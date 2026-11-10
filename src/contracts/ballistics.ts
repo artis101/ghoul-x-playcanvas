@@ -6,6 +6,33 @@ export interface Vec3Like {
 
 export type AmmoType = 'FMJ' | 'JHP' | 'AP' | 'BUCKSHOT_00';
 
+export type EnemyArchetypeId =
+  | 'SKINHEAD_PUNK'
+  | 'MILITIA_GUNNER'
+  | 'HEAVY_ENFORCER'
+  | 'SNIPER_OPERATIVE';
+
+export type CombatantPostureState =
+  | 'COMBAT_READY'
+  | 'STAGGERED'
+  | 'LEG_BUCKLED'
+  | 'THROAT_CLUTCH'
+  | 'GUT_HURT'
+  | 'DISARMED'
+  | 'AIRBORNE_RAGDOLL'
+  | 'RAGDOLL_GROUNDED';
+
+export type PainReactionType =
+  | 'NONE'
+  | 'HEAD_SNAP'
+  | 'THROAT_CLUTCH'
+  | 'CHEST_STAGGER'
+  | 'GUT_FOLD'
+  | 'ARM_WRENCH_LEFT'
+  | 'ARM_WRENCH_RIGHT'
+  | 'LEG_BUCKLE_LEFT'
+  | 'LEG_BUCKLE_RIGHT';
+
 export interface AmmoSpec {
   id: string;
   name: string;
@@ -27,9 +54,9 @@ export interface AmmoSpec {
   pelletCount: number;
   /** Spread cone half-angle in radians */
   spreadRadians: number;
-  /** Cinematic knockback amplification factor (e.g. 5.5x for 12-Gauge Shotgun blast, 2.5x for .50 AE) */
+  /** Cinematic knockback amplification factor */
   ragdollImpulseMultiplier: number;
-  /** Gore & dismemberment multiplier (e.g. 2.8x for 12-Gauge Buckshot and .50 AE) */
+  /** Gore & dismemberment multiplier */
   goreFactor: number;
 }
 
@@ -91,7 +118,7 @@ export interface TrajectorySample {
 }
 
 /**
- * The classic Soldier of Fortune (2000) GHOUL Gore Zone Taxonomy (22+ distinct anatomical damage & sever zones).
+ * The classic Soldier of Fortune (2000) GHOUL Gore Zone Taxonomy (22 distinct anatomical damage & sever zones).
  */
 export type GhoulZoneId =
   | 'HEAD_CRANIUM'
@@ -141,7 +168,7 @@ export interface AnatomicalColliderVolume {
   label: string;
   ghoulZone: GhoulZoneId;
   layerType: TissueLayerType;
-  /** Local center relative to target root (feet at y=0, standing ~1.80m tall) */
+  /** Local center relative to standing target root (feet at y=0, standing ~1.80m tall) */
   localCenter: Vec3Like;
   /** Half-extents (box) or radius/height encoded as half-extents in meters */
   halfExtents: Vec3Like;
@@ -160,12 +187,13 @@ export interface AnatomicalColliderVolume {
   limbMassKg: number;
   /** Parent zone in the kinematic tree (where the bloody stump & bone protrusion appear on sever) */
   parentZone?: GhoulZoneId;
-  /** Child zones that automatically detach with this limb when severed (e.g. severing UPPER_ARM_LEFT takes FOREARM_LEFT + HAND_LEFT) */
+  /** Child zones that automatically detach with this limb when severed */
   childZones?: GhoulZoneId[];
 }
 
 export interface DismembermentEvent {
   zone: GhoulZoneId;
+  parentZone?: GhoulZoneId;
   goreMode: GoreMode;
   /** All child zones detached as part of this limb chain */
   detachedSubtree: GhoulZoneId[];
@@ -181,6 +209,18 @@ export interface DismembermentEvent {
   gibCount: number;
 }
 
+export interface LocalizedSurfaceWound {
+  id: string;
+  zone: GhoulZoneId;
+  /** Offset relative to the bone's local coordinate frame */
+  localOffset: Vec3Like;
+  /** Outward surface normal in bone local space */
+  localNormal: Vec3Like;
+  radiusM: number;
+  isExit: boolean;
+  armorDent: boolean;
+}
+
 export interface WoundChannelEvent {
   colliderId: string;
   label: string;
@@ -189,6 +229,9 @@ export interface WoundChannelEvent {
   entryPointWorld: Vec3Like;
   exitPointWorld: Vec3Like;
   entryNormalWorld: Vec3Like;
+  /** Offset from the hit zone's joint position in bone-local frame */
+  localEntryOffset: Vec3Like;
+  localExitOffset: Vec3Like;
   /** Direction vector of projectile at entry */
   impactDirectionWorld: Vec3Like;
   pathLengthM: number;
@@ -197,10 +240,12 @@ export interface WoundChannelEvent {
   entryEnergyJ: number;
   exitEnergyJ: number;
   energyDepositedJ: number;
-  /** Momentum impulse transferred to this limb in N*s (including cinematic amplifier) */
+  /** Momentum impulse transferred to this limb in N*s */
   impulseTransferredNs: number;
   permanentCavityRadiusCm: number;
   temporaryStretchCavityRadiusCm: number;
+  armorStopped: boolean;
+  bluntTraumaJ: number;
   boneFractured: boolean;
   boneShattered: boolean;
   organRuptured: boolean;
@@ -208,25 +253,27 @@ export interface WoundChannelEvent {
   limbSevered: boolean;
   arterialSevered: boolean;
   deflectionAngleDeg: number;
+  /** Real-world combatant impact description */
+  physiologicalEffect: string;
 }
 
 /**
- * Pre-calculated Ragdoll & Dismemberment Activation Plan computed at trigger pull BEFORE pellets/bullets arrive.
+ * Ragdoll & Dismemberment Activation Plan computed upon shot simulation.
  */
 export interface RagdollActivationPlan {
-  /** Whether this shot will trigger full ragdoll physics upon impact */
+  /** Whether this shot activates or impulses full 3D ragdoll physics */
   willEnableRagdoll: boolean;
   /** Exact flight time (seconds after trigger pull) when ragdoll unlocks and launches */
   activationTimeS: number;
   /** Primary GHOUL zone receiving the main blast impulse */
   primaryHitZone: GhoulZoneId | null;
-  /** Net world-space impulse vector (N*s) applied to the ragdoll torso/pelvis root */
+  /** Net world-space impulse vector (N*s) applied to the ragdoll */
   netRootImpulseWorld: Vec3Like;
-  /** Upward lift component added for dramatic shotgun launch arc */
+  /** Upward lift component added for dramatic stomach/chest blast launch arc */
   launchLiftVelocityMs: number;
-  /** Initial center-of-mass launch speed in m/s (so a point-blank shotgun blast sends the ragdoll flying backwards 3-6 meters) */
+  /** Initial center-of-mass estimated backward travel distance in meters */
   estimatedLaunchDistanceM: number;
-  /** Per-zone localized impulse vectors for realistic limb whip/spin (e.g. hitting right shoulder spins ragdoll clockwise) */
+  /** Per-zone localized impulse vectors for realistic limb/stomach jackknife & spin */
   zoneImpulses: Partial<Record<GhoulZoneId, Vec3Like>>;
   /** Angular torque vector (N*m*s) around center of mass */
   netTorqueWorld: Vec3Like;
@@ -267,11 +314,9 @@ export interface ShotSimulationReport {
   woundEvents: WoundChannelEvent[];
   totalEnergyDepositedJ: number;
   totalDamageHp: number;
-  /** Pre-calculated at trigger pull: will this shot kill the enemy? */
   isLethalKill: boolean;
-  /** Pre-calculated Ragdoll & Dismemberment physics launch plan */
   ragdollPlan: RagdollActivationPlan;
-  /** Whether Sniper Elite X-Ray Kill Cam should trigger */
+  /** Retained for telemetry inspector compatibility */
   triggerXRayKillCam: boolean;
   xRayFocusZone: GhoulZoneId | null;
   xRayHighlightPointWorld: Vec3Like | null;
@@ -279,38 +324,117 @@ export interface ShotSimulationReport {
   dismembermentEvents: DismembermentEvent[];
   shatteredBones: string[];
   rupturedOrgans: string[];
+  /** Real-world combatant trauma effects triggered by this shot */
+  combatantEffects: string[];
+  headgearKnockedOff: boolean;
+  weaponDisarmed: boolean;
   trajectorySamples: TrajectorySample[];
 }
 
+/**
+ * 3D orthonormal orientation basis (column vectors Right, Up, Forward) + position for exact ragdoll bone rendering.
+ */
 export interface RagdollBoneState {
   zone: GhoulZoneId;
   position: Vec3Like;
+  prevPosition: Vec3Like;
   velocity: Vec3Like;
   angularVelocity: Vec3Like;
   rotationEuler: Vec3Like;
+  /** Orthonormal right (+X), up (+Y), forward (+Z) vectors in world space */
+  basisRight: Vec3Like;
+  basisUp: Vec3Like;
+  basisForward: Vec3Like;
+  /** Distal endpoint in world space (e.g. elbow for upper arm, wrist for forearm) */
+  distalPosition: Vec3Like;
   massKg: number;
+  radiusM: number;
+  /** Connected PBD component ID ('BODY' when attached, or 'SEVERED_<ZONE>' when amputated) */
+  componentId: string;
   severed: boolean;
   goreMode: GoreMode;
   grounded: boolean;
 }
 
+export type AuxParticleId =
+  | 'HEAD_TOP'
+  | 'HAND_TIP_LEFT'
+  | 'HAND_TIP_RIGHT'
+  | 'FOOT_TOE_LEFT'
+  | 'FOOT_TOE_RIGHT';
+
+export interface AuxRagdollParticle {
+  id: AuxParticleId;
+  parentZone: GhoulZoneId;
+  position: Vec3Like;
+  prevPosition: Vec3Like;
+  velocity: Vec3Like;
+  massKg: number;
+  radiusM: number;
+  componentId: string;
+}
+
+export interface RagdollDistanceConstraint {
+  id: string;
+  nodeA: GhoulZoneId | AuxParticleId;
+  nodeB: GhoulZoneId | AuxParticleId;
+  restLength: number;
+  minLength: number;
+  maxLength: number;
+  /** Stiffness in [0, 1] per solver iteration (1.0 = rigid bone, 0.25 = soft anatomical bend limit) */
+  stiffness: number;
+}
+
+export interface ActivePainReaction {
+  type: PainReactionType;
+  timerS: number;
+  durationS: number;
+  intensity: number;
+  hitDirectionWorld: Vec3Like;
+}
+
 export interface TargetHealthState {
   targetId: string;
   name: string;
+  archetype: EnemyArchetypeId;
   worldPosition: Vec3Like;
   yawRad: number;
   maxHp: number;
   currentHp: number;
   bleedRateHpPerSec: number;
+  /** Realistic physiological vitals */
+  bloodVolumeMl: number;
+  bloodLossRateMlPerSec: number;
+  systolicBpMmHg: number;
+  heartRateBpm: number;
+  oxygenSaturationPct: number;
+  consciousness: number;
+  painShock: number;
+  posture: CombatantPostureState;
+  leftLegFunctional: boolean;
+  rightLegFunctional: boolean;
+  leftArmFunctional: boolean;
+  rightArmFunctional: boolean;
+  headgearIntact: boolean;
+  weaponDropped: boolean;
+  hasChestArmor: boolean;
+  chestArmorIntegrity: number;
+  hasHelmetArmor: boolean;
+  helmetArmorIntegrity: number;
+  activeReaction: ActivePainReaction;
   alive: boolean;
   isRagdollActive: boolean;
   ragdollRootPosition: Vec3Like;
   ragdollRootVelocity: Vec3Like;
   ragdollAngularVelocity: Vec3Like;
   ragdollBones: Record<GhoulZoneId, RagdollBoneState>;
+  auxParticles: Record<AuxParticleId, AuxRagdollParticle>;
+  ragdollConstraints: RagdollDistanceConstraint[];
   zoneIntegrity: Record<GhoulZoneId, number>;
+  zoneCumulativeDamageJ: Record<GhoulZoneId, number>;
   zoneGoreMode: Record<GhoulZoneId, GoreMode>;
   severedZones: Set<GhoulZoneId>;
   fracturedBones: Set<string>;
   rupturedOrgans: Set<string>;
+  surfaceWounds: LocalizedSurfaceWound[];
 }

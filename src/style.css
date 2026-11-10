@@ -1,17 +1,11 @@
 :root {
-  --bg-obsidian: hsl(215, 28%, 6%);
-  --panel-surface: hsla(215, 26%, 9%, 0.86);
-  --panel-elevated: hsla(215, 22%, 14%, 0.92);
-  --border-hairline: hsla(200, 18%, 32%, 0.42);
-  --border-bright: hsla(38, 92%, 56%, 0.65);
-  --text-primary: hsl(210, 20%, 95%);
-  --text-secondary: hsl(212, 14%, 68%);
-  --text-muted: hsl(214, 12%, 48%);
-  --accent-amber: hsl(38, 95%, 56%);
-  --accent-crimson: hsl(356, 84%, 54%);
-  --accent-gore: hsl(352, 90%, 42%);
-  --accent-emerald: hsl(152, 76%, 46%);
-  --accent-cyan: hsl(192, 85%, 54%);
+  --hud-amber: #f5b642;
+  --hud-emerald: #46e891;
+  --hud-cyan: #5ce1ff;
+  --hud-crimson: #ff3b4e;
+  --hud-text: #f2f5f8;
+  --hud-dim: rgba(242, 245, 248, 0.52);
+  --hud-shadow: 0 2px 6px rgba(0, 0, 0, 0.92), 0 0 2px rgba(0, 0, 0, 0.95);
   --font-display: 'Chakra Petch', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 }
@@ -29,8 +23,8 @@ body,
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background-color: var(--bg-obsidian);
-  color: var(--text-primary);
+  background-color: #090d12;
+  color: var(--hud-text);
   font-family: var(--font-display);
 }
 
@@ -44,12 +38,17 @@ body,
   z-index: 1;
 }
 
-/* RETICLE & SNIPER SCOPE OVERLAY */
+.fps-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+/* CENTER CROSSHAIR & HITMARKER */
 .reticle-layer {
   position: absolute;
   inset: 0;
-  pointer-events: none;
-  z-index: 5;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -57,69 +56,117 @@ body,
 
 .crosshair-standard {
   position: relative;
-  width: 48px;
-  height: 48px;
+  width: 36px;
+  height: 36px;
+  transition: transform 0.06s ease-out;
 }
 
 .ch-line {
   position: absolute;
-  background: hsla(38, 95%, 58%, 0.9);
-  box-shadow: 0 0 4px hsla(0, 0%, 0%, 0.85);
+  background: rgba(120, 255, 165, 0.92);
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.95);
 }
 
 .ch-top {
   width: 2px;
-  height: 11px;
-  left: 23px;
+  height: 8px;
+  left: 17px;
   top: 2px;
 }
 
 .ch-bottom {
   width: 2px;
-  height: 11px;
-  left: 23px;
+  height: 8px;
+  left: 17px;
   bottom: 2px;
 }
 
 .ch-left {
   height: 2px;
-  width: 11px;
-  top: 23px;
+  width: 8px;
+  top: 17px;
   left: 2px;
 }
 
 .ch-right {
   height: 2px;
-  width: 11px;
-  top: 23px;
+  width: 8px;
+  top: 17px;
   right: 2px;
+}
+
+.ch-dot {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  left: 17px;
+  top: 17px;
+  background: rgba(255, 255, 255, 0.85);
 }
 
 .shotgun-spread-ring {
   position: absolute;
-  inset: -14px;
-  border: 1.5px dashed hsla(38, 95%, 56%, 0.55);
+  inset: -8px;
+  border: 1px solid rgba(120, 255, 165, 0.28);
   border-radius: 50%;
-  transition: transform 0.15s ease, opacity 0.15s ease;
 }
 
-.aim-predictor-pip {
+/* HITMARKER */
+.hitmarker {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 0.08s ease-out, transform 0.08s ease-out;
+}
+
+.hitmarker.active {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.hitmarker.lethal .hm-tick {
+  background: var(--hud-crimson);
+  box-shadow: 0 0 6px var(--hud-crimson);
+}
+
+.hm-tick {
   position: absolute;
   width: 8px;
-  height: 8px;
-  left: 20px;
-  top: 20px;
-  border-radius: 50%;
-  background: var(--accent-crimson);
-  border: 1.5px solid #fff;
-  box-shadow: 0 0 8px var(--accent-crimson);
-  transition: transform 0.06s linear;
+  height: 2px;
+  background: #ffffff;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
 }
 
+.hm-tl {
+  top: 9px;
+  left: 6px;
+  transform: rotate(45deg);
+}
+
+.hm-tr {
+  top: 9px;
+  right: 6px;
+  transform: rotate(-45deg);
+}
+
+.hm-bl {
+  bottom: 9px;
+  left: 6px;
+  transform: rotate(-45deg);
+}
+
+.hm-br {
+  bottom: 9px;
+  right: 6px;
+  transform: rotate(45deg);
+}
+
+/* SNIPER OPTIC OVERLAY */
 .sniper-scope-mask {
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at center, transparent 28%, rgba(4, 7, 11, 0.96) 31%);
+  background: radial-gradient(circle at center, transparent 30%, rgba(3, 5, 8, 0.97) 32.5%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -127,519 +174,238 @@ body,
 
 .scope-mil-dots-h {
   position: absolute;
-  width: 56%;
+  width: 60%;
   height: 1px;
-  background: hsla(152, 80%, 50%, 0.55);
+  background: rgba(70, 232, 145, 0.65);
 }
 
 .scope-mil-dots-v {
   position: absolute;
-  height: 56%;
+  height: 60%;
   width: 1px;
-  background: hsla(152, 80%, 50%, 0.55);
+  background: rgba(70, 232, 145, 0.65);
 }
 
 .scope-telemetry-readout {
   position: absolute;
-  top: calc(50% + 145px);
+  top: calc(50% + 140px);
   display: flex;
   gap: 14px;
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--accent-emerald);
-  background: hsla(215, 30%, 6%, 0.85);
-  padding: 4px 10px;
-  border: 1px solid hsla(152, 76%, 46%, 0.35);
-}
-
-/* X-RAY KILL CAM CINEMA OVERLAY */
-.xray-cinema-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  pointer-events: none;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
-
-.letterbox-bar {
-  width: 100%;
-  height: 68px;
-  background: linear-gradient(90deg, rgba(5, 8, 12, 0.96), rgba(18, 8, 10, 0.94));
-  border-bottom: 1px solid hsla(356, 84%, 54%, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 24px;
-  pointer-events: auto;
-}
-
-.letterbox-bottom {
-  border-bottom: none;
-  border-top: 1px solid hsla(356, 84%, 54%, 0.45);
-}
-
-.xray-status-strip {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.xray-badge {
-  background: var(--accent-crimson);
-  color: #fff;
-  font-weight: 700;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  padding: 4px 10px;
-}
-
-.xray-live-telemetry {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  color: var(--accent-amber);
-}
-
-.xray-wound-ticker {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  color: var(--text-primary);
-  letter-spacing: 0.04em;
-}
-
-/* TOP BAR */
-.hud-topbar {
-  position: absolute;
-  top: 10px;
-  left: 12px;
-  right: 12px;
-  z-index: 10;
-  background: var(--panel-surface);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--border-hairline);
-  padding: 8px 14px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.brand-cluster {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.brand-emblem {
-  width: 34px;
-  height: 34px;
-  background: linear-gradient(135deg, var(--accent-crimson), hsl(24, 90%, 45%));
-  display: grid;
-  place-items: center;
-  font-weight: 700;
-  font-size: 15px;
-  letter-spacing: 0.05em;
-  color: #fff;
-}
-
-.brand-title {
-  font-size: 15px;
-  font-weight: 700;
+  color: var(--hud-emerald);
+  text-shadow: var(--hud-shadow);
   letter-spacing: 0.06em;
 }
 
-.brand-sub {
-  color: var(--accent-amber);
-  font-weight: 600;
-  font-size: 12px;
-}
-
-.brand-meta {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--text-secondary);
-}
-
-.preset-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.hud-btn {
-  background: var(--panel-elevated);
-  color: var(--text-primary);
-  border: 1px solid var(--border-hairline);
-  padding: 6px 10px;
-  font-family: var(--font-display);
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-  transition: background 0.14s ease, border-color 0.14s ease, transform 0.1s ease;
-}
-
-.hud-btn:hover {
-  background: hsla(215, 20%, 22%, 0.95);
-  border-color: var(--accent-amber);
-}
-
-.hud-btn:active {
-  transform: translateY(1px);
-}
-
-.hud-btn-accent {
-  background: hsla(38, 92%, 45%, 0.22);
-  border-color: var(--accent-amber);
-  color: hsl(42, 100%, 78%);
-}
-
-.hud-btn-gore {
-  background: hsla(356, 84%, 45%, 0.25);
-  border-color: var(--accent-crimson);
-  color: hsl(356, 100%, 84%);
-}
-
-.hud-btn-secondary {
-  border-color: hsla(192, 85%, 54%, 0.45);
-  color: hsl(192, 90%, 76%);
-}
-
-.hud-btn-danger {
-  background: var(--accent-crimson);
-  border-color: #fff;
-  color: #fff;
-}
-
-/* SIDE PANELS */
-.hud-panel {
+/* TOP-RIGHT MINIMAL KILL / TRAUMA FEED */
+.hud-killfeed {
   position: absolute;
-  top: 68px;
-  bottom: 58px;
-  width: 295px;
-  z-index: 10;
-  background: var(--panel-surface);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--border-hairline);
+  top: 20px;
+  right: 26px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px;
-  overflow-y: auto;
-}
-
-.hud-left-panel {
-  left: 12px;
-}
-
-.hud-right-panel {
-  right: 12px;
-  width: 315px;
-}
-
-.panel-section {
-  background: hsla(215, 28%, 6%, 0.55);
-  border: 1px solid hsla(200, 16%, 26%, 0.38);
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid hsla(200, 16%, 28%, 0.4);
-  padding-bottom: 4px;
-}
-
-.section-header h2 {
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: var(--accent-amber);
-}
-
-.hotkey-hint {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
-.weapon-selector-list {
-  display: flex;
-  flex-direction: column;
+  align-items: flex-end;
   gap: 5px;
 }
 
-.weapon-card {
-  background: var(--panel-elevated);
-  border: 1px solid var(--border-hairline);
-  padding: 6px 8px;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  text-align: left;
-  color: var(--text-primary);
-  font-family: var(--font-display);
-  transition: border-color 0.14s ease, background 0.14s ease;
-}
-
-.weapon-card.active {
-  border-color: var(--accent-amber);
-  background: hsla(38, 85%, 46%, 0.16);
-}
-
-.weapon-card-top {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
+.killfeed-item {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
   font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--hud-text);
+  text-shadow: var(--hud-shadow);
+  background: linear-gradient(90deg, transparent, rgba(8, 12, 18, 0.62));
+  padding: 3px 8px;
+  border-right: 2px solid var(--hud-amber);
+  transition: opacity 0.35s ease;
 }
 
-.weapon-card-sub {
+.killfeed-item.lethal {
+  border-right-color: var(--hud-crimson);
+  color: #ffd6da;
+}
+
+.killfeed-item .kf-tag {
+  color: var(--hud-amber);
+  margin: 0 5px;
+}
+
+.killfeed-item.lethal .kf-tag {
+  color: var(--hud-crimson);
+}
+
+/* SUBTLE CONTEXT PROMPT */
+.hud-prompt {
+  position: absolute;
+  bottom: 84px;
+  left: 50%;
+  transform: translateX(-50%);
   font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-secondary);
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  color: rgba(242, 245, 248, 0.85);
+  text-shadow: var(--hud-shadow);
+  background: rgba(8, 12, 18, 0.58);
+  padding: 5px 14px;
+  border-bottom: 1px solid rgba(245, 182, 66, 0.45);
+  white-space: nowrap;
+  transition: opacity 0.2s ease;
 }
 
-.ammo-selector-list {
+/* DIEGETIC CORNER CLUSTERS */
+.hud-corner {
+  position: absolute;
+  bottom: 24px;
   display: flex;
-  gap: 5px;
-  flex-wrap: wrap;
+  text-shadow: var(--hud-shadow);
 }
 
-.ammo-pill {
-  flex: 1;
-  background: hsla(215, 22%, 12%, 0.9);
-  border: 1px solid var(--border-hairline);
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  padding: 4px 6px;
-  cursor: pointer;
+.hud-bottom-left {
+  left: 28px;
+  align-items: flex-end;
+  gap: 26px;
 }
 
-.ammo-pill.active {
-  border-color: var(--accent-cyan);
-  color: var(--text-primary);
-  background: hsla(192, 85%, 45%, 0.2);
-}
-
-.control-row {
+.vital-block {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  font-size: 11.5px;
-  color: var(--text-secondary);
   gap: 8px;
 }
 
-.control-row input[type='range'] {
-  width: 95px;
-  accent-color: var(--accent-amber);
-}
-
-.legend-list {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.legend-list kbd {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  background: hsla(215, 20%, 18%, 0.95);
-  border: 1px solid var(--border-hairline);
-  padding: 1px 5px;
-  color: var(--accent-amber);
-}
-
-/* TELEMETRY & GHOUL ZONE MAP */
-.status-pill {
-  font-family: var(--font-mono);
-  font-size: 10px;
+.vital-icon {
+  font-size: 22px;
   font-weight: 700;
-  padding: 2px 6px;
+  line-height: 1;
 }
 
-.status-ready {
-  background: hsla(152, 76%, 42%, 0.2);
-  color: var(--accent-emerald);
+.vital-cross {
+  color: var(--hud-emerald);
 }
 
-.status-lethal {
-  background: hsla(356, 84%, 50%, 0.28);
-  color: hsl(356, 100%, 76%);
+.vital-shield {
+  color: var(--hud-cyan);
+  font-size: 19px;
 }
 
-.telemetry-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 5px;
-}
-
-.t-cell {
-  background: hsla(215, 24%, 11%, 0.85);
-  border: 1px solid hsla(200, 15%, 25%, 0.4);
-  padding: 5px 7px;
+.vital-data {
   display: flex;
   flex-direction: column;
+  gap: 3px;
 }
 
-.t-label {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  color: var(--text-muted);
-}
-
-.t-val {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.hp-badge {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--accent-emerald);
-}
-
-.ghoul-zone-diagram {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 4px;
-  max-height: 175px;
-  overflow-y: auto;
-}
-
-.zone-chip {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  padding: 3px 6px;
-  background: hsla(215, 22%, 12%, 0.85);
-  border-left: 3px solid var(--accent-emerald);
-}
-
-.zone-chip.damaged {
-  border-left-color: var(--accent-amber);
-  color: hsl(38, 95%, 76%);
-}
-
-.zone-chip.severed {
-  border-left-color: var(--accent-crimson);
-  background: hsla(356, 80%, 24%, 0.45);
-  color: hsl(356, 100%, 82%);
-  text-decoration: line-through;
-}
-
-.wound-log-section {
-  flex: 1;
-  min-height: 120px;
-}
-
-.wound-channel-log {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  overflow-y: auto;
-  max-height: 210px;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-}
-
-.wound-entry {
-  background: hsla(215, 24%, 11%, 0.9);
-  border-left: 3px solid var(--accent-crimson);
-  padding: 5px 7px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.wound-entry-title {
-  font-weight: 700;
-  color: hsl(38, 95%, 72%);
-}
-
-.wound-entry-meta {
-  color: var(--text-secondary);
-  font-size: 9.8px;
-}
-
-/* BOTTOM BAR */
-.hud-bottom-bar {
-  position: absolute;
-  bottom: 10px;
-  left: 12px;
-  right: 12px;
-  height: 42px;
-  z-index: 10;
-  background: var(--panel-surface);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--border-hairline);
-  padding: 0 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.target-selector-strip {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  overflow-x: auto;
-}
-
-.strip-label {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--text-secondary);
-  margin-right: 4px;
-}
-
-.zone-aim-btn {
-  background: hsla(215, 22%, 14%, 0.9);
-  border: 1px solid var(--border-hairline);
-  color: var(--text-secondary);
+.vital-num {
   font-family: var(--font-display);
-  font-size: 11px;
-  font-weight: 600;
-  padding: 4px 8px;
-  cursor: pointer;
-}
-
-.zone-aim-btn.active {
-  border-color: var(--accent-amber);
-  color: var(--text-primary);
-  background: hsla(38, 92%, 50%, 0.22);
-}
-
-.btn-fire-primary {
-  background: linear-gradient(135deg, var(--accent-crimson), hsl(18, 90%, 48%));
-  border: 1px solid hsl(38, 95%, 68%);
-  color: #fff;
-  font-family: var(--font-display);
+  font-size: 30px;
   font-weight: 700;
-  font-size: 12.5px;
+  line-height: 0.92;
+  letter-spacing: 0.03em;
+  color: var(--hud-text);
+}
+
+.armor-num {
+  color: #d6f4ff;
+}
+
+.vital-bar {
+  width: 64px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.vital-bar-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+.health-fill {
+  background: var(--hud-emerald);
+}
+
+.armor-fill {
+  background: var(--hud-cyan);
+}
+
+/* BOTTOM-RIGHT AMMO & WEAPON */
+.hud-bottom-right {
+  right: 28px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.ammo-counter-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  line-height: 0.95;
+}
+
+.ammo-mag {
+  font-family: var(--font-display);
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--hud-amber);
+  letter-spacing: 0.03em;
+}
+
+.ammo-mag.low {
+  color: var(--hud-crimson);
+}
+
+.ammo-sep {
+  font-size: 20px;
+  color: var(--hud-dim);
+}
+
+.ammo-reserve {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 700;
+  color: rgba(242, 245, 248, 0.78);
+}
+
+.weapon-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
   letter-spacing: 0.06em;
-  padding: 6px 16px;
-  cursor: pointer;
 }
 
-.btn-fire-primary:hover {
-  filter: brightness(1.12);
+.weapon-name {
+  color: var(--hud-text);
+  font-weight: 700;
+}
+
+.ammo-caliber {
+  color: var(--hud-amber);
+}
+
+.weapon-slots {
+  display: flex;
+  gap: 5px;
+  margin-top: 3px;
+}
+
+.slot-pip {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  width: 18px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.42);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.18);
+}
+
+.slot-pip.active {
+  color: var(--hud-amber);
+  border-bottom-color: var(--hud-amber);
 }
 
 .hidden {

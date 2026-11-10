@@ -5,10 +5,15 @@ import {
   TargetHealthState,
   TrajectorySample,
   GhoulZoneId,
+  EnemyArchetypeId,
 } from '../contracts/ballistics.ts';
-import { vec3, copyVec3, add, sub, scale, length, normalize } from '../core/ballistics/vec3.ts';
-import { GHOUL_ZONE_HIERARCHY } from '../core/ghoul/anatomy.ts';
+import { copyVec3, length, normalize, sub, scale } from '../core/ballistics/vec3.ts';
 import { EngineMaterialPalette } from './materials.ts';
+import { getArchetypeRetroMaterials } from './retroTextures.ts';
+import {
+  buildArchetypeHeadgearEntity,
+  buildEnemyWeaponEntity,
+} from './retroMeshBuilder.ts';
 
 export interface ActiveProjectileFx {
   entity: pc.Entity;
@@ -43,6 +48,9 @@ export interface GibChunk {
   angularVelocity: pc.Vec3;
   bounces: number;
   life: number;
+  maxLife: number;
+  leavesBlood: boolean;
+  restHeight: number;
 }
 
 export interface BoneShardSpark {
@@ -56,7 +64,6 @@ export interface ArterialFountainStream {
   target?: TargetHealthState;
   zone?: GhoulZoneId;
   parentZone?: GhoulZoneId;
-  localOffsetFromParent?: Vec3Like;
   stumpPos: Vec3Like;
   sprayDir: Vec3Like;
   durationS: number;
@@ -67,11 +74,11 @@ export interface ArterialFountainStream {
 /**
  * Class GoreAndBallisticsFxManager manages:
  * - In-flight 3D spinning bullet models and Mach shockwave rings
- * - Persistent ballistic trajectory trails
+ * - Ballistic trajectory trails & impact sparks
  * - High-velocity blood splatter & expanding ground blood pools
  * - Flying Soldier of Fortune dismemberment meat/bone gib chunks
+ * - Detached PS1/PS2 physics props (shot-off helmets/berets/shades & dropped AK-47/MP5/SVD weapons!)
  * - Pulsing arterial stump blood fountains
- * - White cortical bone shatter sparks
  */
 export class GoreAndBallisticsFxManager {
   public readonly app: pc.AppBase;
@@ -93,12 +100,11 @@ export class GoreAndBallisticsFxManager {
   }
 
   /**
-   * Spawns an animated 3D projectile following pre-calculated trajectory samples.
+   * Spawns an animated 3D projectile following RK4 trajectory samples.
    */
   public spawnFlyingProjectile(
     trajectorySamples: TrajectorySample[],
-    isShotgunPellet = false,
-    speedMultiplier = 1.0
+    isShotgunPellet = false
   ): ActiveProjectileFx | null {
     if (!trajectorySamples || trajectorySamples.length < 2) return null;
 
@@ -118,7 +124,6 @@ export class GoreAndBallisticsFxManager {
     pEntity.setPosition(firstPos.x, firstPos.y, firstPos.z);
     this.fxRoot.addChild(pEntity);
 
-    // Shockwave ring for supersonic projectiles
     let shockwaveRing: pc.Entity | undefined;
     if (!isShotgunPellet && trajectorySamples[0].mach > 1.0) {
       shockwaveRing = new pc.Entity('MachShockwaveRing');
@@ -130,7 +135,7 @@ export class GoreAndBallisticsFxManager {
       pEntity.addChild(shockwaveRing);
     }
 
-    const totalFlightTimeS = trajectorySamples[trajectorySamples.length - 1].timeS;
+    const totalFlightTimeS = Math.max(0.045, trajectorySamples[trajectorySamples.length - 1].timeS);
 
     const projFx: ActiveProjectileFx = {
       entity: pEntity,
@@ -148,32 +153,128 @@ export class GoreAndBallisticsFxManager {
   }
 
   /**
+   * Spawns a shot-off helmet, beret, watch-cap, or shades spinning through the air!
+   */
+  public spawnDetachedHeadgearProp(
+    archetype: EnemyArchetypeId,
+    worldPos: Vec3Like,
+    shotDir: Vec3Like
+  ): void {
+    const mats = getArchetypeRetroMaterials(this.app.graphicsDevice, archetype);
+    const prop = buildArchetypeHeadgearEntity(this.app.graphicsDevice, archetype, mats);
+    prop.setPosition(worldPos.x, worldPos.y, worldPos.z);
+    this.fxRoot.addChild(prop);
+
+    const vx = shotDir.x * 4.5 + (Math.random() - 0.5) * 2.2;
+    const vy = 3.2 + Math.random() * 2.0;
+    const vz = shotDir.z * 4.5 + (Math.random() - 0.5) * 2.2;
+
+    this.gibChunks.push({
+      entity: prop,
+      position: new pc.Vec3(worldPos.x, worldPos.y, worldPos.z),
+      velocity: new pc.Vec3(vx, vy, vz),
+      angularVelocity: new pc.Vec3(
+        (Math.random() - 0.5) * 18,
+        (Math.random() - 0.5) * 18,
+        (Math.random() - 0.5) * 18
+      ),
+      bounces: 0,
+      life: 0,
+      maxLife: 24.0,
+      leavesBlood: false,
+      restHeight: 0.03,
+    });
+  }
+
+  /**
+   * Spawns the combatant's dropped 3D weapon clattering onto the concrete floor!
+   */
+  public spawnDroppedWeaponProp(
+    archetype: EnemyArchetypeId,
+    worldPos: Vec3Like,
+    inheritedVel: Vec3Like
+  ): void {
+    const mats = getArchetypeRetroMaterials(this.app.graphicsDevice, archetype);
+    const gun = buildEnemyWeaponEntity(this.app.graphicsDevice, archetype, mats);
+    gun.setPosition(worldPos.x, worldPos.y, worldPos.z);
+    this.fxRoot.addChild(gun);
+
+    const vx = inheritedVel.x * 0.45 + (Math.random() - 0.5) * 2.2;
+    const vy = Math.max(1.2, inheritedVel.y * 0.35 + 1.4);
+    const vz = inheritedVel.z * 0.45 + (Math.random() - 0.5) * 2.2 + 0.8;
+
+    this.gibChunks.push({
+      entity: gun,
+      position: new pc.Vec3(worldPos.x, worldPos.y, worldPos.z),
+      velocity: new pc.Vec3(vx, vy, vz),
+      angularVelocity: new pc.Vec3(
+        (Math.random() - 0.5) * 10,
+        (Math.random() - 0.5) * 12,
+        6 + Math.random() * 6
+      ),
+      bounces: 0,
+      life: 0,
+      maxLife: 30.0,
+      leavesBlood: false,
+      restHeight: 0.04,
+    });
+  }
+
+  /**
+   * Spawns grey/amber Kevlar spark/dust burst when ballistic armor stops a round!
+   */
+  public spawnArmorImpactSparks(worldPos: Vec3Like, normalDir: Vec3Like): void {
+    for (let i = 0; i < 10; i++) {
+      const spark = new pc.Entity('ArmorSpark');
+      spark.addComponent('render', {
+        type: 'box',
+        material: i % 2 === 0 ? this.materials.rangeDistanceMarkerMat : this.materials.sandbagMat,
+      });
+      const s = 0.012 + Math.random() * 0.014;
+      spark.setLocalScale(s, s, s);
+      spark.setPosition(worldPos.x, worldPos.y, worldPos.z);
+      this.fxRoot.addChild(spark);
+
+      const spd = 2.4 + Math.random() * 3.8;
+      this.boneShards.push({
+        entity: spark,
+        position: new pc.Vec3(worldPos.x, worldPos.y, worldPos.z),
+        velocity: new pc.Vec3(
+          normalDir.x * spd + (Math.random() - 0.5) * 3.2,
+          normalDir.y * spd + Math.random() * 2.4,
+          normalDir.z * spd + (Math.random() - 0.5) * 3.2
+        ),
+        life: 0,
+      });
+    }
+  }
+
+  /**
    * Spawns high-velocity 3D blood droplets and mist affected by gravity that splat into floor pools.
    */
   public spawnBloodBurst(
     worldPos: Vec3Like,
     normalDir: Vec3Like,
     energyJ: number,
-    count = 18
+    count = 16
   ): void {
-    const burstCount = Math.min(60, Math.max(count, Math.floor(energyJ / 20)));
-    const baseSpeed = Math.min(12.0, Math.max(3.0, Math.sqrt(energyJ) * 0.18));
+    const burstCount = Math.min(48, Math.max(count, Math.floor(energyJ / 24)));
+    const baseSpeed = Math.min(9.5, Math.max(2.6, Math.sqrt(energyJ) * 0.16));
 
     for (let i = 0; i < burstCount; i++) {
       const dropEnt = new pc.Entity('BloodDrop');
       dropEnt.addComponent('render', {
-        type: 'sphere',
+        type: 'box', // Crisp low-poly PS1 pixel-chunk blood droplets!
         material: this.materials.bloodDropMat,
       });
-      const radius = 0.012 + Math.random() * 0.018;
+      const radius = 0.014 + Math.random() * 0.02;
       dropEnt.setLocalScale(radius, radius, radius);
       dropEnt.setPosition(worldPos.x, worldPos.y, worldPos.z);
       this.fxRoot.addChild(dropEnt);
 
-      // Random cone velocity along normalDir
-      const vx = normalDir.x * baseSpeed + (Math.random() - 0.5) * baseSpeed * 1.2;
-      const vy = normalDir.y * baseSpeed + Math.random() * baseSpeed * 0.8 + 0.5;
-      const vz = normalDir.z * baseSpeed + (Math.random() - 0.5) * baseSpeed * 1.2;
+      const vx = normalDir.x * baseSpeed + (Math.random() - 0.5) * baseSpeed * 1.15;
+      const vy = normalDir.y * baseSpeed + Math.random() * baseSpeed * 0.7 + 0.6;
+      const vz = normalDir.z * baseSpeed + (Math.random() - 0.5) * baseSpeed * 1.15;
 
       this.bloodDrops.push({
         entity: dropEnt,
@@ -186,10 +287,10 @@ export class GoreAndBallisticsFxManager {
   }
 
   /**
-   * Spawns spinning 3D meat & skull/bone gib chunks that bounce off the floor with wet blood splats.
+   * Spawns spinning 3D meat & skull/bone gib chunks (primarily on CRANIAL_POP or EVISCERATED).
    */
   public spawnDismembermentGibs(event: DismembermentEvent): void {
-    const count = Math.max(4, event.gibCount);
+    const count = Math.max(3, event.gibCount);
     const origin = event.stumpWorldPosition;
     const launchVel = event.severedLimbVelocity;
 
@@ -201,123 +302,103 @@ export class GoreAndBallisticsFxManager {
         material: isBone ? this.materials.exposedBoneMat : this.materials.gibChunkMat,
       });
 
-      const s = 0.035 + Math.random() * 0.045;
-      gib.setLocalScale(s, s * 1.2, s);
+      const s = 0.032 + Math.random() * 0.04;
+      gib.setLocalScale(s, s * 1.25, s);
       gib.setPosition(origin.x, origin.y, origin.z);
       this.fxRoot.addChild(gib);
 
-      const vx = launchVel.x + (Math.random() - 0.5) * 4.5;
-      const vy = launchVel.y + Math.random() * 3.5 + 1.2;
-      const vz = launchVel.z + (Math.random() - 0.5) * 4.5;
-
-      const avx = (Math.random() - 0.5) * 25;
-      const avy = (Math.random() - 0.5) * 25;
-      const avz = (Math.random() - 0.5) * 25;
+      const vx = launchVel.x * 0.65 + (Math.random() - 0.5) * 4.2;
+      const vy = Math.max(1.8, launchVel.y * 0.55 + Math.random() * 3.2);
+      const vz = launchVel.z * 0.65 + (Math.random() - 0.5) * 4.2;
 
       this.gibChunks.push({
         entity: gib,
         position: new pc.Vec3(origin.x, origin.y, origin.z),
         velocity: new pc.Vec3(vx, vy, vz),
-        angularVelocity: new pc.Vec3(avx, avy, avz),
+        angularVelocity: new pc.Vec3(
+          (Math.random() - 0.5) * 22,
+          (Math.random() - 0.5) * 22,
+          (Math.random() - 0.5) * 22
+        ),
         bounces: 0,
         life: 0,
+        maxLife: 12.0,
+        leavesBlood: true,
+        restHeight: 0.025,
       });
     }
   }
 
   /**
-   * Attaches a continuous pulsing arterial blood stream spraying from the severed parent stump on the body.
+   * Attaches a continuous pulsing arterial blood stream spraying from the parent body's severed stump socket!
    */
   public attachArterialFountain(
     target: TargetHealthState,
     event: DismembermentEvent
   ): void {
-    const hier = GHOUL_ZONE_HIERARCHY[event.zone];
-    const parentZone = hier?.parent;
-    let localOffsetFromParent: Vec3Like | undefined;
-    let sprayDir = copyVec3(event.arterialSprayDirection);
-
-    if (parentZone) {
-      const parentHier = GHOUL_ZONE_HIERARCHY[parentZone];
-      localOffsetFromParent = sub(hier.jointLocalPos, parentHier.jointLocalPos);
-      // Spray outward from parent toward severed joint + upward arc
-      const outLocal = normalize(add(localOffsetFromParent, vec3(0, 0.35, 0)));
-      const cosY = Math.cos(target.yawRad);
-      const sinY = Math.sin(target.yawRad);
-      sprayDir = normalize(
-        vec3(
-          outLocal.x * cosY + outLocal.z * sinY,
-          Math.max(0.35, outLocal.y),
-          -outLocal.x * sinY + outLocal.z * cosY
-        )
-      );
-    }
-
     this.arterialFountains.push({
       target,
       zone: event.zone,
-      parentZone,
-      localOffsetFromParent,
+      parentZone: event.parentZone,
       stumpPos: copyVec3(event.stumpWorldPosition),
-      sprayDir,
-      durationS: 3.5, // Sprays for 3.5 seconds
+      sprayDir: copyVec3(event.arterialSprayDirection),
+      durationS: 3.8,
       elapsedS: 0,
       dropTimerS: 0,
     });
   }
 
   /**
-   * Spawns white cortical bone shards inside the X-Ray cavity when a bullet shatters bone.
+   * Spawns white cortical bone shards when a projectile shatters bone.
    */
   public spawnBoneShatterSparks(worldPos: Vec3Like, dir: Vec3Like): void {
-    const shardCount = 14;
+    const shardCount = 10;
     for (let i = 0; i < shardCount; i++) {
       const shard = new pc.Entity('BoneShard');
       shard.addComponent('render', {
         type: 'box',
         material: this.materials.exposedBoneMat,
       });
-      const s = 0.012 + Math.random() * 0.02;
+      const s = 0.012 + Math.random() * 0.016;
       shard.setLocalScale(s, s * 2.0, s * 0.6);
       shard.setPosition(worldPos.x, worldPos.y, worldPos.z);
       this.fxRoot.addChild(shard);
 
-      const spd = 2.5 + Math.random() * 4.5;
-      const vx = dir.x * spd + (Math.random() - 0.5) * 3.0;
-      const vy = dir.y * spd + Math.random() * 2.5;
-      const vz = dir.z * spd + (Math.random() - 0.5) * 3.0;
-
+      const spd = 2.2 + Math.random() * 3.8;
       this.boneShards.push({
         entity: shard,
         position: new pc.Vec3(worldPos.x, worldPos.y, worldPos.z),
-        velocity: new pc.Vec3(vx, vy, vz),
+        velocity: new pc.Vec3(
+          dir.x * spd + (Math.random() - 0.5) * 2.6,
+          dir.y * spd + Math.random() * 2.2,
+          dir.z * spd + (Math.random() - 0.5) * 2.6
+        ),
         life: 0,
       });
     }
   }
 
   /**
-   * Spawns a flat circular dark-crimson pool on the floor at y=0.01.
+   * Spawns a flat circular dark-crimson pool on the floor at y=0.008.
    */
-  private spawnBloodPool(pos: pc.Vec3, maxRadius = 0.35): void {
+  private spawnBloodPool(pos: pc.Vec3, maxRadius = 0.34): void {
     const pool = new pc.Entity('BloodPoolDecal');
     pool.addComponent('render', {
       type: 'cylinder',
       material: this.materials.bloodPoolMat,
     });
     pool.setLocalScale(0.04, 0.003, 0.04);
-    pool.setPosition(pos.x, 0.01, pos.z);
+    pool.setPosition(pos.x, 0.008, pos.z);
     this.fxRoot.addChild(pool);
 
     this.bloodPools.push({
       entity: pool,
       currentScale: 0.04,
-      targetScale: maxRadius * (0.8 + Math.random() * 0.4),
-      growthRate: 0.35,
+      targetScale: maxRadius * (0.8 + Math.random() * 0.45),
+      growthRate: 0.38,
     });
 
-    // Cap total blood pools to 50 for performance
-    if (this.bloodPools.length > 50) {
+    if (this.bloodPools.length > 65) {
       const oldest = this.bloodPools.shift();
       if (oldest) oldest.entity.destroy();
     }
@@ -334,7 +415,6 @@ export class GoreAndBallisticsFxManager {
       const p = this.activeProjectiles[i];
       p.progressTimeS += dt;
 
-      // Find current trajectory sample
       const samples = p.trajectorySamples;
       while (
         p.currentSampleIndex < samples.length - 1 &&
@@ -350,7 +430,6 @@ export class GoreAndBallisticsFxManager {
       let py = curSample.position.y;
       let pz = curSample.position.z;
 
-      // Lerp if within segment
       const segDt = nextSample.timeS - curSample.timeS;
       if (segDt > 1e-6) {
         const factor = Math.min(1.0, (p.progressTimeS - curSample.timeS) / segDt);
@@ -361,17 +440,15 @@ export class GoreAndBallisticsFxManager {
 
       p.entity.setPosition(px, py, pz);
 
-      // Orient forward along velocity
       const vel = curSample.velocity;
       const speed = length(vel);
       if (speed > 1e-2) {
         const dir = normalize(vel);
         const lookTarget = new pc.Vec3(px + dir.x, py + dir.y, pz + dir.z);
         p.entity.lookAt(lookTarget);
-        p.entity.rotateLocal(90, 0, 0); // align cylinder axis
+        p.entity.rotateLocal(90, 0, 0);
       }
 
-      // Record trail point
       const curPosVec = new pc.Vec3(px, py, pz);
       if (
         p.trailPoints.length === 0 ||
@@ -380,7 +457,6 @@ export class GoreAndBallisticsFxManager {
         p.trailPoints.push(curPosVec);
       }
 
-      // Draw trajectory ribbon
       if (showTrails && p.trailPoints.length >= 2) {
         for (let ptIdx = 0; ptIdx < p.trailPoints.length - 1; ptIdx++) {
           this.app.drawLine(
@@ -399,39 +475,32 @@ export class GoreAndBallisticsFxManager {
       }
     }
 
-    // 2. Update Arterial Fountains
+    // 2. Update Arterial Fountains (tracks the PARENT body stump socket as the ragdoll flies & tumbles!)
     for (let i = this.arterialFountains.length - 1; i >= 0; i--) {
       const f = this.arterialFountains[i];
       f.elapsedS += dt;
       f.dropTimerS += dt;
 
-      // Track the intact parent stump on the body (e.g. neck on decapitation, shoulder on arm sever)
-      if (
-        f.target &&
-        f.parentZone &&
-        !f.target.severedZones.has(f.parentZone) &&
-        f.target.ragdollBones[f.parentZone]
-      ) {
-        const parentBone = f.target.ragdollBones[f.parentZone];
-        const off = f.localOffsetFromParent || vec3(0, 0, 0);
-        const cosY = Math.cos(parentBone.rotationEuler.y);
-        const sinY = Math.sin(parentBone.rotationEuler.y);
-        f.stumpPos = vec3(
-          parentBone.position.x + (off.x * cosY + off.z * sinY),
-          parentBone.position.y + off.y,
-          parentBone.position.z + (-off.x * sinY + off.z * cosY)
-        );
-      } else if (f.target && f.zone && f.target.ragdollBones[f.zone]) {
-        const b = f.target.ragdollBones[f.zone];
-        f.stumpPos = copyVec3(b.position);
+      if (f.target) {
+        const socketZone = f.parentZone || f.zone;
+        if (socketZone && f.target.ragdollBones[socketZone]) {
+          const b = f.target.ragdollBones[socketZone];
+          f.stumpPos = copyVec3(b.distalPosition || b.position);
+          // Spray spurts outward from the stump socket!
+          const out = sub(b.distalPosition, b.position);
+          if (length(out) > 0.02) {
+            f.sprayDir = normalize(scale(out, 1));
+          } else {
+            f.sprayDir = copyVec3(b.basisUp);
+          }
+        }
       }
 
-      // Pulse blood drops (simulating systolic heartbeat at 1.4 Hz)
-      const pulseRate = 1.0 + Math.sin(f.elapsedS * 9.0) * 0.8;
-      if (f.dropTimerS >= 0.05 / pulseRate) {
+      const pulseRate = 1.0 + Math.sin(f.elapsedS * 9.5) * 0.75;
+      if (f.dropTimerS >= 0.055 / Math.max(0.3, pulseRate)) {
         f.dropTimerS = 0;
         const sprayDirNorm = normalize(f.sprayDir);
-        this.spawnBloodBurst(f.stumpPos, sprayDirNorm, 40 * pulseRate, 3);
+        this.spawnBloodBurst(f.stumpPos, sprayDirNorm, 42 * pulseRate, 3);
       }
 
       if (f.elapsedS >= f.durationS) {
@@ -451,9 +520,8 @@ export class GoreAndBallisticsFxManager {
 
       drop.entity.setPosition(drop.position.x, drop.position.y, drop.position.z);
 
-      // Floor collision at y = 0.01 -> splat into blood pool!
       if (drop.position.y <= 0.015) {
-        this.spawnBloodPool(drop.position, 0.25);
+        this.spawnBloodPool(drop.position, 0.24);
         drop.entity.destroy();
         this.bloodDrops.splice(i, 1);
         continue;
@@ -465,7 +533,7 @@ export class GoreAndBallisticsFxManager {
       }
     }
 
-    // 4. Update Gib Chunks
+    // 4. Update Gib Chunks & Detached Physics Props (Helmets / Weapons)
     for (let i = this.gibChunks.length - 1; i >= 0; i--) {
       const gib = this.gibChunks[i];
       gib.life += dt;
@@ -476,36 +544,48 @@ export class GoreAndBallisticsFxManager {
       gib.position.z += gib.velocity.z * dt;
 
       gib.entity.setPosition(gib.position.x, gib.position.y, gib.position.z);
-      gib.entity.rotate(
-        gib.angularVelocity.x * dt * 50,
-        gib.angularVelocity.y * dt * 50,
-        gib.angularVelocity.z * dt * 50
-      );
+      if (gib.angularVelocity.length() > 0.05) {
+        gib.entity.rotate(
+          gib.angularVelocity.x * dt * 45,
+          gib.angularVelocity.y * dt * 45,
+          gib.angularVelocity.z * dt * 45
+        );
+      }
 
-      // Floor bounce & blood splat
-      if (gib.position.y <= 0.025) {
-        gib.position.y = 0.025;
+      if (gib.position.y <= gib.restHeight) {
+        gib.position.y = gib.restHeight;
         gib.bounces++;
-        this.spawnBloodPool(gib.position, 0.3);
+        if (gib.leavesBlood && gib.bounces <= 2) {
+          this.spawnBloodPool(gib.position, 0.28);
+        }
 
-        if (gib.bounces <= 2) {
-          gib.velocity.y = -gib.velocity.y * 0.35;
-          gib.velocity.x *= 0.6;
-          gib.velocity.z *= 0.6;
+        if (gib.bounces <= 2 && Math.abs(gib.velocity.y) > 0.5) {
+          gib.velocity.y = -gib.velocity.y * 0.32;
+          gib.velocity.x *= 0.58;
+          gib.velocity.z *= 0.58;
+          gib.angularVelocity.set(
+            gib.angularVelocity.x * 0.5,
+            gib.angularVelocity.y * 0.5,
+            gib.angularVelocity.z * 0.2
+          );
         } else {
-          // Rest on floor
           gib.velocity.set(0, 0, 0);
           gib.angularVelocity.set(0, 0, 0);
+          // Lay dropped firearms flat on their side
+          if (!gib.leavesBlood && gib.bounces === 3) {
+            const eul = gib.entity.getLocalEulerAngles();
+            gib.entity.setLocalEulerAngles(0, eul.y, 88);
+          }
         }
       }
 
-      if (gib.life >= 8.0) {
+      if (gib.life >= gib.maxLife) {
         gib.entity.destroy();
         this.gibChunks.splice(i, 1);
       }
     }
 
-    // 5. Update Bone Shard Sparks
+    // 5. Update Bone & Armor Sparks
     for (let i = this.boneShards.length - 1; i >= 0; i--) {
       const shard = this.boneShards[i];
       shard.life += dt;
@@ -522,7 +602,7 @@ export class GoreAndBallisticsFxManager {
         shard.velocity.set(0, 0, 0);
       }
 
-      if (shard.life >= 4.0) {
+      if (shard.life >= 3.2) {
         shard.entity.destroy();
         this.boneShards.splice(i, 1);
       }

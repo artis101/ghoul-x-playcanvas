@@ -3,15 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GHOUL-X // Soldier of Fortune x Sniper Elite Ballistics Engine (PlayCanvas)</title>
-    <meta
-      name="description"
-      content="First-principles recreation of Soldier of Fortune (GHOUL 22-zone dismemberment & early-2000s FPS gore) combined with Sniper Elite RK4 external/terminal ballistics, pre-calculated shotgun ragdoll launch physics, and X-Ray Kill Cam in PlayCanvas + TypeScript."
-    />
+    <title>GHOUL-X</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,500;0,600;0,700;1,700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@500;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/src/style.css" />
@@ -20,186 +16,82 @@
     <div id="app-root">
       <canvas id="playcanvas-viewport"></canvas>
 
-      <!-- SNIPER SCOPE & RETICLE OVERLAY -->
-      <div id="reticle-layer" class="reticle-layer">
-        <div id="crosshair-standard" class="crosshair-standard">
-          <span class="ch-line ch-top"></span>
-          <span class="ch-line ch-right"></span>
-          <span class="ch-line ch-bottom"></span>
-          <span class="ch-line ch-left"></span>
-          <span id="shotgun-spread-ring" class="shotgun-spread-ring"></span>
-          <span id="aim-predictor-pip" class="aim-predictor-pip" title="Ballistic Drop & Windage Impact Point"></span>
+      <!-- IN-GAME FPS HUD LAYER (100% NON-BLOCKING) -->
+      <div id="fps-hud" class="fps-hud">
+        <!-- CENTER CROSSHAIR, HITMARKER & SNIPER OPTIC -->
+        <div id="reticle-layer" class="reticle-layer">
+          <div id="crosshair-standard" class="crosshair-standard">
+            <span class="ch-line ch-top"></span>
+            <span class="ch-line ch-right"></span>
+            <span class="ch-line ch-bottom"></span>
+            <span class="ch-line ch-left"></span>
+            <span class="ch-dot"></span>
+            <span id="shotgun-spread-ring" class="shotgun-spread-ring"></span>
+
+            <div id="hitmarker" class="hitmarker">
+              <span class="hm-tick hm-tl"></span>
+              <span class="hm-tick hm-tr"></span>
+              <span class="hm-tick hm-bl"></span>
+              <span class="hm-tick hm-br"></span>
+            </div>
+          </div>
+
+          <div id="sniper-scope-mask" class="sniper-scope-mask hidden">
+            <div class="scope-mil-dots-h"></div>
+            <div class="scope-mil-dots-v"></div>
+            <div class="scope-telemetry-readout">
+              <span id="scope-zoom-label">4.0x</span>
+              <span id="scope-range-label">42m</span>
+              <span id="scope-drop-label">DROP 0cm</span>
+            </div>
+          </div>
         </div>
 
-        <div id="sniper-scope-mask" class="sniper-scope-mask hidden">
-          <div class="scope-mil-dots-h"></div>
-          <div class="scope-mil-dots-v"></div>
-          <div class="scope-telemetry-readout">
-            <span id="scope-zoom-label">6.0x OPTIC</span>
-            <span id="scope-range-label">RNG: 25.0m</span>
-            <span id="scope-drop-label">DROP: -1.2cm</span>
-            <span id="scope-wind-label">WIND: +0.8m/s</span>
+        <!-- TOP-RIGHT FADING KILL / IMPACT FEED -->
+        <div id="hud-killfeed" class="hud-killfeed"></div>
+
+        <!-- CENTER CONTEXT PROMPT (ONLY WHEN UNLOCKED OR WAVE CLEAR) -->
+        <div id="hud-prompt" class="hud-prompt">
+          CLICK TO ENGAGE &nbsp;•&nbsp; WASD MOVE &nbsp;•&nbsp; RMB ADS &nbsp;•&nbsp; 1-4 WEAPON &nbsp;•&nbsp; B AMMO &nbsp;•&nbsp; R RELOAD &nbsp;•&nbsp; T NEW WAVE
+        </div>
+
+        <!-- BOTTOM-LEFT: CLASSIC FPS HEALTH & ARMOR -->
+        <div class="hud-corner hud-bottom-left">
+          <div class="vital-block">
+            <span class="vital-icon vital-cross">+</span>
+            <div class="vital-data">
+              <span id="hud-health-val" class="vital-num">100</span>
+              <span class="vital-bar"><span class="vital-bar-fill health-fill"></span></span>
+            </div>
+          </div>
+          <div class="vital-block">
+            <span class="vital-icon vital-shield">⛨</span>
+            <div class="vital-data">
+              <span id="hud-armor-val" class="vital-num armor-num">100</span>
+              <span class="vital-bar"><span class="vital-bar-fill armor-fill"></span></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- BOTTOM-RIGHT: WEAPON, MAGAZINE / RESERVE AMMO & SLOTS -->
+        <div class="hud-corner hud-bottom-right">
+          <div class="ammo-counter-row">
+            <span id="hud-mag-count" class="ammo-mag">08</span>
+            <span class="ammo-sep">/</span>
+            <span id="hud-reserve-count" class="ammo-reserve">32</span>
+          </div>
+          <div class="weapon-meta-row">
+            <span id="hud-weapon-name" class="weapon-name">BESERKER 12G</span>
+            <span id="hud-ammo-caliber" class="ammo-caliber">12G 00 BUCK</span>
+          </div>
+          <div id="hud-weapon-slots" class="weapon-slots">
+            <span class="slot-pip active" data-slot="0">1</span>
+            <span class="slot-pip" data-slot="1">2</span>
+            <span class="slot-pip" data-slot="2">3</span>
+            <span class="slot-pip" data-slot="3">4</span>
           </div>
         </div>
       </div>
-
-      <!-- X-RAY KILL CAM CINEMATIC LETTERBOX & BANNER -->
-      <div id="xray-cinema-overlay" class="xray-cinema-overlay hidden">
-        <div class="letterbox-bar letterbox-top">
-          <div class="xray-status-strip">
-            <span class="xray-badge">X-RAY BALLISTIC CAM // 0.04x TIME DILATION</span>
-            <span id="xray-live-telemetry" class="xray-live-telemetry">VEL: 805 m/s | E_k: 3,675 J | TARGET: CRANIUM</span>
-          </div>
-        </div>
-        <div class="letterbox-bar letterbox-bottom">
-          <div id="xray-wound-ticker" class="xray-wound-ticker">
-            PRE-IMPACT PREDICTION: LETHAL TRAJECTORY LOCKED
-          </div>
-          <button id="btn-skip-killcam" class="hud-btn hud-btn-danger">SKIP KILL CAM [SPACE]</button>
-        </div>
-      </div>
-
-      <!-- TOP BAR: TACTICAL HEADER & QUICK SCENARIO PRESETS -->
-      <header id="hud-topbar" class="hud-topbar">
-        <div class="brand-cluster">
-          <div class="brand-emblem">GX</div>
-          <div>
-            <h1 class="brand-title">PROJECT GHOUL-X <span class="brand-sub">// SOF 2000 x SNIPER ELITE</span></h1>
-            <p class="brand-meta">PlayCanvas WebGL2 • 22-Zone GHOUL Gore • Pre-Calculated Shotgun Ragdoll • RK4 X-Ray Ballistics</p>
-          </div>
-        </div>
-
-        <div class="preset-bar" role="toolbar" aria-label="Tactical Demonstration Presets">
-          <button id="preset-shotgun-ragdoll" class="hud-btn hud-btn-accent" title="Point-Blank 12-Gauge Shotgun Blast -> Pre-Calculated Lethal Ragdoll Launch + Dismemberment">
-            1. 12G SHOTGUN RAGDOLL LAUNCH (4m)
-          </button>
-          <button id="preset-decap-50ae" class="hud-btn hud-btn-gore" title=".50 AE Heavy Pistol Cranial Pop / Head Explosion">
-            2. .50 AE CRANIAL POP (8m)
-          </button>
-          <button id="preset-limb-sever" class="hud-btn" title="Sever Left Arm Subtree + Arterial Stump Fountain">
-            3. GHOUL ARM DISMEMBERMENT (6m)
-          </button>
-          <button id="preset-sniper-xray" class="hud-btn" title="Long-Range 7.62mm NATO Heart & Spine Penetration in X-Ray Cam">
-            4. 7.62 SNIPER X-RAY HEART SHOT (65m)
-          </button>
-          <button id="btn-spawn-wave" class="hud-btn hud-btn-secondary" title="Reset & Spawn Fresh Enemy Squad">
-            RESPAWN ENEMIES [R]
-          </button>
-        </div>
-      </header>
-
-      <!-- LEFT PANEL: ARSENAL, BALLISTICS & GORE CONTROLS -->
-      <aside id="hud-left-panel" class="hud-panel hud-left-panel">
-        <section class="panel-section">
-          <div class="section-header">
-            <h2>ARSENAL & AMMUNITION</h2>
-            <span class="hotkey-hint">[1-4]</span>
-          </div>
-          <div id="weapon-selector-list" class="weapon-selector-list"></div>
-          <div id="ammo-selector-list" class="ammo-selector-list"></div>
-        </section>
-
-        <section class="panel-section">
-          <div class="section-header">
-            <h2>SIMULATION & GORE DIRECTORS</h2>
-          </div>
-          <div class="control-row">
-            <label for="toggle-xray-cam">Sniper Elite X-Ray Kill Cam</label>
-            <input type="checkbox" id="toggle-xray-cam" checked />
-          </div>
-          <div class="control-row">
-            <label for="toggle-xray-vision">Permanent Anatomical X-Ray View</label>
-            <input type="checkbox" id="toggle-xray-vision" />
-          </div>
-          <div class="control-row">
-            <label for="toggle-bullet-trails">RK4 Trajectory & Pellet Cones</label>
-            <input type="checkbox" id="toggle-bullet-trails" checked />
-          </div>
-          <div class="control-row">
-            <label for="slider-wind">Crosswind Speed (<span id="val-wind">2.5</span> m/s)</label>
-            <input type="range" id="slider-wind" min="-12" max="12" step="0.5" value="2.5" />
-          </div>
-          <div class="control-row">
-            <label for="slider-timescale">Base Time Scale (<span id="val-timescale">1.00</span>x)</label>
-            <input type="range" id="slider-timescale" min="0.1" max="1.0" step="0.05" value="1.0" />
-          </div>
-        </section>
-
-        <section class="panel-section controls-legend">
-          <div class="section-header">
-            <h2>TACTICAL CONTROLS</h2>
-          </div>
-          <ul class="legend-list">
-            <li><kbd>LMB</kbd> / <kbd>FIRE BTN</kbd> Fire Weapon</li>
-            <li><kbd>RMB</kbd> / <kbd>SHIFT</kbd> Toggle Scope / Aim Lock</li>
-            <li><kbd>WASD</kbd> Move Shooter Position</li>
-            <li><kbd>1</kbd>–<kbd>4</kbd> Switch Weapon</li>
-            <li><kbd>X</kbd> Toggle X-Ray Anatomy Overlay</li>
-            <li><kbd>R</kbd> Respawn / Heal Targets</li>
-          </ul>
-        </section>
-      </aside>
-
-      <!-- RIGHT PANEL: GHOUL 22-ZONE ANATOMICAL INSPECTOR & PRE-IMPACT TELEMETRY -->
-      <aside id="hud-right-panel" class="hud-panel hud-right-panel">
-        <section class="panel-section">
-          <div class="section-header">
-            <h2>PRE-IMPACT BALLISTIC PREDICTOR</h2>
-            <span id="live-lethality-pill" class="status-pill status-ready">SCANNING</span>
-          </div>
-          <div id="pre-impact-card" class="telemetry-grid">
-            <div class="t-cell">
-              <span class="t-label">TARGET RANGE</span>
-              <span id="pred-range" class="t-val">12.0 m</span>
-            </div>
-            <div class="t-cell">
-              <span class="t-label">PRE-CALC LETHAL?</span>
-              <span id="pred-lethal" class="t-val">READY</span>
-            </div>
-            <div class="t-cell">
-              <span class="t-label">RAGDOLL LAUNCH</span>
-              <span id="pred-ragdoll" class="t-val">0.0 m/s</span>
-            </div>
-            <div class="t-cell">
-              <span class="t-label">GHOUL DISMEMBER</span>
-              <span id="pred-dismember" class="t-val">NONE</span>
-            </div>
-          </div>
-        </section>
-
-        <section class="panel-section">
-          <div class="section-header">
-            <h2>GHOUL 22-ZONE DAMAGE MAP</h2>
-            <span id="target-hp-badge" class="hp-badge">100 / 100 HP</span>
-          </div>
-          <div id="ghoul-zone-diagram" class="ghoul-zone-diagram"></div>
-        </section>
-
-        <section class="panel-section wound-log-section">
-          <div class="section-header">
-            <h2>TERMINAL WOUND & GORE LOG</h2>
-          </div>
-          <div id="wound-channel-log" class="wound-channel-log">
-            <div class="log-empty">Select a preset above or click in the 3D viewport to fire.</div>
-          </div>
-        </section>
-      </aside>
-
-      <!-- BOTTOM ACTION BAR: INSTant FIRE & CAMERA CONTROLS FOR REMOTE / MOUSELESS OR QUICK TESTING -->
-      <footer id="hud-bottom-bar" class="hud-bottom-bar">
-        <div class="target-selector-strip">
-          <span class="strip-label">AIM TARGET ZONE:</span>
-          <button class="zone-aim-btn active" data-aim-zone="TORSO_UPPER_THORAX">CHEST / HEART</button>
-          <button class="zone-aim-btn" data-aim-zone="HEAD_CRANIUM">HEAD (CRANIAL POP)</button>
-          <button class="zone-aim-btn" data-aim-zone="UPPER_ARM_LEFT">LEFT ARM (SEVER)</button>
-          <button class="zone-aim-btn" data-aim-zone="UPPER_ARM_RIGHT">RIGHT ARM (SEVER)</button>
-          <button class="zone-aim-btn" data-aim-zone="THIGH_LEFT">LEFT LEG (SEVER)</button>
-          <button class="zone-aim-btn" data-aim-zone="TORSO_LOWER_ABDOMEN">GUT (EVISCERATE)</button>
-        </div>
-        <div class="fire-action-cluster">
-          <button id="btn-fire-shot" class="btn-fire-primary">FIRE WEAPON [LMB / F]</button>
-        </div>
-      </footer>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

@@ -2,371 +2,517 @@ import * as pc from 'playcanvas';
 import {
   GhoulZoneId,
   TargetHealthState,
-  GoreMode,
 } from '../contracts/ballistics.ts';
 import {
   ALL_GHOUL_ZONES,
-  GHOUL_ZONE_HIERARCHY,
-  buildAnatomicalColliders,
+  updateStandingCombatPose,
 } from '../core/ghoul/anatomy.ts';
+import { add, cross, length, normalize, scale } from '../core/ballistics/vec3.ts';
 import { EngineMaterialPalette } from './materials.ts';
+import {
+  ArchetypeRetroMaterialSet,
+  getArchetypeRetroMaterials,
+} from './retroTextures.ts';
+import {
+  attachCustomMesh,
+  buildArchetypeHeadgearEntity,
+  buildEnemyWeaponEntity,
+  getOrCreateRetroMeshes,
+} from './retroMeshBuilder.ts';
+import { GoreAndBallisticsFxManager } from './goreFx.ts';
+
+export interface ChildSocketStump {
+  childZone: GhoulZoneId;
+  node: pc.Entity;
+}
 
 export interface ZoneMeshBundle {
   zone: GhoulZoneId;
   zoneNode: pc.Entity;
   fleshNode: pc.Entity;
-  fleshRenders: pc.RenderComponent[];
-  defaultMaterials: pc.StandardMaterial[];
+  fleshMeshInstances: pc.MeshInstance[];
+  intactMaterials: pc.StandardMaterial[];
+  laceratedMaterials: pc.StandardMaterial[];
   boneNodes: pc.Entity[];
-  boneLabels: string[];
   organNodes: pc.Entity[];
-  stumpNode?: pc.Entity;
-  boneProtrusionNode?: pc.Entity;
-  childStumps: Map<GhoulZoneId, { stump: pc.Entity; bone: pc.Entity }>;
+  proximalStumpNode?: pc.Entity;
+  distalChildStumps: ChildSocketStump[];
+  intactAbdomenNode?: pc.Entity;
+  evisceratedAbdomenNode?: pc.Entity;
 }
 
 /**
- * Class GhoulMannequinEntity represents an articulated 22-zone enemy mannequin in PlayCanvas.
- * Supports:
- * - Full 22-zone kinematic and ragdoll bone updates
- * - Procedural outer tactical / skin flesh meshes
- * - Internal 3D skeleton (skull, ribs, spine, pelvis, humerus, femur, tibia)
- * - Beating 3D heart, lungs, brain, aorta/carotid arteries
- * - Early-2000s Soldier of Fortune clean sever stump caps & bone marrow protrusions
- * - X-Ray Mode: switches outer flesh to translucent cyan/blue rim silhouetted xraySkinMat
- * - Cranial pop: hides head mesh and shows jagged cranial stump on cervical neck
+ * Class GhoulMannequinEntity renders an authentic 1998–2001 PS1/PS2 / Soldier of Fortune (2000)
+ * sculpted low-poly combatant driven by a 22-zone PBD articulated ragdoll skeleton.
+ *
+ * Features:
+ * - Faceted low-poly anatomy with 64x64 nearest-neighbor Bayer-dithered pixel-art textures
+ * - 4 distinct enemy archetypes (NYC Skinhead Punk, Balkan Militia Gunner, Kosovo Heavy Enforcer, Spetsnaz Sniper)
+ * - Shootable detachable headgear (helmets, berets, shades, watch-caps) & droppable 3D weapons (MP5, AK-47, 12G, SVD)
+ * - Soldier of Fortune GHOUL gore: localized lacerated bloody textures, 3D entry/exit wound decals,
+ *   parent-socket + detached-limb bloody stumps with protruding white cortical bone, CRANIAL_POP,
+ *   and non-detaching EVISCERATED open-stomach wounds
+ * - Full 3D quaternion alignment from orthonormal bone basis vectors (zero joint gaps or gimbal lock)
  */
 export class GhoulMannequinEntity {
   public readonly rootEntity: pc.Entity;
   public readonly healthState: TargetHealthState;
   public readonly app: pc.AppBase;
   public readonly materials: EngineMaterialPalette;
+  public readonly retroMats: ArchetypeRetroMaterialSet;
+  private readonly fxManager?: GoreAndBallisticsFxManager;
 
   private zoneBundles: Map<GhoulZoneId, ZoneMeshBundle> = new Map();
+  private headgearNode: pc.Entity | null = null;
+  private heldWeaponNode: pc.Entity | null = null;
+  private wasHeadgearIntact = true;
+  private wasWeaponHeld = true;
+  private syncedSurfaceWoundCount = 0;
+
   private isXRayActive = false;
-  private highlightedZone: GhoulZoneId | null = null;
   private heartEntity: pc.Entity | null = null;
   private brainEntity: pc.Entity | null = null;
+
+  private readonly tmpMat4 = new pc.Mat4();
+  private readonly tmpQuat = new pc.Quat();
 
   constructor(
     app: pc.AppBase,
     healthState: TargetHealthState,
-    materials: EngineMaterialPalette
+    materials: EngineMaterialPalette,
+    fxManager?: GoreAndBallisticsFxManager
   ) {
     this.app = app;
     this.healthState = healthState;
     this.materials = materials;
+    this.fxManager = fxManager;
+    this.retroMats = getArchetypeRetroMaterials(app.graphicsDevice, healthState.archetype);
 
-    this.rootEntity = new pc.Entity(`Mannequin_${healthState.targetId}`);
-    this.rootEntity.setPosition(
-      healthState.worldPosition.x,
-      healthState.worldPosition.y,
-      healthState.worldPosition.z
-    );
-    this.rootEntity.setEulerAngles(0, (healthState.yawRad * 180) / Math.PI, 0);
+    // Keep rootEntity at world origin (0,0,0) identity so every zoneNode uses exact world-space coordinates
+    this.rootEntity = new pc.Entity(`Combatant_${healthState.targetId}`);
+    this.rootEntity.setPosition(0, 0, 0);
+    this.rootEntity.setEulerAngles(0, 0, 0);
 
-    this.buildMannequin();
+    this.buildCombatant();
+    this.syncFromHealthState(0, 0);
   }
 
-  private buildMannequin(): void {
-    const colliders = buildAnatomicalColliders();
-    const collidersByZone = new Map<GhoulZoneId, typeof colliders>();
-    for (const c of colliders) {
-      if (!collidersByZone.has(c.ghoulZone)) {
-        collidersByZone.set(c.ghoulZone, []);
-      }
-      collidersByZone.get(c.ghoulZone)!.push(c);
-    }
-
+  private buildCombatant(): void {
     for (const zone of ALL_GHOUL_ZONES) {
-      const boneState = this.healthState.ragdollBones[zone];
-      const zoneColliders = collidersByZone.get(zone) || [];
-      const boneLabels = zoneColliders
-        .filter((c) => c.layerType === 'CORTICAL_BONE')
-        .map((c) => c.label);
-
       const zoneNode = new pc.Entity(`Zone_${zone}`);
       this.rootEntity.addChild(zoneNode);
-      zoneNode.setPosition(boneState.position.x, boneState.position.y, boneState.position.z);
-      zoneNode.setEulerAngles(
-        (boneState.rotationEuler.x * 180) / Math.PI,
-        (boneState.rotationEuler.y * 180) / Math.PI,
-        (boneState.rotationEuler.z * 180) / Math.PI
-      );
 
       const fleshNode = new pc.Entity(`Flesh_${zone}`);
       zoneNode.addChild(fleshNode);
 
-      const fleshRenders: pc.RenderComponent[] = [];
-      const defaultMaterials: pc.StandardMaterial[] = [];
+      const fleshMeshInstances: pc.MeshInstance[] = [];
+      const intactMaterials: pc.StandardMaterial[] = [];
+      const laceratedMaterials: pc.StandardMaterial[] = [];
       const boneNodes: pc.Entity[] = [];
       const organNodes: pc.Entity[] = [];
 
-      // 1. Outer Flesh / Tactical Meshes
-      this.buildZoneOuterMesh(zone, fleshNode, fleshRenders, defaultMaterials);
-
-      // 2. Internal 3D Skeleton & Organs
-      this.buildZoneInternalAnatomy(zone, zoneNode, boneNodes, organNodes);
-
-      // 3. Bloody Stump Cap & Protruding Bone (on severed limb root + parent-side joint caps)
-      const { stumpNode, boneProtrusionNode, childStumps } = this.buildGoreCapNodes(
+      const { intactAbdomenNode, evisceratedAbdomenNode } = this.buildZoneRetroMesh(
         zone,
-        zoneNode
+        fleshNode,
+        fleshMeshInstances,
+        intactMaterials,
+        laceratedMaterials
       );
+
+      this.buildZoneInternalAnatomy(zone, zoneNode, boneNodes, organNodes);
+      // Internal X-ray skeleton & organs stay hidden until [X] anatomical inspector is toggled
+      for (const b of boneNodes) b.enabled = false;
+      for (const o of organNodes) o.enabled = false;
+
+      const proximalStumpNode = this.buildProximalLimbStump(zone, zoneNode);
+      const distalChildStumps = this.buildDistalParentSocketStumps(zone, zoneNode);
 
       this.zoneBundles.set(zone, {
         zone,
         zoneNode,
         fleshNode,
-        fleshRenders,
-        defaultMaterials,
+        fleshMeshInstances,
+        intactMaterials,
+        laceratedMaterials,
         boneNodes,
-        boneLabels,
         organNodes,
-        stumpNode,
-        boneProtrusionNode,
-        childStumps,
+        proximalStumpNode,
+        distalChildStumps,
+        intactAbdomenNode,
+        evisceratedAbdomenNode,
       });
     }
+
+    // Build held 3D PS1/PS2 firearm (MP5, AK-47, Combat 12G, or SVD Dragunov)
+    this.heldWeaponNode = buildEnemyWeaponEntity(
+      this.app.graphicsDevice,
+      this.healthState.archetype,
+      this.retroMats
+    );
+    this.rootEntity.addChild(this.heldWeaponNode);
   }
 
-  private buildZoneOuterMesh(
+  private buildZoneRetroMesh(
     zone: GhoulZoneId,
     fleshNode: pc.Entity,
-    fleshRenders: pc.RenderComponent[],
-    defaultMaterials: pc.StandardMaterial[]
-  ): void {
-    const matPal = this.materials;
+    fleshMeshInstances: pc.MeshInstance[],
+    intactMaterials: pc.StandardMaterial[],
+    laceratedMaterials: pc.StandardMaterial[]
+  ): { intactAbdomenNode?: pc.Entity; evisceratedAbdomenNode?: pc.Entity } {
+    const lib = getOrCreateRetroMeshes(this.app.graphicsDevice);
+    const rm = this.retroMats;
+
+    const addPart = (
+      name: string,
+      mesh: pc.Mesh,
+      intactMat: pc.StandardMaterial,
+      bloodyMat: pc.StandardMaterial,
+      parent: pc.Entity = fleshNode
+    ): pc.Entity => {
+      const ent = new pc.Entity(name);
+      const mi = attachCustomMesh(ent, mesh, intactMat, true);
+      parent.addChild(ent);
+      fleshMeshInstances.push(mi);
+      intactMaterials.push(intactMat);
+      laceratedMaterials.push(bloodyMat);
+      return ent;
+    };
 
     switch (zone) {
       case 'HEAD_CRANIUM': {
-        const head = new pc.Entity('HeadCraniumMesh');
-        head.addComponent('render', {
-          type: 'sphere',
-          material: matPal.skinTone,
-        });
-        head.setLocalScale(0.2, 0.22, 0.22);
-        head.setLocalPosition(0, 0.05, 0);
-        fleshNode.addChild(head);
-        if (head.render) {
-          fleshRenders.push(head.render);
-          defaultMaterials.push(matPal.skinTone);
-        }
-        break;
+        addPart('HeadCranium', lib.headCranium, rm.headMat, rm.headBloodyMat);
+        this.headgearNode = buildArchetypeHeadgearEntity(
+          this.app.graphicsDevice,
+          this.healthState.archetype,
+          rm
+        );
+        fleshNode.addChild(this.headgearNode);
+        return {};
       }
 
       case 'HEAD_FACE_JAW': {
-        const jaw = new pc.Entity('FaceMesh');
-        jaw.addComponent('render', {
-          type: 'box',
-          material: matPal.tacticalOlive,
-        });
-        jaw.setLocalScale(0.16, 0.12, 0.12);
-        jaw.setLocalPosition(0, 0, 0.02);
-        fleshNode.addChild(jaw);
-        if (jaw.render) {
-          fleshRenders.push(jaw.render);
-          defaultMaterials.push(matPal.tacticalOlive);
-        }
-        break;
+        addPart('HeadJaw', lib.headJaw, rm.jawMat, rm.jawBloodyMat);
+        return {};
       }
 
       case 'NECK_CERVICAL': {
-        const neck = new pc.Entity('NeckMesh');
-        neck.addComponent('render', {
-          type: 'cylinder',
-          material: matPal.skinTone,
-        });
-        neck.setLocalScale(0.12, 0.12, 0.12);
-        fleshNode.addChild(neck);
-        if (neck.render) {
-          fleshRenders.push(neck.render);
-          defaultMaterials.push(matPal.skinTone);
-        }
-        break;
+        addPart('NeckCollar', lib.neckCollar, rm.headMat, rm.headBloodyMat);
+        return {};
       }
 
       case 'TORSO_UPPER_THORAX': {
-        const chest = new pc.Entity('ChestVestMesh');
-        chest.addComponent('render', {
-          type: 'box',
-          material: matPal.tacticalArmorVest,
-        });
-        chest.setLocalScale(0.36, 0.28, 0.26);
-        fleshNode.addChild(chest);
-        if (chest.render) {
-          fleshRenders.push(chest.render);
-          defaultMaterials.push(matPal.tacticalArmorVest);
+        addPart('HeroicThorax', lib.thoraxHeroic, rm.torsoMat, rm.torsoBloodyMat);
+
+        // Tactical 3D chest rig mag pouches (for armed military/SWAT archetypes)
+        if (this.healthState.archetype !== 'SKINHEAD_PUNK') {
+          for (const side of [-1, 1]) {
+            const pouch = addPart(
+              `ChestMagPouch_${side}`,
+              lib.ammoPouch,
+              rm.pouchWebbingMat,
+              rm.torsoBloodyMat
+            );
+            pouch.setLocalPosition(side * 0.076, 0.055, 0.132);
+            pouch.setLocalEulerAngles(-6, side * 8, 0);
+          }
         }
-        break;
+        return {};
       }
 
       case 'TORSO_LOWER_ABDOMEN': {
-        const gut = new pc.Entity('AbdomenMesh');
-        gut.addComponent('render', {
+        const intactAbdomenNode = new pc.Entity('AbdomenIntactGroup');
+        fleshNode.addChild(intactAbdomenNode);
+        addPart(
+          'AbdomenIntactMesh',
+          lib.abdomenIntact,
+          rm.abdomenMat,
+          rm.abdomenBloodyMat,
+          intactAbdomenNode
+        );
+
+        // Soldier of Fortune EVISCERATED stomach wound group (toggled on heavy gut blast without breaking spine!)
+        const evisceratedAbdomenNode = new pc.Entity('AbdomenEvisceratedGroup');
+        evisceratedAbdomenNode.enabled = false;
+        fleshNode.addChild(evisceratedAbdomenNode);
+
+        const outerCrater = new pc.Entity('AbdomenGoreShell');
+        attachCustomMesh(outerCrater, lib.abdomenEvisceratedOuter, rm.abdomenBloodyMat, true);
+        evisceratedAbdomenNode.addChild(outerCrater);
+
+        // Deep wet crimson visceral cavity inside hollowed gut
+        const gutCore = new pc.Entity('VisceralGutCore');
+        gutCore.addComponent('render', {
           type: 'box',
-          material: matPal.tacticalOlive,
+          material: this.materials.goreStumpMat,
         });
-        gut.setLocalScale(0.32, 0.2, 0.24);
-        fleshNode.addChild(gut);
-        if (gut.render) {
-          fleshRenders.push(gut.render);
-          defaultMaterials.push(matPal.tacticalOlive);
+        gutCore.setLocalScale(0.20, 0.14, 0.11);
+        gutCore.setLocalPosition(0, 0.085, 0.032);
+        evisceratedAbdomenNode.addChild(gutCore);
+
+        // Jagged white lower rib tips framing top of stomach crater
+        for (const side of [-1, 1]) {
+          const ribTip = new pc.Entity(`BrokenRib_${side}`);
+          ribTip.addComponent('render', {
+            type: 'box',
+            material: this.materials.exposedBoneMat,
+          });
+          ribTip.setLocalScale(0.022, 0.038, 0.018);
+          ribTip.setLocalPosition(side * 0.068, 0.155, 0.088);
+          ribTip.setLocalEulerAngles(22, 0, side * 28);
+          evisceratedAbdomenNode.addChild(ribTip);
         }
-        break;
+
+        // Hanging glistening entrail coils
+        for (let i = 0; i < 3; i++) {
+          const coil = new pc.Entity(`EntrailLoop_${i}`);
+          coil.addComponent('render', {
+            type: 'cylinder',
+            material: i % 2 === 0 ? this.materials.liverGutMat : this.materials.goreStumpMat,
+          });
+          coil.setLocalScale(0.042, 0.095, 0.042);
+          coil.setLocalPosition((i - 1) * 0.044, 0.048 - (i % 2) * 0.025, 0.096);
+          coil.setLocalEulerAngles(25, 0, (i - 1) * 24);
+          evisceratedAbdomenNode.addChild(coil);
+        }
+
+        return { intactAbdomenNode, evisceratedAbdomenNode };
       }
 
       case 'PELVIS_GROIN': {
-        const pelvis = new pc.Entity('PelvisMesh');
-        pelvis.addComponent('render', {
-          type: 'box',
-          material: matPal.tacticalOlive,
-        });
-        pelvis.setLocalScale(0.34, 0.18, 0.24);
-        fleshNode.addChild(pelvis);
-        if (pelvis.render) {
-          fleshRenders.push(pelvis.render);
-          defaultMaterials.push(matPal.tacticalOlive);
-        }
-        break;
+        addPart('PelvisBelt', lib.pelvisBelt, rm.pelvisMat, rm.pelvisBloodyMat);
+
+        // Right hip sidearm/utility pouch & rear canteen pouch
+        const sideHolster = addPart(
+          'HipHolster',
+          lib.ammoPouch,
+          rm.pouchWebbingMat,
+          rm.pelvisBloodyMat
+        );
+        sideHolster.setLocalPosition(0.168, 0.05, 0.01);
+        sideHolster.setLocalScale(0.75, 1.15, 1.1);
+
+        const rearPouch = addPart(
+          'RearButtpack',
+          lib.ammoPouch,
+          rm.pouchWebbingMat,
+          rm.pelvisBloodyMat
+        );
+        rearPouch.setLocalPosition(0, 0.09, -0.122);
+        rearPouch.setLocalScale(1.6, 0.9, 0.95);
+        return {};
       }
 
       case 'SHOULDER_LEFT':
       case 'SHOULDER_RIGHT': {
-        const shoulder = new pc.Entity(`${zone}_Mesh`);
-        shoulder.addComponent('render', {
-          type: 'sphere',
-          material: matPal.tacticalOlive,
-        });
-        shoulder.setLocalScale(0.15, 0.15, 0.15);
-        fleshNode.addChild(shoulder);
-        if (shoulder.render) {
-          fleshRenders.push(shoulder.render);
-          defaultMaterials.push(matPal.tacticalOlive);
-        }
-        break;
+        addPart(`${zone}_Cap`, lib.shoulderCap, rm.torsoMat, rm.torsoBloodyMat);
+        return {};
       }
 
       case 'UPPER_ARM_LEFT':
       case 'UPPER_ARM_RIGHT': {
-        const arm = new pc.Entity(`${zone}_Mesh`);
-        arm.addComponent('render', {
-          type: 'cylinder',
-          material: matPal.tacticalOlive,
-        });
-        arm.setLocalScale(0.12, 0.24, 0.12);
-        arm.setLocalPosition(0, -0.1, 0);
-        fleshNode.addChild(arm);
-        if (arm.render) {
-          fleshRenders.push(arm.render);
-          defaultMaterials.push(matPal.tacticalOlive);
-        }
-        break;
+        addPart(`${zone}_Bicep`, lib.upperArmMuscle, rm.upperArmMat, rm.upperArmBloodyMat);
+        return {};
       }
 
       case 'FOREARM_LEFT':
       case 'FOREARM_RIGHT': {
-        const forearm = new pc.Entity(`${zone}_Mesh`);
-        forearm.addComponent('render', {
-          type: 'cylinder',
-          material: matPal.skinTone,
-        });
-        forearm.setLocalScale(0.09, 0.22, 0.09);
-        forearm.setLocalPosition(0, -0.1, 0);
-        fleshNode.addChild(forearm);
-        if (forearm.render) {
-          fleshRenders.push(forearm.render);
-          defaultMaterials.push(matPal.skinTone);
-        }
-        break;
+        addPart(`${zone}_Forearm`, lib.forearmTapered, rm.forearmMat, rm.forearmBloodyMat);
+        return {};
       }
 
-      case 'HAND_LEFT':
+      case 'HAND_LEFT': {
+        addPart('HandMittenL', lib.handMittenLeft, rm.handMat, rm.forearmBloodyMat);
+        return {};
+      }
+
       case 'HAND_RIGHT': {
-        const hand = new pc.Entity(`${zone}_Mesh`);
-        hand.addComponent('render', {
-          type: 'box',
-          material: matPal.bootsDark,
-        });
-        hand.setLocalScale(0.08, 0.1, 0.05);
-        hand.setLocalPosition(0, -0.04, 0);
-        fleshNode.addChild(hand);
-        if (hand.render) {
-          fleshRenders.push(hand.render);
-          defaultMaterials.push(matPal.bootsDark);
-        }
-        break;
+        addPart('HandMittenR', lib.handMittenRight, rm.handMat, rm.forearmBloodyMat);
+        return {};
       }
 
       case 'THIGH_LEFT':
       case 'THIGH_RIGHT': {
-        const thigh = new pc.Entity(`${zone}_Mesh`);
-        thigh.addComponent('render', {
-          type: 'cylinder',
-          material: matPal.tacticalOlive,
-        });
-        thigh.setLocalScale(0.16, 0.3, 0.16);
-        thigh.setLocalPosition(0, -0.14, 0);
-        fleshNode.addChild(thigh);
-        if (thigh.render) {
-          fleshRenders.push(thigh.render);
-          defaultMaterials.push(matPal.tacticalOlive);
-        }
-        break;
+        addPart(`${zone}_Cargo`, lib.thighCargo, rm.legsMat, rm.legsBloodyMat);
+        const sideSign = zone === 'THIGH_LEFT' ? -1 : 1;
+        const cargoPocket = addPart(
+          `${zone}_CargoPocket`,
+          lib.ammoPouch,
+          rm.legsMat,
+          rm.legsBloodyMat
+        );
+        cargoPocket.setLocalPosition(sideSign * 0.092, -0.19, 0.005);
+        cargoPocket.setLocalScale(0.55, 1.15, 1.35);
+        return {};
       }
 
       case 'KNEE_LEFT':
       case 'KNEE_RIGHT': {
-        const knee = new pc.Entity(`${zone}_Mesh`);
-        knee.addComponent('render', {
-          type: 'sphere',
-          material: matPal.bootsDark,
-        });
-        knee.setLocalScale(0.12, 0.12, 0.12);
-        fleshNode.addChild(knee);
-        if (knee.render) {
-          fleshRenders.push(knee.render);
-          defaultMaterials.push(matPal.bootsDark);
-        }
-        break;
+        addPart(`${zone}_KneePad`, lib.kneeCapPad, rm.kneePadMat, rm.legsBloodyMat);
+        return {};
       }
 
       case 'SHIN_LEFT':
       case 'SHIN_RIGHT': {
-        const shin = new pc.Entity(`${zone}_Mesh`);
-        shin.addComponent('render', {
-          type: 'cylinder',
-          material: matPal.tacticalOlive,
-        });
-        shin.setLocalScale(0.12, 0.28, 0.12);
-        shin.setLocalPosition(0, -0.12, 0);
-        fleshNode.addChild(shin);
-        if (shin.render) {
-          fleshRenders.push(shin.render);
-          defaultMaterials.push(matPal.tacticalOlive);
-        }
-        break;
+        addPart(`${zone}_Shin`, lib.shinBloused, rm.legsMat, rm.legsBloodyMat);
+        return {};
       }
 
       case 'FOOT_LEFT':
       case 'FOOT_RIGHT': {
-        const foot = new pc.Entity(`${zone}_Mesh`);
-        foot.addComponent('render', {
-          type: 'box',
-          material: matPal.bootsDark,
-        });
-        foot.setLocalScale(0.1, 0.08, 0.22);
-        foot.setLocalPosition(0, -0.04, 0.04);
-        fleshNode.addChild(foot);
-        if (foot.render) {
-          fleshRenders.push(foot.render);
-          defaultMaterials.push(matPal.bootsDark);
-        }
-        break;
+        addPart(`${zone}_CombatBoot`, lib.combatBoot, rm.bootMat, rm.legsBloodyMat);
+        return {};
       }
     }
   }
 
+  /**
+   * Builds a bloody GHOUL stump cap + exposed white cortical bone on a severable limb's proximal joint.
+   */
+  private buildProximalLimbStump(zone: GhoulZoneId, zoneNode: pc.Entity): pc.Entity | undefined {
+    const specs: Partial<
+      Record<GhoulZoneId, { radius: number; boneLen: number; dirY: number }>
+    > = {
+      HEAD_CRANIUM: { radius: 0.095, boneLen: 0.05, dirY: -1 },
+      UPPER_ARM_LEFT: { radius: 0.095, boneLen: 0.065, dirY: 1 },
+      UPPER_ARM_RIGHT: { radius: 0.095, boneLen: 0.065, dirY: 1 },
+      FOREARM_LEFT: { radius: 0.082, boneLen: 0.055, dirY: 1 },
+      FOREARM_RIGHT: { radius: 0.082, boneLen: 0.055, dirY: 1 },
+      HAND_LEFT: { radius: 0.065, boneLen: 0.04, dirY: 1 },
+      HAND_RIGHT: { radius: 0.065, boneLen: 0.04, dirY: 1 },
+      THIGH_LEFT: { radius: 0.135, boneLen: 0.075, dirY: 1 },
+      THIGH_RIGHT: { radius: 0.135, boneLen: 0.075, dirY: 1 },
+      KNEE_LEFT: { radius: 0.11, boneLen: 0.06, dirY: 1 },
+      KNEE_RIGHT: { radius: 0.11, boneLen: 0.06, dirY: 1 },
+      SHIN_LEFT: { radius: 0.10, boneLen: 0.06, dirY: 1 },
+      SHIN_RIGHT: { radius: 0.10, boneLen: 0.06, dirY: 1 },
+      FOOT_LEFT: { radius: 0.085, boneLen: 0.045, dirY: 1 },
+      FOOT_RIGHT: { radius: 0.085, boneLen: 0.045, dirY: 1 },
+    };
+
+    const spec = specs[zone];
+    if (!spec) return undefined;
+
+    const root = this.createStumpAssembly(`${zone}_ProximalStump`, spec.radius, spec.boneLen, spec.dirY);
+    root.enabled = false;
+    zoneNode.addChild(root);
+    return root;
+  }
+
+  /**
+   * Builds bloody GHOUL socket stumps on the PARENT body bone where severed child limbs detach!
+   */
+  private buildDistalParentSocketStumps(
+    zone: GhoulZoneId,
+    zoneNode: pc.Entity
+  ): ChildSocketStump[] {
+    const socketDefs: Partial<
+      Record<
+        GhoulZoneId,
+        Array<{
+          childZone: GhoulZoneId;
+          offset: [number, number, number];
+          radius: number;
+          boneLen: number;
+          dirY: number;
+        }>
+      >
+    > = {
+      NECK_CERVICAL: [
+        { childZone: 'HEAD_CRANIUM', offset: [0, 0.085, 0], radius: 0.115, boneLen: 0.065, dirY: 1 },
+      ],
+      SHOULDER_LEFT: [
+        { childZone: 'UPPER_ARM_LEFT', offset: [-0.045, -0.085, 0], radius: 0.11, boneLen: 0.065, dirY: -1 },
+      ],
+      SHOULDER_RIGHT: [
+        { childZone: 'UPPER_ARM_RIGHT', offset: [0.045, -0.085, 0], radius: 0.11, boneLen: 0.065, dirY: -1 },
+      ],
+      UPPER_ARM_LEFT: [
+        { childZone: 'FOREARM_LEFT', offset: [0, -0.245, 0], radius: 0.092, boneLen: 0.06, dirY: -1 },
+      ],
+      UPPER_ARM_RIGHT: [
+        { childZone: 'FOREARM_RIGHT', offset: [0, -0.245, 0], radius: 0.092, boneLen: 0.06, dirY: -1 },
+      ],
+      FOREARM_LEFT: [
+        { childZone: 'HAND_LEFT', offset: [0, -0.235, 0], radius: 0.074, boneLen: 0.05, dirY: -1 },
+      ],
+      FOREARM_RIGHT: [
+        { childZone: 'HAND_RIGHT', offset: [0, -0.235, 0], radius: 0.074, boneLen: 0.05, dirY: -1 },
+      ],
+      PELVIS_GROIN: [
+        { childZone: 'THIGH_LEFT', offset: [-0.115, -0.085, 0], radius: 0.145, boneLen: 0.075, dirY: -1 },
+        { childZone: 'THIGH_RIGHT', offset: [0.115, -0.085, 0], radius: 0.145, boneLen: 0.075, dirY: -1 },
+      ],
+      THIGH_LEFT: [
+        { childZone: 'KNEE_LEFT', offset: [0, -0.345, 0], radius: 0.125, boneLen: 0.07, dirY: -1 },
+      ],
+      THIGH_RIGHT: [
+        { childZone: 'KNEE_RIGHT', offset: [0, -0.345, 0], radius: 0.125, boneLen: 0.07, dirY: -1 },
+      ],
+      KNEE_LEFT: [
+        { childZone: 'SHIN_LEFT', offset: [0, -0.075, 0], radius: 0.11, boneLen: 0.065, dirY: -1 },
+      ],
+      KNEE_RIGHT: [
+        { childZone: 'SHIN_RIGHT', offset: [0, -0.075, 0], radius: 0.11, boneLen: 0.065, dirY: -1 },
+      ],
+      SHIN_LEFT: [
+        { childZone: 'FOOT_LEFT', offset: [0, -0.205, 0], radius: 0.092, boneLen: 0.055, dirY: -1 },
+      ],
+      SHIN_RIGHT: [
+        { childZone: 'FOOT_RIGHT', offset: [0, -0.205, 0], radius: 0.092, boneLen: 0.055, dirY: -1 },
+      ],
+    };
+
+    const list = socketDefs[zone];
+    if (!list) return [];
+
+    const result: ChildSocketStump[] = [];
+    for (const item of list) {
+      const node = this.createStumpAssembly(
+        `${zone}_Socket_${item.childZone}`,
+        item.radius,
+        item.boneLen,
+        item.dirY
+      );
+      node.setLocalPosition(item.offset[0], item.offset[1], item.offset[2]);
+      node.enabled = false;
+      zoneNode.addChild(node);
+      result.push({ childZone: item.childZone, node });
+    }
+    return result;
+  }
+
+  private createStumpAssembly(
+    name: string,
+    meatDiameter: number,
+    boneLen: number,
+    dirY: number
+  ): pc.Entity {
+    const root = new pc.Entity(name);
+
+    const meatCap = new pc.Entity('MeatCap');
+    meatCap.addComponent('render', {
+      type: 'cylinder',
+      material: this.materials.goreStumpMat,
+    });
+    meatCap.setLocalScale(meatDiameter, 0.032, meatDiameter);
+    root.addChild(meatCap);
+
+    const boneShaft = new pc.Entity('ProtrudingCorticalBone');
+    boneShaft.addComponent('render', {
+      type: 'cylinder',
+      material: this.materials.exposedBoneMat,
+    });
+    const boneDiam = meatDiameter * 0.34;
+    boneShaft.setLocalScale(boneDiam, boneLen, boneDiam);
+    boneShaft.setLocalPosition(0, dirY * (boneLen * 0.45), 0);
+    root.addChild(boneShaft);
+
+    return root;
+  }
+
+  /**
+   * Builds internal 3D skeleton & organs for optional [X] Anatomical X-Ray Inspector mode.
+   */
   private buildZoneInternalAnatomy(
     zone: GhoulZoneId,
     zoneNode: pc.Entity,
@@ -377,473 +523,412 @@ export class GhoulMannequinEntity {
 
     switch (zone) {
       case 'HEAD_CRANIUM': {
-        // Skull Bone
         const skull = new pc.Entity('SkullBone');
-        skull.addComponent('render', {
-          type: 'sphere',
-          material: matPal.boneMat,
-        });
-        skull.setLocalScale(0.17, 0.17, 0.19);
-        skull.setLocalPosition(0, 0.04, 0);
+        skull.addComponent('render', { type: 'sphere', material: matPal.boneMat });
+        skull.setLocalScale(0.15, 0.16, 0.17);
+        skull.setLocalPosition(0, 0.06, 0);
         zoneNode.addChild(skull);
         boneNodes.push(skull);
 
-        // Brain Organ
         const brain = new pc.Entity('BrainOrgan');
-        brain.addComponent('render', {
-          type: 'sphere',
-          material: matPal.brainMat,
-        });
-        brain.setLocalScale(0.13, 0.13, 0.14);
-        brain.setLocalPosition(0, 0.04, -0.01);
+        brain.addComponent('render', { type: 'sphere', material: matPal.brainMat });
+        brain.setLocalScale(0.12, 0.12, 0.13);
+        brain.setLocalPosition(0, 0.07, -0.005);
         zoneNode.addChild(brain);
         organNodes.push(brain);
         this.brainEntity = brain;
         break;
       }
 
-      case 'HEAD_FACE_JAW': {
-        const jawBone = new pc.Entity('JawBone');
-        jawBone.addComponent('render', {
-          type: 'box',
-          material: matPal.boneMat,
-        });
-        jawBone.setLocalScale(0.12, 0.08, 0.09);
-        jawBone.setLocalPosition(0, 0, 0.02);
-        zoneNode.addChild(jawBone);
-        boneNodes.push(jawBone);
-        break;
-      }
-
       case 'NECK_CERVICAL': {
-        const cervicalSpine = new pc.Entity('CervicalSpine');
-        cervicalSpine.addComponent('render', {
-          type: 'cylinder',
-          material: matPal.boneMat,
-        });
-        cervicalSpine.setLocalScale(0.05, 0.11, 0.05);
-        cervicalSpine.setLocalPosition(0, 0, -0.02);
-        zoneNode.addChild(cervicalSpine);
-        boneNodes.push(cervicalSpine);
+        const cSpine = new pc.Entity('CervicalSpine');
+        cSpine.addComponent('render', { type: 'cylinder', material: matPal.boneMat });
+        cSpine.setLocalScale(0.042, 0.10, 0.042);
+        cSpine.setLocalPosition(0, 0.02, -0.015);
+        zoneNode.addChild(cSpine);
+        boneNodes.push(cSpine);
 
         const carotid = new pc.Entity('CarotidArtery');
-        carotid.addComponent('render', {
-          type: 'cylinder',
-          material: matPal.arteryMat,
-        });
-        carotid.setLocalScale(0.03, 0.1, 0.03);
-        carotid.setLocalPosition(0.02, 0, 0.02);
+        carotid.addComponent('render', { type: 'cylinder', material: matPal.arteryMat });
+        carotid.setLocalScale(0.024, 0.10, 0.024);
+        carotid.setLocalPosition(0.025, 0.02, 0.015);
         zoneNode.addChild(carotid);
         organNodes.push(carotid);
         break;
       }
 
       case 'TORSO_UPPER_THORAX': {
-        // Ribcage bone frame
         const ribcage = new pc.Entity('RibcageBone');
-        ribcage.addComponent('render', {
-          type: 'box',
-          material: matPal.boneMat,
-        });
-        ribcage.setLocalScale(0.32, 0.26, 0.22);
+        ribcage.addComponent('render', { type: 'box', material: matPal.boneMat });
+        ribcage.setLocalScale(0.27, 0.21, 0.18);
+        ribcage.setLocalPosition(0, 0.10, 0);
         zoneNode.addChild(ribcage);
         boneNodes.push(ribcage);
 
-        // Heart
         const heart = new pc.Entity('HeartOrgan');
-        heart.addComponent('render', {
-          type: 'sphere',
-          material: matPal.heartMat,
-        });
-        heart.setLocalScale(0.12, 0.13, 0.12);
-        heart.setLocalPosition(-0.03, -0.01, 0.02);
+        heart.addComponent('render', { type: 'sphere', material: matPal.heartMat });
+        heart.setLocalScale(0.10, 0.11, 0.10);
+        heart.setLocalPosition(-0.025, 0.08, 0.02);
         zoneNode.addChild(heart);
         organNodes.push(heart);
         this.heartEntity = heart;
 
-        // Lungs
-        const lungL = new pc.Entity('LeftLung');
-        lungL.addComponent('render', {
-          type: 'box',
-          material: matPal.lungMat,
-        });
-        lungL.setLocalScale(0.09, 0.18, 0.11);
-        lungL.setLocalPosition(-0.09, 0, 0.01);
-        zoneNode.addChild(lungL);
-        organNodes.push(lungL);
-
-        const lungR = new pc.Entity('RightLung');
-        lungR.addComponent('render', {
-          type: 'box',
-          material: matPal.lungMat,
-        });
-        lungR.setLocalScale(0.09, 0.18, 0.11);
-        lungR.setLocalPosition(0.09, 0, 0.01);
-        zoneNode.addChild(lungR);
-        organNodes.push(lungR);
-
-        // Aorta
-        const aorta = new pc.Entity('AortaTube');
-        aorta.addComponent('render', {
-          type: 'cylinder',
-          material: matPal.arteryMat,
-        });
-        aorta.setLocalScale(0.04, 0.16, 0.04);
-        aorta.setLocalPosition(0.01, 0, -0.03);
-        zoneNode.addChild(aorta);
-        organNodes.push(aorta);
+        for (const side of [-1, 1]) {
+          const lung = new pc.Entity(side < 0 ? 'LeftLung' : 'RightLung');
+          lung.addComponent('render', { type: 'box', material: matPal.lungMat });
+          lung.setLocalScale(0.085, 0.15, 0.10);
+          lung.setLocalPosition(side * 0.08, 0.10, 0.01);
+          zoneNode.addChild(lung);
+          organNodes.push(lung);
+        }
         break;
       }
 
       case 'TORSO_LOWER_ABDOMEN': {
-        // Lumbar Spine
         const lumbar = new pc.Entity('LumbarSpine');
-        lumbar.addComponent('render', {
-          type: 'cylinder',
-          material: matPal.boneMat,
-        });
-        lumbar.setLocalScale(0.06, 0.18, 0.06);
-        lumbar.setLocalPosition(0, 0, -0.05);
+        lumbar.addComponent('render', { type: 'cylinder', material: matPal.boneMat });
+        lumbar.setLocalScale(0.05, 0.17, 0.05);
+        lumbar.setLocalPosition(0, 0.08, -0.04);
         zoneNode.addChild(lumbar);
         boneNodes.push(lumbar);
 
-        // Liver
-        const liver = new pc.Entity('LiverOrgan');
-        liver.addComponent('render', {
-          type: 'sphere',
-          material: matPal.liverGutMat,
-        });
-        liver.setLocalScale(0.12, 0.1, 0.11);
-        liver.setLocalPosition(0.07, 0.02, 0.02);
-        zoneNode.addChild(liver);
-        organNodes.push(liver);
-
-        // Stomach / Guts
-        const guts = new pc.Entity('GutsOrgan');
-        guts.addComponent('render', {
-          type: 'box',
-          material: matPal.liverGutMat,
-        });
-        guts.setLocalScale(0.14, 0.12, 0.12);
-        guts.setLocalPosition(-0.04, -0.02, 0.02);
+        const guts = new pc.Entity('VisceralOrgans');
+        guts.addComponent('render', { type: 'box', material: matPal.liverGutMat });
+        guts.setLocalScale(0.18, 0.12, 0.11);
+        guts.setLocalPosition(0, 0.08, 0.02);
         zoneNode.addChild(guts);
         organNodes.push(guts);
         break;
       }
 
       case 'PELVIS_GROIN': {
-        const pelvisBone = new pc.Entity('PelvisBone');
-        pelvisBone.addComponent('render', {
-          type: 'box',
-          material: matPal.boneMat,
-        });
-        pelvisBone.setLocalScale(0.3, 0.16, 0.18);
-        zoneNode.addChild(pelvisBone);
-        boneNodes.push(pelvisBone);
+        const pel = new pc.Entity('PelvisBone');
+        pel.addComponent('render', { type: 'box', material: matPal.boneMat });
+        pel.setLocalScale(0.25, 0.13, 0.15);
+        pel.setLocalPosition(0, 0.02, 0);
+        zoneNode.addChild(pel);
+        boneNodes.push(pel);
         break;
       }
 
       case 'UPPER_ARM_LEFT':
       case 'UPPER_ARM_RIGHT': {
-        const humerus = new pc.Entity(`${zone}_Humerus`);
-        humerus.addComponent('render', {
-          type: 'cylinder',
-          material: matPal.boneMat,
-        });
-        humerus.setLocalScale(0.04, 0.22, 0.04);
-        humerus.setLocalPosition(0, -0.1, 0);
-        zoneNode.addChild(humerus);
-        boneNodes.push(humerus);
+        const hum = new pc.Entity(`${zone}_Humerus`);
+        hum.addComponent('render', { type: 'cylinder', material: matPal.boneMat });
+        hum.setLocalScale(0.036, 0.21, 0.036);
+        hum.setLocalPosition(0, -0.12, 0);
+        zoneNode.addChild(hum);
+        boneNodes.push(hum);
         break;
       }
 
       case 'FOREARM_LEFT':
       case 'FOREARM_RIGHT': {
-        const ulna = new pc.Entity(`${zone}_UlnaRadius`);
-        ulna.addComponent('render', {
-          type: 'cylinder',
-          material: matPal.boneMat,
-        });
-        ulna.setLocalScale(0.035, 0.2, 0.035);
-        ulna.setLocalPosition(0, -0.1, 0);
-        zoneNode.addChild(ulna);
-        boneNodes.push(ulna);
+        const rad = new pc.Entity(`${zone}_RadiusUlna`);
+        rad.addComponent('render', { type: 'cylinder', material: matPal.boneMat });
+        rad.setLocalScale(0.03, 0.19, 0.03);
+        rad.setLocalPosition(0, -0.11, 0);
+        zoneNode.addChild(rad);
+        boneNodes.push(rad);
         break;
       }
 
       case 'THIGH_LEFT':
       case 'THIGH_RIGHT': {
-        const femur = new pc.Entity(`${zone}_Femur`);
-        femur.addComponent('render', {
-          type: 'cylinder',
-          material: matPal.boneMat,
-        });
-        femur.setLocalScale(0.05, 0.28, 0.05);
-        femur.setLocalPosition(0, -0.14, 0);
-        zoneNode.addChild(femur);
-        boneNodes.push(femur);
+        const fem = new pc.Entity(`${zone}_Femur`);
+        fem.addComponent('render', { type: 'cylinder', material: matPal.boneMat });
+        fem.setLocalScale(0.045, 0.29, 0.045);
+        fem.setLocalPosition(0, -0.17, 0);
+        zoneNode.addChild(fem);
+        boneNodes.push(fem);
         break;
       }
 
       case 'SHIN_LEFT':
       case 'SHIN_RIGHT': {
-        const tibia = new pc.Entity(`${zone}_Tibia`);
-        tibia.addComponent('render', {
-          type: 'cylinder',
-          material: matPal.boneMat,
-        });
-        tibia.setLocalScale(0.045, 0.26, 0.045);
-        tibia.setLocalPosition(0, -0.12, 0);
-        zoneNode.addChild(tibia);
-        boneNodes.push(tibia);
+        const tib = new pc.Entity(`${zone}_Tibia`);
+        tib.addComponent('render', { type: 'cylinder', material: matPal.boneMat });
+        tib.setLocalScale(0.038, 0.18, 0.038);
+        tib.setLocalPosition(0, -0.10, 0);
+        zoneNode.addChild(tib);
+        boneNodes.push(tib);
         break;
       }
     }
   }
 
-  private buildGoreCapNodes(
-    zone: GhoulZoneId,
-    zoneNode: pc.Entity
-  ): {
-    stumpNode?: pc.Entity;
-    boneProtrusionNode?: pc.Entity;
-    childStumps: Map<GhoulZoneId, { stump: pc.Entity; bone: pc.Entity }>;
-  } {
-    const matPal = this.materials;
-    const childStumps = new Map<GhoulZoneId, { stump: pc.Entity; bone: pc.Entity }>();
-    const hierNode = GHOUL_ZONE_HIERARCHY[zone];
-
-    // Build parent-side bloody stump caps & protruding cortical bone at each child joint offset
-    for (const childZone of hierNode.children) {
-      const childHier = GHOUL_ZONE_HIERARCHY[childZone];
-      const ox = childHier.jointLocalPos.x - hierNode.jointLocalPos.x;
-      const oy = childHier.jointLocalPos.y - hierNode.jointLocalPos.y;
-      const oz = childHier.jointLocalPos.z - hierNode.jointLocalPos.z;
-
-      const stump = new pc.Entity(`${zone}_ChildStump_${childZone}`);
-      stump.addComponent('render', {
-        type: 'cylinder',
-        material: matPal.goreStumpMat,
-      });
-      stump.setLocalScale(0.11, 0.03, 0.11);
-      stump.setLocalPosition(ox, oy, oz);
-      stump.enabled = false;
-      zoneNode.addChild(stump);
-
-      const bone = new pc.Entity(`${zone}_ChildBone_${childZone}`);
-      bone.addComponent('render', {
-        type: 'cylinder',
-        material: matPal.exposedBoneMat,
-      });
-      bone.setLocalScale(0.038, 0.07, 0.038);
-      bone.setLocalPosition(ox, oy + 0.02, oz);
-      bone.enabled = false;
-      zoneNode.addChild(bone);
-
-      childStumps.set(childZone, { stump, bone });
-    }
-
-    // Build cap on severable limbs themselves (visible at the cut end of the flying limb)
-    const severableZones = new Set<GhoulZoneId>([
-      'HEAD_CRANIUM',
-      'NECK_CERVICAL',
-      'SHOULDER_LEFT',
-      'SHOULDER_RIGHT',
-      'UPPER_ARM_LEFT',
-      'UPPER_ARM_RIGHT',
-      'FOREARM_LEFT',
-      'FOREARM_RIGHT',
-      'HAND_LEFT',
-      'HAND_RIGHT',
-      'THIGH_LEFT',
-      'THIGH_RIGHT',
-      'KNEE_LEFT',
-      'KNEE_RIGHT',
-      'SHIN_LEFT',
-      'SHIN_RIGHT',
-      'FOOT_LEFT',
-      'FOOT_RIGHT',
-    ]);
-
-    if (!severableZones.has(zone)) {
-      return { childStumps };
-    }
-
-    const stumpNode = new pc.Entity(`${zone}_StumpCap`);
-    stumpNode.addComponent('render', {
-      type: 'cylinder',
-      material: matPal.goreStumpMat,
-    });
-    stumpNode.setLocalScale(0.11, 0.03, 0.11);
-    stumpNode.enabled = false;
-    zoneNode.addChild(stumpNode);
-
-    const boneProtrusionNode = new pc.Entity(`${zone}_ExposedBone`);
-    boneProtrusionNode.addComponent('render', {
-      type: 'cylinder',
-      material: matPal.exposedBoneMat,
-    });
-    boneProtrusionNode.setLocalScale(0.035, 0.06, 0.035);
-    boneProtrusionNode.setLocalPosition(0, 0.02, 0);
-    boneProtrusionNode.enabled = false;
-    zoneNode.addChild(boneProtrusionNode);
-
-    return { stumpNode, boneProtrusionNode, childStumps };
+  /**
+   * Toggles optional Anatomical X-Ray Skeleton & Organ Inspector [X].
+   */
+  public setXRayMode(enabled: boolean): void {
+    this.isXRayActive = enabled;
+    this.refreshZoneMaterialsAndAnatomy();
   }
 
-  /**
-   * Toggles anatomical X-Ray silhouette view mode.
-   * In X-Ray mode, outer flesh is rendered translucent with cyan/blue rim emission.
-   */
-  public setXRayMode(enabled: boolean, highlightZone: GhoulZoneId | null = null): void {
-    this.isXRayActive = enabled;
-    this.highlightedZone = highlightZone;
-
+  private refreshZoneMaterialsAndAnatomy(): void {
     const xrayMat = this.materials.xraySkinMat;
-    const woundMat = this.materials.woundGoreMat;
 
     for (const [zone, bundle] of this.zoneBundles) {
-      const isSevered = this.healthState.severedZones.has(zone);
-      if (isSevered) continue;
+      const goreMode = this.healthState.zoneGoreMode[zone];
+      const isPoppedHead =
+        goreMode === 'CRANIAL_POP' && (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW');
 
-      for (let i = 0; i < bundle.fleshRenders.length; i++) {
-        const render = bundle.fleshRenders[i];
-        if (enabled) {
-          render.material = xrayMat;
+      for (const b of bundle.boneNodes) {
+        b.enabled = this.isXRayActive && !isPoppedHead;
+        if (b.render) {
+          b.render.material =
+            this.healthState.fracturedBones.size > 0 && goreMode !== 'INTACT'
+              ? this.materials.shatteredBoneMat
+              : this.materials.boneMat;
+        }
+      }
+      for (const o of bundle.organNodes) {
+        o.enabled = this.isXRayActive && !isPoppedHead;
+      }
+
+      for (let i = 0; i < bundle.fleshMeshInstances.length; i++) {
+        const mi = bundle.fleshMeshInstances[i];
+        if (this.isXRayActive) {
+          mi.material = xrayMat;
+        } else if (goreMode === 'LACERATED' || goreMode === 'EVISCERATED') {
+          mi.material = bundle.laceratedMaterials[i] || bundle.intactMaterials[i];
         } else {
-          // Restore tactical material or wound tint
-          const goreMode = this.healthState.zoneGoreMode[zone];
-          if (goreMode === 'EVISCERATED' || goreMode === 'LACERATED') {
-            render.material = woundMat;
-          } else {
-            render.material = bundle.defaultMaterials[i] || this.materials.tacticalOlive;
-          }
+          mi.material = bundle.intactMaterials[i];
         }
       }
     }
   }
 
-  /**
-   * Synchronizes 3D mesh transforms and visibility from TargetHealthState.
-   */
-  public syncFromHealthState(dt: number, elapsedTime: number): void {
-    const isAlive = this.healthState.alive;
-    const isRagdoll = this.healthState.isRagdollActive;
-    const isHeadPopped =
-      this.healthState.zoneGoreMode['HEAD_CRANIUM'] === 'CRANIAL_POP' ||
-      this.healthState.zoneGoreMode['HEAD_FACE_JAW'] === 'CRANIAL_POP';
+  private setEntityBasisRotation(
+    entity: pc.Entity,
+    right: { x: number; y: number; z: number },
+    up: { x: number; y: number; z: number },
+    forward: { x: number; y: number; z: number }
+  ): void {
+    const d = this.tmpMat4.data;
+    d[0] = right.x;
+    d[1] = right.y;
+    d[2] = right.z;
+    d[3] = 0;
 
-    // 1. Idle stance sway & tactical breathing if intact and alive
-    let idleBreathY = 0;
-    let idleSwayX = 0;
-    if (!isRagdoll && isAlive) {
-      idleBreathY = Math.sin(elapsedTime * 2.5) * 0.008;
-      idleSwayX = Math.cos(elapsedTime * 1.2) * 0.006;
+    d[4] = up.x;
+    d[5] = up.y;
+    d[6] = up.z;
+    d[7] = 0;
+
+    d[8] = forward.x;
+    d[9] = forward.y;
+    d[10] = forward.z;
+    d[11] = 0;
+
+    d[12] = 0;
+    d[13] = 0;
+    d[14] = 0;
+    d[15] = 1;
+
+    this.tmpQuat.setFromMat4(this.tmpMat4);
+    entity.setLocalRotation(this.tmpQuat);
+  }
+
+  /**
+   * Spawns 3D entry/exit wound decals directly onto hit bones so bullet holes & blowouts stick to the character!
+   */
+  private syncSurfaceWoundDecals(): void {
+    while (this.syncedSurfaceWoundCount < this.healthState.surfaceWounds.length) {
+      const sw = this.healthState.surfaceWounds[this.syncedSurfaceWoundCount];
+      this.syncedSurfaceWoundCount++;
+
+      const bundle = this.zoneBundles.get(sw.zone);
+      if (!bundle) continue;
+
+      const decal = new pc.Entity(sw.id);
+      decal.addComponent('render', {
+        type: 'sphere',
+        material: sw.armorDent
+          ? this.materials.sandbagMat
+          : sw.isExit
+            ? this.materials.goreStumpMat
+            : this.materials.woundGoreMat,
+        castShadows: false,
+      });
+
+      const r = sw.radiusM * 2.0;
+      decal.setLocalScale(r, r, r * 0.55);
+      decal.setLocalPosition(sw.localOffset.x, sw.localOffset.y, sw.localOffset.z);
+      bundle.fleshNode.addChild(decal);
+    }
+  }
+
+  /**
+   * Synchronizes all 22 low-poly anatomical zones, GHOUL stumps, headgear, weapons, and wounds every frame.
+   */
+  public syncFromHealthState(_dt: number, elapsedTime: number): void {
+    // 1. Update procedural combat breathing / pain / crouch pose if standing & alive
+    if (!this.healthState.isRagdollActive && this.healthState.alive) {
+      updateStandingCombatPose(this.healthState, elapsedTime);
     }
 
-    // 2. Synchronize each of the 22 zone nodes
+    // 2. Check detached headgear transition (shoot-off helmet / beret / shades!)
+    const isHeadPoppedOrSevered =
+      this.healthState.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP' ||
+      this.healthState.severedZones.has('HEAD_CRANIUM');
+    const headgearNowAttached = this.healthState.headgearIntact && !isHeadPoppedOrSevered;
+
+    if (this.wasHeadgearIntact && !headgearNowAttached) {
+      this.wasHeadgearIntact = false;
+      if (this.headgearNode) {
+        this.headgearNode.enabled = false;
+      }
+      if (this.fxManager && this.healthState.zoneGoreMode.HEAD_CRANIUM !== 'CRANIAL_POP') {
+        const headBone = this.healthState.ragdollBones.HEAD_CRANIUM;
+        this.fxManager.spawnDetachedHeadgearProp(
+          this.healthState.archetype,
+          add(headBone.position, scale(headBone.basisUp, 0.11)),
+          this.healthState.activeReaction.hitDirectionWorld
+        );
+      }
+    }
+
+    // 3. Check weapon disarm / death / ragdoll weapon drop transition!
+    const shouldHoldWeapon =
+      !this.healthState.weaponDropped &&
+      this.healthState.alive &&
+      !this.healthState.isRagdollActive &&
+      !this.healthState.severedZones.has('HAND_RIGHT') &&
+      !this.healthState.severedZones.has('FOREARM_RIGHT') &&
+      !this.healthState.severedZones.has('UPPER_ARM_RIGHT');
+
+    if (this.wasWeaponHeld && !shouldHoldWeapon) {
+      this.wasWeaponHeld = false;
+      this.healthState.weaponDropped = true;
+      if (this.heldWeaponNode) {
+        this.heldWeaponNode.enabled = false;
+      }
+      if (this.fxManager) {
+        const handR = this.healthState.ragdollBones.HAND_RIGHT;
+        this.fxManager.spawnDroppedWeaponProp(
+          this.healthState.archetype,
+          handR.position,
+          handR.velocity
+        );
+      }
+    }
+
+    // Orient held weapon in combatant's hands when active
+    if (shouldHoldWeapon && this.heldWeaponNode) {
+      const handR = this.healthState.ragdollBones.HAND_RIGHT;
+      const thorax = this.healthState.ragdollBones.TORSO_UPPER_THORAX;
+      this.heldWeaponNode.setLocalPosition(handR.position.x, handR.position.y, handR.position.z);
+
+      // Barrel aims forward across chest toward player (+Forward slightly angled inward)
+      const gunFwd = normalize(
+        add(scale(thorax.basisForward, 0.94), scale(thorax.basisRight, -0.26))
+      );
+      const gunRight = normalize(cross(thorax.basisUp, gunFwd));
+      const gunUp = normalize(cross(gunFwd, gunRight));
+      this.setEntityBasisRotation(this.heldWeaponNode, gunRight, gunUp, gunFwd);
+    }
+
+    // 4. Synchronize all 22 anatomical bone nodes via full 3D orthonormal basis quaternions
     for (const zone of ALL_GHOUL_ZONES) {
       const bundle = this.zoneBundles.get(zone);
       if (!bundle) continue;
 
       const boneState = this.healthState.ragdollBones[zone];
-      const isSevered = this.healthState.severedZones.has(zone);
       const goreMode = this.healthState.zoneGoreMode[zone];
+      const isSevered = this.healthState.severedZones.has(zone);
 
-      // Update position and rotation
-      let wx = boneState.position.x;
-      let wy = boneState.position.y;
-      let wz = boneState.position.z;
-
-      if (!isRagdoll && isAlive) {
-        if (zone === 'TORSO_UPPER_THORAX' || zone === 'NECK_CERVICAL' || zone === 'HEAD_CRANIUM') {
-          wy += idleBreathY;
-          wx += idleSwayX;
-        }
-      }
-
-      bundle.zoneNode.setPosition(wx, wy, wz);
-      bundle.zoneNode.setEulerAngles(
-        (boneState.rotationEuler.x * 180) / Math.PI,
-        (boneState.rotationEuler.y * 180) / Math.PI,
-        (boneState.rotationEuler.z * 180) / Math.PI
+      bundle.zoneNode.setLocalPosition(
+        boneState.position.x,
+        boneState.position.y,
+        boneState.position.z
+      );
+      this.setEntityBasisRotation(
+        bundle.zoneNode,
+        boneState.basisRight,
+        boneState.basisUp,
+        boneState.basisForward
       );
 
-      // Handle gore mode / severing visuals
-      if (isHeadPopped && (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW')) {
-        // Upper head obliterated into gibs; bloody stump stays on parent NECK_CERVICAL
+      // Cranial pop obliterates upper head & jaw while leaving bloody stump on NECK_CERVICAL
+      if (goreMode === 'CRANIAL_POP' && (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW')) {
         bundle.fleshNode.enabled = false;
-        for (const b of bundle.boneNodes) b.enabled = false;
-        for (const o of bundle.organNodes) o.enabled = false;
-        if (bundle.stumpNode) bundle.stumpNode.enabled = false;
-        if (bundle.boneProtrusionNode) bundle.boneProtrusionNode.enabled = false;
-        for (const cs of bundle.childStumps.values()) {
-          cs.stump.enabled = false;
-          cs.bone.enabled = false;
-        }
-      } else if (isSevered) {
-        // Detached limb segment flying/tumbling on floor: show cut cap only on the severed root joint
-        bundle.fleshNode.enabled = true;
-        const isSeverRoot = goreMode === 'CLEAN_SEVER' || goreMode === 'EVISCERATED';
-        if (bundle.stumpNode) bundle.stumpNode.enabled = isSeverRoot;
-        if (bundle.boneProtrusionNode) bundle.boneProtrusionNode.enabled = isSeverRoot;
-        for (const [childZone, cs] of bundle.childStumps) {
-          const childIndependentlySevered =
-            this.healthState.zoneGoreMode[childZone] !== 'INTACT' &&
-            this.healthState.severedZones.has(childZone);
-          cs.stump.enabled = childIndependentlySevered;
-          cs.bone.enabled = childIndependentlySevered;
-        }
-      } else {
-        bundle.fleshNode.enabled = true;
-        if (bundle.stumpNode) bundle.stumpNode.enabled = false;
-        if (bundle.boneProtrusionNode) bundle.boneProtrusionNode.enabled = false;
+        if (bundle.proximalStumpNode) bundle.proximalStumpNode.enabled = false;
+        continue;
+      }
 
-        // Show bloody stump & protruding marrow on this intact parent joint for any severed direct child!
-        for (const [childZone, cs] of bundle.childStumps) {
-          const childSevered = this.healthState.severedZones.has(childZone);
-          cs.stump.enabled = childSevered;
-          cs.bone.enabled = childSevered;
-        }
+      bundle.fleshNode.enabled = true;
 
-        // Apply wound tint in normal view when zone is lacerated or eviscerated
-        if (!this.isXRayActive && (goreMode === 'LACERATED' || goreMode === 'EVISCERATED')) {
-          for (const render of bundle.fleshRenders) {
-            render.material = this.materials.woundGoreMat;
-          }
-        }
+      // Toggle intact vs eviscerated open-stomach cavity on TORSO_LOWER_ABDOMEN
+      if (zone === 'TORSO_LOWER_ABDOMEN' && bundle.intactAbdomenNode && bundle.evisceratedAbdomenNode) {
+        const isEviscerated = goreMode === 'EVISCERATED';
+        bundle.intactAbdomenNode.enabled = !isEviscerated;
+        bundle.evisceratedAbdomenNode.enabled = isEviscerated;
+      }
 
-        // Highlight ONLY bones belonging to this specific zone that were fractured
-        const hasZoneFracture = bundle.boneLabels.some((lbl) =>
-          this.healthState.fracturedBones.has(lbl)
-        );
-        if (hasZoneFracture) {
-          for (const bNode of bundle.boneNodes) {
-            if (bNode.render) {
-              bNode.render.material = this.materials.shatteredBoneMat;
-            }
-          }
-        }
+      // Show proximal stump cap on detached limb root (where its component separated from its parent!)
+      if (bundle.proximalStumpNode) {
+        const parentZone = this.getParentZone(zone);
+        const parentComp = parentZone ? this.healthState.ragdollBones[parentZone].componentId : 'BODY';
+        const separatedFromParent = isSevered && boneState.componentId !== parentComp;
+        bundle.proximalStumpNode.enabled = separatedFromParent;
+      }
+
+      // Show bloody parent-socket stump cap + protruding white bone whenever a child limb is severed off!
+      for (const socketStump of bundle.distalChildStumps) {
+        const childBone = this.healthState.ragdollBones[socketStump.childZone];
+        const childPopped =
+          socketStump.childZone === 'HEAD_CRANIUM' &&
+          this.healthState.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP';
+        socketStump.node.enabled = childPopped || childBone.componentId !== boneState.componentId;
       }
     }
 
-    // 3. Heart rate pulsation
-    if (this.heartEntity && isAlive) {
-      // Beating heart: 80 bpm = 1.33 Hz
-      const pulse = 1.0 + Math.sin(elapsedTime * 8.3) * 0.12;
-      this.heartEntity.setLocalScale(0.12 * pulse, 0.13 * pulse, 0.12 * pulse);
-    }
+    // 5. Sync 3D entry/exit bullet wound decals & lacerated pixel-art textures
+    this.syncSurfaceWoundDecals();
+    this.refreshZoneMaterialsAndAnatomy();
 
-    // 4. Brain rhythmic cranial pulsation
-    if (this.brainEntity && isAlive) {
-      const brainPulse = 1.0 + Math.sin(elapsedTime * 2.5) * 0.04;
-      this.brainEntity.setLocalScale(0.13 * brainPulse, 0.13 * brainPulse, 0.14 * brainPulse);
+    // 6. Optional X-Ray Organ Pulsation when [X] Inspector is enabled
+    if (this.isXRayActive && this.healthState.alive) {
+      const bpmHz = (this.healthState.heartRateBpm / 60) * Math.PI * 2;
+      if (this.heartEntity) {
+        const pulse = 1.0 + Math.sin(elapsedTime * bpmHz) * 0.12;
+        this.heartEntity.setLocalScale(0.10 * pulse, 0.11 * pulse, 0.10 * pulse);
+      }
+      if (this.brainEntity) {
+        const bPulse = 1.0 + Math.sin(elapsedTime * 2.5) * 0.04;
+        this.brainEntity.setLocalScale(0.12 * bPulse, 0.12 * bPulse, 0.13 * bPulse);
+      }
     }
   }
 
-  /**
-   * Cleans up resources when mannequin is destroyed.
-   */
+  private getParentZone(zone: GhoulZoneId): GhoulZoneId | undefined {
+    const map: Partial<Record<GhoulZoneId, GhoulZoneId>> = {
+      HEAD_CRANIUM: 'NECK_CERVICAL',
+      HEAD_FACE_JAW: 'HEAD_CRANIUM',
+      NECK_CERVICAL: 'TORSO_UPPER_THORAX',
+      TORSO_UPPER_THORAX: 'TORSO_LOWER_ABDOMEN',
+      TORSO_LOWER_ABDOMEN: 'PELVIS_GROIN',
+      SHOULDER_LEFT: 'TORSO_UPPER_THORAX',
+      UPPER_ARM_LEFT: 'SHOULDER_LEFT',
+      FOREARM_LEFT: 'UPPER_ARM_LEFT',
+      HAND_LEFT: 'FOREARM_LEFT',
+      SHOULDER_RIGHT: 'TORSO_UPPER_THORAX',
+      UPPER_ARM_RIGHT: 'SHOULDER_RIGHT',
+      FOREARM_RIGHT: 'UPPER_ARM_RIGHT',
+      HAND_RIGHT: 'FOREARM_RIGHT',
+      THIGH_LEFT: 'PELVIS_GROIN',
+      KNEE_LEFT: 'THIGH_LEFT',
+      SHIN_LEFT: 'KNEE_LEFT',
+      FOOT_LEFT: 'SHIN_LEFT',
+      THIGH_RIGHT: 'PELVIS_GROIN',
+      KNEE_RIGHT: 'THIGH_RIGHT',
+      SHIN_RIGHT: 'KNEE_RIGHT',
+      FOOT_RIGHT: 'SHIN_RIGHT',
+    };
+    return map[zone];
+  }
+
   public destroy(): void {
     this.rootEntity.destroy();
     this.zoneBundles.clear();
