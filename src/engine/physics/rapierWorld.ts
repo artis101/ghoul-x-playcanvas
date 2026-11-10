@@ -112,6 +112,7 @@ export class RapierPhysicsWorld {
   private readonly scratchImpulse: RAPIER.Vector = { x: 0, y: 0, z: 0 };
   private readonly scratchTorque: RAPIER.Vector = { x: 0, y: 0, z: 0 };
 
+  private queryPipelineDirty = true;
   private destroyed = false;
 
   public constructor() {
@@ -155,6 +156,7 @@ export class RapierPhysicsWorld {
     }
 
     const collider = this.world.createCollider(colliderDesc);
+    this.queryPipelineDirty = true;
     if (tag) {
       this.surfaceTags.set(collider.handle, tag);
     }
@@ -188,6 +190,7 @@ export class RapierPhysicsWorld {
       .setFriction(DEFAULT_FRICTION);
 
     const collider = this.world.createCollider(colliderDesc, body);
+    this.queryPipelineDirty = true;
 
     this.dynamicBodyHandles.add(body.handle);
     this.bodySettleTimers.set(body.handle, 0);
@@ -274,6 +277,7 @@ export class RapierPhysicsWorld {
     );
     const body = this.world.createRigidBody(bodyDesc);
     const collider = this.world.createCollider(colliderDesc, body);
+    this.queryPipelineDirty = true;
 
     this.dynamicBodyHandles.add(body.handle);
     this.bodySettleTimers.set(body.handle, 0);
@@ -295,6 +299,7 @@ export class RapierPhysicsWorld {
       | undefined;
     if (collider) {
       this.world.removeCollider(collider, true);
+      this.queryPipelineDirty = true;
     }
   }
 
@@ -314,6 +319,7 @@ export class RapierPhysicsWorld {
       this.surfaceTags.delete(col.handle);
     }
     this.world.removeRigidBody(body);
+    this.queryPipelineDirty = true;
   }
 
   public getSurfaceTag(colliderHandle: number): ColliderSurfaceTag | undefined {
@@ -324,6 +330,17 @@ export class RapierPhysicsWorld {
     this.surfaceTags.set(colliderHandle, tag);
   }
 
+  public flushQueryPipeline(): void {
+    if (this.destroyed || !this.queryPipelineDirty) {
+      return;
+    }
+    const prevDt = this.world.timestep;
+    this.world.timestep = 0;
+    this.world.step();
+    this.world.timestep = prevDt;
+    this.queryPipelineDirty = false;
+  }
+
   public castPenetrationRay(
     origin: Vec3Like,
     dirNormalized: Vec3Like,
@@ -331,6 +348,10 @@ export class RapierPhysicsWorld {
   ): PenetrationRayHit[] {
     if (this.destroyed || maxDistM <= 0) {
       return [];
+    }
+
+    if (this.queryPipelineDirty) {
+      this.flushQueryPipeline();
     }
 
     const dirLenSq =
@@ -566,6 +587,7 @@ export class RapierPhysicsWorld {
     for (let i = 0; i < substeps; i++) {
       this.world.step();
     }
+    this.queryPipelineDirty = false;
 
     this.updateDebrisSleepThresholds(clampedDt);
   }

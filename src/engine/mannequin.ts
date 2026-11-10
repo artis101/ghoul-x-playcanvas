@@ -19,6 +19,11 @@ import {
   buildEnemyWeaponEntity,
   getOrCreateRetroMeshes,
 } from './retroMeshBuilder.ts';
+import {
+  CombatantAnimationClipName,
+  CombatantGlbInstance,
+  GlbModelRegistry,
+} from './assets/glbLoader.ts';
 import { GoreAndBallisticsFxManager } from './goreFx.ts';
 
 export interface ChildSocketStump {
@@ -73,6 +78,10 @@ export class GhoulMannequinEntity {
   private heartEntity: pc.Entity | null = null;
   private brainEntity: pc.Entity | null = null;
 
+  public combatantGlb: CombatantGlbInstance | null = null;
+  private readonly glbOriginalMaterials = new Map<pc.MeshInstance, pc.Material>();
+  private activeGlbClip: CombatantAnimationClipName | null = null;
+
   private readonly tmpMat4 = new pc.Mat4();
   private readonly tmpQuat = new pc.Quat();
 
@@ -80,7 +89,8 @@ export class GhoulMannequinEntity {
     app: pc.AppBase,
     healthState: TargetHealthState,
     materials: EngineMaterialPalette,
-    fxManager?: GoreAndBallisticsFxManager
+    fxManager?: GoreAndBallisticsFxManager,
+    glbRegistry?: GlbModelRegistry | null
   ) {
     this.app = app;
     this.healthState = healthState;
@@ -94,7 +104,57 @@ export class GhoulMannequinEntity {
     this.rootEntity.setEulerAngles(0, 0, 0);
 
     this.buildCombatant();
+    if (glbRegistry && glbRegistry.isLoaded('ghoul_combatant')) {
+      this.attachCombatantGlb(glbRegistry);
+    }
     this.syncFromHealthState(0, 0);
+  }
+
+  /**
+   * Attaches the sculpted & rigged Blender 5.2 `ghoul_combatant.glb` 22-zone hierarchy
+   * (with ESAPI plate carrier, PASGT helmet, sculpted X-Ray anatomy, and 5 baked animations).
+   */
+  public attachCombatantGlb(glbRegistry: GlbModelRegistry): boolean {
+    if (this.combatantGlb || !glbRegistry.isLoaded('ghoul_combatant')) {
+      return false;
+    }
+
+    try {
+      const inst = glbRegistry.instantiateCombatant({
+        castShadows: true,
+        receiveShadows: true,
+        initialClip: 'CombatReadyIdle',
+      });
+      this.combatantGlb = inst;
+      this.activeGlbClip = 'CombatReadyIdle';
+      this.rootEntity.addChild(inst.rootEntity);
+
+      // Cache original PBR materials on outer Zone_* + Gear_* meshes so [X] X-Ray toggles cleanly
+      for (const zEnt of inst.zoneEntities.values()) {
+        if (zEnt.render) {
+          for (const mi of zEnt.render.meshInstances) {
+            if (mi.material) {
+              this.glbOriginalMaterials.set(mi, mi.material);
+            }
+          }
+        }
+      }
+      for (const gearEnt of [inst.esapiPlateCarrier, inst.pasgtHelmet]) {
+        if (gearEnt?.render) {
+          for (const mi of gearEnt.render.meshInstances) {
+            if (mi.material) {
+              this.glbOriginalMaterials.set(mi, mi.material);
+            }
+          }
+        }
+      }
+
+      this.syncFromHealthState(0, 0);
+      return true;
+    } catch {
+      this.combatantGlb = null;
+      return false;
+    }
   }
 
   private buildCombatant(): void {
@@ -674,7 +734,7 @@ export class GhoulMannequinEntity {
         goreMode === 'CRANIAL_POP' && (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW');
 
       for (const b of bundle.boneNodes) {
-        b.enabled = this.isXRayActive && !isPoppedHead;
+        b.enabled = this.isXRayActive && !isPoppedHead && this.combatantGlb === null;
         if (b.render) {
           b.render.material =
             this.healthState.fracturedBones.size > 0 && goreMode !== 'INTACT'
@@ -683,7 +743,7 @@ export class GhoulMannequinEntity {
         }
       }
       for (const o of bundle.organNodes) {
-        o.enabled = this.isXRayActive && !isPoppedHead;
+        o.enabled = this.isXRayActive && !isPoppedHead && this.combatantGlb === null;
       }
 
       for (let i = 0; i < bundle.fleshMeshInstances.length; i++) {
@@ -829,6 +889,64 @@ export class GhoulMannequinEntity {
       this.setEntityBasisRotation(this.heldWeaponNode, gunRight, gunUp, gunFwd);
     }
 
+    const useAnimatedGlb =
+      this.combatantGlb !== null &&
+      !this.healthState.isRagdollActive &&
+      this.healthState.alive &&
+      this.healthState.severedZones.size === 0 &&
+      this.healthState.zoneGoreMode.HEAD_CRANIUM !== 'CRANIAL_POP' &&
+      this.healthState.zoneGoreMode.TORSO_LOWER_ABDOMEN !== 'EVISCERATED';
+
+    if (this.combatantGlb) {
+      this.combatantGlb.rootEntity.enabled = useAnimatedGlb;
+      if (useAnimatedGlb) {
+        this.combatantGlb.rootEntity.setPosition(
+          this.healthState.worldPosition.x,
+          this.healthState.worldPosition.y,
+          this.healthState.worldPosition.z
+        );
+        this.combatantGlb.rootEntity.setEulerAngles(
+          0,
+          (this.healthState.yawRad * 180) / Math.PI,
+          0
+        );
+
+        const arch = this.healthState.archetype;
+        const hasPlate =
+          arch === 'HEAVY_ENFORCER' ||
+          arch === 'MILITIA_GUNNER' ||
+          arch === 'SNIPER_OPERATIVE';
+        const hasHelmet =
+          this.healthState.headgearIntact &&
+          (arch === 'HEAVY_ENFORCER' || arch === 'MILITIA_GUNNER');
+        this.combatantGlb.setArmorVisible(hasPlate && !this.isXRayActive, hasHelmet && !this.isXRayActive);
+        this.combatantGlb.setXRayVisible(this.isXRayActive);
+
+        for (const [mi, origMat] of this.glbOriginalMaterials) {
+          mi.material = this.isXRayActive ? this.materials.xraySkinMat : origMat;
+        }
+
+        const desiredClip: CombatantAnimationClipName =
+          this.healthState.posture === 'LEG_BUCKLED'
+            ? 'LegCollapseCrawl'
+            : this.healthState.posture === 'GUT_HURT' ||
+                this.healthState.posture === 'THROAT_CLUTCH'
+              ? 'DiaphragmDropKneel'
+              : this.healthState.posture === 'STAGGERED' ||
+                  this.healthState.posture === 'DISARMED'
+                ? 'HitStaggerChest'
+                : 'CombatReadyIdle';
+        if (desiredClip !== this.activeGlbClip) {
+          this.combatantGlb.playClip(desiredClip, 0.12, 1.0);
+          this.activeGlbClip = desiredClip;
+        }
+      }
+    }
+
+    if (this.headgearNode) {
+      this.headgearNode.enabled = headgearNowAttached && !useAnimatedGlb;
+    }
+
     // 4. Synchronize all 22 anatomical bone nodes via full 3D orthonormal basis quaternions
     for (const zone of ALL_GHOUL_ZONES) {
       const bundle = this.zoneBundles.get(zone);
@@ -857,7 +975,7 @@ export class GhoulMannequinEntity {
         continue;
       }
 
-      bundle.fleshNode.enabled = true;
+      bundle.fleshNode.enabled = !useAnimatedGlb;
 
       // Toggle intact vs eviscerated open-stomach cavity on TORSO_LOWER_ABDOMEN
       if (zone === 'TORSO_LOWER_ABDOMEN' && bundle.intactAbdomenNode && bundle.evisceratedAbdomenNode) {
@@ -930,6 +1048,11 @@ export class GhoulMannequinEntity {
   }
 
   public destroy(): void {
+    if (this.combatantGlb) {
+      this.combatantGlb.destroy();
+      this.combatantGlb = null;
+    }
+    this.glbOriginalMaterials.clear();
     this.rootEntity.destroy();
     this.zoneBundles.clear();
   }

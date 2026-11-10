@@ -12,6 +12,11 @@ import {
   GhoulZoneId,
   TargetHealthState,
 } from '../../contracts/ballistics.ts';
+import type { BlastEvent } from '../../contracts/destruction.ts';
+import type {
+  InternalBallisticsReport,
+  PhysiologicalEntityState,
+} from '../../contracts/physiology.ts';
 import {
   vec3,
   copyVec3,
@@ -35,10 +40,24 @@ import {
   applyShotReportToTarget,
   stepRagdollPhysics,
 } from '../../core/ballistics/solver.ts';
+import { getDefaultAnatomicalBvh, AnatomicalBvh } from '../../core/ghoul/bvhVolumes.ts';
+import { marchInternalBallistics } from '../../core/ballistics/rayMarchTerminal.ts';
+import { PhysiologyEcsSystem } from '../../core/physiology/physiologySystem.ts';
 import { EngineMaterialPalette } from '../materials.ts';
 import { GhoulMannequinEntity } from '../mannequin.ts';
 import { GoreAndBallisticsFxManager } from '../goreFx.ts';
+import { VascularBloodFxEmitter } from '../gore/vascularBloodFx.ts';
 import { HudController, ProjectedTargetTriageEntry } from '../hudController.ts';
+import type { MayhemDirector } from '../fx/mayhemDirector.ts';
+import type {
+  BrutalKillRewardKind,
+  TacticalCombatAiSystem,
+} from '../ai/tacticalCombatAi.ts';
+import type {
+  CombatAudioEngine,
+  GoreImpactAudioKind,
+} from '../audio/combatAudioEngine.ts';
+import type { GlbModelRegistry, WeaponGlbInstance } from '../assets/glbLoader.ts';
 
 export interface RangeTargetConfig {
   id: string;
@@ -48,36 +67,79 @@ export interface RangeTargetConfig {
   yawDeg: number;
 }
 
+/**
+ * 7 Tactical Breaching Arena Hostiles stationed across CQB lanes, destructible R6 wood walls,
+ * marching/Voronoi glass galleries, instanced masonry brick barriers, Voronoi fractured concrete
+ * cover (paired with red hazard barrels), and 42m sniper overwatch.
+ */
 export const TARGET_CONFIGS: RangeTargetConfig[] = [
   {
     id: 'target_0',
-    name: 'NYC SKINHEAD PUNK (5m)',
+    name: 'NYC SKINHEAD PUNK (5m CQB)',
     archetype: 'SKINHEAD_PUNK',
-    position: { x: 0, y: 0, z: -5.2 },
+    position: { x: 0.9, y: 0, z: -5.2 },
     yawDeg: 0,
   },
   {
     id: 'target_1',
-    name: 'BALKAN MILITIA GUNNER (9m)',
+    name: 'SHOOT-HOUSE BREACHER (8m WOOD)',
     archetype: 'MILITIA_GUNNER',
-    position: { x: -2.1, y: 0, z: -9.0 },
-    yawDeg: 12,
+    position: { x: -2.3, y: 0, z: -8.35 },
+    yawDeg: 6,
   },
   {
     id: 'target_2',
-    name: 'KOSOVO HEAVY ENFORCER (15m)',
-    archetype: 'HEAVY_ENFORCER',
-    position: { x: 2.2, y: 0, z: -15.0 },
-    yawDeg: -10,
+    name: 'WEST GALLERY SENTRY (8m GLASS)',
+    archetype: 'SKINHEAD_PUNK',
+    position: { x: -5.5, y: 0, z: -7.9 },
+    yawDeg: 14,
   },
   {
     id: 'target_3',
-    name: 'SPETSNAZ SNIPER (42m)',
+    name: 'EAST GALLERY GUNNER (8m VORONOI)',
+    archetype: 'MILITIA_GUNNER',
+    position: { x: 5.5, y: 0, z: -8.1 },
+    yawDeg: -14,
+  },
+  {
+    id: 'target_4',
+    name: 'MASONRY BUNKER GUARD (14m BRICK)',
+    archetype: 'MILITIA_GUNNER',
+    position: { x: -3.8, y: 0, z: -13.75 },
+    yawDeg: 10,
+  },
+  {
+    id: 'target_5',
+    name: 'KOSOVO HEAVY ENFORCER (15m CONCRETE)',
+    archetype: 'HEAVY_ENFORCER',
+    position: { x: 2.3, y: 0, z: -14.85 },
+    yawDeg: -8,
+  },
+  {
+    id: 'target_6',
+    name: 'SPETSNAZ SNIPER (42m OVERWATCH)',
     archetype: 'SNIPER_OPERATIVE',
     position: { x: 0.4, y: 0, z: -42.0 },
     yawDeg: 0,
   },
 ];
+
+const SYNTHETIC_SHRAPNEL_AMMO: AmmoSpec = {
+  id: 'comp_b_shrapnel',
+  name: 'HE Steel Shrapnel',
+  caliber: '6mm Fragment',
+  type: 'FMJ',
+  massKg: 0.0042,
+  diameterM: 0.0062,
+  muzzleVelocityMs: 560,
+  dragCoefficient: 0.42,
+  tissueExpansionFactor: 1.2,
+  armorPenetrationFactor: 1.15,
+  pelletCount: 1,
+  spreadRadians: 0,
+  ragdollImpulseMultiplier: 1.25,
+  goreFactor: 1.35,
+};
 
 export interface EnvironmentRayInterceptResult {
   remainingEnergyJ: number;
@@ -104,9 +166,17 @@ export type ExplosionBlastHandler = (
 
 export type CameraShakeCallback = (intensityDeg: number, durationS: number) => void;
 
+export interface CombatDirectorSubsystems {
+  mayhemDirector?: MayhemDirector | null;
+  tacticalAi?: TacticalCombatAiSystem | null;
+  combatAudio?: CombatAudioEngine | null;
+  glbRegistry?: GlbModelRegistry | null;
+}
+
 interface ActiveFragGrenade {
   entity: pc.Entity;
   fusePinLed: pc.Entity;
+  glbInstance: WeaponGlbInstance | null;
   position: pc.Vec3;
   velocity: pc.Vec3;
   angularVelocity: pc.Vec3;
@@ -132,8 +202,13 @@ export class CombatDirector {
   public environment: EnvironmentState = { ...DEFAULT_ENVIRONMENT };
   public enableXRayInspector = false;
 
+  public readonly anatomicalBvh: AnatomicalBvh;
+  public readonly physiologySystem: PhysiologyEcsSystem;
+  public readonly vascularFx: VascularBloodFxEmitter;
+  public lastInternalBallisticsReport: InternalBallisticsReport | null = null;
+
   /**
-   * Optional Wave 2 destructible cover ray interceptor (wood/glass/brick/concrete walls).
+   * Optional Wave 2 destructible cover ray interceptor (wood/glass/brick/concrete walls + barrels).
    */
   public environmentRayInterceptor?: EnvironmentRayInterceptor;
 
@@ -146,6 +221,11 @@ export class CombatDirector {
    * Optional first-person camera blast shake callback.
    */
   public onCameraShake?: CameraShakeCallback;
+
+  private mayhemDirector: MayhemDirector | null = null;
+  private tacticalAi: TacticalCombatAiSystem | null = null;
+  private combatAudio: CombatAudioEngine | null = null;
+  private glbRegistry: GlbModelRegistry | null = null;
 
   private readonly app: pc.AppBase;
   private readonly materials: EngineMaterialPalette;
@@ -167,13 +247,22 @@ export class CombatDirector {
     materials: EngineMaterialPalette,
     fxManager: GoreAndBallisticsFxManager,
     hudController: HudController,
-    onCameraShake?: CameraShakeCallback
+    onCameraShake?: CameraShakeCallback,
+    subsystems?: CombatDirectorSubsystems
   ) {
     this.app = app;
     this.materials = materials;
     this.fxManager = fxManager;
     this.hudController = hudController;
     this.onCameraShake = onCameraShake;
+
+    this.anatomicalBvh = getDefaultAnatomicalBvh();
+    this.physiologySystem = new PhysiologyEcsSystem(8);
+    this.vascularFx = new VascularBloodFxEmitter(app, materials);
+
+    if (subsystems) {
+      this.connectSubsystems(subsystems);
+    }
 
     this.blastFireballMat = new pc.StandardMaterial();
     this.blastFireballMat.name = 'fragBlastFireballMat';
@@ -186,12 +275,52 @@ export class CombatDirector {
     this.blastFireballMat.update();
   }
 
+  public connectSubsystems(subsystems: CombatDirectorSubsystems): void {
+    if (subsystems.mayhemDirector !== undefined) {
+      this.mayhemDirector = subsystems.mayhemDirector;
+    }
+    if (subsystems.tacticalAi !== undefined) {
+      this.tacticalAi = subsystems.tacticalAi;
+    }
+    if (subsystems.combatAudio !== undefined) {
+      this.combatAudio = subsystems.combatAudio;
+    }
+    if (subsystems.glbRegistry !== undefined) {
+      this.glbRegistry = subsystems.glbRegistry;
+      if (this.glbRegistry && this.targets.length > 0) {
+        this.upgradeTargetsWithGlb(this.glbRegistry);
+      }
+    }
+  }
+
+  /**
+   * Live-upgrades all active `GhoulMannequinEntity` combatants with the rigged `ghoul_combatant.glb`
+   * hierarchy once async asset streaming completes.
+   */
+  public upgradeTargetsWithGlb(glbRegistry: GlbModelRegistry): number {
+    this.glbRegistry = glbRegistry;
+    let upgraded = 0;
+    for (const target of this.targets) {
+      if (target.attachCombatantGlb(glbRegistry)) {
+        upgraded++;
+      }
+    }
+    return upgraded;
+  }
+
+  public getTargetPhysiology(targetId: string): PhysiologicalEntityState | undefined {
+    return this.physiologySystem.getEntity(targetId);
+  }
+
   public spawnAllTargets(): void {
     const oldTargets = this.targets;
     const nextTargets: GhoulMannequinEntity[] = [];
 
     this.clearLiveGrenadesAndFlashes();
     this.fxManager.clearAll();
+    this.vascularFx.clearAll();
+    this.physiologySystem.reset();
+    this.lastInternalBallisticsReport = null;
 
     for (const cfg of TARGET_CONFIGS) {
       const yawRad = (cfg.yawDeg * Math.PI) / 180;
@@ -203,11 +332,26 @@ export class CombatDirector {
         cfg.archetype
       );
 
+      const enableHelmet =
+        cfg.archetype === 'HEAVY_ENFORCER' || cfg.archetype === 'MILITIA_GUNNER';
+      const physioState = this.physiologySystem.registerEntity({
+        entityId: cfg.id,
+        alertnessState: 'UNSUSPECTING',
+        enableArmorPlates: healthState.hasChestArmor,
+        enableHelmet,
+      });
+
+      this.vascularFx.bindEntity(physioState, () => ({
+        positionWorld: copyVec3(healthState.worldPosition),
+        yawRad: healthState.yawRad,
+      }));
+
       const mannequin = new GhoulMannequinEntity(
         this.app,
         healthState,
         this.materials,
-        this.fxManager
+        this.fxManager,
+        this.glbRegistry
       );
       this.app.root.addChild(mannequin.rootEntity);
       nextTargets.push(mannequin);
@@ -222,6 +366,13 @@ export class CombatDirector {
     }
     this.targets = nextTargets;
     this.lastEngagedTarget = null;
+
+    if (this.tacticalAi) {
+      this.tacticalAi.registerWaveTargets(
+        this.targets.map((t) => t.healthState),
+        false
+      );
+    }
   }
 
   public setXRayMode(enabled: boolean): void {
@@ -233,6 +384,14 @@ export class CombatDirector {
 
   public areAllTargetsDown(): boolean {
     return this.targets.length > 0 && this.targets.every((t) => !t.healthState.alive);
+  }
+
+  private getViewerPosVec3(): Vec3Like {
+    return vec3(
+      this.lastViewerWorldPos.x,
+      this.lastViewerWorldPos.y,
+      this.lastViewerWorldPos.z
+    );
   }
 
   private findBestTargetHit(
@@ -349,15 +508,189 @@ export class CombatDirector {
     ];
   }
 
+  /**
+   * Synchronizes decoupled 8 Hz `PhysiologicalEntityState` hemodynamics, oxygenation,
+   * limb motor nerve status, and Class-IV exsanguination / hypoxia arrest onto `TargetHealthState`.
+   */
+  private syncPhysiologyToHealthState(
+    physio: PhysiologicalEntityState,
+    hs: TargetHealthState
+  ): void {
+    // Keep GHOUL distal-amputation bleed rates reflected in PhysiologyEcsSystem
+    if (hs.bloodLossRateMlPerSec > physio.baseBleedRateMlPerSec) {
+      physio.baseBleedRateMlPerSec = hs.bloodLossRateMlPerSec;
+    }
+
+    // If GHOUL killed the target instantly (e.g., CRANIAL_POP or massive trauma), mark physio dead
+    if (!hs.alive && physio.alive) {
+      physio.alive = false;
+      physio.conscious = false;
+      if (physio.causeOfDeath === 'NONE') {
+        physio.causeOfDeath =
+          hs.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP'
+            ? 'CNS_BRAINSTEM_DESTRUCTION'
+            : 'CARDIAC_DESTRUCTION';
+      }
+      physio.heartRateBpm = 0;
+      physio.meanArterialPressureMmHg = 0;
+      physio.systolicBpMmHg = 0;
+      physio.diastolicBpMmHg = 0;
+      physio.effectiveBleedRateMlPerSec = 0;
+      return;
+    }
+
+    // Conversely, if PhysiologyEcsSystem killed the target (brainstem/cardiac rupture, Class IV exsanguination, or hypoxic arrest)
+    if (!physio.alive && hs.alive) {
+      hs.alive = false;
+      hs.currentHp = 0;
+      hs.consciousness = 0;
+      hs.heartRateBpm = 0;
+      hs.systolicBpMmHg = 0;
+      if (!hs.isRagdollActive) {
+        hs.isRagdollActive = true;
+      }
+    }
+
+    if (physio.biologicalTicksExecuted > 0 || physio.vascularWounds.length > 0) {
+      hs.bloodVolumeMl = Math.min(hs.bloodVolumeMl, physio.bloodVolumeMl);
+    }
+    hs.bloodLossRateMlPerSec = Math.max(
+      hs.bloodLossRateMlPerSec,
+      physio.effectiveBleedRateMlPerSec > 0
+        ? physio.effectiveBleedRateMlPerSec
+        : physio.baseBleedRateMlPerSec
+    );
+    hs.systolicBpMmHg = physio.systolicBpMmHg;
+    hs.heartRateBpm = physio.heartRateBpm;
+    hs.oxygenSaturationPct = Math.round(physio.oxygenSaturationPct);
+    hs.painShock = Math.max(hs.painShock, physio.painShockLevel);
+
+    if (!physio.conscious) {
+      hs.consciousness = Math.min(hs.consciousness, 0.18);
+    }
+
+    if (!physio.leftLegFunctional) hs.leftLegFunctional = false;
+    if (!physio.rightLegFunctional) hs.rightLegFunctional = false;
+    if (!physio.leftArmFunctional) hs.leftArmFunctional = false;
+    if (!physio.rightArmFunctional) hs.rightArmFunctional = false;
+    if (physio.weaponDropped) hs.weaponDropped = true;
+
+    if (!hs.isRagdollActive && hs.alive) {
+      if (physio.readability.immediatePostureReaction === 'DIAPHRAGM_DROP_KNEEL') {
+        hs.posture = 'GUT_HURT';
+      } else if (physio.readability.immediatePostureReaction === 'LEG_COLLAPSE_PRONE') {
+        hs.posture = 'LEG_BUCKLED';
+      }
+    }
+  }
+
   private applyImpactFxAndState(
     target: GhoulMannequinEntity,
     report: ShotSimulationReport,
-    weaponLabel: string
+    weaponLabel: string,
+    ammoForInternalMarch?: AmmoSpec
   ): void {
     this.lastEngagedTarget = target;
-    const wasAlive = target.healthState.alive;
-    applyShotReportToTarget(target.healthState, report);
-    const isLethalNow = !target.healthState.alive;
+    const hs = target.healthState;
+    const wasAlive = hs.alive;
+
+    applyShotReportToTarget(hs, report);
+
+    // Sub-stepped Two-Tier Anatomical BVH Internal Ballistics + Decoupled Physiology Trauma!
+    const physio = this.physiologySystem.getEntity(hs.targetId);
+    if (physio) {
+      const aiAgent = this.tacticalAi?.getAgent(hs.targetId);
+      if (aiAgent && aiAgent.state !== 'PATROL_GUARD') {
+        physio.alertnessState = 'COMBAT_ALERT';
+        physio.adrenalineLevel = Math.max(physio.adrenalineLevel, aiAgent.adrenaline);
+      }
+
+      const primaryWound = report.woundEvents[0];
+      const marchAmmo = ammoForInternalMarch ?? SYNTHETIC_SHRAPNEL_AMMO;
+      const marchDir = primaryWound
+        ? normalize(primaryWound.impactDirectionWorld)
+        : normalize(report.aimDirectionWorld);
+      const marchOrigin = primaryWound
+        ? sub(primaryWound.entryPointWorld, scale(marchDir, 0.35))
+        : report.originWorld;
+      const marchSpeedMs = Math.max(
+        60,
+        primaryWound ? primaryWound.entryVelocityMs : report.impactSpeedMs
+      );
+
+      let internalReport = marchInternalBallistics(
+        {
+          ammo: marchAmmo,
+          rayOriginWorld: marchOrigin,
+          rayDirectionWorld: marchDir,
+          impactVelocityMs: marchSpeedMs,
+          characterTransform: {
+            positionWorld: copyVec3(hs.worldPosition),
+            yawRad: hs.yawRad,
+          },
+          config: {
+            enableArmorPlates: hs.hasChestArmor && hs.chestArmorIntegrity > 0.05,
+            enableHelmet:
+              hs.headgearIntact &&
+              (hs.archetype === 'HEAVY_ENFORCER' || hs.archetype === 'MILITIA_GUNNER'),
+            initialPlateIntegrity: physio.plateIntegrity,
+          },
+        },
+        this.anatomicalBvh
+      );
+
+      // If an outer-edge GHOUL hitbox graze skimmed 1cm outside the tighter Tier-1 BVH shell,
+      // align through the struck zone's anatomical bone axis so 100% of confirmed hits couple into BVH!
+      if (!internalReport.hitOuterShell && primaryWound) {
+        const bonePos = hs.ragdollBones[primaryWound.ghoulZone]?.position;
+        if (bonePos) {
+          const nudgedEntry = vec3(
+            (primaryWound.entryPointWorld.x + bonePos.x) * 0.5,
+            (primaryWound.entryPointWorld.y + bonePos.y) * 0.5,
+            (primaryWound.entryPointWorld.z + bonePos.z) * 0.5
+          );
+          internalReport = marchInternalBallistics(
+            {
+              ammo: marchAmmo,
+              rayOriginWorld: sub(nudgedEntry, scale(marchDir, 0.35)),
+              rayDirectionWorld: marchDir,
+              impactVelocityMs: marchSpeedMs,
+              characterTransform: {
+                positionWorld: copyVec3(hs.worldPosition),
+                yawRad: hs.yawRad,
+              },
+              config: {
+                enableArmorPlates: hs.hasChestArmor && hs.chestArmorIntegrity > 0.05,
+                enableHelmet:
+                  hs.headgearIntact &&
+                  (hs.archetype === 'HEAVY_ENFORCER' || hs.archetype === 'MILITIA_GUNNER'),
+                initialPlateIntegrity: physio.plateIntegrity,
+              },
+            },
+            this.anatomicalBvh
+          );
+        }
+      }
+      this.lastInternalBallisticsReport = internalReport;
+
+      if (internalReport.hitOuterShell) {
+        this.physiologySystem.applyBallisticTrauma(hs.targetId, internalReport);
+        for (const ot of internalReport.organTrauma) {
+          if (ot.directCrushLacerated || ot.stretchCavitationRuptured) {
+            hs.rupturedOrgans.add(ot.organId);
+          }
+        }
+        for (const bt of internalReport.boneTrauma) {
+          if (bt.fractured) {
+            hs.fracturedBones.add(bt.boneId);
+          }
+        }
+      }
+
+      this.syncPhysiologyToHealthState(physio, hs);
+    }
+
+    const isLethalNow = !hs.alive;
     const armorOnly =
       report.woundEvents.length > 0 && report.woundEvents.every((w) => w.armorStopped);
 
@@ -367,10 +700,73 @@ export class CombatDirector {
     this.hudController.pushCombatFeed(
       report,
       weaponLabel,
-      target.healthState.name,
+      hs.name,
       wasAlive,
-      target.healthState.alive
+      hs.alive
     );
+
+    // Wall & floor directional blood splatter decals + CRANIAL_POP Kill-Punch micro-dilation
+    this.mayhemDirector?.processShotSimulationReport(report);
+
+    // Notify Tactical Combat AI of trauma, stagger, leg-cripple crawl, and brutal kill siphon
+    if (this.tacticalAi) {
+      const primaryZone =
+        report.woundEvents[0]?.ghoulZone ?? report.ragdollPlan.primaryHitZone ?? undefined;
+      this.tacticalAi.notifyEnemyHit(hs, {
+        hitZone: primaryZone,
+        energyDepositedJ: report.totalEnergyDepositedJ,
+        externalAccuracyMultiplier: physio?.readability.aiAccuracyMultiplier,
+      });
+
+      if (wasAlive && !hs.alive) {
+        let rewardKind: BrutalKillRewardKind = 'STANDARD_KILL';
+        if (report.dismembermentEvents.some((d) => d.goreMode === 'CRANIAL_POP')) {
+          rewardKind = 'CRANIAL_POP';
+        } else if (report.dismembermentEvents.some((d) => d.goreMode === 'EVISCERATED')) {
+          rewardKind = 'EVISCERATED';
+        } else if (report.dismembermentEvents.some((d) => d.goreMode === 'CLEAN_SEVER')) {
+          rewardKind = 'CLEAN_SEVER';
+        }
+        this.tacticalAi.grantBrutalKillReward(rewardKind);
+      }
+    }
+
+    // 3D Spatial Gore Foley & Formant Vocal Trauma Cues
+    if (this.combatAudio) {
+      const listenerPos = this.getViewerPosVec3();
+      const impactPos =
+        report.woundEvents[0]?.entryPointWorld ??
+        hs.ragdollBones.TORSO_UPPER_THORAX?.position ??
+        hs.worldPosition;
+
+      let goreKind: GoreImpactAudioKind = 'FLESH_HIT';
+      if (report.dismembermentEvents.some((d) => d.goreMode === 'CRANIAL_POP')) {
+        goreKind = 'CRANIAL_POP';
+      } else if (report.dismembermentEvents.length > 0) {
+        goreKind = 'LIMB_SEVER';
+      } else if (armorOnly) {
+        goreKind = 'ARMOR_SPARK';
+      } else if (report.woundEvents.some((w) => w.boneShattered || w.boneFractured)) {
+        goreKind = 'BONE_SHATTER';
+      } else if (
+        report.woundEvents.some((w) => w.arterialSevered) ||
+        physio?.readability.bleedVisualProfile.kind === 'ARTERIAL_PULSING_JET'
+      ) {
+        goreKind = 'ARTERIAL_SPURT';
+      }
+      this.combatAudio.playGoreImpact(goreKind, impactPos, listenerPos);
+
+      if (hs.alive && physio) {
+        const vocal = physio.readability.vocalCue;
+        if (
+          vocal === 'SHARP_GASP' ||
+          vocal === 'WET_HEMOTHORAX_COUGH' ||
+          vocal === 'PAIN_GRUNT'
+        ) {
+          this.combatAudio.playVocalTraumaCue(vocal, impactPos, listenerPos);
+        }
+      }
+    }
 
     for (const w of report.woundEvents) {
       if (w.armorStopped) {
@@ -382,7 +778,6 @@ export class CombatDirector {
           w.energyDepositedJ,
           14
         );
-        // Exit-wound blood spray when a penetrator punches clean out the back!
         if (w.exitEnergyJ > 140) {
           this.fxManager.spawnBloodBurst(
             w.exitPointWorld,
@@ -399,7 +794,7 @@ export class CombatDirector {
 
     for (const dism of report.dismembermentEvents) {
       this.fxManager.spawnDismembermentGibs(dism);
-      this.fxManager.attachArterialFountain(target.healthState, dism);
+      this.fxManager.attachArterialFountain(hs, dism);
     }
   }
 
@@ -422,7 +817,6 @@ export class CombatDirector {
     const match = this.findBestTargetHit(weapon, ammo, origin, normAim);
 
     if (!match || !match.report.hitTarget) {
-      // No GHOUL target hit: trace full downrange ray against destructible cover stations
       if (this.environmentRayInterceptor) {
         this.environmentRayInterceptor(
           origin,
@@ -443,6 +837,7 @@ export class CombatDirector {
     }
 
     let { target, report } = match;
+    let effectiveAmmo: AmmoSpec = ammo;
     const hitDistM =
       report.woundEvents.length > 0
         ? distance(origin, report.woundEvents[0].entryPointWorld)
@@ -474,13 +869,13 @@ export class CombatDirector {
       }
 
       if (preIntercept.remainingSpeedMs < muzzleSpeedMs * 0.98) {
-        const attenuatedAmmo: AmmoSpec = {
+        effectiveAmmo = {
           ...ammo,
           muzzleVelocityMs: preIntercept.remainingSpeedMs,
         };
         const attenuatedReport = simulateShot(
           weapon,
-          attenuatedAmmo,
+          effectiveAmmo,
           origin,
           normAim,
           target.healthState,
@@ -500,7 +895,7 @@ export class CombatDirector {
       this.fxManager.spawnFlyingProjectile(report.trajectorySamples, false);
     }
 
-    this.applyImpactFxAndState(target, report, weapon.codeName);
+    this.applyImpactFxAndState(target, report, weapon.codeName, effectiveAmmo);
 
     // Over-penetration collateral pass: high-penetration AP/FMJ rounds exiting a body
     // continue downrange into destructible walls and lined-up combatants!
@@ -537,6 +932,7 @@ export class CombatDirector {
               : collateral.report.targetDistanceM;
 
           let collatReport = collateral.report;
+          let collatAmmo = baseResidualAmmo;
           let collatBlocked = false;
 
           if (this.environmentRayInterceptor) {
@@ -558,9 +954,10 @@ export class CombatDirector {
             } else if (betweenIntercept.remainingSpeedMs < residualSpeedMs * 0.98) {
               residualSpeedMs = betweenIntercept.remainingSpeedMs;
               residualEnergyJ = betweenIntercept.remainingEnergyJ;
+              collatAmmo = { ...baseResidualAmmo, muzzleVelocityMs: residualSpeedMs };
               collatReport = simulateShot(
                 weapon,
-                { ...baseResidualAmmo, muzzleVelocityMs: residualSpeedMs },
+                collatAmmo,
                 exitOrigin,
                 exitDir,
                 collateral.target.healthState,
@@ -573,7 +970,12 @@ export class CombatDirector {
           }
 
           if (!collatBlocked) {
-            this.applyImpactFxAndState(collateral.target, collatReport, weapon.codeName);
+            this.applyImpactFxAndState(
+              collateral.target,
+              collatReport,
+              weapon.codeName,
+              collatAmmo
+            );
           }
         } else if (this.environmentRayInterceptor) {
           this.environmentRayInterceptor(
@@ -710,13 +1112,13 @@ export class CombatDirector {
             this.environment
           );
           if (attenReport.hitTarget) {
-            this.applyImpactFxAndState(cr.target, attenReport, weapon.codeName);
+            this.applyImpactFxAndState(cr.target, attenReport, weapon.codeName, attenAmmo);
           }
           continue;
         }
       }
 
-      this.applyImpactFxAndState(cr.target, cr.report, weapon.codeName);
+      this.applyImpactFxAndState(cr.target, cr.report, weapon.codeName, ammo);
     }
   }
 
@@ -731,23 +1133,36 @@ export class CombatDirector {
     const grenadeRoot = new pc.Entity('LiveFragGrenade');
     grenadeRoot.setPosition(spawnPos.x, spawnPos.y, spawnPos.z);
 
-    const body = new pc.Entity('GrenadeBody');
-    body.addComponent('render', {
-      type: 'sphere',
-      material: this.materials.tacticalOlive,
-      castShadows: true,
-    });
-    body.setLocalScale(0.095, 0.115, 0.095);
-    grenadeRoot.addChild(body);
+    let glbInstance: WeaponGlbInstance | null = null;
+    if (this.glbRegistry && this.glbRegistry.isLoaded('frag_grenade')) {
+      try {
+        glbInstance = this.glbRegistry.instantiateWeapon('frag_grenade');
+        glbInstance.playFire(1.0);
+        grenadeRoot.addChild(glbInstance.rootEntity);
+      } catch {
+        glbInstance = null;
+      }
+    }
 
-    const neck = new pc.Entity('GrenadeSpoonNeck');
-    neck.addComponent('render', {
-      type: 'box',
-      material: this.materials.bootsDark,
-    });
-    neck.setLocalScale(0.032, 0.048, 0.044);
-    neck.setLocalPosition(0, 0.062, 0);
-    grenadeRoot.addChild(neck);
+    if (!glbInstance) {
+      const body = new pc.Entity('GrenadeBody');
+      body.addComponent('render', {
+        type: 'sphere',
+        material: this.materials.tacticalOlive,
+        castShadows: true,
+      });
+      body.setLocalScale(0.095, 0.115, 0.095);
+      grenadeRoot.addChild(body);
+
+      const neck = new pc.Entity('GrenadeSpoonNeck');
+      neck.addComponent('render', {
+        type: 'box',
+        material: this.materials.bootsDark,
+      });
+      neck.setLocalScale(0.032, 0.048, 0.044);
+      neck.setLocalPosition(0, 0.062, 0);
+      grenadeRoot.addChild(neck);
+    }
 
     const fusePinLed = new pc.Entity('GrenadeFuseLed');
     fusePinLed.addComponent('render', {
@@ -763,6 +1178,7 @@ export class CombatDirector {
     this.activeGrenades.push({
       entity: grenadeRoot,
       fusePinLed,
+      glbInstance,
       position: new pc.Vec3(spawnPos.x, spawnPos.y, spawnPos.z),
       velocity: new pc.Vec3(throwVel.x, throwVel.y, throwVel.z),
       angularVelocity: new pc.Vec3(8.5, 5.2, -6.4),
@@ -773,34 +1189,45 @@ export class CombatDirector {
     this.hudController.pushSystemToast('M67 FRAG', 'LIVE GRENADE OUT (1.6S)');
   }
 
-  private detonateFragGrenade(center: Vec3Like): void {
-    const blastRadiusM = 7.5;
-    const peakImpulseNs = 940.0;
-    const peakEnergyJ = 4400.0;
+  /**
+   * Shared high-explosive GHOUL + BVH physiology blast pipeline used by both thrown M67 Frag Grenades
+   * and detonating Red Hazard Barrels! Returns the number of newly killed combatants.
+   */
+  public applyExternalExplosionTrauma(
+    blast: BlastEvent,
+    sourceLabel = 'HAZARD BARREL'
+  ): number {
+    const center = blast.centerWorld;
+    const blastRadiusM = blast.radiusM;
+    const peakImpulseNs = blast.peakImpulseNs;
+    const peakEnergyJ = blast.peakEnergyJ;
 
     // 1. Visual Fireball, Shockwave Ring & Shrapnel Sparks
     this.spawnBlastVisualFx(center, blastRadiusM);
     this.fxManager.spawnArmorImpactSparks(add(center, vec3(0, 0.12, 0)), vec3(0, 1, 0));
     this.fxManager.spawnBoneShatterSparks(add(center, vec3(0, 0.18, 0)), vec3(0, 1, 0));
 
-    // 2. Camera Shake Attenuated by Viewer Distance
+    // 2. 3D Catastrophic Explosion Audio (with <= 4.5m ear-ringing tinnitus!)
+    if (this.combatAudio) {
+      const intensity = Math.min(2.0, Math.max(0.75, peakEnergyJ / 6000));
+      this.combatAudio.playExplosion(center, this.getViewerPosVec3(), intensity);
+    }
+
+    // 3. Camera Shake Attenuated by Viewer Distance
     if (this.onCameraShake) {
-      const viewerDist = distance(
-        center,
-        vec3(this.lastViewerWorldPos.x, this.lastViewerWorldPos.y, this.lastViewerWorldPos.z)
-      );
+      const viewerDist = distance(center, this.getViewerPosVec3());
       if (viewerDist < 34.0) {
         const proximity = Math.max(0.12, 1 - viewerDist / 34.0);
         this.onCameraShake(4.2 * proximity * proximity + 0.55, 0.44);
       }
     }
 
-    // 3. Wave 2 Destructible Cover Blast Hook (Brick / Concrete / Glass / Wood)
-    this.onExplosionBlast?.(center, blastRadiusM, peakImpulseNs, peakEnergyJ);
+    // 4. GHOUL Anatomical Shrapnel Trauma, BVH Organ/Vascular Laceration & 3D Ragdoll Launch
+    let newlyKilledCount = 0;
 
-    // 4. GHOUL Anatomical Shrapnel Trauma, Dismemberment & 3D Ragdoll Launch
     for (const target of this.targets) {
       const hs = target.healthState;
+      const wasAlive = hs.alive;
       const pelvisPos = hs.ragdollBones.PELVIS_GROIN.position;
       const distM = distance(center, pelvisPos);
       if (distM > blastRadiusM) continue;
@@ -813,11 +1240,14 @@ export class CombatDirector {
         peakImpulseNs,
         peakEnergyJ
       );
-      this.applyImpactFxAndState(target, blastReport, 'M67 FRAG');
+      this.applyImpactFxAndState(target, blastReport, sourceLabel, SYNTHETIC_SHRAPNEL_AMMO);
 
-      // Add extra upward/radial concussive lift on very close blasts (< 4.0m)
-      if (distM < 4.0 && hs.isRagdollActive) {
-        const closeLift = (1 - distM / 4.0) * 2.35;
+      if (wasAlive && !hs.alive) {
+        newlyKilledCount++;
+      }
+
+      if (distM < 4.5 && hs.isRagdollActive) {
+        const closeLift = (1 - distM / 4.5) * 2.55;
         const rawOut = sub(pelvisPos, center);
         const horizOut = vec3(rawOut.x, 0, rawOut.z);
         const outDir = length(horizOut) > 1e-3 ? normalize(horizOut) : vec3(0, 0, -1);
@@ -831,6 +1261,33 @@ export class CombatDirector {
         }
       }
     }
+
+    if (newlyKilledCount >= 2) {
+      this.tacticalAi?.grantBrutalKillReward('MULTI_KILL_BLAST');
+      this.mayhemDirector?.bulletTime.triggerKillPunch('MULTI_KILL_BLAST', 0.35);
+    }
+
+    return newlyKilledCount;
+  }
+
+  private detonateFragGrenade(center: Vec3Like): void {
+    const blastRadiusM = 7.5;
+    const peakImpulseNs = 940.0;
+    const peakEnergyJ = 4400.0;
+
+    const killedCount = this.applyExternalExplosionTrauma(
+      {
+        centerWorld: center,
+        radiusM: blastRadiusM,
+        peakImpulseNs,
+        peakEnergyJ,
+      },
+      'M67 FRAG'
+    );
+
+    // Wave 2 Destructible Cover & Sympathetic Barrel Chain-Reaction Hook
+    this.onExplosionBlast?.(center, blastRadiusM, peakImpulseNs, peakEnergyJ);
+    void killedCount;
   }
 
   private buildFragBlastReportForTarget(
@@ -848,20 +1305,21 @@ export class CombatDirector {
     const horizDir = length(horizDelta) > 1e-3 ? normalize(horizDelta) : vec3(0, 0, -1);
     const blastDir = normalize(vec3(horizDir.x, 0.45, horizDir.z));
 
-    const totalDamageHp = 245.0 * falloff;
+    const energyScale = Math.min(2.2, Math.max(1.0, peakEnergyJ / 4400.0));
+    const totalDamageHp = 245.0 * falloff * (0.75 + 0.25 * energyScale);
     const totalEnergyJ = peakEnergyJ * falloff;
     const isCloseLethal = distM < 3.5;
     const isLethalKill = isCloseLethal || totalDamageHp >= hs.currentHp;
 
     const exposedZones: GhoulZoneId[] = [
+      'TORSO_LOWER_ABDOMEN',
+      'TORSO_UPPER_THORAX',
+      'THIGH_LEFT',
+      'THIGH_RIGHT',
       'SHIN_LEFT',
       'SHIN_RIGHT',
       'KNEE_LEFT',
       'KNEE_RIGHT',
-      'THIGH_LEFT',
-      'THIGH_RIGHT',
-      'TORSO_LOWER_ABDOMEN',
-      'TORSO_UPPER_THORAX',
     ];
     const woundEvents: WoundChannelEvent[] = [];
     const zoneImpulses: Partial<Record<GhoulZoneId, Vec3Like>> = {};
@@ -873,7 +1331,7 @@ export class CombatDirector {
           distance(blastCenter, hs.ragdollBones[a].position) -
           distance(blastCenter, hs.ragdollBones[b].position)
       )
-      .slice(0, distM < 3.8 ? 5 : 3);
+      .slice(0, distM < 4.2 ? 5 : 3);
 
     for (const z of shrapnelZones) {
       const bonePos = hs.ragdollBones[z].position;
@@ -895,7 +1353,7 @@ export class CombatDirector {
         localExitOffset: vec3(0, 0, -0.03),
         impactDirectionWorld: segDir,
         pathLengthM: 0.08,
-        entryVelocityMs: 580 * falloff,
+        entryVelocityMs: Math.max(240, 620 * falloff),
         exitVelocityMs: 0,
         entryEnergyJ: wEnergy,
         exitEnergyJ: 0,
@@ -906,11 +1364,12 @@ export class CombatDirector {
         armorStopped: false,
         bluntTraumaJ: 0,
         boneFractured: distM < 4.8,
-        boneShattered: distM < 3.0,
-        organRuptured: distM < 2.8 && z === 'TORSO_LOWER_ABDOMEN',
+        boneShattered: distM < 3.2,
+        organRuptured:
+          distM < 3.2 && (z === 'TORSO_LOWER_ABDOMEN' || z === 'TORSO_UPPER_THORAX'),
         limbSensoryShock: true,
         limbSevered: false,
-        arterialSevered: distM < 3.4,
+        arterialSevered: distM < 3.8,
         deflectionAngleDeg: 0,
         physiologicalEffect: 'High-explosive fragmentation trauma',
       });
@@ -919,13 +1378,12 @@ export class CombatDirector {
     const dismembermentEvents: DismembermentEvent[] = [];
     const newlySeveredZones: GhoulZoneId[] = [];
 
-    if (distM < 3.3) {
-      // Closest intact lower limb gets blown clean off by ground-level frag blast!
+    if (distM < 3.4) {
       const candidateLimbs: GhoulZoneId[] =
-        distM < 2.0
+        distM < 2.2
           ? ['KNEE_LEFT', 'SHIN_RIGHT', 'FOREARM_LEFT']
           : ['SHIN_LEFT', 'SHIN_RIGHT'];
-      const maxSevers = distM < 2.0 ? 2 : 1;
+      const maxSevers = distM < 2.2 ? 2 : 1;
 
       for (const limbZone of candidateLimbs) {
         if (dismembermentEvents.length >= maxSevers) break;
@@ -953,7 +1411,7 @@ export class CombatDirector {
         });
       }
 
-      if (distM < 2.1 && hs.zoneGoreMode.TORSO_LOWER_ABDOMEN !== 'EVISCERATED') {
+      if (distM < 2.3 && hs.zoneGoreMode.TORSO_LOWER_ABDOMEN !== 'EVISCERATED') {
         const gutPos = hs.ragdollBones.TORSO_LOWER_ABDOMEN.position;
         dismembermentEvents.push({
           zone: 'TORSO_LOWER_ABDOMEN',
@@ -982,7 +1440,7 @@ export class CombatDirector {
       targetDistanceM: distM,
       pelletCount: shrapnelZones.length,
       muzzleEnergyJ: peakEnergyJ,
-      impactSpeedMs: 650 * falloff,
+      impactSpeedMs: Math.max(240, 650 * falloff),
       impactEnergyJ: totalEnergyJ,
       flightTimeAtImpactS: 0,
       bulletDropAtImpactCm: 0,
@@ -999,7 +1457,7 @@ export class CombatDirector {
         activationTimeS: 0,
         primaryHitZone,
         netRootImpulseWorld,
-        launchLiftVelocityMs: Math.min(1.25, 1.35 * falloff),
+        launchLiftVelocityMs: Math.min(1.35, 1.45 * falloff),
         estimatedLaunchDistanceM: 3.4 * falloff,
         zoneImpulses,
         netTorqueWorld: vec3(blastDir.z * -45 * falloff, 18 * falloff, blastDir.x * 45 * falloff),
@@ -1010,10 +1468,10 @@ export class CombatDirector {
       xRayHighlightPointWorld: copyVec3(pelvisPos),
       severedZones: newlySeveredZones,
       dismembermentEvents,
-      shatteredBones: distM < 3.6 ? ['Tibia & Fibula (Blast Fracture)'] : [],
-      rupturedOrgans: distM < 2.8 ? ['Pulmonary Blast Overpressure'] : [],
+      shatteredBones: distM < 3.8 ? ['Tibia & Fibula (Blast Fracture)'] : [],
+      rupturedOrgans: distM < 3.2 ? ['Pulmonary Blast Overpressure'] : [],
       combatantEffects: ['HE FRAGMENTATION BLAST'],
-      headgearKnockedOff: distM < 5.4,
+      headgearKnockedOff: distM < 5.6,
       weaponDisarmed: distM < 6.0,
       trajectorySamples: [],
     };
@@ -1067,6 +1525,7 @@ export class CombatDirector {
 
   private clearLiveGrenadesAndFlashes(): void {
     for (const g of this.activeGrenades) {
+      g.glbInstance?.destroy();
       g.entity.destroy();
     }
     this.activeGrenades.length = 0;
@@ -1155,6 +1614,7 @@ export class CombatDirector {
 
       if (g.fuseRemainingS <= 0) {
         const detCenter = vec3(g.position.x, g.position.y, g.position.z);
+        g.glbInstance?.destroy();
         g.entity.destroy();
         this.activeGrenades.splice(i, 1);
         this.detonateFragGrenade(detCenter);
@@ -1177,16 +1637,35 @@ export class CombatDirector {
       }
     }
 
-    // 3. Step 3D Articulated PBD Ragdoll Physics & Sync PS1/PS2 Combatants
+    // 3. Step Decoupled 8 Hz Physiology ECS + Systolic Pulsed Arterial/Venous Blood FX
+    this.physiologySystem.update(dt);
+    for (const t of this.targets) {
+      const physio = this.physiologySystem.getEntity(t.healthState.targetId);
+      if (physio) {
+        this.syncPhysiologyToHealthState(physio, t.healthState);
+      }
+    }
+    this.vascularFx.update(dt);
+
+    // 4. Step Tactical Hostile AI (cover peeking, burst tracers, trauma-degraded aim, player vitals)
+    if (this.tacticalAi) {
+      this.tacticalAi.update(
+        dt,
+        this.targets.map((t) => t.healthState),
+        this.getViewerPosVec3()
+      );
+    }
+
+    // 5. Step 3D Articulated PBD Ragdoll Physics & Sync Combatants
     for (const t of this.targets) {
       stepRagdollPhysics(t.healthState, dt, 0.0);
       t.syncFromHealthState(dt, totalElapsedTimeS);
     }
 
-    // 4. Project 3D Enemy Health Bars & Triage Status onto HUD Overlay
+    // 6. Project 3D Enemy Health Bars, Triage & Live Physiological Vitals onto HUD Overlay
     if (camera) {
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
+      const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+      const vh = typeof window !== 'undefined' ? window.innerHeight : 720;
       const cx = vw * 0.5;
       const cy = vh * 0.5;
       const entries: ProjectedTargetTriageEntry[] = [];
@@ -1242,7 +1721,21 @@ export class CombatDirector {
       }
 
       const focusedState = aimedTarget?.healthState ?? this.lastEngagedTarget?.healthState ?? null;
-      hudController.updateTriageOverlays(entries, focusedState);
+      const focusedPhysio = focusedState
+        ? this.physiologySystem.getEntity(focusedState.targetId) ?? null
+        : null;
+      hudController.updateTriageOverlays(entries, focusedState, focusedPhysio);
     }
+  }
+
+  public destroy(): void {
+    this.clearLiveGrenadesAndFlashes();
+    for (const t of this.targets) {
+      t.destroy();
+    }
+    this.targets.length = 0;
+    this.physiologySystem.reset();
+    this.vascularFx.destroy();
+    this.blastFireballMat.destroy();
   }
 }

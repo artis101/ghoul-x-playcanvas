@@ -18,6 +18,9 @@
 
       <!-- IN-GAME FPS HUD LAYER (100% NON-BLOCKING) -->
       <div id="fps-hud" class="fps-hud">
+        <!-- BULLET-TIME / KILL-PUNCH / DAMAGE SCREEN-EDGE VIGNETTE -->
+        <div id="bullet-time-vignette" class="bullet-time-vignette"></div>
+
         <!-- FLOATING 3D-PROJECTED ENEMY HEALTH & TRIAGE PLATES -->
         <div id="hud-world-triage-layer" class="hud-world-triage-layer"></div>
 
@@ -35,6 +38,10 @@
           </div>
           <div id="hud-target-armor-track" class="ttc-armor-track hidden">
             <div id="hud-target-armor-fill" class="ttc-armor-fill"></div>
+          </div>
+          <div id="hud-target-physio-row" class="ttc-physio-row">
+            <span id="hud-target-physio-vitals" class="ttc-physio-vitals">BP 120/80 mmHg • SpO2 99% • 72 BPM</span>
+            <span id="hud-target-physio-trauma" class="ttc-physio-trauma"></span>
           </div>
         </div>
 
@@ -72,23 +79,30 @@
 
         <!-- CENTER CONTEXT PROMPT (ONLY WHEN UNLOCKED OR WAVE CLEAR) -->
         <div id="hud-prompt" class="hud-prompt">
-          CLICK TO ENGAGE &nbsp;•&nbsp; WASD MOVE &nbsp;•&nbsp; RMB ADS &nbsp;•&nbsp; 1-4 WEAPON &nbsp;•&nbsp; B AMMO &nbsp;•&nbsp; G FRAG &nbsp;•&nbsp; R RELOAD &nbsp;•&nbsp; T WAVE
+          CLICK TO ENGAGE &nbsp;•&nbsp; WASD MOVE &nbsp;•&nbsp; RMB ADS &nbsp;•&nbsp; 1-4 WEAPON &nbsp;•&nbsp; B AMMO &nbsp;•&nbsp; G FRAG &nbsp;•&nbsp; Z REFLEX &nbsp;•&nbsp; X X-RAY &nbsp;•&nbsp; R RELOAD &nbsp;•&nbsp; T WAVE
         </div>
 
-        <!-- BOTTOM-LEFT: CLASSIC FPS HEALTH & ARMOR -->
+        <!-- BOTTOM-LEFT: CLASSIC FPS HEALTH, ARMOR & [Z] REFLEX -->
         <div class="hud-corner hud-bottom-left">
           <div class="vital-block">
             <span class="vital-icon vital-cross">+</span>
             <div class="vital-data">
               <span id="hud-health-val" class="vital-num">100</span>
-              <span class="vital-bar"><span class="vital-bar-fill health-fill"></span></span>
+              <span class="vital-bar"><span id="hud-health-fill" class="vital-bar-fill health-fill"></span></span>
             </div>
           </div>
           <div class="vital-block">
             <span class="vital-icon vital-shield">⛨</span>
             <div class="vital-data">
-              <span id="hud-armor-val" class="vital-num armor-num">100</span>
-              <span class="vital-bar"><span class="vital-bar-fill armor-fill"></span></span>
+              <span id="hud-armor-val" class="vital-num armor-num">50</span>
+              <span class="vital-bar"><span id="hud-armor-fill" class="vital-bar-fill armor-fill"></span></span>
+            </div>
+          </div>
+          <div class="vital-block reflex-block">
+            <span class="vital-icon vital-reflex">⚡</span>
+            <div class="vital-data">
+              <span id="hud-reflex-val" class="vital-num reflex-num">100%</span>
+              <span class="vital-bar"><span id="hud-reflex-fill" class="vital-bar-fill reflex-fill"></span></span>
             </div>
           </div>
         </div>

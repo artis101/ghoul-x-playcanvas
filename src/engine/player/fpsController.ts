@@ -11,6 +11,7 @@ export interface FpsInputCallbacks {
   onSpawnWave: () => void;
   onThrowGrenade: () => void;
   onToggleXRay: () => void;
+  onToggleBulletTime?: () => void;
 }
 
 export class FpsController {
@@ -152,6 +153,8 @@ export class FpsController {
         this.setAimDownSights(!this.isAimingDownSights, this.getCurrentWeapon());
       } else if (e.code === 'KeyX') {
         this.callbacks.onToggleXRay();
+      } else if (e.code === 'KeyZ' && !e.repeat) {
+        this.callbacks.onToggleBulletTime?.();
       }
     });
 

@@ -1,6 +1,12 @@
 import * as pc from 'playcanvas';
 import { WeaponSpec, AmmoSpec } from '../../contracts/ballistics.ts';
 import { WEAPONS, WEAPON_M590 } from '../../core/ballistics/weapons.ts';
+import {
+  GlbModelRegistry,
+  WEAPON_ASSET_IDS,
+  WeaponAssetId,
+  WeaponGlbInstance,
+} from '../assets/glbLoader.ts';
 import { EngineMaterialPalette } from '../materials.ts';
 import { populatePlayerWeaponViewmodel } from '../retroMeshBuilder.ts';
 import { HudController } from '../hudController.ts';
@@ -19,9 +25,19 @@ export const WEAPON_CAPACITIES: Record<string, { magCap: number; reserve: number
   m4a1_carbine: { magCap: 30, reserve: 120 },
 };
 
+function toWeaponAssetId(weaponId: string): WeaponAssetId | null {
+  for (const candidate of WEAPON_ASSET_IDS) {
+    if (candidate === weaponId) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 export class ArsenalManager {
   public readonly weaponViewmodelEntity: pc.Entity;
   public muzzleFlashEntity: pc.Entity;
+  public activeWeaponGlb: WeaponGlbInstance | null = null;
   public currentWeaponIndex = 0;
   public currentWeapon: WeaponSpec = WEAPON_M590;
   public currentAmmo: AmmoSpec = WEAPON_M590.defaultAmmo;
@@ -32,30 +48,105 @@ export class ArsenalManager {
   private readonly materials: EngineMaterialPalette;
   private readonly hudController: HudController;
   private readonly onWeaponSwitched?: (weapon: WeaponSpec) => void;
-  private muzzleFlashTimeout: number | null = null;
+  private glbRegistry: GlbModelRegistry | null = null;
+  private muzzleFlashTimeout: ReturnType<typeof globalThis.setTimeout> | null = null;
 
   constructor(
     cameraEntity: pc.Entity,
     materials: EngineMaterialPalette,
     hudController: HudController,
-    onWeaponSwitched?: (weapon: WeaponSpec) => void
+    onWeaponSwitched?: (weapon: WeaponSpec) => void,
+    glbRegistry?: GlbModelRegistry | null
   ) {
     this.materials = materials;
     this.hudController = hudController;
     this.onWeaponSwitched = onWeaponSwitched;
+    this.glbRegistry = glbRegistry ?? null;
 
     this.weaponViewmodelEntity = new pc.Entity('WeaponViewmodel');
     this.weaponViewmodelEntity.setPosition(0.24, -0.22, -0.48);
     cameraEntity.addChild(this.weaponViewmodelEntity);
 
-    this.muzzleFlashEntity = populatePlayerWeaponViewmodel(
+    this.muzzleFlashEntity = this.rebuildActiveViewmodel();
+
+    this.initAmmoInventory();
+    this.syncWeaponHud();
+  }
+
+  /**
+   * Connects or upgrades the viewmodel arsenal to use sculpted & animated Blender `.glb` weapon models
+   * (`m590_shotgun.glb`, `silver_talon_50ae.glb`, `msg90_sniper.glb`, `m4a1_carbine.glb`) once loaded.
+   */
+  public attachGlbRegistry(registry: GlbModelRegistry): void {
+    this.glbRegistry = registry;
+    this.muzzleFlashEntity = this.rebuildActiveViewmodel();
+  }
+
+  public rebuildActiveViewmodel(): pc.Entity {
+    if (this.activeWeaponGlb) {
+      this.activeWeaponGlb.destroy();
+      this.activeWeaponGlb = null;
+    }
+
+    while (this.weaponViewmodelEntity.children.length > 0) {
+      this.weaponViewmodelEntity.children[0].destroy();
+    }
+
+    const assetId = toWeaponAssetId(this.currentWeapon.id);
+    if (assetId && this.glbRegistry && this.glbRegistry.isLoaded(assetId)) {
+      try {
+        const glbInst = this.glbRegistry.instantiateWeapon(assetId, {
+          castShadows: false,
+          receiveShadows: true,
+        });
+        this.activeWeaponGlb = glbInst;
+        this.weaponViewmodelEntity.addChild(glbInst.rootEntity);
+
+        const flash = this.createMuzzleFlashStarEntity();
+        glbInst.muzzleNode.addChild(flash);
+        return flash;
+      } catch {
+        this.activeWeaponGlb = null;
+      }
+    }
+
+    return populatePlayerWeaponViewmodel(
       this.weaponViewmodelEntity,
       this.currentWeapon,
       this.materials
     );
+  }
 
-    this.initAmmoInventory();
-    this.syncWeaponHud();
+  private createMuzzleFlashStarEntity(): pc.Entity {
+    const flashRoot = new pc.Entity('MuzzleFlashStar');
+    const flashMat = new pc.StandardMaterial();
+    flashMat.name = 'glbMuzzleFlashStarMat';
+    flashMat.diffuse = new pc.Color(1.0, 0.82, 0.32);
+    flashMat.emissive = new pc.Color(1.0, 0.76, 0.22);
+    flashMat.blendType = pc.BLEND_ADDITIVEALPHA;
+    flashMat.opacity = 0.92;
+    flashMat.depthWrite = false;
+    flashMat.cull = pc.CULLFACE_NONE;
+    flashMat.update();
+
+    const finOffsets: ReadonlyArray<readonly [number, number, number]> = [
+      [0.14, 0.035, 0.035],
+      [0.035, 0.14, 0.035],
+      [0.04, 0.04, 0.18],
+    ];
+    for (let i = 0; i < finOffsets.length; i++) {
+      const fin = new pc.Entity(`FlashFin_${i}`);
+      fin.addComponent('render', {
+        type: 'box',
+        material: flashMat,
+        castShadows: false,
+      });
+      fin.setLocalScale(finOffsets[i][0], finOffsets[i][1], finOffsets[i][2]);
+      flashRoot.addChild(fin);
+    }
+    flashRoot.setLocalPosition(0, 0, -0.04);
+    flashRoot.enabled = false;
+    return flashRoot;
   }
 
   public initAmmoInventory(): void {
@@ -90,15 +181,11 @@ export class ArsenalManager {
     this.reloadTimerS = 0;
 
     if (this.muzzleFlashTimeout !== null) {
-      window.clearTimeout(this.muzzleFlashTimeout);
+      globalThis.clearTimeout(this.muzzleFlashTimeout);
       this.muzzleFlashTimeout = null;
     }
 
-    this.muzzleFlashEntity = populatePlayerWeaponViewmodel(
-      this.weaponViewmodelEntity,
-      this.currentWeapon,
-      this.materials
-    );
+    this.muzzleFlashEntity = this.rebuildActiveViewmodel();
 
     this.onWeaponSwitched?.(this.currentWeapon);
     this.syncWeaponHud();
@@ -136,11 +223,13 @@ export class ArsenalManager {
     this.fireCooldownTimerS = 60 / this.currentWeapon.fireRateRpm;
     this.syncWeaponHud();
 
+    this.activeWeaponGlb?.playFire(1.0);
+
     this.muzzleFlashEntity.enabled = true;
     if (this.muzzleFlashTimeout !== null) {
-      window.clearTimeout(this.muzzleFlashTimeout);
+      globalThis.clearTimeout(this.muzzleFlashTimeout);
     }
-    this.muzzleFlashTimeout = window.setTimeout(() => {
+    this.muzzleFlashTimeout = globalThis.setTimeout(() => {
       if (this.muzzleFlashEntity) {
         this.muzzleFlashEntity.enabled = false;
       }
@@ -148,7 +237,7 @@ export class ArsenalManager {
     }, 42);
 
     if (inv.mag === 0) {
-      window.setTimeout(() => this.startReload(false), 220);
+      globalThis.setTimeout(() => this.startReload(false), 220);
     }
 
     return true;
@@ -174,6 +263,7 @@ export class ArsenalManager {
     }
 
     this.reloadTimerS = 0.65;
+    this.activeWeaponGlb?.playReload(1.15);
     this.syncWeaponHud();
   }
 
@@ -205,6 +295,7 @@ export class ArsenalManager {
           inv.mag += loaded;
           inv.reserve -= loaded;
         }
+        this.activeWeaponGlb?.playIdle(0.08);
         this.syncWeaponHud();
       }
     }

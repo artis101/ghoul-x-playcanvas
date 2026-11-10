@@ -4,11 +4,14 @@ import {
   ShotSimulationReport,
   TargetHealthState,
 } from '../contracts/ballistics.ts';
+import type { PhysiologicalEntityState } from '../contracts/physiology.ts';
 import { WEAPONS } from '../core/ballistics/weapons.ts';
 import {
   CombatantTriageStatus,
   computeCombatantTriageStatus,
 } from '../core/ballistics/solver.ts';
+import type { PlayerCombatVitals } from './ai/tacticalCombatAi.ts';
+import type { BulletTimeVignetteState } from './fx/mayhemDirector.ts';
 
 export interface ProjectedTargetTriageEntry {
   state: TargetHealthState;
@@ -65,9 +68,17 @@ function triageCardClass(status: CombatantTriageStatus): string {
   }
 }
 
+function queryEl(id: string): HTMLElement | null {
+  if (typeof document === 'undefined' || typeof document.getElementById !== 'function') {
+    return null;
+  }
+  return document.getElementById(id);
+}
+
 /**
- * Minimalist In-Game Tactical FPS HUD Controller (Soldier of Fortune / CS / MGS style).
- * Zero debug panels or blocking chrome — pure crosshair, hitmarker, enemy health/triage overlay, ammo/vitals corners, and fading killfeed.
+ * Minimalist In-Game Tactical FPS HUD Controller (Soldier of Fortune / F.E.A.R. / CS style).
+ * Zero debug panels or blocking chrome — pure crosshair, hitmarker, enemy health/triage + BP/SpO2 overlay,
+ * player vitals + Reflex slow-mo energy bar, Bullet-Time edge vignette, and fading killfeed.
  */
 export class HudController {
   private crosshairEl: HTMLElement | null = null;
@@ -77,6 +88,8 @@ export class HudController {
   private scopeZoomLabelEl: HTMLElement | null = null;
   private scopeRangeLabelEl: HTMLElement | null = null;
   private scopeDropLabelEl: HTMLElement | null = null;
+
+  private vignetteEl: HTMLElement | null = null;
 
   private worldTriageLayerEl: HTMLElement | null = null;
   private worldPlates = new Map<string, WorldTriagePlateDom>();
@@ -88,6 +101,15 @@ export class HudController {
   private targetHpTextEl: HTMLElement | null = null;
   private targetArmorTrackEl: HTMLElement | null = null;
   private targetArmorFillEl: HTMLElement | null = null;
+  private targetPhysioVitalsEl: HTMLElement | null = null;
+  private targetPhysioTraumaEl: HTMLElement | null = null;
+
+  private healthValEl: HTMLElement | null = null;
+  private healthFillEl: HTMLElement | null = null;
+  private armorValEl: HTMLElement | null = null;
+  private armorFillEl: HTMLElement | null = null;
+  private reflexValEl: HTMLElement | null = null;
+  private reflexFillEl: HTMLElement | null = null;
 
   private magCountEl: HTMLElement | null = null;
   private reserveCountEl: HTMLElement | null = null;
@@ -95,35 +117,50 @@ export class HudController {
   private ammoCaliberEl: HTMLElement | null = null;
   private killfeedEl: HTMLElement | null = null;
   private promptEl: HTMLElement | null = null;
-  private slotPips: NodeListOf<HTMLElement>;
+  private slotPips: HTMLElement[] = [];
 
-  private hitmarkerTimeout: number | null = null;
+  private hitmarkerTimeout: ReturnType<typeof globalThis.setTimeout> | null = null;
+  private damageFlashAlpha = 0;
+  private lastBulletTimeCss = 'none';
 
   constructor() {
-    this.crosshairEl = document.getElementById('crosshair-standard');
-    this.shotgunRingEl = document.getElementById('shotgun-spread-ring');
-    this.hitmarkerEl = document.getElementById('hitmarker');
-    this.sniperScopeMaskEl = document.getElementById('sniper-scope-mask');
-    this.scopeZoomLabelEl = document.getElementById('scope-zoom-label');
-    this.scopeRangeLabelEl = document.getElementById('scope-range-label');
-    this.scopeDropLabelEl = document.getElementById('scope-drop-label');
+    this.crosshairEl = queryEl('crosshair-standard');
+    this.shotgunRingEl = queryEl('shotgun-spread-ring');
+    this.hitmarkerEl = queryEl('hitmarker');
+    this.sniperScopeMaskEl = queryEl('sniper-scope-mask');
+    this.scopeZoomLabelEl = queryEl('scope-zoom-label');
+    this.scopeRangeLabelEl = queryEl('scope-range-label');
+    this.scopeDropLabelEl = queryEl('scope-drop-label');
 
-    this.worldTriageLayerEl = document.getElementById('hud-world-triage-layer');
-    this.targetCardEl = document.getElementById('hud-target-triage-card');
-    this.targetNameEl = document.getElementById('hud-target-name');
-    this.targetTriageBadgeEl = document.getElementById('hud-target-triage-badge');
-    this.targetHpFillEl = document.getElementById('hud-target-hp-fill');
-    this.targetHpTextEl = document.getElementById('hud-target-hp-text');
-    this.targetArmorTrackEl = document.getElementById('hud-target-armor-track');
-    this.targetArmorFillEl = document.getElementById('hud-target-armor-fill');
+    this.vignetteEl = queryEl('bullet-time-vignette');
 
-    this.magCountEl = document.getElementById('hud-mag-count');
-    this.reserveCountEl = document.getElementById('hud-reserve-count');
-    this.weaponNameEl = document.getElementById('hud-weapon-name');
-    this.ammoCaliberEl = document.getElementById('hud-ammo-caliber');
-    this.killfeedEl = document.getElementById('hud-killfeed');
-    this.promptEl = document.getElementById('hud-prompt');
-    this.slotPips = document.querySelectorAll<HTMLElement>('.slot-pip');
+    this.worldTriageLayerEl = queryEl('hud-world-triage-layer');
+    this.targetCardEl = queryEl('hud-target-triage-card');
+    this.targetNameEl = queryEl('hud-target-name');
+    this.targetTriageBadgeEl = queryEl('hud-target-triage-badge');
+    this.targetHpFillEl = queryEl('hud-target-hp-fill');
+    this.targetHpTextEl = queryEl('hud-target-hp-text');
+    this.targetArmorTrackEl = queryEl('hud-target-armor-track');
+    this.targetArmorFillEl = queryEl('hud-target-armor-fill');
+    this.targetPhysioVitalsEl = queryEl('hud-target-physio-vitals');
+    this.targetPhysioTraumaEl = queryEl('hud-target-physio-trauma');
+
+    this.healthValEl = queryEl('hud-health-val');
+    this.healthFillEl = queryEl('hud-health-fill');
+    this.armorValEl = queryEl('hud-armor-val');
+    this.armorFillEl = queryEl('hud-armor-fill');
+    this.reflexValEl = queryEl('hud-reflex-val');
+    this.reflexFillEl = queryEl('hud-reflex-fill');
+
+    this.magCountEl = queryEl('hud-mag-count');
+    this.reserveCountEl = queryEl('hud-reserve-count');
+    this.weaponNameEl = queryEl('hud-weapon-name');
+    this.ammoCaliberEl = queryEl('hud-ammo-caliber');
+    this.killfeedEl = queryEl('hud-killfeed');
+    this.promptEl = queryEl('hud-prompt');
+    if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+      this.slotPips = Array.from(document.querySelectorAll<HTMLElement>('.slot-pip'));
+    }
   }
 
   public updateWeaponHud(
@@ -166,6 +203,66 @@ export class HudController {
     }
   }
 
+  public updatePlayerVitals(vitals: Readonly<PlayerCombatVitals>, dt = 0.016): void {
+    const hpRounded = Math.max(0, Math.round(vitals.health));
+    const armorRounded = Math.max(0, Math.round(vitals.armor));
+    const hpPct = Math.max(0, Math.min(100, (vitals.health / Math.max(1, vitals.maxHealth)) * 100));
+    const armorPct = Math.max(0, Math.min(100, (vitals.armor / Math.max(1, vitals.maxArmor)) * 100));
+
+    if (this.healthValEl) {
+      this.healthValEl.textContent = `${hpRounded}`;
+    }
+    if (this.healthFillEl) {
+      this.healthFillEl.style.width = `${hpPct.toFixed(1)}%`;
+    }
+    if (this.armorValEl) {
+      this.armorValEl.textContent = `${armorRounded}`;
+    }
+    if (this.armorFillEl) {
+      this.armorFillEl.style.width = `${armorPct.toFixed(1)}%`;
+    }
+
+    if (this.damageFlashAlpha > 0) {
+      this.damageFlashAlpha = Math.max(0, this.damageFlashAlpha - dt * 2.8);
+      this.refreshVignetteOverlay();
+    }
+  }
+
+  public triggerPlayerDamageFlash(): void {
+    this.damageFlashAlpha = 0.42;
+    this.refreshVignetteOverlay();
+  }
+
+  public updateBulletTimeHud(state: BulletTimeVignetteState): void {
+    const pct = Math.max(0, Math.min(100, state.reflexEnergyPct));
+    if (this.reflexValEl) {
+      this.reflexValEl.textContent =
+        state.active || state.killPunchActive
+          ? `${state.timeScale.toFixed(2)}x`
+          : `${Math.round(pct)}%`;
+      this.reflexValEl.classList.toggle('active', state.active || state.killPunchActive);
+    }
+    if (this.reflexFillEl) {
+      this.reflexFillEl.style.width = `${pct.toFixed(1)}%`;
+    }
+
+    this.lastBulletTimeCss = state.cssBoxShadow;
+    this.refreshVignetteOverlay();
+  }
+
+  private refreshVignetteOverlay(): void {
+    if (!this.vignetteEl) return;
+    if (this.damageFlashAlpha > 0.01) {
+      const dmgShadow = `inset 0 0 88px rgba(255, 42, 58, ${this.damageFlashAlpha.toFixed(3)})`;
+      this.vignetteEl.style.boxShadow =
+        this.lastBulletTimeCss !== 'none'
+          ? `${dmgShadow}, ${this.lastBulletTimeCss}`
+          : dmgShadow;
+    } else {
+      this.vignetteEl.style.boxShadow = this.lastBulletTimeCss;
+    }
+  }
+
   public setCrosshairBloom(scaleFactor: number, hidden = false): void {
     if (!this.crosshairEl) return;
     this.crosshairEl.style.opacity = hidden ? '0' : '1';
@@ -180,19 +277,20 @@ export class HudController {
     this.hitmarkerEl.classList.add('active');
 
     if (this.hitmarkerTimeout !== null) {
-      window.clearTimeout(this.hitmarkerTimeout);
+      globalThis.clearTimeout(this.hitmarkerTimeout);
     }
-    this.hitmarkerTimeout = window.setTimeout(() => {
+    this.hitmarkerTimeout = globalThis.setTimeout(() => {
       this.hitmarkerEl?.classList.remove('active');
     }, resolved === 'LETHAL' ? 170 : 105);
   }
 
   public updateTriageOverlays(
     entries: ProjectedTargetTriageEntry[],
-    focusedTarget: TargetHealthState | null
+    focusedTarget: TargetHealthState | null,
+    focusedPhysiology?: PhysiologicalEntityState | null
   ): void {
     // 1. Update floating 3D-projected health bars & triage plates above each combatant
-    if (this.worldTriageLayerEl) {
+    if (this.worldTriageLayerEl && typeof document !== 'undefined') {
       const seenRefs = new Set<string>();
 
       for (const entry of entries) {
@@ -276,7 +374,7 @@ export class HudController {
       }
     }
 
-    // 2. Update top-center focused target Health Bar & Triage Card
+    // 2. Update top-center focused target Health Bar, Triage & Hemodynamic Telemetry Card
     if (!this.targetCardEl) return;
     if (!focusedTarget) {
       this.targetCardEl.classList.add('hidden');
@@ -317,6 +415,58 @@ export class HudController {
         this.targetArmorTrackEl.classList.add('hidden');
       }
     }
+
+    if (this.targetPhysioVitalsEl) {
+      const sysBp = focusedPhysiology
+        ? Math.round(focusedPhysiology.systolicBpMmHg)
+        : Math.round(focusedTarget.systolicBpMmHg);
+      const diaBp = focusedPhysiology
+        ? Math.round(focusedPhysiology.diastolicBpMmHg)
+        : Math.round(focusedTarget.systolicBpMmHg * 0.67);
+      const spo2 = focusedPhysiology
+        ? Math.round(focusedPhysiology.oxygenSaturationPct)
+        : Math.round(focusedTarget.oxygenSaturationPct);
+      const hr = focusedPhysiology
+        ? Math.round(focusedPhysiology.heartRateBpm)
+        : Math.round(focusedTarget.heartRateBpm);
+      const bloodMl = focusedPhysiology
+        ? Math.round(focusedPhysiology.bloodVolumeMl)
+        : Math.round(focusedTarget.bloodVolumeMl);
+      this.targetPhysioVitalsEl.textContent = focusedTarget.alive
+        ? `BP ${sysBp}/${diaBp} • SpO2 ${spo2}% • ${hr} BPM • ${bloodMl}mL`
+        : `BP 0/0 • SpO2 ${spo2}% • ASYSTOLE (${bloodMl}mL)`;
+    }
+
+    if (this.targetPhysioTraumaEl) {
+      let traumaTag = '';
+      let isCritical = false;
+      if (!focusedTarget.alive) {
+        traumaTag =
+          focusedPhysiology && focusedPhysiology.causeOfDeath !== 'NONE'
+            ? focusedPhysiology.causeOfDeath.replace(/_/g, ' ')
+            : 'KIA';
+        isCritical = true;
+      } else if (focusedPhysiology) {
+        if (focusedPhysiology.pneumothoraxState === 'TENSION_PNEUMOTHORAX') {
+          traumaTag = 'TENSION PNEUMOTHORAX';
+          isCritical = true;
+        } else if (focusedPhysiology.shockStage === 'CLASS_III' || focusedPhysiology.shockStage === 'CLASS_IV') {
+          traumaTag = `SHOCK ${focusedPhysiology.shockStage.replace('_', ' ')}`;
+          isCritical = true;
+        } else if (focusedPhysiology.effectiveBleedRateMlPerSec >= 35) {
+          traumaTag = `ARTERIAL BLEED -${Math.round(focusedPhysiology.effectiveBleedRateMlPerSec)}mL/s`;
+          isCritical = true;
+        } else if (focusedPhysiology.pneumothoraxState === 'OPEN_PNEUMOTHORAX') {
+          traumaTag = 'SUCKING CHEST WOUND';
+        } else if (focusedPhysiology.effectiveBleedRateMlPerSec >= 4) {
+          traumaTag = `VENOUS OOZE -${Math.round(focusedPhysiology.effectiveBleedRateMlPerSec)}mL/s`;
+        } else if (focusedPhysiology.fracturedBones.size > 0) {
+          traumaTag = 'CORTICAL FRACTURE';
+        }
+      }
+      this.targetPhysioTraumaEl.textContent = traumaTag;
+      this.targetPhysioTraumaEl.classList.toggle('critical', isCritical);
+    }
   }
 
   public pushCombatFeed(
@@ -326,7 +476,7 @@ export class HudController {
     wasAliveBefore: boolean,
     isAliveAfter: boolean
   ): void {
-    if (!this.killfeedEl || !report.hitTarget) return;
+    if (!this.killfeedEl || !report.hitTarget || typeof document === 'undefined') return;
 
     const cleanTarget = targetName.split(' (')[0];
     const killedNow = wasAliveBefore && !isAliveAfter;
@@ -365,7 +515,7 @@ export class HudController {
   }
 
   private addFeedRow(subject: string, tag: string, outcome: string, isLethal: boolean): void {
-    if (!this.killfeedEl) return;
+    if (!this.killfeedEl || typeof document === 'undefined') return;
 
     const item = document.createElement('div');
     item.className = `killfeed-item${isLethal ? ' lethal' : ''}`;
@@ -380,9 +530,9 @@ export class HudController {
       this.killfeedEl.firstElementChild.remove();
     }
 
-    window.setTimeout(() => {
+    globalThis.setTimeout(() => {
       item.style.opacity = '0';
-      window.setTimeout(() => item.remove(), 360);
+      globalThis.setTimeout(() => item.remove(), 360);
     }, 3100);
   }
 
@@ -391,7 +541,7 @@ export class HudController {
 
     if (!isPointerLocked) {
       this.promptEl.textContent =
-        'CLICK TO ENGAGE  •  WASD MOVE  •  RMB ADS  •  1-4 WEAPON  •  B AMMO  •  G FRAG  •  R RELOAD  •  T WAVE';
+        'CLICK TO ENGAGE  •  WASD MOVE  •  RMB ADS  •  1-4 WEAPON  •  B AMMO  •  G FRAG  •  Z REFLEX  •  X X-RAY  •  R RELOAD  •  T WAVE';
       this.promptEl.style.opacity = '1';
     } else if (allHostilesDown) {
       this.promptEl.textContent = 'AREA CLEAR  —  PRESS [T] FOR NEXT HOSTILE SQUAD';

@@ -331,6 +331,37 @@ body,
 
 .armor-fill {
   background: var(--hud-cyan);
+  transition: width 0.08s linear;
+}
+
+.health-fill {
+  transition: width 0.08s linear;
+}
+
+.vital-reflex {
+  color: #7ee8ff;
+  font-size: 18px;
+}
+
+.reflex-num {
+  font-size: 20px;
+  color: #aef2ff;
+}
+
+.reflex-num.active {
+  color: var(--hud-amber);
+}
+
+.reflex-fill {
+  background: linear-gradient(90deg, #3ecbff, #9df5ff);
+  transition: width 0.06s linear;
+}
+
+.bullet-time-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: box-shadow 0.08s linear;
 }
 
 /* BOTTOM-RIGHT AMMO & WEAPON */
@@ -593,6 +624,29 @@ body,
   width: 100%;
   background: var(--hud-cyan);
   transition: width 0.08s linear;
+}
+
+.ttc-physio-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 5px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: rgba(214, 244, 255, 0.86);
+}
+
+.ttc-physio-trauma {
+  color: var(--hud-amber);
+  font-weight: 700;
+}
+
+.ttc-physio-trauma.critical {
+  color: var(--hud-crimson);
 }
 
 /* SHARED TRIAGE COLOR PALETTE */
