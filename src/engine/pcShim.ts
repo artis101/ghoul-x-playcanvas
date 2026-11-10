@@ -78,10 +78,12 @@ export class Vec3 {
 }
 
 export class StandardMaterial {
+  name = '';
   diffuse = new Color(0.8, 0.8, 0.8);
   specular = new Color(0.2, 0.2, 0.2);
   emissive = new Color(0, 0, 0);
   emissiveIntensity = 1.0;
+  shininess = 32;
   metalness = 0.0;
   gloss = 0.5;
   useMetalness = false;
@@ -216,8 +218,11 @@ export class Entity {
       return;
     }
     if (this.parent && this.parent.parent !== null) {
-      const pPos = this.parent.getPosition();
-      this._localPos.set(x - pPos.x, y - pPos.y, z - pPos.z);
+      const invParent = mat4InvertRigidOrAffine(this.parent.getWorldMatrix());
+      const lx = invParent[0] * x + invParent[4] * y + invParent[8] * z + invParent[12];
+      const ly = invParent[1] * x + invParent[5] * y + invParent[9] * z + invParent[13];
+      const lz = invParent[2] * x + invParent[6] * y + invParent[10] * z + invParent[14];
+      this._localPos.set(lx, ly, lz);
     } else {
       this._localPos.set(x, y, z);
     }
@@ -237,10 +242,35 @@ export class Entity {
   }
 
   setEulerAngles(x: number | Vec3, y = 0, z = 0): void {
-    this.setLocalEulerAngles(x, y, z);
+    if (x instanceof Vec3) {
+      this.setEulerAngles(x.x, x.y, x.z);
+      return;
+    }
+    if (this.parent && this.parent.parent !== null) {
+      const pEuler = this.parent.getEulerAngles();
+      this._localEuler.set(x - pEuler.x, y - pEuler.y, z - pEuler.z);
+    } else {
+      this._localEuler.set(x, y, z);
+    }
+  }
+
+  rotate(x: number, y: number, z: number): void {
+    this._localEuler.x += x;
+    this._localEuler.y += y;
+    this._localEuler.z += z;
+  }
+
+  rotateLocal(x: number, y: number, z: number): void {
+    this._localEuler.x += x;
+    this._localEuler.y += y;
+    this._localEuler.z += z;
   }
 
   getEulerAngles(): Vec3 {
+    if (this.parent && this.parent.parent !== null) {
+      const p = this.parent.getEulerAngles();
+      return new Vec3(p.x + this._localEuler.x, p.y + this._localEuler.y, p.z + this._localEuler.z);
+    }
     return this._localEuler.clone();
   }
 
@@ -436,7 +466,7 @@ export class Application {
     }
   }
 
-  drawLine(p1: Vec3, p2: Vec3, color: Color = Color.YELLOW): void {
+  drawLine(p1: Vec3, p2: Vec3, color: Color = Color.YELLOW, _depthTest = true): void {
     this.pendingLines.push(p1.x, p1.y, p1.z, color.r, color.g, color.b);
     this.pendingLines.push(p2.x, p2.y, p2.z, color.r, color.g, color.b);
   }
@@ -458,7 +488,7 @@ export class Application {
 
   private renderFrame(): void {
     const gl = this.gl;
-    let camEntity: Entity | null = null;
+    let camEntity: Entity | null = null as Entity | null;
     const opaqueList: Entity[] = [];
     const transparentList: Entity[] = [];
 
@@ -478,18 +508,19 @@ export class Application {
     };
     traverse(this.root);
 
-    if (!camEntity || !camEntity.camera) return;
-    const cam = (camEntity as Entity).camera!;
+    const activeCamEntity = camEntity as Entity | null;
+    if (!activeCamEntity || !activeCamEntity.camera) return;
+    const cam = activeCamEntity.camera;
     gl.clearColor(cam.clearColor.r, cam.clearColor.g, cam.clearColor.b, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.DEPTH_TEST);
 
     const aspect = this.canvas.width / Math.max(1, this.canvas.height);
     const proj = mat4Perspective(cam.fov, aspect, cam.nearClip, cam.farClip);
-    const camWorld = (camEntity as Entity).getWorldMatrix();
+    const camWorld = activeCamEntity.getWorldMatrix();
     const view = mat4InvertRigidOrAffine(camWorld);
     const vp = mat4Multiply(proj, view);
-    const camPos = (camEntity as Entity).getPosition();
+    const camPos = activeCamEntity.getPosition();
 
     gl.useProgram(this.meshProgram);
     const uMVP = gl.getUniformLocation(this.meshProgram, 'uMVP');

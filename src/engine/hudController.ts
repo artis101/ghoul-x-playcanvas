@@ -401,7 +401,7 @@ export class HudController {
     const title = document.createElement('span');
     title.className = 'wound-entry-title';
 
-    if (report.ammoId.includes('BUCKSHOT')) {
+    if (report.pelletCount > 1 || report.ammoId.includes('BUCK')) {
       title.textContent = `12G BUCKSHOT BLAST (${report.pelletCount} PELLETS)`;
     } else {
       title.textContent = `${report.weaponId.toUpperCase()} // ${report.ammoId}`;

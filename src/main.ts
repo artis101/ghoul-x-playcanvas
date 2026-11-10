@@ -4,15 +4,14 @@ import {
   AmmoSpec,
   EnvironmentState,
   GhoulZoneId,
-  TargetHealthState,
+  Vec3Like,
 } from './contracts/ballistics.ts';
-import { vec3, copyVec3, normalize, sub } from './core/ballistics/vec3.ts';
+import { vec3, normalize, sub } from './core/ballistics/vec3.ts';
 import {
-  WEAPONS,
   WEAPON_M590,
   WEAPON_SILVER_TALON,
   WEAPON_MSG90,
-  WEAPON_M4A1,
+  AMMO_12G_FLECHETTE_SLUG,
   DEFAULT_ENVIRONMENT,
 } from './core/ballistics/weapons.ts';
 import { createTargetHealthState } from './core/ghoul/anatomy.ts';
@@ -20,6 +19,8 @@ import {
   simulateShot,
   applyShotReportToTarget,
   stepRagdollPhysics,
+  targetLocalToWorld,
+  computeBallisticZeroAimDirection,
 } from './core/ballistics/solver.ts';
 import { getOrCreateMaterials, EngineMaterialPalette } from './engine/materials.ts';
 import { GhoulMannequinEntity } from './engine/mannequin.ts';
@@ -64,6 +65,23 @@ const TARGET_CONFIGS: RangeTargetConfig[] = [
   },
 ];
 
+const ANATOMICAL_AIM_CENTERS: Partial<Record<GhoulZoneId, Vec3Like>> = {
+  TORSO_UPPER_THORAX: vec3(-0.02, 1.33, 0.01), // Myocardium / Heart center
+  HEAD_CRANIUM: vec3(0, 1.70, 0), // Cranial calvarium & brain center
+  HEAD_FACE_JAW: vec3(0, 1.62, 0.06),
+  NECK_CERVICAL: vec3(0, 1.54, 0),
+  TORSO_LOWER_ABDOMEN: vec3(0, 1.13, 0),
+  PELVIS_GROIN: vec3(0, 0.95, 0),
+  UPPER_ARM_LEFT: vec3(-0.29, 1.28, 0),
+  UPPER_ARM_RIGHT: vec3(0.29, 1.28, 0),
+  FOREARM_LEFT: vec3(-0.33, 1.02, 0),
+  FOREARM_RIGHT: vec3(0.33, 1.02, 0),
+  THIGH_LEFT: vec3(-0.11, 0.69, 0),
+  THIGH_RIGHT: vec3(0.11, 0.69, 0),
+  SHIN_LEFT: vec3(-0.11, 0.28, 0),
+  SHIN_RIGHT: vec3(0.11, 0.28, 0),
+};
+
 class GhoulXApplication {
   private canvas: HTMLCanvasElement;
   private app: pc.Application;
@@ -77,6 +95,7 @@ class GhoulXApplication {
   private cameraYaw = 0;
   private isPointerLocked = false;
   private isAimingDownSights = false;
+  private currentZoomIndex = 0;
   private recoilPitch = 0;
   private recoilOffsetZ = 0;
 
@@ -89,7 +108,10 @@ class GhoulXApplication {
   private activeTargetIndex = 0;
   private currentWeapon: WeaponSpec = WEAPON_M590;
   private currentAmmo: AmmoSpec = WEAPON_M590.defaultAmmo;
-  private environment: EnvironmentState = { ...DEFAULT_ENVIRONMENT };
+  private environment: EnvironmentState = {
+    ...DEFAULT_ENVIRONMENT,
+    windVelocity: { ...DEFAULT_ENVIRONMENT.windVelocity },
+  };
   private baseTimeScale = 1.0;
   private enableXRayCam = true;
   private enablePermanentXRay = false;
@@ -107,6 +129,22 @@ class GhoulXApplication {
     this.canvas = document.getElementById('playcanvas-viewport') as HTMLCanvasElement;
     if (!this.canvas) {
       throw new Error('Canvas #playcanvas-viewport not found in document!');
+    }
+
+    // Sync initial crosswind & timescale with DOM slider defaults
+    const windInput = document.getElementById('slider-wind') as HTMLInputElement | null;
+    if (windInput) {
+      const parsedWind = parseFloat(windInput.value);
+      if (!Number.isNaN(parsedWind)) {
+        this.environment.windVelocity = vec3(parsedWind, 0, 0);
+      }
+    }
+    const timeScaleInput = document.getElementById('slider-timescale') as HTMLInputElement | null;
+    if (timeScaleInput) {
+      const parsedScale = parseFloat(timeScaleInput.value);
+      if (!Number.isNaN(parsedScale)) {
+        this.baseTimeScale = parsedScale;
+      }
     }
 
     // 1. Initialize PlayCanvas App
@@ -149,6 +187,7 @@ class GhoulXApplication {
       app: this.app,
       cameraEntity: this.cameraEntity,
       fxManager: this.fxManager,
+      shouldRestoreXRayVision: () => this.enablePermanentXRay,
       onSequenceComplete: () => {
         this.cameraEntity.setPosition(this.playerPos.x, this.playerPos.y, this.playerPos.z);
         this.cameraEntity.setEulerAngles(this.cameraPitch, this.cameraYaw, 0);
@@ -162,7 +201,7 @@ class GhoulXApplication {
     this.hudController = new HudController({
       onWeaponSelected: (weapon) => this.selectWeapon(weapon),
       onAmmoSelected: (ammo) => this.selectAmmo(ammo),
-      onAimZoneSelected: (zone) => this.aimAtTargetZone(zone),
+      onAimZoneSelected: (zone) => this.aimAtTargetZone(zone, undefined, true),
       onFireRequested: () => this.handleTriggerPull(),
       onRespawnRequested: () => this.spawnAllTargets(),
       onToggleXRayCam: (enabled) => {
@@ -357,15 +396,29 @@ class GhoulXApplication {
     this.activeTargetIndex = 0;
   }
 
-  private selectWeapon(weapon: WeaponSpec): void {
+  private getCurrentScopeZoom(): number {
+    const levels = this.currentWeapon.scopeZoomLevels;
+    if (!levels || levels.length === 0) return 1.5;
+    const clampedIdx = Math.max(0, Math.min(levels.length - 1, this.currentZoomIndex));
+    return levels[clampedIdx] || 1.5;
+  }
+
+  private selectWeapon(weapon: WeaponSpec, ammoOverride?: AmmoSpec): void {
     this.currentWeapon = weapon;
-    this.currentAmmo = weapon.defaultAmmo;
+    this.currentAmmo = ammoOverride || weapon.defaultAmmo;
+    this.currentZoomIndex = 0;
     this.hudController.setActiveWeapon(weapon, this.currentAmmo);
 
-    // Adjust camera FOV if zoomed
-    const baseFov = this.isAimingDownSights ? 65 / this.currentWeapon.scopeZoomLevels[0] : 65;
+    // Adjust camera FOV and sniper optic mask if zoomed
+    const zoom = this.getCurrentScopeZoom();
+    const baseFov = this.isAimingDownSights ? 65 / zoom : 65;
     if (this.cameraEntity.camera) {
       this.cameraEntity.camera.fov = baseFov;
+    }
+    if (this.isAimingDownSights && weapon.role === 'SNIPER') {
+      this.hudController.setScopeOverlay(true, zoom, 55.0, -1.2, this.environment.windVelocity.x);
+    } else {
+      this.hudController.setScopeOverlay(false);
     }
   }
 
@@ -373,45 +426,95 @@ class GhoulXApplication {
     this.currentAmmo = ammo;
   }
 
-  private bindInputListeners(): void {
-    // Pointer lock for FPS mouselook
-    this.canvas.addEventListener('click', () => {
-      if (!this.isPointerLocked) {
-        this.canvas.requestPointerLock();
-      }
-    });
+  private isDraggingView = false;
+  private dragMovedPx = 0;
+  private lastPointerX = 0;
+  private lastPointerY = 0;
 
+  private bindInputListeners(): void {
     document.addEventListener('pointerlockchange', () => {
       this.isPointerLocked = document.pointerLockElement === this.canvas;
     });
 
-    // Mouselook
+    // Mouselook (supports both Pointer Lock FPS mode and cloud-iframe Drag-to-Aim fallback)
     document.addEventListener('mousemove', (e) => {
-      if (!this.isPointerLocked || this.killCamDirector.isActive()) return;
+      if (this.killCamDirector.isActive()) return;
 
-      const sensitivity = this.isAimingDownSights ? 0.08 : 0.16;
-      this.cameraYaw -= e.movementX * sensitivity;
-      this.cameraPitch -= e.movementY * sensitivity;
+      const zoom = this.isAimingDownSights ? Math.max(1.5, this.getCurrentScopeZoom()) : 1.0;
+      const sensitivity = 0.16 / zoom;
 
-      this.cameraPitch = Math.max(-85, Math.min(85, this.cameraPitch));
+      if (this.isPointerLocked) {
+        this.cameraYaw -= e.movementX * sensitivity;
+        this.cameraPitch -= e.movementY * sensitivity;
+        this.cameraPitch = Math.max(-85, Math.min(85, this.cameraPitch));
+      } else if (this.isDraggingView) {
+        const dx = e.clientX - this.lastPointerX;
+        const dy = e.clientY - this.lastPointerY;
+        this.lastPointerX = e.clientX;
+        this.lastPointerY = e.clientY;
+        this.dragMovedPx += Math.hypot(dx, dy);
+        this.cameraYaw -= dx * sensitivity;
+        this.cameraPitch -= dy * sensitivity;
+        this.cameraPitch = Math.max(-85, Math.min(85, this.cameraPitch));
+      }
     });
 
-    // Mouse Down (Fire / Aim Down Sights)
+    // Mouse Wheel: Cycle optic magnification levels when ADS
+    this.canvas.addEventListener(
+      'wheel',
+      (e) => {
+        if (!this.isAimingDownSights || this.currentWeapon.scopeZoomLevels.length <= 1) return;
+        e.preventDefault();
+        const dir = e.deltaY < 0 ? 1 : -1;
+        const maxIdx = this.currentWeapon.scopeZoomLevels.length - 1;
+        this.currentZoomIndex = Math.max(0, Math.min(maxIdx, this.currentZoomIndex + dir));
+        const zoom = this.getCurrentScopeZoom();
+        if (this.cameraEntity.camera) {
+          this.cameraEntity.camera.fov = 65 / zoom;
+        }
+      },
+      { passive: false }
+    );
+
+    // Mouse Down / Up (Pointer Lock instant fire OR Cloud Iframe click-fire + drag-aim)
     this.canvas.addEventListener('mousedown', (e) => {
-      if (e.button === 0) {
-        // LMB: Fire
-        this.handleTriggerPull();
-      } else if (e.button === 2) {
-        // RMB: Toggle Precision Scope
+      if (e.button === 2) {
         e.preventDefault();
         this.toggleAimDownSights();
+        return;
+      }
+      if (e.button === 0) {
+        if (this.isPointerLocked) {
+          this.handleTriggerPull();
+        } else {
+          this.isDraggingView = true;
+          this.dragMovedPx = 0;
+          this.lastPointerX = e.clientX;
+          this.lastPointerY = e.clientY;
+        }
+      }
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 0 && this.isDraggingView) {
+        this.isDraggingView = false;
+        if (this.dragMovedPx < 5) {
+          // Crisp click fires weapon and attempts pointer lock safely
+          this.handleTriggerPull();
+          try {
+            const lockPromise = this.canvas.requestPointerLock?.() as unknown as Promise<void>;
+            lockPromise?.catch?.(() => {});
+          } catch {
+            // Pointer lock disallowed in sandboxed iframe; drag-to-aim remains active
+          }
+        }
       }
     });
 
     // Prevent context menu on RMB
     this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    // WASD movement keys
+    // WASD + Arrow movement/aim keys
     window.addEventListener('keydown', (e) => {
       this.keysPressed[e.code] = true;
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
@@ -429,7 +532,7 @@ class GhoulXApplication {
     const isSniper = this.currentWeapon.role === 'SNIPER';
 
     if (this.isAimingDownSights) {
-      const zoom = this.currentWeapon.scopeZoomLevels[0] || 2.0;
+      const zoom = this.getCurrentScopeZoom();
       if (this.cameraEntity.camera) {
         this.cameraEntity.camera.fov = 65 / zoom;
       }
@@ -448,36 +551,41 @@ class GhoulXApplication {
 
   /**
    * Automatically aims the player's view at a specific anatomical zone on a specified or nearest live target,
-   * optionally compensating for RK4 gravity drop and crosswind drift at long range.
+   * optionally compensating for RK4 gravity drop, crosswind drift, and spin drift via iterative ballistic zeroing.
    */
   private aimAtTargetZone(
     zone: GhoulZoneId,
     explicitTarget?: GhoulMannequinEntity,
-    compensateBallistics = false
+    compensateBallistics = true
   ): void {
     this.activeAimZone = zone;
     const target = explicitTarget || this.getClosestLiveTarget();
     if (!target) return;
 
-    const bone = target.healthState.ragdollBones[zone];
-    const targetWorldPos = bone ? bone.position : target.healthState.worldPosition;
+    const hs = target.healthState;
+    const localAimCenter = ANATOMICAL_AIM_CENTERS[zone];
+    const bone = hs.ragdollBones[zone];
+    const desiredWorldPos =
+      !hs.isRagdollActive && localAimCenter
+        ? targetLocalToWorld(localAimCenter, hs.worldPosition, hs.yawRad)
+        : bone
+          ? bone.position
+          : hs.worldPosition;
 
-    const eyePos = this.playerPos;
-    let dx = targetWorldPos.x - eyePos.x;
-    let dy = targetWorldPos.y - eyePos.y;
-    const dz = targetWorldPos.z - eyePos.z;
-    const horizDist = Math.sqrt(dx * dx + dz * dz);
+    const origin = vec3(this.playerPos.x, this.playerPos.y, this.playerPos.z);
+    const aimDir = compensateBallistics
+      ? computeBallisticZeroAimDirection(
+          this.currentWeapon,
+          this.currentAmmo,
+          origin,
+          desiredWorldPos,
+          this.environment
+        )
+      : normalize(sub(desiredWorldPos, origin));
 
-    if (compensateBallistics && this.currentAmmo.muzzleVelocityMs > 0) {
-      const approxFlightTime = horizDist / (this.currentAmmo.muzzleVelocityMs * 0.92);
-      const dropComp = 0.5 * 9.81 * approxFlightTime * approxFlightTime;
-      const windComp = 0.45 * this.environment.windVelocity.x * approxFlightTime;
-      dy += dropComp;
-      dx -= windComp;
-    }
-
-    this.cameraYaw = (Math.atan2(-dx, -dz) * 180) / Math.PI;
-    this.cameraPitch = (Math.atan2(dy, horizDist) * 180) / Math.PI;
+    const horizLen = Math.sqrt(aimDir.x * aimDir.x + aimDir.z * aimDir.z);
+    this.cameraYaw = (Math.atan2(-aimDir.x, -aimDir.z) * 180) / Math.PI;
+    this.cameraPitch = (Math.atan2(aimDir.y, Math.max(1e-6, horizLen)) * 180) / Math.PI;
   }
 
   private getClosestLiveTarget(): GhoulMannequinEntity | null {
@@ -609,7 +717,7 @@ class GhoulXApplication {
           w.energyDepositedJ,
           18
         );
-        if (w.boneShattered) {
+        if (w.boneShattered || w.boneFractured) {
           this.fxManager.spawnBoneShatterSparks(w.entryPointWorld, w.impactDirectionWorld);
         }
       }
@@ -628,10 +736,9 @@ class GhoulXApplication {
     this.killCamDirector.skipKillCam();
     this.spawnAllTargets();
     this.activeTargetIndex = 0;
-    this.selectWeapon(WEAPON_M590);
     this.isAimingDownSights = false;
-    this.hudController.setScopeOverlay(false);
-    this.playerPos.set(0, 1.45, -1.0); // 4.0m point-blank from Target 0 at z = -5
+    this.selectWeapon(WEAPON_M590);
+    this.playerPos.set(0, 1.40, -1.0); // 4.0m point-blank from Target 0 at (0, 0, -5)
     this.aimAtTargetZone('TORSO_UPPER_THORAX', this.targets[0], false);
     this.fireCooldownTimerS = 0;
     setTimeout(() => this.handleTriggerPull(this.targets[0]), 120);
@@ -641,10 +748,9 @@ class GhoulXApplication {
     this.killCamDirector.skipKillCam();
     this.spawnAllTargets();
     this.activeTargetIndex = 1;
-    this.selectWeapon(WEAPON_SILVER_TALON);
     this.isAimingDownSights = false;
-    this.hudController.setScopeOverlay(false);
-    this.playerPos.set(-2.2, 1.65, -2.0); // 6m from Target 1 at (-2.2, 0, -8)
+    this.selectWeapon(WEAPON_SILVER_TALON);
+    this.playerPos.set(-2.2, 1.68, 0.0); // 8.0m from Target 1 at (-2.2, 0, -8)
     this.aimAtTargetZone('HEAD_CRANIUM', this.targets[1], true);
     this.fireCooldownTimerS = 0;
     setTimeout(() => this.handleTriggerPull(this.targets[1]), 120);
@@ -654,11 +760,11 @@ class GhoulXApplication {
     this.killCamDirector.skipKillCam();
     this.spawnAllTargets();
     this.activeTargetIndex = 0;
-    this.selectWeapon(WEAPON_M590);
     this.isAimingDownSights = false;
-    this.hudController.setScopeOverlay(false);
-    this.playerPos.set(-0.3, 1.45, -0.8); // 4.2m aimed squarely at left bicep
-    this.aimAtTargetZone('UPPER_ARM_LEFT', this.targets[0], false);
+    // Use 12-Gauge Heavy Penetrator Slug aligned on Target 0's left arm (world.x = +0.29) at 6.0m
+    this.selectWeapon(WEAPON_M590, AMMO_12G_FLECHETTE_SLUG);
+    this.playerPos.set(0.32, 1.28, 1.0); // 6.0m from Target 0 at (0, 0, -5)
+    this.aimAtTargetZone('UPPER_ARM_LEFT', this.targets[0], true);
     this.fireCooldownTimerS = 0;
     setTimeout(() => this.handleTriggerPull(this.targets[0]), 120);
   }
@@ -667,9 +773,9 @@ class GhoulXApplication {
     this.killCamDirector.skipKillCam();
     this.spawnAllTargets();
     this.activeTargetIndex = 3;
-    this.selectWeapon(WEAPON_MSG90);
-    this.playerPos.set(0.5, 1.50, 5.0); // 60m range from Target 3 at (0.5, 0, -55)
     this.isAimingDownSights = false;
+    this.selectWeapon(WEAPON_MSG90);
+    this.playerPos.set(0.5, 1.50, 10.0); // 65.0m range from Target 3 at (0.5, 0, -55)
     this.toggleAimDownSights(); // activate sniper scope
     this.aimAtTargetZone('TORSO_UPPER_THORAX', this.targets[3], true);
     this.fireCooldownTimerS = 0;
@@ -693,8 +799,15 @@ class GhoulXApplication {
       this.recoilOffsetZ = Math.max(0, this.recoilOffsetZ - dt * 0.4);
     }
 
-    // 3. Player Movement (WASD) if not in Kill Cam
+    // 3. Player Movement (WASD) & Fine Aim (Arrow Keys) if not in Kill Cam
     if (!this.killCamDirector.isActive()) {
+      const zoom = this.isAimingDownSights ? Math.max(1.5, this.getCurrentScopeZoom()) : 1.0;
+      const turnSpeed = (55.0 / zoom) * dt;
+      if (this.keysPressed['ArrowLeft']) this.cameraYaw += turnSpeed;
+      if (this.keysPressed['ArrowRight']) this.cameraYaw -= turnSpeed;
+      if (this.keysPressed['ArrowUp']) this.cameraPitch = Math.min(85, this.cameraPitch + turnSpeed);
+      if (this.keysPressed['ArrowDown']) this.cameraPitch = Math.max(-85, this.cameraPitch - turnSpeed);
+
       const moveSpeed = 4.2 * dt;
       const yawRad = (this.cameraYaw * Math.PI) / 180;
       const fwdX = -Math.sin(yawRad);
@@ -788,6 +901,16 @@ class GhoulXApplication {
 
     this.hudController.updatePreImpactTelemetry(previewReport, target.healthState, pipOffset);
     this.hudController.updateTargetHealthDisplay(target.healthState);
+
+    if (this.isAimingDownSights && this.currentWeapon.role === 'SNIPER') {
+      this.hudController.setScopeOverlay(
+        true,
+        this.getCurrentScopeZoom(),
+        previewReport.targetDistanceM,
+        -dropCm,
+        this.environment.windVelocity.x
+      );
+    }
   }
 }
 

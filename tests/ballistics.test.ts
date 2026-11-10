@@ -4,9 +4,12 @@ import {
   WEAPON_MSG90,
   WEAPON_M590,
   WEAPON_SILVER_TALON,
+  WEAPON_M4A1,
   AMMO_762_NATO_M118LR,
   AMMO_12G_00_BUCK,
+  AMMO_12G_FLECHETTE_SLUG,
   AMMO_50AE_JHP,
+  AMMO_556_NATO_M855,
   DEFAULT_ENVIRONMENT,
 } from '../src/core/ballistics/weapons.ts';
 import {
@@ -18,6 +21,8 @@ import {
   simulateShot,
   applyShotReportToTarget,
   stepRagdollPhysics,
+  targetLocalToWorld,
+  computeBallisticZeroAimDirection,
 } from '../src/core/ballistics/solver.ts';
 import { EnvironmentState, ProjectileState } from '../src/contracts/ballistics.ts';
 
@@ -111,15 +116,49 @@ describe('GHOUL-X Ballistics Simulation Core', () => {
       // Wind pushing +X should drift bullet to the right
       expect(proj.position.x).toBeGreaterThan(0.05); // Drifted at least 5cm at 200m
     });
+
+    it('reports signed crosswind drift (+X vs -X) and non-zero drop/drift on near-misses', () => {
+      const target = createTargetHealthState('target_wind_sign', 'Range Target', vec3(0, 0, -55), Math.PI);
+      const shooterPos = vec3(0, 1.4, 0);
+      // Aim slightly wide so shot misses target, testing predictor fallback at targetDistanceM
+      const missAimDir = normalize(sub(vec3(1.2, 1.4, -55), shooterPos));
+
+      const rightWindEnv: EnvironmentState = {
+        ...DEFAULT_ENVIRONMENT,
+        windVelocity: vec3(10.0, 0, 0),
+      };
+      const leftWindEnv: EnvironmentState = {
+        ...DEFAULT_ENVIRONMENT,
+        windVelocity: vec3(-10.0, 0, 0),
+      };
+
+      const repRight = simulateShot(
+        WEAPON_MSG90,
+        AMMO_762_NATO_M118LR,
+        shooterPos,
+        missAimDir,
+        target,
+        rightWindEnv
+      );
+      const repLeft = simulateShot(
+        WEAPON_MSG90,
+        AMMO_762_NATO_M118LR,
+        shooterPos,
+        missAimDir,
+        target,
+        leftWindEnv
+      );
+
+      expect(repRight.hitTarget).toBe(false);
+      expect(repRight.bulletDropAtImpactCm).toBeGreaterThan(1.5);
+      expect(repRight.windDriftAtImpactCm).toBeGreaterThan(0.5);
+      expect(repLeft.windDriftAtImpactCm).toBeLessThan(-0.5);
+    });
   });
 
   describe('2. Multi-Layer Anatomical Penetration & X-Ray Kill Cam', () => {
     it('MSG90 7.62 NATO shot to upper thorax penetrates flesh, ribcage bone, and heart', () => {
       // Place target at z = 20m facing shooter (facing -Z, yaw = Math.PI)
-      // Thorax center is at y = 1.34m, heart is at (x: -0.02, y: 1.33, z: 0.02)
-      // When target is at z = 20m with yaw = Math.PI, local x: -0.02, z: 0.02 maps to world:
-      // x = 0 + (-0.02 * cos(PI) + 0.02 * sin(PI)) = +0.02
-      // z = 20 + (-(-0.02)*sin(PI) + 0.02*cos(PI)) = 20 - 0.02 = 19.98
       const target = createTargetHealthState('target_alpha', 'Enemy Marksman', vec3(0, 0, 20), Math.PI);
 
       const shooterPos = vec3(0.02, 1.33, 0); // Aim directly at heart height & X
@@ -156,10 +195,54 @@ describe('GHOUL-X Ballistics Simulation Core', () => {
       expect(target.fracturedBones.size).toBeGreaterThan(0);
       expect(target.rupturedOrgans.size).toBeGreaterThan(0);
     });
+
+    it('Preset 4 (65m MSG90 sniper shot) hits Heart & Ribcage and triggers X-Ray Kill Cam in 2.5 m/s and 10 m/s crosswinds', () => {
+      for (const windSpeed of [2.5, 10.0, -10.0]) {
+        const target = createTargetHealthState(
+          'target_3',
+          'OVERWATCH SNIPER (55m)',
+          vec3(0.5, 0, -55),
+          Math.PI
+        );
+        const shooterPos = vec3(0.5, 1.50, 10.0); // 65m range
+        const env: EnvironmentState = {
+          ...DEFAULT_ENVIRONMENT,
+          windVelocity: vec3(windSpeed, 0, 0),
+        };
+        const heartWorld = targetLocalToWorld(
+          vec3(-0.02, 1.33, 0.01),
+          target.worldPosition,
+          target.yawRad
+        );
+        const aimDir = computeBallisticZeroAimDirection(
+          WEAPON_MSG90,
+          AMMO_762_NATO_M118LR,
+          shooterPos,
+          heartWorld,
+          env
+        );
+
+        const report = simulateShot(
+          WEAPON_MSG90,
+          AMMO_762_NATO_M118LR,
+          shooterPos,
+          aimDir,
+          target,
+          env
+        );
+
+        expect(report.hitTarget).toBe(true);
+        const layerTypes = report.woundEvents.map((w) => w.layerType);
+        expect(layerTypes).toContain('CORTICAL_BONE');
+        expect(layerTypes).toContain('ORGAN_HEART');
+        expect(report.isLethalKill).toBe(true);
+        expect(report.triggerXRayKillCam).toBe(true);
+      }
+    });
   });
 
-  describe('3. Pre-Calculated Shotgun Lethality & Ragdoll Launch', () => {
-    it('M590 Shotgun blast at 5 meters pre-calculates instant lethality and violent ragdoll launch', () => {
+  describe('3. Pre-Calculated Shotgun Lethality & Articulated Ragdoll Launch', () => {
+    it('M590 Shotgun blast at 5 meters pre-calculates instant lethality and launches articulated ragdoll together', () => {
       // Enemy standing 5 meters away at (0, 0, 5)
       const target = createTargetHealthState('target_shotgun', 'CQB Guard', vec3(0, 0, 5), Math.PI);
 
@@ -199,6 +282,19 @@ describe('GHOUL-X Ballistics Simulation Core', () => {
 
       // Enemy must have flown backwards
       expect(target.worldPosition.z).toBeGreaterThan(initialZ + 0.8);
+
+      // Articulated stick constraints: unsevered pelvis, thorax, and feet stay connected to the body
+      const pelvisPos = target.ragdollBones['PELVIS_GROIN'].position;
+      const thoraxPos = target.ragdollBones['TORSO_UPPER_THORAX'].position;
+      const footLeftPos = target.ragdollBones['FOOT_LEFT'].position;
+
+      expect(pelvisPos.z).toBeGreaterThan(initialZ + 0.8);
+      if (!target.severedZones.has('TORSO_UPPER_THORAX')) {
+        expect(distance(pelvisPos, thoraxPos)).toBeLessThan(0.55);
+      }
+      if (!target.severedZones.has('FOOT_LEFT')) {
+        expect(distance(pelvisPos, footLeftPos)).toBeLessThan(1.15);
+      }
     });
   });
 
@@ -236,7 +332,7 @@ describe('GHOUL-X Ballistics Simulation Core', () => {
       expect(target.severedZones.has('HEAD_FACE_JAW')).toBe(true);
     });
 
-    it('UPPER_ARM_LEFT hit triggers CLEAN_SEVER detaching upper arm, forearm, and hand', () => {
+    it('UPPER_ARM_LEFT hit triggers CLEAN_SEVER detaching upper arm, forearm, and hand while keeping severed limb segments articulated', () => {
       // Kinematic subtree test
       const armSubtree = getSubtreeZones('UPPER_ARM_LEFT');
       expect(armSubtree).toEqual(['UPPER_ARM_LEFT', 'FOREARM_LEFT', 'HAND_LEFT']);
@@ -268,9 +364,73 @@ describe('GHOUL-X Ballistics Simulation Core', () => {
       expect(target.severedZones.has('UPPER_ARM_LEFT')).toBe(true);
       expect(target.severedZones.has('FOREARM_LEFT')).toBe(true);
       expect(target.severedZones.has('HAND_LEFT')).toBe(true);
-      expect(target.ragdollBones['UPPER_ARM_LEFT'].severed).toBe(true);
-      expect(target.ragdollBones['FOREARM_LEFT'].severed).toBe(true);
-      expect(target.ragdollBones['HAND_LEFT'].severed).toBe(true);
+
+      // Step physics so severed arm flies off while staying connected internally
+      for (let s = 0; s < 30; s++) {
+        stepRagdollPhysics(target, 0.01, 0.0);
+      }
+      const upperArmPos = target.ragdollBones['UPPER_ARM_LEFT'].position;
+      const forearmPos = target.ragdollBones['FOREARM_LEFT'].position;
+      const handPos = target.ragdollBones['HAND_LEFT'].position;
+      if ( !target.ragdollBones['FOREARM_LEFT'].goreMode || target.ragdollBones['FOREARM_LEFT'].goreMode === 'INTACT' ) {
+        expect(distance(upperArmPos, forearmPos)).toBeLessThan(0.35);
+      }
+      if ( !target.ragdollBones['HAND_LEFT'].goreMode || target.ragdollBones['HAND_LEFT'].goreMode === 'INTACT' ) {
+        expect(distance(forearmPos, handPos)).toBeLessThan(0.30);
+      }
+    });
+
+    it('Preset 3 (6m M590 12G Slug) cleanly severs UPPER_ARM_LEFT without hitting torso', () => {
+      const target = createTargetHealthState('target_0', 'MERCENARY POINTMAN', vec3(0, 0, -5), Math.PI);
+      const shooterPos = vec3(0.32, 1.28, 1.0);
+      const armCenterWorld = targetLocalToWorld(vec3(-0.29, 1.28, 0), target.worldPosition, target.yawRad);
+      const env: EnvironmentState = { ...DEFAULT_ENVIRONMENT, windVelocity: vec3(2.5, 0, 0) };
+      const aimDir = computeBallisticZeroAimDirection(
+        WEAPON_M590,
+        AMMO_12G_FLECHETTE_SLUG,
+        shooterPos,
+        armCenterWorld,
+        env
+      );
+
+      const report = simulateShot(
+        WEAPON_M590,
+        AMMO_12G_FLECHETTE_SLUG,
+        shooterPos,
+        aimDir,
+        target,
+        env
+      );
+
+      expect(report.hitTarget).toBe(true);
+      expect(report.severedZones).toContain('UPPER_ARM_LEFT');
+      expect(report.severedZones).toContain('FOREARM_LEFT');
+      expect(report.severedZones).toContain('HAND_LEFT');
+      expect(report.woundEvents.every((w) => w.ghoulZone !== 'TORSO_UPPER_THORAX')).toBe(true);
+    });
+
+    it('non-severing 5.56mm limb wound degrades zoneIntegrity and sets zoneGoreMode to LACERATED', () => {
+      const target = createTargetHealthState('target_lacerate', 'Guard', vec3(0, 0, -10), Math.PI);
+      const outerThighWorld = targetLocalToWorld(vec3(-0.15, 0.69, 0), target.worldPosition, target.yawRad);
+      const shooterPos = vec3(outerThighWorld.x, outerThighWorld.y, 0);
+      const aimDir = normalize(sub(outerThighWorld, shooterPos));
+
+      const report = simulateShot(
+        WEAPON_M4A1,
+        AMMO_556_NATO_M855,
+        shooterPos,
+        aimDir,
+        target,
+        DEFAULT_ENVIRONMENT
+      );
+
+      expect(report.hitTarget).toBe(true);
+      expect(report.severedZones).not.toContain('THIGH_LEFT');
+
+      applyShotReportToTarget(target, report);
+      expect(target.zoneIntegrity['THIGH_LEFT']).toBeLessThan(100);
+      expect(target.zoneGoreMode['THIGH_LEFT']).toBe('LACERATED');
     });
   });
 });
+

@@ -18,9 +18,11 @@ export interface ZoneMeshBundle {
   fleshRenders: pc.RenderComponent[];
   defaultMaterials: pc.StandardMaterial[];
   boneNodes: pc.Entity[];
+  boneLabels: string[];
   organNodes: pc.Entity[];
   stumpNode?: pc.Entity;
   boneProtrusionNode?: pc.Entity;
+  childStumps: Map<GhoulZoneId, { stump: pc.Entity; bone: pc.Entity }>;
 }
 
 /**
@@ -32,7 +34,7 @@ export interface ZoneMeshBundle {
  * - Beating 3D heart, lungs, brain, aorta/carotid arteries
  * - Early-2000s Soldier of Fortune clean sever stump caps & bone marrow protrusions
  * - X-Ray Mode: switches outer flesh to translucent cyan/blue rim silhouetted xraySkinMat
- * - Cranial pop: hides head mesh and shows jagged cranial stump
+ * - Cranial pop: hides head mesh and shows jagged cranial stump on cervical neck
  */
 export class GhoulMannequinEntity {
   public readonly rootEntity: pc.Entity;
@@ -78,7 +80,10 @@ export class GhoulMannequinEntity {
 
     for (const zone of ALL_GHOUL_ZONES) {
       const boneState = this.healthState.ragdollBones[zone];
-      const hierNode = GHOUL_ZONE_HIERARCHY[zone];
+      const zoneColliders = collidersByZone.get(zone) || [];
+      const boneLabels = zoneColliders
+        .filter((c) => c.layerType === 'CORTICAL_BONE')
+        .map((c) => c.label);
 
       const zoneNode = new pc.Entity(`Zone_${zone}`);
       this.rootEntity.addChild(zoneNode);
@@ -103,8 +108,11 @@ export class GhoulMannequinEntity {
       // 2. Internal 3D Skeleton & Organs
       this.buildZoneInternalAnatomy(zone, zoneNode, boneNodes, organNodes);
 
-      // 3. Bloody Stump Cap & Protruding Bone (for CLEAN_SEVER / CRANIAL_POP)
-      const { stumpNode, boneProtrusionNode } = this.buildGoreCapNodes(zone, zoneNode);
+      // 3. Bloody Stump Cap & Protruding Bone (on severed limb root + parent-side joint caps)
+      const { stumpNode, boneProtrusionNode, childStumps } = this.buildGoreCapNodes(
+        zone,
+        zoneNode
+      );
 
       this.zoneBundles.set(zone, {
         zone,
@@ -113,9 +121,11 @@ export class GhoulMannequinEntity {
         fleshRenders,
         defaultMaterials,
         boneNodes,
+        boneLabels,
         organNodes,
         stumpNode,
         boneProtrusionNode,
+        childStumps,
       });
     }
   }
@@ -594,13 +604,51 @@ export class GhoulMannequinEntity {
   private buildGoreCapNodes(
     zone: GhoulZoneId,
     zoneNode: pc.Entity
-  ): { stumpNode?: pc.Entity; boneProtrusionNode?: pc.Entity } {
+  ): {
+    stumpNode?: pc.Entity;
+    boneProtrusionNode?: pc.Entity;
+    childStumps: Map<GhoulZoneId, { stump: pc.Entity; bone: pc.Entity }>;
+  } {
     const matPal = this.materials;
+    const childStumps = new Map<GhoulZoneId, { stump: pc.Entity; bone: pc.Entity }>();
+    const hierNode = GHOUL_ZONE_HIERARCHY[zone];
 
-    // Build stump cap & bone protrusion only on severable limbs/joints
+    // Build parent-side bloody stump caps & protruding cortical bone at each child joint offset
+    for (const childZone of hierNode.children) {
+      const childHier = GHOUL_ZONE_HIERARCHY[childZone];
+      const ox = childHier.jointLocalPos.x - hierNode.jointLocalPos.x;
+      const oy = childHier.jointLocalPos.y - hierNode.jointLocalPos.y;
+      const oz = childHier.jointLocalPos.z - hierNode.jointLocalPos.z;
+
+      const stump = new pc.Entity(`${zone}_ChildStump_${childZone}`);
+      stump.addComponent('render', {
+        type: 'cylinder',
+        material: matPal.goreStumpMat,
+      });
+      stump.setLocalScale(0.11, 0.03, 0.11);
+      stump.setLocalPosition(ox, oy, oz);
+      stump.enabled = false;
+      zoneNode.addChild(stump);
+
+      const bone = new pc.Entity(`${zone}_ChildBone_${childZone}`);
+      bone.addComponent('render', {
+        type: 'cylinder',
+        material: matPal.exposedBoneMat,
+      });
+      bone.setLocalScale(0.038, 0.07, 0.038);
+      bone.setLocalPosition(ox, oy + 0.02, oz);
+      bone.enabled = false;
+      zoneNode.addChild(bone);
+
+      childStumps.set(childZone, { stump, bone });
+    }
+
+    // Build cap on severable limbs themselves (visible at the cut end of the flying limb)
     const severableZones = new Set<GhoulZoneId>([
       'HEAD_CRANIUM',
       'NECK_CERVICAL',
+      'SHOULDER_LEFT',
+      'SHOULDER_RIGHT',
       'UPPER_ARM_LEFT',
       'UPPER_ARM_RIGHT',
       'FOREARM_LEFT',
@@ -609,6 +657,8 @@ export class GhoulMannequinEntity {
       'HAND_RIGHT',
       'THIGH_LEFT',
       'THIGH_RIGHT',
+      'KNEE_LEFT',
+      'KNEE_RIGHT',
       'SHIN_LEFT',
       'SHIN_RIGHT',
       'FOOT_LEFT',
@@ -616,7 +666,7 @@ export class GhoulMannequinEntity {
     ]);
 
     if (!severableZones.has(zone)) {
-      return {};
+      return { childStumps };
     }
 
     const stumpNode = new pc.Entity(`${zone}_StumpCap`);
@@ -638,7 +688,7 @@ export class GhoulMannequinEntity {
     boneProtrusionNode.enabled = false;
     zoneNode.addChild(boneProtrusionNode);
 
-    return { stumpNode, boneProtrusionNode };
+    return { stumpNode, boneProtrusionNode, childStumps };
   }
 
   /**
@@ -679,6 +729,9 @@ export class GhoulMannequinEntity {
   public syncFromHealthState(dt: number, elapsedTime: number): void {
     const isAlive = this.healthState.alive;
     const isRagdoll = this.healthState.isRagdollActive;
+    const isHeadPopped =
+      this.healthState.zoneGoreMode['HEAD_CRANIUM'] === 'CRANIAL_POP' ||
+      this.healthState.zoneGoreMode['HEAD_FACE_JAW'] === 'CRANIAL_POP';
 
     // 1. Idle stance sway & tactical breathing if intact and alive
     let idleBreathY = 0;
@@ -717,26 +770,58 @@ export class GhoulMannequinEntity {
       );
 
       // Handle gore mode / severing visuals
-      if (goreMode === 'CRANIAL_POP' && (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW')) {
-        // Upper head obliterated
+      if (isHeadPopped && (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW')) {
+        // Upper head obliterated into gibs; bloody stump stays on parent NECK_CERVICAL
         bundle.fleshNode.enabled = false;
         for (const b of bundle.boneNodes) b.enabled = false;
         for (const o of bundle.organNodes) o.enabled = false;
-        if (bundle.stumpNode) bundle.stumpNode.enabled = true;
+        if (bundle.stumpNode) bundle.stumpNode.enabled = false;
+        if (bundle.boneProtrusionNode) bundle.boneProtrusionNode.enabled = false;
+        for (const cs of bundle.childStumps.values()) {
+          cs.stump.enabled = false;
+          cs.bone.enabled = false;
+        }
       } else if (isSevered) {
-        // Limb detached
-        if (bundle.stumpNode) bundle.stumpNode.enabled = true;
-        if (bundle.boneProtrusionNode) bundle.boneProtrusionNode.enabled = true;
+        // Detached limb segment flying/tumbling on floor: show cut cap only on the severed root joint
+        bundle.fleshNode.enabled = true;
+        const isSeverRoot = goreMode === 'CLEAN_SEVER' || goreMode === 'EVISCERATED';
+        if (bundle.stumpNode) bundle.stumpNode.enabled = isSeverRoot;
+        if (bundle.boneProtrusionNode) bundle.boneProtrusionNode.enabled = isSeverRoot;
+        for (const [childZone, cs] of bundle.childStumps) {
+          const childIndependentlySevered =
+            this.healthState.zoneGoreMode[childZone] !== 'INTACT' &&
+            this.healthState.severedZones.has(childZone);
+          cs.stump.enabled = childIndependentlySevered;
+          cs.bone.enabled = childIndependentlySevered;
+        }
       } else {
         bundle.fleshNode.enabled = true;
         if (bundle.stumpNode) bundle.stumpNode.enabled = false;
         if (bundle.boneProtrusionNode) bundle.boneProtrusionNode.enabled = false;
 
-        // Check if bone fractured or shattered
-        for (const bNode of bundle.boneNodes) {
-          const hasFracture = this.healthState.fracturedBones.size > 0;
-          if (hasFracture && bNode.render) {
-            bNode.render.material = this.materials.shatteredBoneMat;
+        // Show bloody stump & protruding marrow on this intact parent joint for any severed direct child!
+        for (const [childZone, cs] of bundle.childStumps) {
+          const childSevered = this.healthState.severedZones.has(childZone);
+          cs.stump.enabled = childSevered;
+          cs.bone.enabled = childSevered;
+        }
+
+        // Apply wound tint in normal view when zone is lacerated or eviscerated
+        if (!this.isXRayActive && (goreMode === 'LACERATED' || goreMode === 'EVISCERATED')) {
+          for (const render of bundle.fleshRenders) {
+            render.material = this.materials.woundGoreMat;
+          }
+        }
+
+        // Highlight ONLY bones belonging to this specific zone that were fractured
+        const hasZoneFracture = bundle.boneLabels.some((lbl) =>
+          this.healthState.fracturedBones.has(lbl)
+        );
+        if (hasZoneFracture) {
+          for (const bNode of bundle.boneNodes) {
+            if (bNode.render) {
+              bNode.render.material = this.materials.shatteredBoneMat;
+            }
           }
         }
       }

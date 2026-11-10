@@ -2,7 +2,7 @@ import { WeaponSpec, AmmoSpec, EnvironmentState } from '../../contracts/ballisti
 
 export const AMMO_12G_00_BUCK: AmmoSpec = {
   id: '12G_00_BUCK',
-  name: '12-Gauge 00 Buckshot (9 Pellets Heavy Magnum)',
+  name: '12-Gauge 00 Buckshot (10 Pellets Heavy Magnum)',
   caliber: '12 Gauge (00 Buck)',
   type: 'BUCKSHOT_00',
   massKg: 0.0036,
@@ -105,7 +105,7 @@ export const AMMO_556_NATO_M855: AmmoSpec = {
 export const WEAPON_M590: WeaponSpec = {
   id: 'm590_shotgun',
   name: 'Mossberg 590 Tactical 12-Gauge',
-  codeName: 'BESERKER 12G',
+  codeName: 'BERSERKER 12G',
   role: 'SHOTGUN',
   description: 'Military 12-gauge pump-action shotgun. Massive close-range kinetic shock, limb amputation, and violent ragdoll displacement.',
   defaultAmmo: AMMO_12G_00_BUCK,

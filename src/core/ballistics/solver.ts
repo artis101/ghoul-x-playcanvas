@@ -30,13 +30,25 @@ import {
   deterministicConeSpread,
 } from './vec3.ts';
 import {
+  ALL_GHOUL_ZONES,
   buildAnatomicalColliders,
   getSubtreeZones,
   GHOUL_ZONE_HIERARCHY,
 } from '../ghoul/anatomy.ts';
 
-// Cache colliders statically for performance
+// Cache colliders and bone rest lengths statically for performance
 const ALL_ANATOMICAL_COLLIDERS = buildAnatomicalColliders();
+const TOPOLOGICAL_GHOUL_ZONES = getSubtreeZones('PELVIS_GROIN');
+const BONE_REST_LENGTHS: Partial<Record<GhoulZoneId, number>> = {};
+for (const z of ALL_GHOUL_ZONES) {
+  const node = GHOUL_ZONE_HIERARCHY[z];
+  if (node.parent) {
+    BONE_REST_LENGTHS[z] = distance(
+      node.jointLocalPos,
+      GHOUL_ZONE_HIERARCHY[node.parent].jointLocalPos
+    );
+  }
+}
 
 /**
  * Standard Mach drag multiplier model (realistic transonic drag rise between Mach 0.85 and 1.3).
@@ -300,13 +312,7 @@ export function intersectSegmentVolume(
   } else if (col.shape === 'CAPSULE') {
     // Vertical capsule along Y axis
     const radius = col.halfExtents.x;
-    const halfH = Math.max(0, col.halfExtents.y - radius);
     const pCenter = col.localCenter;
-    const segA = vec3(pCenter.x, pCenter.y - halfH, pCenter.z);
-    const segB = vec3(pCenter.x, pCenter.y + halfH, pCenter.z);
-
-    // Approximate cylinder/capsule intersection test:
-    // Test infinite cylinder around Y, then clamp to hemisphere caps
     const oc = sub(pA, pCenter);
     const dx = rayDir.x;
     const dz = rayDir.z;
@@ -325,29 +331,39 @@ export function intersectSegmentVolume(
       const sqrtD = Math.sqrt(discr);
       t1 = (-bCyl - sqrtD) / (2 * aCyl);
       t2 = (-bCyl + sqrtD) / (2 * aCyl);
+    } else if (ox * ox + oz * oz > radius * radius) {
+      // Purely vertical ray outside cylinder radius
+      return null;
     }
-
-    // Check caps
-    let hitTEntry = Math.max(0, t1);
-    let hitTExit = Math.min(segLen, t2);
-
-    // Validate along Y extent
-    const entryY = pA.y + rayDir.y * hitTEntry;
-    const exitY = pA.y + rayDir.y * hitTExit;
 
     const minY = pCenter.y - col.halfExtents.y;
     const maxY = pCenter.y + col.halfExtents.y;
 
-    if (
-      (entryY < minY && exitY < minY) ||
-      (entryY > maxY && exitY > maxY) ||
-      hitTEntry > hitTExit
-    ) {
+    if (Math.abs(rayDir.y) > 1e-8) {
+      let ty1 = (minY - pA.y) / rayDir.y;
+      let ty2 = (maxY - pA.y) / rayDir.y;
+      if (ty1 > ty2) {
+        const tmp = ty1;
+        ty1 = ty2;
+        ty2 = tmp;
+      }
+      t1 = Math.max(t1, ty1);
+      t2 = Math.min(t2, ty2);
+    } else if (pA.y < minY || pA.y > maxY) {
+      return null;
+    }
+
+    if (t2 < 0 || t1 > segLen || t1 > t2) {
+      return null;
+    }
+
+    const hitTEntry = Math.max(0, t1);
+    const hitTExit = Math.min(segLen, t2);
+    if (hitTEntry > hitTExit) {
       return null;
     }
 
     const hitPoint = add(pA, scale(rayDir, hitTEntry));
-    // Normal perpendicular to cylinder axis
     const norm = normalize(vec3(hitPoint.x - pCenter.x, 0, hitPoint.z - pCenter.z));
 
     return {
@@ -473,12 +489,12 @@ export function simulateShot(
       if (trajectorySamples.length < 50 || trajectorySamples.length % 5 === 0) {
         const speed = length(proj.velocity);
         const mach = speed / env.speedOfSoundMs;
-        // Bullet drop relative to straight boresight ray
+        // Bullet drop and signed lateral drift relative to straight boresight ray
         const straightPos = add(originWorld, scale(pelletAimDir, proj.distanceTraveledM));
         const drop = straightPos.y - currPos.y;
-        const drift = Math.sqrt(
-          Math.pow(currPos.x - straightPos.x, 2) + Math.pow(currPos.z - straightPos.z, 2)
-        );
+        const shotRightRaw = cross(pelletAimDir, vec3(0, 1, 0));
+        const shotRight = lengthSq(shotRightRaw) > 1e-6 ? normalize(shotRightRaw) : vec3(1, 0, 0);
+        const drift = dot(sub(currPos, straightPos), shotRight);
 
         trajectorySamples.push({
           timeS: proj.flightTimeS,
@@ -574,12 +590,11 @@ export function simulateShot(
                 firstImpactTime = proj.flightTimeS;
 
                 const straightPos = add(originWorld, scale(pelletAimDir, proj.distanceTraveledM));
+                const shotRightRaw = cross(pelletAimDir, vec3(0, 1, 0));
+                const shotRight =
+                  lengthSq(shotRightRaw) > 1e-6 ? normalize(shotRightRaw) : vec3(1, 0, 0);
                 bulletDropAtImpactCm = (straightPos.y - entryWorld.y) * 100;
-                windDriftAtImpactCm =
-                  Math.sqrt(
-                    Math.pow(entryWorld.x - straightPos.x, 2) +
-                      Math.pow(entryWorld.z - straightPos.z, 2)
-                  ) * 100;
+                windDriftAtImpactCm = dot(sub(entryWorld, straightPos), shotRight) * 100;
               }
             }
 
@@ -638,11 +653,19 @@ export function simulateShot(
             const torque = cross(hitOffsetFromRoot, impulseVec);
             netTorqueWorld = add(netTorqueWorld, torque);
 
-            // Bone fracture and organ rupture flags
+            // Bone fracture and organ rupture flags (direct high-energy rifle perforation also fractures cortical bone)
+            const highEnergyBonePerforation =
+              col.layerType === 'CORTICAL_BONE' &&
+              entryEnergy >= col.fractureThresholdJ * 3.5 &&
+              pathLen >= 0.03;
             const boneFractured =
-              col.layerType === 'CORTICAL_BONE' && energyDeposited >= col.fractureThresholdJ;
+              col.layerType === 'CORTICAL_BONE' &&
+              (energyDeposited >= col.fractureThresholdJ || highEnergyBonePerforation);
             const boneShattered =
-              boneFractured && (energyDeposited >= col.fractureThresholdJ * 1.8 || ammo.goreFactor >= 2.5);
+              boneFractured &&
+              (energyDeposited >= col.fractureThresholdJ * 1.8 ||
+                ammo.goreFactor >= 2.5 ||
+                entryEnergy >= col.fractureThresholdJ * 6.0);
             const organRuptured =
               col.layerType.startsWith('ORGAN_') && energyDeposited >= col.fractureThresholdJ;
             const arterialSevered =
@@ -796,10 +819,16 @@ export function simulateShot(
   // ---------------------------------------------------------------------------
   // Check instant lethality:
   // 1. Total damage >= target current HP
-  // 2. Brain or heart ruptured, or neck severed
+  // 2. Brain or heart ruptured, neck severed, or torso bisected/eviscerated
   // 3. Cranial pop
   const isCranialExploded = dismembermentEvents.some((d) => d.goreMode === 'CRANIAL_POP');
   const isNeckSevered = dismembermentEvents.some((d) => d.zone === 'NECK_CERVICAL');
+  const isTorsoBisected = dismembermentEvents.some(
+    (d) =>
+      d.zone === 'TORSO_LOWER_ABDOMEN' ||
+      d.zone === 'TORSO_UPPER_THORAX' ||
+      d.zone === 'PELVIS_GROIN'
+  );
   const isVitalOrganDestroyed =
     rupturedOrgansSet.has('Brain (Cerebrum & Brainstem)') ||
     rupturedOrgansSet.has('Heart (Myocardium & Ventricles)');
@@ -809,6 +838,7 @@ export function simulateShot(
     (totalDamageHp >= target.currentHp ||
       isCranialExploded ||
       isNeckSevered ||
+      isTorsoBisected ||
       isVitalOrganDestroyed);
 
   // Massive shotgun knockdown threshold
@@ -862,6 +892,23 @@ export function simulateShot(
   // Calculate straight line distance to target
   const targetDistanceM = distance(originWorld, target.worldPosition);
 
+  // If shot missed target, still compute drop & signed wind drift at targetDistanceM for smooth reticle prediction
+  const primarySamples = pelletResults[0]?.trajectorySamples || [];
+  if (!hasHitTarget && primarySamples.length > 1) {
+    let closestSample = primarySamples[primarySamples.length - 1];
+    let minDistDiff = Infinity;
+    for (const s of primarySamples) {
+      const d = distance(originWorld, s.position);
+      const diff = Math.abs(d - targetDistanceM);
+      if (diff < minDistDiff) {
+        minDistDiff = diff;
+        closestSample = s;
+      }
+    }
+    bulletDropAtImpactCm = closestSample.dropM * 100;
+    windDriftAtImpactCm = closestSample.windDriftM * 100;
+  }
+
   return {
     shotId,
     weaponId: weapon.id,
@@ -891,13 +938,13 @@ export function simulateShot(
     dismembermentEvents,
     shatteredBones: Array.from(shatteredBonesSet),
     rupturedOrgans: Array.from(rupturedOrgansSet),
-    trajectorySamples: pelletResults[0]?.trajectorySamples || [],
+    trajectorySamples: primarySamples,
   };
 }
 
 /**
  * Applies the simulation results into the TargetHealthState.
- * Updates HP, fractured bones, severed limbs, and activates ragdoll physics if lethal/knockdown.
+ * Updates HP, zone integrity, fractured bones, severed limbs, and activates ragdoll physics if lethal/knockdown.
  */
 export function applyShotReportToTarget(
   target: TargetHealthState,
@@ -915,6 +962,19 @@ export function applyShotReportToTarget(
   }
   for (const o of report.rupturedOrgans) {
     target.rupturedOrgans.add(o);
+  }
+
+  // Apply localized GHOUL zone integrity loss & laceration for non-severing wounds
+  for (const w of report.woundEvents) {
+    if (target.severedZones.has(w.ghoulZone)) continue;
+    const refCol = ALL_ANATOMICAL_COLLIDERS.find((c) => c.ghoulZone === w.ghoulZone);
+    const severThresh = refCol ? refCol.severThresholdJ : 400;
+    const integrityLoss = Math.min(95, (w.energyDepositedJ / severThresh) * 120);
+    const nextIntegrity = Math.max(5, (target.zoneIntegrity[w.ghoulZone] ?? 100) - integrityLoss);
+    target.zoneIntegrity[w.ghoulZone] = nextIntegrity;
+    if (nextIntegrity < 85 && target.zoneGoreMode[w.ghoulZone] === 'INTACT') {
+      target.zoneGoreMode[w.ghoulZone] = 'LACERATED';
+    }
   }
 
   // Apply dismemberment events
@@ -959,23 +1019,31 @@ export function applyShotReportToTarget(
     );
 
     target.ragdollAngularVelocity = scale(report.ragdollPlan.netTorqueWorld, 1 / 45.0);
+    const comWorld = add(target.ragdollRootPosition, vec3(0, 0.95, 0));
 
-    // Apply per-zone velocities
-    for (const zone of Object.keys(report.ragdollPlan.zoneImpulses) as GhoulZoneId[]) {
-      const zImp = report.ragdollPlan.zoneImpulses[zone]!;
+    // Initialize ALL non-severed bones with root launch velocity + rotational whip + localized impulse
+    for (const zone of ALL_GHOUL_ZONES) {
       const bone = target.ragdollBones[zone];
-      if (bone && !bone.severed) {
-        bone.velocity = add(
-          target.ragdollRootVelocity,
-          scale(zImp, 1 / (bone.massKg + 0.1))
-        );
+      if (!bone || bone.severed) continue;
+
+      const offsetFromCom = sub(bone.position, comWorld);
+      const rotVel = cross(target.ragdollAngularVelocity, offsetFromCom);
+      let nextVel = add(target.ragdollRootVelocity, scale(rotVel, 0.45));
+
+      const zImp = report.ragdollPlan.zoneImpulses[zone];
+      if (zImp) {
+        const localWhip = scale(zImp, 1 / Math.max(8.0, bone.massKg * 2.5));
+        nextVel = add(nextVel, localWhip);
       }
+
+      bone.velocity = nextVel;
+      bone.angularVelocity = scale(target.ragdollAngularVelocity, 0.85);
     }
   }
 }
 
 /**
- * Steps the articulated ragdoll physics (gravity, floor bounce, friction, severed flying limbs).
+ * Steps the articulated ragdoll physics (gravity, parent-child joint constraints, floor bounce, friction, severed flying limbs).
  * Works headless for Vitest as well as inside PlayCanvas frames.
  */
 export function stepRagdollPhysics(
@@ -984,6 +1052,7 @@ export function stepRagdollPhysics(
   floorY = 0.0
 ): void {
   if (!target.isRagdollActive && target.severedZones.size === 0) return;
+  if (dt <= 0) return;
 
   const gravity = -9.81;
   const floorFriction = 0.85;
@@ -1018,24 +1087,157 @@ export function stepRagdollPhysics(
     }
   }
 
+  // Save pre-step positions to keep velocities consistent after stick constraint projection
+  const prevPositions: Partial<Record<GhoulZoneId, Vec3Like>> = {};
+
   // Step individual bones / flying severed limbs
-  for (const bone of Object.values(target.ragdollBones)) {
+  for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
+    const bone = target.ragdollBones[zone];
     if (bone.severed || target.isRagdollActive) {
+      prevPositions[zone] = copyVec3(bone.position);
       bone.velocity.y += gravity * dt;
       bone.position = add(bone.position, scale(bone.velocity, dt));
       bone.rotationEuler = add(bone.rotationEuler, scale(bone.angularVelocity, dt));
+    }
+  }
 
-      // Ground collision
-      if (bone.position.y <= floorY + 0.05) {
+  // Anchor intact pelvis to the ragdoll root trajectory so the skeleton travels cohesively
+  const pelvisBone = target.ragdollBones.PELVIS_GROIN;
+  if (target.isRagdollActive && pelvisBone && !pelvisBone.severed) {
+    const anchorTarget = vec3(
+      target.ragdollRootPosition.x,
+      Math.max(floorY + 0.12, target.ragdollRootPosition.y + 0.18),
+      target.ragdollRootPosition.z
+    );
+    pelvisBone.position = add(
+      scale(pelvisBone.position, 0.35),
+      scale(anchorTarget, 0.65)
+    );
+  }
+
+  // Iterative parent-child stick constraints keep both the body ragdoll and severed multi-bone limbs articulated
+  const constraintIterations = 4;
+  for (let iter = 0; iter < constraintIterations; iter++) {
+    for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
+      const node = GHOUL_ZONE_HIERARCHY[zone];
+      if (!node.parent) continue;
+
+      const bone = target.ragdollBones[zone];
+      const parentBone = target.ragdollBones[node.parent];
+      if (!bone || !parentBone) continue;
+      if (!bone.severed && !target.isRagdollActive) continue;
+
+      // Joint remains intact if both share severed state AND child wasn't the severed root itself
+      const jointIntact =
+        bone.severed === parentBone.severed && (!bone.severed || bone.goreMode === 'INTACT');
+      if (!jointIntact) continue;
+
+      const restLen = BONE_REST_LENGTHS[zone] ?? 0.2;
+      const delta = sub(bone.position, parentBone.position);
+      const curLen = length(delta);
+      if (curLen < 1e-5) continue;
+
+      const diff = (curLen - restLen) / curLen;
+      if (node.parent === 'PELVIS_GROIN' && target.isRagdollActive && !parentBone.severed) {
+        bone.position = sub(bone.position, scale(delta, diff * 0.85));
+        parentBone.position = add(parentBone.position, scale(delta, diff * 0.15));
+      } else {
+        const wParent = bone.massKg / (parentBone.massKg + bone.massKg);
+        const wChild = 1.0 - wParent;
+        parentBone.position = add(parentBone.position, scale(delta, diff * wParent));
+        bone.position = sub(bone.position, scale(delta, diff * wChild));
+      }
+    }
+
+    // Enforce floor clamp inside constraint loop
+    for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
+      const bone = target.ragdollBones[zone];
+      if ((bone.severed || target.isRagdollActive) && bone.position.y < floorY + 0.05) {
         bone.position.y = floorY + 0.05;
-        bone.grounded = true;
-        if (bone.velocity.y < 0) {
-          bone.velocity.y = -bone.velocity.y * restitution;
-        }
-        bone.velocity.x *= Math.pow(floorFriction, dt * 60);
-        bone.velocity.z *= Math.pow(floorFriction, dt * 60);
-        bone.angularVelocity = scale(bone.angularVelocity, Math.pow(0.7, dt * 60));
       }
     }
   }
+
+  // Reconcile bone velocities and apply ground bounce / friction
+  for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
+    const bone = target.ragdollBones[zone];
+    if (!bone.severed && !target.isRagdollActive) continue;
+
+    const prev = prevPositions[zone];
+    if (prev) {
+      const constrainedVel = scale(sub(bone.position, prev), 1 / dt);
+      bone.velocity = add(scale(bone.velocity, 0.3), scale(constrainedVel, 0.7));
+    }
+
+    if (bone.position.y <= floorY + 0.055) {
+      bone.position.y = floorY + 0.05;
+      bone.grounded = true;
+      if (bone.velocity.y < 0) {
+        bone.velocity.y = -bone.velocity.y * restitution;
+      }
+      bone.velocity.x *= Math.pow(floorFriction, dt * 60);
+      bone.velocity.z *= Math.pow(floorFriction, dt * 60);
+      bone.angularVelocity = scale(bone.angularVelocity, Math.pow(0.7, dt * 60));
+    }
+  }
 }
+
+/**
+ * Computes the exact boresight aim direction required for a projectile fired from `originWorld`
+ * to impact `desiredImpactWorld` under full RK4 gravity, Mach drag, crosswind, and spin drift.
+ */
+export function computeBallisticZeroAimDirection(
+  weapon: WeaponSpec,
+  ammo: AmmoSpec,
+  originWorld: Vec3Like,
+  desiredImpactWorld: Vec3Like,
+  env: EnvironmentState
+): Vec3Like {
+  const directVec = sub(desiredImpactWorld, originWorld);
+  const targetDist = length(directVec);
+  if (targetDist < 0.5 || ammo.muzzleVelocityMs <= 0) {
+    return normalize(directVec);
+  }
+
+  const dt = 0.0015;
+  const spinRadS =
+    weapon.role === 'SNIPER' ? 2400 : weapon.role === 'ASSAULT_RIFLE' ? 3000 : 0;
+  const muzzleEnergyJ = 0.5 * ammo.massKg * ammo.muzzleVelocityMs * ammo.muzzleVelocityMs;
+
+  let aimTarget = copyVec3(desiredImpactWorld);
+
+  for (let iter = 0; iter < 3; iter++) {
+    const aimDir = normalize(sub(aimTarget, originWorld));
+    let proj: ProjectileState = {
+      id: 'zero_probe',
+      ammo,
+      position: copyVec3(originWorld),
+      velocity: scale(aimDir, ammo.muzzleVelocityMs),
+      spinRadS,
+      currentDiameterM: ammo.diameterM,
+      flightTimeS: 0,
+      distanceTraveledM: 0,
+      kineticEnergyJ: muzzleEnergyJ,
+      penetratedLayers: 0,
+      alive: true,
+    };
+
+    let prevPos = copyVec3(proj.position);
+    let prevDist = 0;
+    while (proj.alive && proj.distanceTraveledM < targetDist && proj.flightTimeS < 2.0) {
+      prevPos = copyVec3(proj.position);
+      prevDist = proj.distanceTraveledM;
+      proj = stepProjectileRK4(proj, env, dt);
+    }
+
+    const segDist = proj.distanceTraveledM - prevDist;
+    const alpha =
+      segDist > 1e-6 ? Math.min(1, Math.max(0, (targetDist - prevDist) / segDist)) : 1;
+    const posAtRange = add(prevPos, scale(sub(proj.position, prevPos), alpha));
+    const error = sub(posAtRange, desiredImpactWorld);
+    aimTarget = sub(aimTarget, error);
+  }
+
+  return normalize(sub(aimTarget, originWorld));
+}
+

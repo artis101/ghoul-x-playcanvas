@@ -6,7 +6,8 @@ import {
   TrajectorySample,
   GhoulZoneId,
 } from '../contracts/ballistics.ts';
-import { vec3, copyVec3, add, scale, length, normalize } from '../core/ballistics/vec3.ts';
+import { vec3, copyVec3, add, sub, scale, length, normalize } from '../core/ballistics/vec3.ts';
+import { GHOUL_ZONE_HIERARCHY } from '../core/ghoul/anatomy.ts';
 import { EngineMaterialPalette } from './materials.ts';
 
 export interface ActiveProjectileFx {
@@ -54,6 +55,8 @@ export interface BoneShardSpark {
 export interface ArterialFountainStream {
   target?: TargetHealthState;
   zone?: GhoulZoneId;
+  parentZone?: GhoulZoneId;
+  localOffsetFromParent?: Vec3Like;
   stumpPos: Vec3Like;
   sprayDir: Vec3Like;
   durationS: number;
@@ -223,17 +226,40 @@ export class GoreAndBallisticsFxManager {
   }
 
   /**
-   * Attaches a continuous pulsing arterial blood stream spraying from the severed stump.
+   * Attaches a continuous pulsing arterial blood stream spraying from the severed parent stump on the body.
    */
   public attachArterialFountain(
     target: TargetHealthState,
     event: DismembermentEvent
   ): void {
+    const hier = GHOUL_ZONE_HIERARCHY[event.zone];
+    const parentZone = hier?.parent;
+    let localOffsetFromParent: Vec3Like | undefined;
+    let sprayDir = copyVec3(event.arterialSprayDirection);
+
+    if (parentZone) {
+      const parentHier = GHOUL_ZONE_HIERARCHY[parentZone];
+      localOffsetFromParent = sub(hier.jointLocalPos, parentHier.jointLocalPos);
+      // Spray outward from parent toward severed joint + upward arc
+      const outLocal = normalize(add(localOffsetFromParent, vec3(0, 0.35, 0)));
+      const cosY = Math.cos(target.yawRad);
+      const sinY = Math.sin(target.yawRad);
+      sprayDir = normalize(
+        vec3(
+          outLocal.x * cosY + outLocal.z * sinY,
+          Math.max(0.35, outLocal.y),
+          -outLocal.x * sinY + outLocal.z * cosY
+        )
+      );
+    }
+
     this.arterialFountains.push({
       target,
       zone: event.zone,
+      parentZone,
+      localOffsetFromParent,
       stumpPos: copyVec3(event.stumpWorldPosition),
-      sprayDir: copyVec3(event.arterialSprayDirection),
+      sprayDir,
       durationS: 3.5, // Sprays for 3.5 seconds
       elapsedS: 0,
       dropTimerS: 0,
@@ -379,8 +405,23 @@ export class GoreAndBallisticsFxManager {
       f.elapsedS += dt;
       f.dropTimerS += dt;
 
-      // Update stump pos if tracking ragdoll bone
-      if (f.target && f.zone && f.target.ragdollBones[f.zone]) {
+      // Track the intact parent stump on the body (e.g. neck on decapitation, shoulder on arm sever)
+      if (
+        f.target &&
+        f.parentZone &&
+        !f.target.severedZones.has(f.parentZone) &&
+        f.target.ragdollBones[f.parentZone]
+      ) {
+        const parentBone = f.target.ragdollBones[f.parentZone];
+        const off = f.localOffsetFromParent || vec3(0, 0, 0);
+        const cosY = Math.cos(parentBone.rotationEuler.y);
+        const sinY = Math.sin(parentBone.rotationEuler.y);
+        f.stumpPos = vec3(
+          parentBone.position.x + (off.x * cosY + off.z * sinY),
+          parentBone.position.y + off.y,
+          parentBone.position.z + (-off.x * sinY + off.z * cosY)
+        );
+      } else if (f.target && f.zone && f.target.ragdollBones[f.zone]) {
         const b = f.target.ragdollBones[f.zone];
         f.stumpPos = copyVec3(b.position);
       }
