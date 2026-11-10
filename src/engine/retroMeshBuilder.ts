@@ -354,24 +354,26 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
     7
   );
 
-  // 9. Muscular Upper Arm (hangs along -Y from 0 to -0.26m)
+  // 9. Muscular Upper Arm (rounded humeral ball cap at +0.05m down to elbow at -0.26m)
   const uarmB = new FacetedMeshBuilder();
   uarmB.addLoft(
     [
-      { y: -0.26, rx: 0.048, rz: 0.048, v: 0.05 }, // Elbow end
+      { y: -0.265, rx: 0.048, rz: 0.048, v: 0.04 }, // Elbow condyle cap
       { y: -0.14, rx: 0.064, rz: 0.068, cz: 0.005, v: 0.52 }, // Bicep / Tricep peak
-      { y: 0.02, rx: 0.058, rz: 0.058, v: 0.96 }, // Deltoid insertion
+      { y: 0.01, rx: 0.060, rz: 0.060, v: 0.88 }, // Deltoid insertion
+      { y: 0.052, rx: 0.046, rz: 0.046, v: 0.98 }, // Rounded shoulder ball-joint cap (zero gap on bend!)
     ],
     6
   );
 
-  // 10. Tapered Forearm (hangs along -Y from 0 to -0.25m)
+  // 10. Tapered Forearm (rounded olecranon elbow cap at +0.04m down to wrist at -0.275m)
   const farmB = new FacetedMeshBuilder();
   farmB.addLoft(
     [
-      { y: -0.25, rx: 0.036, rz: 0.042, v: 0.05 }, // Wrist
-      { y: -0.08, rx: 0.052, rz: 0.054, v: 0.68 }, // Forearm extensor belly
-      { y: 0.02, rx: 0.048, rz: 0.048, v: 0.96 }, // Elbow socket
+      { y: -0.275, rx: 0.036, rz: 0.042, v: 0.04 }, // Wrist cuff (reaches HAND joint seamlessly)
+      { y: -0.09, rx: 0.052, rz: 0.054, v: 0.65 }, // Forearm extensor belly
+      { y: 0.005, rx: 0.050, rz: 0.050, v: 0.90 }, // Elbow socket
+      { y: 0.042, rx: 0.038, rz: 0.040, v: 0.98 }, // Rounded elbow ball-joint cap
     ],
     6
   );
@@ -380,12 +382,12 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
   const makeHand = (isRight: boolean) => {
     const hb = new FacetedMeshBuilder();
     const dir = isRight ? -1 : 1;
-    // Palm + curled fingers block along -Y (wrist at y=0, knuckles at y=-0.09)
+    // Palm + curled fingers block along -Y (wrist ball at y=+0.025, knuckles at y=-0.10)
     hb.addLoft(
       [
-        { y: -0.095, rx: 0.024, rz: 0.038, cz: 0.008, v: 0.08 }, // Curled fingertips
+        { y: -0.10, rx: 0.024, rz: 0.038, cz: 0.008, v: 0.08 }, // Curled fingertips
         { y: -0.045, rx: 0.028, rz: 0.046, cz: 0.004, v: 0.50 }, // Knuckles / palm
-        { y: 0.015, rx: 0.034, rz: 0.038, v: 0.95 }, // Wrist cuff
+        { y: 0.024, rx: 0.034, rz: 0.038, v: 0.96 }, // Rounded wrist cuff
       ],
       6
     );
@@ -394,39 +396,41 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
     return hb.build(device);
   };
 
-  // 12. Baggy Creased BDU Cargo Thigh (hangs along -Y from +0.03 to -0.36m)
+  // 12. Baggy Creased BDU Cargo Thigh (rounded hip ball at +0.065m down to knee at -0.365m)
   const thighB = new FacetedMeshBuilder();
   thighB.addLoft(
     [
-      { y: -0.36, rx: 0.068, rz: 0.072, v: 0.04 }, // Above knee
+      { y: -0.368, rx: 0.068, rz: 0.072, v: 0.04 }, // Distal femur condyle
       { y: -0.20, rx: 0.092, rz: 0.096, cz: 0.004, v: 0.48 }, // Baggy cargo trouser mid-thigh
-      { y: -0.06, rx: 0.096, rz: 0.100, v: 0.82 }, // Upper quad / glute tie-in
-      { y: 0.03, rx: 0.084, rz: 0.088, v: 0.98 }, // Hip socket cap
+      { y: -0.05, rx: 0.096, rz: 0.100, v: 0.82 }, // Upper quad / glute tie-in
+      { y: 0.03, rx: 0.086, rz: 0.090, v: 0.94 }, // Hip socket collar
+      { y: 0.068, rx: 0.064, rz: 0.068, v: 0.99 }, // Rounded hip ball-joint cap (zero hip gap!)
     ],
     7
   );
 
-  // 13. Articulated Knee + Hard-Shell Tactical Knee-Pad on +Z!
+  // 13. Upper Tibia + Armored Knee-Pad (spans +0.055m knee ball all the way down to -0.225m mid-shin!)
   const kneeB = new FacetedMeshBuilder();
   kneeB.addLoft(
     [
-      { y: -0.08, rx: 0.060, rz: 0.064, v: 0.1 },
-      { y: 0.0, rx: 0.066, rz: 0.070, v: 0.5 },
-      { y: 0.06, rx: 0.064, rz: 0.068, v: 0.9 },
+      { y: -0.225, rx: 0.062, rz: 0.066, v: 0.05 }, // Seamlessly overlaps SHIN_LEFT/RIGHT at y=-0.2175m!
+      { y: -0.11, rx: 0.066, rz: 0.070, cz: -0.004, v: 0.42 }, // Upper gastrocnemius / shin trouser
+      { y: 0.0, rx: 0.068, rz: 0.072, v: 0.78 }, // Knee joint center
+      { y: 0.055, rx: 0.056, rz: 0.060, v: 0.98 }, // Rounded knee ball-joint cap
     ],
     6
   );
   // Front armored knee-pad shell
   kneeB.addBox(0, -0.01, 0.058, 0.095, 0.105, 0.034, 0.85, 0.8);
 
-  // 14. Bloused Shin / Calf BDU Trouser (hangs along -Y from +0.02 to -0.22m)
+  // 14. Lower Bloused Shin / Calf BDU Trouser (overlaps upper tibia at +0.04m down to boot at -0.22m)
   const shinB = new FacetedMeshBuilder();
   shinB.addLoft(
     [
-      { y: -0.22, rx: 0.048, rz: 0.050, v: 0.05 }, // Tucked into boot cuff
+      { y: -0.222, rx: 0.048, rz: 0.050, v: 0.05 }, // Tucked into boot cuff
       { y: -0.15, rx: 0.068, rz: 0.070, v: 0.35 }, // Bloused trouser overhang
-      { y: -0.07, rx: 0.066, rz: 0.072, cz: -0.006, v: 0.70 }, // Gastrocnemius calf muscle
-      { y: 0.02, rx: 0.060, rz: 0.062, v: 0.96 },
+      { y: -0.06, rx: 0.066, rz: 0.072, cz: -0.006, v: 0.70 }, // Gastrocnemius calf muscle
+      { y: 0.04, rx: 0.062, rz: 0.064, v: 0.97 }, // Seamless overlap into upper tibia
     ],
     6
   );

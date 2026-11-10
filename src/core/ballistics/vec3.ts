@@ -111,8 +111,11 @@ export function deterministicConeSpread(
 
   // Golden spiral distribution on circular disk
   const goldenRatio = 1.618033988749895;
-  // Pellet 0 stays closer to center if count > 1
-  const rNorm = Math.sqrt((pelletIndex + 0.5) / pelletCount);
+  // Pellet 0 stays near the central bore axis while pellets 1..N-1 fan out across the full cone
+  const rNorm =
+    pelletIndex === 0
+      ? 0.05
+      : Math.sqrt(pelletIndex / Math.max(1, pelletCount - 1));
   const theta = 2 * Math.PI * (pelletIndex * goldenRatio + (seed % 1000) / 1000);
 
   const radius = rNorm * spreadRad;

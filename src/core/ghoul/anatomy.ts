@@ -203,7 +203,7 @@ export const GHOUL_ZONE_HIERARCHY: Record<GhoulZoneId, GhoulZoneNode> = {
     children: ['SHIN_LEFT'],
     distalTarget: 'SHIN_LEFT',
     jointLocalPos: vec3(-0.12, 0.50, 0.01),
-    defaultMassKg: 1.8,
+    defaultMassKg: 2.2,
     collisionRadiusM: 0.06,
     label: 'Left Knee / Patella',
   },
@@ -211,7 +211,7 @@ export const GHOUL_ZONE_HIERARCHY: Record<GhoulZoneId, GhoulZoneNode> = {
     parent: 'KNEE_LEFT',
     children: ['FOOT_LEFT'],
     distalTarget: 'FOOT_LEFT',
-    jointLocalPos: vec3(-0.12, 0.28, 0),
+    jointLocalPos: vec3(-0.12, 0.2825, 0.01),
     defaultMassKg: 3.5,
     collisionRadiusM: 0.055,
     label: 'Left Shin / Calf',
@@ -220,8 +220,8 @@ export const GHOUL_ZONE_HIERARCHY: Record<GhoulZoneId, GhoulZoneNode> = {
     parent: 'SHIN_LEFT',
     children: [],
     distalTarget: 'FOOT_TOE_LEFT',
-    jointLocalPos: vec3(-0.12, 0.065, 0.02),
-    defaultMassKg: 1.4,
+    jointLocalPos: vec3(-0.12, 0.065, 0.01),
+    defaultMassKg: 1.5,
     collisionRadiusM: 0.06,
     label: 'Left Combat Boot',
   },
@@ -239,7 +239,7 @@ export const GHOUL_ZONE_HIERARCHY: Record<GhoulZoneId, GhoulZoneNode> = {
     children: ['SHIN_RIGHT'],
     distalTarget: 'SHIN_RIGHT',
     jointLocalPos: vec3(0.12, 0.50, 0.01),
-    defaultMassKg: 1.8,
+    defaultMassKg: 2.2,
     collisionRadiusM: 0.06,
     label: 'Right Knee / Patella',
   },
@@ -247,7 +247,7 @@ export const GHOUL_ZONE_HIERARCHY: Record<GhoulZoneId, GhoulZoneNode> = {
     parent: 'KNEE_RIGHT',
     children: ['FOOT_RIGHT'],
     distalTarget: 'FOOT_RIGHT',
-    jointLocalPos: vec3(0.12, 0.28, 0),
+    jointLocalPos: vec3(0.12, 0.2825, 0.01),
     defaultMassKg: 3.5,
     collisionRadiusM: 0.055,
     label: 'Right Shin / Calf',
@@ -256,8 +256,8 @@ export const GHOUL_ZONE_HIERARCHY: Record<GhoulZoneId, GhoulZoneNode> = {
     parent: 'SHIN_RIGHT',
     children: [],
     distalTarget: 'FOOT_TOE_RIGHT',
-    jointLocalPos: vec3(0.12, 0.065, 0.02),
-    defaultMassKg: 1.4,
+    jointLocalPos: vec3(0.12, 0.065, 0.01),
+    defaultMassKg: 1.5,
     collisionRadiusM: 0.06,
     label: 'Right Combat Boot',
   },
@@ -517,7 +517,7 @@ export function buildAnatomicalColliders(): AnatomicalColliderVolume[] {
       stoppingPowerFactor: 1.0,
       fractureThresholdJ: 70,
       severThresholdJ: 9999, // Thorax never detaches into floating cubes
-      vitalityMultiplier: 1.2,
+      vitalityMultiplier: 0.85,
       limbMassKg: 19.0,
       parentZone: 'TORSO_LOWER_ABDOMEN',
     },
@@ -533,7 +533,7 @@ export function buildAnatomicalColliders(): AnatomicalColliderVolume[] {
       stoppingPowerFactor: 3.5,
       fractureThresholdJ: 130,
       severThresholdJ: 9999,
-      vitalityMultiplier: 1.8,
+      vitalityMultiplier: 0.95,
       limbMassKg: 4.5,
       parentZone: 'TORSO_LOWER_ABDOMEN',
     },
@@ -543,13 +543,13 @@ export function buildAnatomicalColliders(): AnatomicalColliderVolume[] {
       ghoulZone: 'TORSO_UPPER_THORAX',
       layerType: 'ORGAN_HEART',
       localCenter: vec3(-0.02, 1.33, 0.01),
-      halfExtents: vec3(0.075, 0.075, 0.075),
+      halfExtents: vec3(0.046, 0.050, 0.046),
       shape: 'SPHERE',
       densityKgM3: 1060,
       stoppingPowerFactor: 1.3,
-      fractureThresholdJ: 40,
+      fractureThresholdJ: 95,
       severThresholdJ: 9999,
-      vitalityMultiplier: 4.5,
+      vitalityMultiplier: 2.8,
       limbMassKg: 0.8,
       parentZone: 'TORSO_UPPER_THORAX',
     },
@@ -558,14 +558,14 @@ export function buildAnatomicalColliders(): AnatomicalColliderVolume[] {
       label: 'Left Lung',
       ghoulZone: 'TORSO_UPPER_THORAX',
       layerType: 'ORGAN_LUNG_LEFT',
-      localCenter: vec3(-0.08, 1.35, 0.01),
-      halfExtents: vec3(0.065, 0.095, 0.07),
+      localCenter: vec3(-0.085, 1.35, 0.01),
+      halfExtents: vec3(0.062, 0.095, 0.07),
       shape: 'BOX',
       densityKgM3: 450,
       stoppingPowerFactor: 0.8,
-      fractureThresholdJ: 35,
+      fractureThresholdJ: 55,
       severThresholdJ: 9999,
-      vitalityMultiplier: 2.5,
+      vitalityMultiplier: 1.25,
       limbMassKg: 0.6,
       parentZone: 'TORSO_UPPER_THORAX',
     },
@@ -574,14 +574,14 @@ export function buildAnatomicalColliders(): AnatomicalColliderVolume[] {
       label: 'Right Lung',
       ghoulZone: 'TORSO_UPPER_THORAX',
       layerType: 'ORGAN_LUNG_RIGHT',
-      localCenter: vec3(0.08, 1.35, 0.01),
-      halfExtents: vec3(0.065, 0.095, 0.07),
+      localCenter: vec3(0.085, 1.35, 0.01),
+      halfExtents: vec3(0.062, 0.095, 0.07),
       shape: 'BOX',
       densityKgM3: 450,
       stoppingPowerFactor: 0.8,
-      fractureThresholdJ: 35,
+      fractureThresholdJ: 55,
       severThresholdJ: 9999,
-      vitalityMultiplier: 2.5,
+      vitalityMultiplier: 1.25,
       limbMassKg: 0.7,
       parentZone: 'TORSO_UPPER_THORAX',
     },
@@ -968,13 +968,13 @@ export function buildAnatomicalColliders(): AnatomicalColliderVolume[] {
       ghoulZone: 'KNEE_LEFT',
       layerType: 'CORTICAL_BONE',
       localCenter: vec3(-0.12, 0.50, 0.01),
-      halfExtents: vec3(0.055, 0.055, 0.055),
+      halfExtents: vec3(0.068, 0.068, 0.068),
       shape: 'SPHERE',
       densityKgM3: 1850,
       stoppingPowerFactor: 3.8,
       fractureThresholdJ: 90,
-      severThresholdJ: 620,
-      vitalityMultiplier: 0.9,
+      severThresholdJ: 540,
+      vitalityMultiplier: 0.7,
       limbMassKg: 1.8,
       parentZone: 'THIGH_LEFT',
       childZones: ['SHIN_LEFT', 'FOOT_LEFT'],
@@ -1087,13 +1087,13 @@ export function buildAnatomicalColliders(): AnatomicalColliderVolume[] {
       ghoulZone: 'KNEE_RIGHT',
       layerType: 'CORTICAL_BONE',
       localCenter: vec3(0.12, 0.50, 0.01),
-      halfExtents: vec3(0.055, 0.055, 0.055),
+      halfExtents: vec3(0.068, 0.068, 0.068),
       shape: 'SPHERE',
       densityKgM3: 1850,
       stoppingPowerFactor: 3.8,
       fractureThresholdJ: 90,
-      severThresholdJ: 620,
-      vitalityMultiplier: 0.9,
+      severThresholdJ: 540,
+      vitalityMultiplier: 0.7,
       limbMassKg: 1.8,
       parentZone: 'THIGH_RIGHT',
       childZones: ['SHIN_RIGHT', 'FOOT_RIGHT'],
@@ -1158,7 +1158,8 @@ function getRestLocalPosition(id: GhoulZoneId | AuxParticleId): Vec3Like {
 }
 
 /**
- * Builds the Position-Based Dynamics (PBD) structural + angular range constraints for the 27-point ragdoll.
+ * Builds the Position-Based Dynamics (PBD) structural + anatomical joint-angle constraints
+ * for the 27-point ragdoll so corpses maintain cohesive human skeletal rigidity (zero disintegration!).
  */
 export function buildRagdollConstraints(): RagdollDistanceConstraint[] {
   const constraints: RagdollDistanceConstraint[] = [];
@@ -1185,7 +1186,7 @@ export function buildRagdollConstraints(): RagdollDistanceConstraint[] {
     b: GhoulZoneId | AuxParticleId,
     minScale: number,
     maxScale: number,
-    stiffness = 0.55
+    stiffness = 0.75
   ) => {
     const rest = distance(getRestLocalPosition(a), getRestLocalPosition(b));
     constraints.push({
@@ -1199,78 +1200,114 @@ export function buildRagdollConstraints(): RagdollDistanceConstraint[] {
     });
   };
 
-  // 1. Primary Skeleton Bone Segments (100% rigid length -> limbs NEVER stretch or separate!)
+  const addMeterBounds = (
+    a: GhoulZoneId | AuxParticleId,
+    b: GhoulZoneId | AuxParticleId,
+    minMeters: number,
+    maxMeters: number,
+    stiffness = 0.75
+  ) => {
+    const rest = distance(getRestLocalPosition(a), getRestLocalPosition(b));
+    constraints.push({
+      id: `bounds_${a}_${b}`,
+      nodeA: a,
+      nodeB: b,
+      restLength: rest,
+      minLength: minMeters,
+      maxLength: maxMeters,
+      stiffness,
+    });
+  };
+
+  // 1. Primary Skeleton Bone Segments (100% rigid length -> bones NEVER stretch or separate!)
   addExactLink('PELVIS_GROIN', 'TORSO_LOWER_ABDOMEN', 1.0);
   addExactLink('TORSO_LOWER_ABDOMEN', 'TORSO_UPPER_THORAX', 1.0);
   addExactLink('TORSO_UPPER_THORAX', 'NECK_CERVICAL', 1.0);
   addExactLink('NECK_CERVICAL', 'HEAD_CRANIUM', 1.0);
   addExactLink('HEAD_CRANIUM', 'HEAD_TOP', 1.0);
   addExactLink('HEAD_CRANIUM', 'HEAD_FACE_JAW', 1.0);
-  addExactLink('NECK_CERVICAL', 'HEAD_FACE_JAW', 0.95);
-  addExactLink('HEAD_TOP', 'HEAD_FACE_JAW', 0.95);
+  addExactLink('NECK_CERVICAL', 'HEAD_FACE_JAW', 1.0);
+  addExactLink('HEAD_TOP', 'HEAD_FACE_JAW', 1.0);
 
-  // Thoracic / Clavicle Structural Cage
+  // 2. Rigid 3D Thoracic Ribcage + Seated Glenohumeral (Shoulder) Sockets
+  // Keeps shoulder sockets seated inside the ribcage until severed!
   addExactLink('TORSO_UPPER_THORAX', 'SHOULDER_LEFT', 1.0);
   addExactLink('TORSO_UPPER_THORAX', 'SHOULDER_RIGHT', 1.0);
   addExactLink('NECK_CERVICAL', 'SHOULDER_LEFT', 1.0);
   addExactLink('NECK_CERVICAL', 'SHOULDER_RIGHT', 1.0);
   addExactLink('SHOULDER_LEFT', 'SHOULDER_RIGHT', 1.0);
+  addExactLink('SHOULDER_LEFT', 'UPPER_ARM_LEFT', 1.0);
+  addExactLink('SHOULDER_RIGHT', 'UPPER_ARM_RIGHT', 1.0);
+  addRangeLimit('TORSO_LOWER_ABDOMEN', 'SHOULDER_LEFT', 0.94, 1.06, 0.9);
+  addRangeLimit('TORSO_LOWER_ABDOMEN', 'SHOULDER_RIGHT', 0.94, 1.06, 0.9);
+  addRangeLimit('TORSO_UPPER_THORAX', 'UPPER_ARM_LEFT', 0.93, 1.07, 0.92);
+  addRangeLimit('TORSO_UPPER_THORAX', 'UPPER_ARM_RIGHT', 0.93, 1.07, 0.92);
+  addRangeLimit('NECK_CERVICAL', 'UPPER_ARM_LEFT', 0.93, 1.07, 0.9);
+  addRangeLimit('NECK_CERVICAL', 'UPPER_ARM_RIGHT', 0.93, 1.07, 0.9);
+  addRangeLimit('UPPER_ARM_LEFT', 'UPPER_ARM_RIGHT', 0.92, 1.08, 0.88);
 
-  // Pelvic / Hip Structural Cage
+  // 3. Rigid 3D Pelvic Girdle + Seated Acetabular (Hip) Sockets
+  // Prevents hip triangle from ever inverting or spinning relative to the spine!
   addExactLink('PELVIS_GROIN', 'THIGH_LEFT', 1.0);
   addExactLink('PELVIS_GROIN', 'THIGH_RIGHT', 1.0);
   addExactLink('THIGH_LEFT', 'THIGH_RIGHT', 1.0);
+  addRangeLimit('TORSO_LOWER_ABDOMEN', 'THIGH_LEFT', 0.94, 1.06, 0.95);
+  addRangeLimit('TORSO_LOWER_ABDOMEN', 'THIGH_RIGHT', 0.94, 1.06, 0.95);
 
-  // Left Arm Chain
-  addExactLink('SHOULDER_LEFT', 'UPPER_ARM_LEFT', 1.0);
+  // 4. Arm Bone Chains (Rigid Humerus, Radius/Ulna, and Locked Wrists!)
   addExactLink('UPPER_ARM_LEFT', 'FOREARM_LEFT', 1.0);
   addExactLink('FOREARM_LEFT', 'HAND_LEFT', 1.0);
   addExactLink('HAND_LEFT', 'HAND_TIP_LEFT', 1.0);
+  addRangeLimit('FOREARM_LEFT', 'HAND_TIP_LEFT', 0.94, 1.01, 0.92); // Wrist stays firm!
 
-  // Right Arm Chain
-  addExactLink('SHOULDER_RIGHT', 'UPPER_ARM_RIGHT', 1.0);
   addExactLink('UPPER_ARM_RIGHT', 'FOREARM_RIGHT', 1.0);
   addExactLink('FOREARM_RIGHT', 'HAND_RIGHT', 1.0);
   addExactLink('HAND_RIGHT', 'HAND_TIP_RIGHT', 1.0);
+  addRangeLimit('FOREARM_RIGHT', 'HAND_TIP_RIGHT', 0.94, 1.01, 0.92);
 
-  // Left Leg Chain
+  // 5. Leg Bone Chains (Rigid Femur + 100% Colinear Rigid Tibia KNEE->SHIN->FOOT + Firm Ankle!)
   addExactLink('THIGH_LEFT', 'KNEE_LEFT', 1.0);
   addExactLink('KNEE_LEFT', 'SHIN_LEFT', 1.0);
   addExactLink('SHIN_LEFT', 'FOOT_LEFT', 1.0);
+  addExactLink('KNEE_LEFT', 'FOOT_LEFT', 1.0); // Locks KNEE-SHIN-FOOT into 1 straight rigid tibia!
   addExactLink('FOOT_LEFT', 'FOOT_TOE_LEFT', 1.0);
-  addExactLink('SHIN_LEFT', 'FOOT_TOE_LEFT', 0.85); // keeps boot ankle near 90 deg
+  addRangeLimit('SHIN_LEFT', 'FOOT_TOE_LEFT', 0.94, 1.05, 0.92); // Firm 90-deg combat boot ankle
 
-  // Right Leg Chain
   addExactLink('THIGH_RIGHT', 'KNEE_RIGHT', 1.0);
   addExactLink('KNEE_RIGHT', 'SHIN_RIGHT', 1.0);
   addExactLink('SHIN_RIGHT', 'FOOT_RIGHT', 1.0);
+  addExactLink('KNEE_RIGHT', 'FOOT_RIGHT', 1.0); // Locks KNEE-SHIN-FOOT into 1 straight rigid tibia!
   addExactLink('FOOT_RIGHT', 'FOOT_TOE_RIGHT', 1.0);
-  addExactLink('SHIN_RIGHT', 'FOOT_TOE_RIGHT', 0.85);
+  addRangeLimit('SHIN_RIGHT', 'FOOT_TOE_RIGHT', 0.94, 1.05, 0.92);
 
-  // 2. Anatomical Joint Flexion & Twist Limits (Allows realistic stomach jackknife & limb swing, prevents inside-out folding)
-  // Spine & Waist Flexion / Twist
-  addRangeLimit('PELVIS_GROIN', 'TORSO_UPPER_THORAX', 0.72, 1.02, 0.65);
-  addRangeLimit('TORSO_LOWER_ABDOMEN', 'NECK_CERVICAL', 0.84, 1.02, 0.7);
-  addRangeLimit('THIGH_LEFT', 'SHOULDER_LEFT', 0.68, 1.12, 0.5);
-  addRangeLimit('THIGH_RIGHT', 'SHOULDER_RIGHT', 0.68, 1.12, 0.5);
-  addRangeLimit('THIGH_LEFT', 'SHOULDER_RIGHT', 0.72, 1.15, 0.45);
-  addRangeLimit('THIGH_RIGHT', 'SHOULDER_LEFT', 0.72, 1.15, 0.45);
+  // 6. Anatomical Spine, Neck, Hip, Knee & Elbow Flexion Bounds
+  // Spine & Waist Support (allows natural ~20-30 deg waist fold without crumpling!)
+  addRangeLimit('PELVIS_GROIN', 'TORSO_UPPER_THORAX', 0.85, 1.02, 0.85);
+  addRangeLimit('TORSO_LOWER_ABDOMEN', 'NECK_CERVICAL', 0.90, 1.02, 0.85);
+  addRangeLimit('THIGH_LEFT', 'SHOULDER_LEFT', 0.82, 1.08, 0.78);
+  addRangeLimit('THIGH_RIGHT', 'SHOULDER_RIGHT', 0.82, 1.08, 0.78);
+  addRangeLimit('THIGH_LEFT', 'SHOULDER_RIGHT', 0.84, 1.10, 0.78);
+  addRangeLimit('THIGH_RIGHT', 'SHOULDER_LEFT', 0.84, 1.10, 0.78);
 
-  // Neck Flexion
-  addRangeLimit('TORSO_UPPER_THORAX', 'HEAD_CRANIUM', 0.80, 1.04, 0.65);
-  addRangeLimit('SHOULDER_LEFT', 'HEAD_CRANIUM', 0.78, 1.22, 0.55);
-  addRangeLimit('SHOULDER_RIGHT', 'HEAD_CRANIUM', 0.78, 1.22, 0.55);
+  // Neck Capsule Limits (keeps head naturally supported on neck!)
+  addRangeLimit('TORSO_UPPER_THORAX', 'HEAD_CRANIUM', 0.88, 1.04, 0.82);
+  addRangeLimit('TORSO_UPPER_THORAX', 'HEAD_TOP', 0.88, 1.04, 0.78);
+  addRangeLimit('SHOULDER_LEFT', 'HEAD_CRANIUM', 0.84, 1.16, 0.75);
+  addRangeLimit('SHOULDER_RIGHT', 'HEAD_CRANIUM', 0.84, 1.16, 0.75);
 
-  // Knee & Hip Limits
-  addRangeLimit('THIGH_LEFT', 'SHIN_LEFT', 0.52, 1.01, 0.5);
-  addRangeLimit('THIGH_RIGHT', 'SHIN_RIGHT', 0.52, 1.01, 0.5);
-  addRangeLimit('PELVIS_GROIN', 'KNEE_LEFT', 0.68, 1.06, 0.45);
-  addRangeLimit('PELVIS_GROIN', 'KNEE_RIGHT', 0.68, 1.06, 0.45);
-  addRangeLimit('KNEE_LEFT', 'KNEE_RIGHT', 0.45, 2.6, 0.35);
+  // Knee Flexion & Hip Capsule Anti-Split Limits
+  addMeterBounds('THIGH_LEFT', 'FOOT_LEFT', 0.48, 0.796, 0.78);
+  addMeterBounds('THIGH_RIGHT', 'FOOT_RIGHT', 0.48, 0.796, 0.78);
+  addMeterBounds('TORSO_UPPER_THORAX', 'KNEE_LEFT', 0.58, 0.86, 0.70);
+  addMeterBounds('TORSO_UPPER_THORAX', 'KNEE_RIGHT', 0.58, 0.86, 0.70);
+  addMeterBounds('KNEE_LEFT', 'KNEE_RIGHT', 0.14, 0.48, 0.75);
+  addMeterBounds('FOOT_LEFT', 'FOOT_RIGHT', 0.13, 0.56, 0.65);
 
-  // Elbow & Shoulder Limits
-  addRangeLimit('UPPER_ARM_LEFT', 'HAND_LEFT', 0.48, 1.38, 0.35);
-  addRangeLimit('UPPER_ARM_RIGHT', 'HAND_RIGHT', 0.48, 1.38, 0.35);
+  // Elbow & Shoulder Swing Bounds (prevents arms from folding inside-out or flinging wildly)
+  addMeterBounds('UPPER_ARM_LEFT', 'HAND_LEFT', 0.28, 0.51, 0.72);
+  addMeterBounds('UPPER_ARM_RIGHT', 'HAND_RIGHT', 0.28, 0.51, 0.72);
+  addMeterBounds('PELVIS_GROIN', 'FOREARM_LEFT', 0.22, 0.62, 0.55);
+  addMeterBounds('PELVIS_GROIN', 'FOREARM_RIGHT', 0.22, 0.62, 0.55);
 
   return constraints;
 }
@@ -1532,8 +1569,35 @@ export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS
       ? Math.sin(Math.min(1, rx.timerS / rx.durationS) * Math.PI) * rx.intensity
       : 0;
 
-  // Leg injured crouch / buckle drop
-  const kneeBuckleDrop = !target.leftLegFunctional || !target.rightLegFunctional ? 0.28 : 0;
+  // Leg injured crouch / one-legged stagger before collapse
+  const leftLegSevered =
+    target.severedZones.has('THIGH_LEFT') ||
+    target.severedZones.has('KNEE_LEFT') ||
+    target.severedZones.has('SHIN_LEFT') ||
+    target.severedZones.has('FOOT_LEFT');
+  const rightLegSevered =
+    target.severedZones.has('THIGH_RIGHT') ||
+    target.severedZones.has('KNEE_RIGHT') ||
+    target.severedZones.has('SHIN_RIGHT') ||
+    target.severedZones.has('FOOT_RIGHT');
+  const hasSeveredLeg = leftLegSevered || rightLegSevered;
+
+  const staggerProg =
+    hasSeveredLeg && rx.durationS > 0 ? Math.min(1, rx.timerS / rx.durationS) : 0;
+  const kneeBuckleDrop = hasSeveredLeg
+    ? 0.10 + staggerProg * 0.24
+    : !target.leftLegFunctional || !target.rightLegFunctional
+      ? 0.28
+      : 0;
+  const legStaggerX = leftLegSevered
+    ? -(0.08 + staggerProg * 0.16)
+    : rightLegSevered
+      ? 0.08 + staggerProg * 0.16
+      : rx.type === 'LEG_BUCKLE_LEFT'
+        ? -0.09 * rxWeight
+        : rx.type === 'LEG_BUCKLE_RIGHT'
+          ? 0.09 * rxWeight
+          : 0;
   const gutFoldZ = rx.type === 'GUT_FOLD' ? 0.14 * rxWeight : 0;
   const gutFoldY = rx.type === 'GUT_FOLD' ? -0.09 * rxWeight : 0;
   const chestBackZ = rx.type === 'CHEST_STAGGER' ? -0.11 * rxWeight : 0;
@@ -1548,7 +1612,7 @@ export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS
     let ly = base.y;
     let lz = base.z;
 
-    // Apply knee-buckle crouch to pelvis & upper body
+    // Apply knee-buckle crouch & one-legged stagger tilt to pelvis & upper body
     if (
       zone !== 'SHIN_LEFT' &&
       zone !== 'FOOT_LEFT' &&
@@ -1556,13 +1620,14 @@ export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS
       zone !== 'FOOT_RIGHT'
     ) {
       ly -= kneeBuckleDrop;
+      lx += legStaggerX * Math.max(0.35, (base.y - 0.45) / 1.1);
     }
 
-    if (zone === 'KNEE_LEFT' && !target.leftLegFunctional) {
+    if (zone === 'KNEE_LEFT' && !target.leftLegFunctional && !leftLegSevered) {
       ly = 0.22;
       lz = 0.16;
     }
-    if (zone === 'KNEE_RIGHT' && !target.rightLegFunctional) {
+    if (zone === 'KNEE_RIGHT' && !target.rightLegFunctional && !rightLegSevered) {
       ly = 0.22;
       lz = 0.16;
     }
@@ -1631,6 +1696,18 @@ export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS
     const wp = toWorld(lx, ly, lz);
     bone.position = wp;
     bone.prevPosition = copyVec3(wp);
+  }
+
+  // Keep non-severed SHIN_LEFT and SHIN_RIGHT colinear with KNEE -> FOOT even during wounded kneeling!
+  for (const side of ['LEFT', 'RIGHT'] as const) {
+    const shin = target.ragdollBones[side === 'LEFT' ? 'SHIN_LEFT' : 'SHIN_RIGHT'];
+    const knee = target.ragdollBones[side === 'LEFT' ? 'KNEE_LEFT' : 'KNEE_RIGHT'];
+    const foot = target.ragdollBones[side === 'LEFT' ? 'FOOT_LEFT' : 'FOOT_RIGHT'];
+    if (!shin.severed && !knee.severed && !foot.severed) {
+      const mid = scale(add(knee.position, foot.position), 0.5);
+      shin.position = mid;
+      shin.prevPosition = copyVec3(mid);
+    }
   }
 
   // Update auxiliary tip particles for non-severed parent bones
@@ -1731,6 +1808,13 @@ export function createTargetHealthState(
 
   const hasChestArmor = archetype === 'HEAVY_ENFORCER';
   const hasHelmetArmor = archetype === 'HEAVY_ENFORCER';
+  const archetypeBaseHp: Record<EnemyArchetypeId, number> = {
+    SKINHEAD_PUNK: 120.0,
+    SNIPER_OPERATIVE: 135.0,
+    MILITIA_GUNNER: 145.0,
+    HEAVY_ENFORCER: 190.0,
+  };
+  const startingHp = archetypeBaseHp[archetype];
 
   const state: TargetHealthState = {
     targetId,
@@ -1738,8 +1822,8 @@ export function createTargetHealthState(
     archetype,
     worldPosition: copyVec3(worldPosition),
     yawRad,
-    maxHp: archetype === 'HEAVY_ENFORCER' ? 125.0 : 100.0,
-    currentHp: archetype === 'HEAVY_ENFORCER' ? 125.0 : 100.0,
+    maxHp: startingHp,
+    currentHp: startingHp,
     bleedRateHpPerSec: 0,
     bloodVolumeMl: 5000,
     bloodLossRateMlPerSec: 0,

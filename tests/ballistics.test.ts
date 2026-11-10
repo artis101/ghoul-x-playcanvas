@@ -27,6 +27,7 @@ import {
   applyShotReportToTarget,
   stepRagdollPhysics,
   computeBallisticZeroAimDirection,
+  computeCombatantTriageStatus,
 } from '../src/core/ballistics/solver.ts';
 import { EnvironmentState, ProjectileState } from '../src/contracts/ballistics.ts';
 
@@ -246,8 +247,8 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
     });
   });
 
-  describe('3. Realistic 82 kg Human Body Ragdoll Physics (1.1m Close Blast vs 20m Distant Fall)', () => {
-    it('1.1m point-blank 12G shotgun blast moves an 82 kg body ~1-2m backward (no cartoon flight) with unified spine!', () => {
+  describe('3. Realistic 82 kg Human Body Ragdoll Physics (1.1m Close Blast vs 20m Wide Spread & Distant Fall)', () => {
+    it('1.1m point-blank 12G shotgun blast delivers punchy close-range knockback (~1.6m-3.8m) with rigid unified skeleton!', () => {
       const target = createTargetHealthState(
         'target_close_1m',
         'NYC Skinhead Punk',
@@ -272,6 +273,11 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
         }
       }
 
+      const restLeftTibiaSpan = distance(
+        target.ragdollBones.KNEE_LEFT.position,
+        target.ragdollBones.FOOT_LEFT.position
+      );
+
       const shooterPos = vec3(0, 1.13, 0);
       const aimDir = normalize(sub(vec3(0, 1.13, -1.1), shooterPos));
 
@@ -286,7 +292,8 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
 
       expect(report.hitTarget).toBe(true);
       expect(report.isLethalKill).toBe(true);
-      expect(report.ragdollPlan.launchLiftVelocityMs).toBeLessThan(0.6);
+      expect(report.ragdollPlan.launchLiftVelocityMs).toBeGreaterThan(0.35);
+      expect(report.ragdollPlan.launchLiftVelocityMs).toBeLessThan(1.25);
 
       applyShotReportToTarget(target, report);
 
@@ -310,14 +317,20 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
         }
       }
 
+      // Tibia stays straight and rigid (colinear KNEE -> SHIN -> FOOT)
+      const finalLeftTibiaSpan = distance(
+        target.ragdollBones.KNEE_LEFT.position,
+        target.ragdollBones.FOOT_LEFT.position
+      );
+      expect(Math.abs(finalLeftTibiaSpan - restLeftTibiaSpan)).toBeLessThan(0.02);
+
       const backwardMoveM = initialPelvisZ - target.ragdollBones.PELVIS_GROIN.position.z;
-      // Moves realistically ~0.9m - 2.1m from a 1.1m point-blank 12G blast — never flying 4-8m!
-      expect(backwardMoveM).toBeGreaterThan(0.85);
-      expect(backwardMoveM).toBeLessThan(2.2);
+      expect(backwardMoveM).toBeGreaterThan(1.4);
+      expect(backwardMoveM).toBeLessThan(4.2);
     });
 
-    it('20m 12G shotgun blast and 20m rifle kill do NOT send an 82 kg body flying (collapse < 0.45m)', () => {
-      // 1) 20m Shotgun shot on unarmored combatant
+    it('20m 12G buckshot blooms into a wide pattern (> 2.2m) and 20m kills collapse in place (< 0.45m)', () => {
+      // 1) 20m Shotgun shot on unarmored combatant: wide aerodynamic wake spread + zero launch!
       const shotgunTarget20m = createTargetHealthState(
         'target_20m_buck',
         'Militia Gunner',
@@ -340,6 +353,17 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       expect(buck20Report.ragdollPlan.launchLiftVelocityMs).toBe(0);
       expect(buck20Report.dismembermentEvents.length).toBe(0);
 
+      // Measure lateral pellet spread across the z = -20m plane across all 9 pellets
+      let minX = Infinity;
+      let maxX = -Infinity;
+      for (const pr of buck20Report.pelletResults) {
+        const sampleNear20 = pr.trajectorySamples.find((s) => s.position.z <= -19.5)
+          ?? pr.trajectorySamples[pr.trajectorySamples.length - 1];
+        minX = Math.min(minX, sampleNear20.position.x);
+        maxX = Math.max(maxX, sampleNear20.position.x);
+      }
+      expect(maxX - minX).toBeGreaterThan(2.2);
+
       // Even if weakened so the 20m shotgun shot finishes him off, he collapses in place without flying!
       shotgunTarget20m.currentHp = 10;
       const lethalBuck20 = simulateShot(
@@ -358,7 +382,7 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       const move20mBuck = Math.abs(shotgunTarget20m.ragdollBones.PELVIS_GROIN.position.z - startPelvisZ);
       expect(move20mBuck).toBeLessThan(0.45);
 
-      // 2) 20m Rifle heart shot collapse
+      // 2) 20m Rifle brain shot collapse
       const rifleTarget20m = createTargetHealthState(
         'target_20m_rifle',
         'Sniper Operative',
@@ -366,12 +390,12 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
         0,
         'SNIPER_OPERATIVE'
       );
-      const heartAim = normalize(sub(vec3(-0.02, 1.33, -20.0), vec3(-0.02, 1.33, 0)));
+      const brainAim = normalize(sub(vec3(0, 1.66, -20.0), vec3(0, 1.66, 0)));
       const rifleRep = simulateShot(
         WEAPON_MSG90,
         AMMO_762_NATO_M118LR,
-        vec3(-0.02, 1.33, 0),
-        heartAim,
+        vec3(0, 1.66, 0),
+        brainAim,
         rifleTarget20m,
         DEFAULT_ENVIRONMENT
       );
@@ -461,6 +485,134 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
         target.ragdollBones.FOREARM_LEFT.position
       );
       expect(Math.abs(postForearmLen - restForearmLen)).toBeLessThan(0.02);
+    });
+  });
+
+  describe('5. Grounded Joint Dismemberment, Living Downed Leg-Shot Posture & 4-State Triage', () => {
+    it('rewards deliberate large-caliber joint shots with CLEAN_SEVER while 5.56mm and off-joint mid-shaft hits do NOT amputate', () => {
+      // 1) 5.56mm M4A1 shot directly at knee joint does NOT sever leg
+      const m4Target = createTargetHealthState('m4_knee', 'Militia', vec3(0, 0, -6), 0);
+      const kneePos = m4Target.ragdollBones.KNEE_LEFT.position;
+      const m4Origin = vec3(kneePos.x, kneePos.y, 0);
+      const m4Dir = normalize(sub(kneePos, m4Origin));
+      const m4Rep = simulateShot(
+        WEAPON_M4A1,
+        AMMO_556_NATO_SOST_JHP,
+        m4Origin,
+        m4Dir,
+        m4Target,
+        DEFAULT_ENVIRONMENT
+      );
+      expect(m4Rep.hitTarget).toBe(true);
+      expect(m4Rep.dismembermentEvents.length).toBe(0);
+
+      // 2) 7.62 NATO mid-thigh (off-joint) fractures femur without severing leg
+      const midShaftTarget = createTargetHealthState('mid_thigh', 'Militia', vec3(0, 0, -6), 0);
+      const midThighPt = vec3(-0.12, 0.68, -6);
+      const midOrigin = vec3(-0.12, 0.68, 0);
+      const midRep = simulateShot(
+        WEAPON_MSG90,
+        AMMO_762_NATO_M118LR,
+        midOrigin,
+        normalize(sub(midThighPt, midOrigin)),
+        midShaftTarget,
+        DEFAULT_ENVIRONMENT
+      );
+      expect(midRep.hitTarget).toBe(true);
+      expect(midRep.dismembermentEvents.length).toBe(0);
+
+      // 3) Deliberate 7.62 NATO shot directly into KNEE_LEFT joint severs lower leg cleanly AND keeps enemy ALIVE!
+      const jointTarget = createTargetHealthState('joint_knee', 'Militia', vec3(0, 0, -6), 0);
+      const jointKneePt = jointTarget.ragdollBones.KNEE_LEFT.position;
+      const jointOrigin = vec3(jointKneePt.x, jointKneePt.y, 0);
+      const jointRep = simulateShot(
+        WEAPON_MSG90,
+        AMMO_762_NATO_M118LR,
+        jointOrigin,
+        normalize(sub(jointKneePt, jointOrigin)),
+        jointTarget,
+        DEFAULT_ENVIRONMENT
+      );
+      expect(jointRep.hitTarget).toBe(true);
+      expect(jointRep.isLethalKill).toBe(false);
+      expect(jointRep.dismembermentEvents.some((d) => d.zone === 'KNEE_LEFT' && d.goreMode === 'CLEAN_SEVER')).toBe(true);
+
+      applyShotReportToTarget(jointTarget, jointRep);
+      expect(jointTarget.alive).toBe(true);
+
+      // 4) Deliberate .50 AE shot at wrist/hand severs HAND_LEFT while keeping enemy standing & alive!
+      const handTarget = createTargetHealthState('joint_hand', 'Punk', vec3(0, 0, -5), 0);
+      const handPt = handTarget.ragdollBones.HAND_LEFT.position;
+      const handOrigin = vec3(handPt.x, handPt.y, 0);
+      const handRep = simulateShot(
+        WEAPON_SILVER_TALON,
+        AMMO_50AE_JHP,
+        handOrigin,
+        normalize(sub(handPt, handOrigin)),
+        handTarget,
+        DEFAULT_ENVIRONMENT
+      );
+      expect(handRep.hitTarget).toBe(true);
+      expect(handRep.isLethalKill).toBe(false);
+      expect(handRep.dismembermentEvents.some((d) => d.zone === 'HAND_LEFT')).toBe(true);
+      applyShotReportToTarget(handTarget, handRep);
+      expect(handTarget.alive).toBe(true);
+      expect(handTarget.leftLegFunctional).toBe(true);
+      expect(handTarget.rightLegFunctional).toBe(true);
+    });
+
+    it('leg-shot enemy staggers then goes down ALIVE (propped up by muscle tone, not a sandbag) and transitions across all 4 Triage states', () => {
+      const target = createTargetHealthState('leg_triage', 'Balkan Militia', vec3(0, 0, -7), 0, 'MILITIA_GUNNER');
+      expect(computeCombatantTriageStatus(target)).toBe('HEALTHY');
+
+      // Shoot left thigh with 5.56 JHP — enemy must survive, become WOUNDED, stumble briefly, then go down onto ground ALIVE
+      const thighPt = vec3(-0.12, 0.70, -7);
+      const origin = vec3(-0.12, 0.70, 0);
+      const legRep = simulateShot(
+        WEAPON_M4A1,
+        AMMO_556_NATO_SOST_JHP,
+        origin,
+        normalize(sub(thighPt, origin)),
+        target,
+        DEFAULT_ENVIRONMENT
+      );
+      expect(legRep.hitTarget).toBe(true);
+      expect(legRep.isLethalKill).toBe(false);
+      applyShotReportToTarget(target, legRep);
+
+      expect(target.alive).toBe(true);
+      expect(target.leftLegFunctional).toBe(false);
+      expect(computeCombatantTriageStatus(target)).toBe('WOUNDED');
+
+      // During brief stumble (t = 0.15s), still upright in LEG_BUCKLE before hitting the ground
+      for (let i = 0; i < 15; i++) {
+        stepRagdollPhysics(target, 0.01, 0.0);
+      }
+      expect(target.isRagdollActive).toBe(false);
+
+      // Step forward ~1.8s: combatant goes down to the ground (pelvis on floor) WITH active muscle tone holding head/chest up!
+      for (let i = 0; i < 180; i++) {
+        stepRagdollPhysics(target, 0.01, 0.0);
+      }
+      expect(target.isRagdollActive).toBe(true);
+      expect(target.alive).toBe(true);
+      expect(target.ragdollBones.PELVIS_GROIN.position.y).toBeLessThan(0.24);
+      // Propped semi-upright (~45 deg): head stays well off the concrete (> 0.42m), NOT flat like a dead sandbag!
+      expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeGreaterThan(0.42);
+
+      // Severing femoral artery / dropping HP low transitions triage to MORTALLY_WOUNDED while still alive
+      target.bloodLossRateMlPerSec = 95;
+      expect(computeCombatantTriageStatus(target)).toBe('MORTALLY_WOUNDED');
+
+      // Once killed, triage becomes DEAD and all muscle tone cuts out so head slumps flat onto the floor!
+      target.alive = false;
+      target.currentHp = 0;
+      expect(computeCombatantTriageStatus(target)).toBe('DEAD');
+
+      for (let i = 0; i < 120; i++) {
+        stepRagdollPhysics(target, 0.01, 0.0);
+      }
+      expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeLessThan(0.22);
     });
   });
 });

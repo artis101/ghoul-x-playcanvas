@@ -14,12 +14,12 @@ export const AMMO_12G_00_BUCK: AmmoSpec = {
   massKg: 0.0035,
   diameterM: 0.0084,
   muzzleVelocityMs: 405,
-  dragCoefficient: 0.52,
+  dragCoefficient: 0.55,
   tissueExpansionFactor: 1.38,
   armorPenetrationFactor: 0.65,
   pelletCount: 9,
-  spreadRadians: 0.034,
-  ragdollImpulseMultiplier: 1.35,
+  spreadRadians: 0.046,
+  ragdollImpulseMultiplier: 1.65,
   goreFactor: 1.55,
 };
 
@@ -41,7 +41,7 @@ export const AMMO_12G_FLECHETTE_SLUG: AmmoSpec = {
   armorPenetrationFactor: 1.48,
   pelletCount: 1,
   spreadRadians: 0.003,
-  ragdollImpulseMultiplier: 1.25,
+  ragdollImpulseMultiplier: 1.50,
   goreFactor: 1.65,
 };
 

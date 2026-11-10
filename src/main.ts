@@ -23,7 +23,10 @@ import { applyRetroEnvironmentTextures } from './engine/retroTextures.ts';
 import { populatePlayerWeaponViewmodel } from './engine/retroMeshBuilder.ts';
 import { GhoulMannequinEntity } from './engine/mannequin.ts';
 import { GoreAndBallisticsFxManager } from './engine/goreFx.ts';
-import { HudController } from './engine/hudController.ts';
+import {
+  HudController,
+  ProjectedTargetTriageEntry,
+} from './engine/hudController.ts';
 
 interface RangeTargetConfig {
   id: string;
@@ -102,6 +105,10 @@ class GhoulXApplication {
 
   // Arsenal & Magazine State
   private targets: GhoulMannequinEntity[] = [];
+  private lastEngagedTarget: GhoulMannequinEntity | null = null;
+  private scratchWorldPt = new pc.Vec3();
+  private scratchScreenPt = new pc.Vec3();
+  private scratchBodyScreenPt = new pc.Vec3();
   private currentWeaponIndex = 0;
   private currentWeapon: WeaponSpec = WEAPON_M590;
   private currentAmmo: AmmoSpec = WEAPON_M590.defaultAmmo;
@@ -292,6 +299,7 @@ class GhoulXApplication {
       t.destroy();
     }
     this.targets = nextTargets;
+    this.lastEngagedTarget = null;
   }
 
   private selectWeaponByIndex(idx: number): void {
@@ -542,11 +550,16 @@ class GhoulXApplication {
     target: GhoulMannequinEntity,
     report: ShotSimulationReport
   ): void {
+    this.lastEngagedTarget = target;
     const wasAlive = target.healthState.alive;
     applyShotReportToTarget(target.healthState, report);
     const isLethalNow = !target.healthState.alive;
+    const armorOnly =
+      report.woundEvents.length > 0 && report.woundEvents.every((w) => w.armorStopped);
 
-    this.hudController.triggerHitmarker(isLethalNow);
+    this.hudController.triggerHitmarker(
+      isLethalNow ? 'LETHAL' : armorOnly ? 'ARMOR' : 'NORMAL'
+    );
     this.hudController.pushCombatFeed(
       report,
       this.currentWeapon.codeName,
@@ -613,46 +626,81 @@ class GhoulXApplication {
     const aimDir = vec3(aimDirPc.x, aimDirPc.y, aimDirPc.z);
     const origin = vec3(this.playerPos.x, this.playerPos.y, this.playerPos.z);
 
-    const match = this.findBestTargetHit(origin, aimDir);
-    if (!match) return;
-
-    const { target, report } = match;
-
-    // Spawn 3D brass/pellet projectiles
     if (this.currentAmmo.pelletCount > 1) {
-      for (const pr of report.pelletResults) {
-        this.fxManager.spawnFlyingProjectile(pr.trajectorySamples, true);
+      // Multi-target wide buckshot evaluation: outer pellets in a bloomed cone can hit multiple hostiles simultaneously
+      if (this.targets.length === 0) return;
+
+      const candidateReports = this.targets.map((cand) => ({
+        target: cand,
+        report: simulateShot(
+          this.currentWeapon,
+          this.currentAmmo,
+          origin,
+          aimDir,
+          cand.healthState,
+          this.environment
+        ),
+      }));
+
+      // Spawn each of the 9 flying pellets once, terminating at the earliest target hit along its ray
+      const basePelletCount = candidateReports[0].report.pelletResults.length;
+      for (let pIdx = 0; pIdx < basePelletCount; pIdx++) {
+        let chosenSamples = candidateReports[0].report.pelletResults[pIdx].trajectorySamples;
+        let earliestHitS = Infinity;
+        for (const cr of candidateReports) {
+          const pr = cr.report.pelletResults[pIdx];
+          if (pr && pr.hitTarget && pr.trajectorySamples.length > 0) {
+            const hitTime = pr.trajectorySamples[pr.trajectorySamples.length - 1].timeS;
+            if (hitTime < earliestHitS) {
+              earliestHitS = hitTime;
+              chosenSamples = pr.trajectorySamples;
+            }
+          }
+        }
+        this.fxManager.spawnFlyingProjectile(chosenSamples, true);
       }
-    } else if (report.trajectorySamples.length > 1) {
-      this.fxManager.spawnFlyingProjectile(report.trajectorySamples, false);
-    }
 
-    if (report.hitTarget) {
-      this.applyImpactFxAndState(target, report);
+      for (const cr of candidateReports) {
+        if (cr.report.hitTarget) {
+          this.applyImpactFxAndState(cr.target, cr.report);
+        }
+      }
+    } else {
+      const match = this.findBestTargetHit(origin, aimDir);
+      if (!match) return;
 
-      // Over-penetration collateral pass: high-penetration AP/FMJ rounds exiting a body
-      // with substantial residual velocity continue downrange into lined-up combatants!
-      if (this.currentAmmo.pelletCount === 1 && report.woundEvents.length > 0) {
-        const lastWound = report.woundEvents[report.woundEvents.length - 1];
-        if (!lastWound.armorStopped && lastWound.exitEnergyJ > 160 && lastWound.exitVelocityMs > 90) {
-          const excluded = new Set<GhoulMannequinEntity>([target]);
-          const residualAmmo: AmmoSpec = {
-            ...this.currentAmmo,
-            muzzleVelocityMs: lastWound.exitVelocityMs,
-            spreadRadians: 0,
-          };
-          const exitOrigin = add(
-            lastWound.exitPointWorld,
-            scale(lastWound.impactDirectionWorld, 0.06)
-          );
-          const collateral = this.findBestTargetHit(
-            exitOrigin,
-            lastWound.impactDirectionWorld,
-            residualAmmo,
-            excluded
-          );
-          if (collateral && collateral.report.hitTarget) {
-            this.applyImpactFxAndState(collateral.target, collateral.report);
+      const { target, report } = match;
+      if (report.trajectorySamples.length > 1) {
+        this.fxManager.spawnFlyingProjectile(report.trajectorySamples, false);
+      }
+
+      if (report.hitTarget) {
+        this.applyImpactFxAndState(target, report);
+
+        // Over-penetration collateral pass: high-penetration AP/FMJ rounds exiting a body
+        // with substantial residual velocity continue downrange into lined-up combatants!
+        if (report.woundEvents.length > 0) {
+          const lastWound = report.woundEvents[report.woundEvents.length - 1];
+          if (!lastWound.armorStopped && lastWound.exitEnergyJ > 160 && lastWound.exitVelocityMs > 90) {
+            const excluded = new Set<GhoulMannequinEntity>([target]);
+            const residualAmmo: AmmoSpec = {
+              ...this.currentAmmo,
+              muzzleVelocityMs: lastWound.exitVelocityMs,
+              spreadRadians: 0,
+            };
+            const exitOrigin = add(
+              lastWound.exitPointWorld,
+              scale(lastWound.impactDirectionWorld, 0.06)
+            );
+            const collateral = this.findBestTargetHit(
+              exitOrigin,
+              lastWound.impactDirectionWorld,
+              residualAmmo,
+              excluded
+            );
+            if (collateral && collateral.report.hitTarget) {
+              this.applyImpactFxAndState(collateral.target, collateral.report);
+            }
           }
         }
       }
@@ -784,6 +832,67 @@ class GhoulXApplication {
     for (const t of this.targets) {
       stepRagdollPhysics(t.healthState, clampedDt, 0.0);
       t.syncFromHealthState(clampedDt, this.totalElapsedTimeS);
+    }
+
+    // Project 3D enemy health bars & triage status onto HUD overlay
+    const cam = this.cameraEntity.camera;
+    if (cam) {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const cx = vw * 0.5;
+      const cy = vh * 0.5;
+      const entries: ProjectedTargetTriageEntry[] = [];
+      let aimedTarget: GhoulMannequinEntity | null = null;
+      let bestCrosshairDist = 165;
+
+      for (const t of this.targets) {
+        const hs = t.healthState;
+        const headPopped = hs.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP';
+        const headNode = hs.ragdollBones.HEAD_CRANIUM;
+        const neckNode = hs.ragdollBones.NECK_CERVICAL;
+        const chestNode = hs.ragdollBones.TORSO_UPPER_THORAX;
+
+        const anchorPos = headPopped
+          ? neckNode?.position ?? hs.worldPosition
+          : headNode?.position ?? hs.worldPosition;
+        const yLift = hs.isRagdollActive ? 0.30 : 0.28;
+
+        this.scratchWorldPt.set(anchorPos.x, anchorPos.y + yLift, anchorPos.z);
+        cam.worldToScreen(this.scratchWorldPt, this.scratchScreenPt);
+
+        const visible =
+          this.scratchScreenPt.z > 0 &&
+          this.scratchScreenPt.x >= -90 &&
+          this.scratchScreenPt.x <= vw + 90 &&
+          this.scratchScreenPt.y >= -60 &&
+          this.scratchScreenPt.y <= vh + 60;
+
+        entries.push({
+          state: hs,
+          screenX: this.scratchScreenPt.x,
+          screenY: this.scratchScreenPt.y,
+          visible,
+        });
+
+        // Check torso/head screen proximity to center reticle for top-center focus card
+        const bodyPos = chestNode?.position ?? anchorPos;
+        this.scratchWorldPt.set(bodyPos.x, bodyPos.y, bodyPos.z);
+        cam.worldToScreen(this.scratchWorldPt, this.scratchBodyScreenPt);
+        if (this.scratchBodyScreenPt.z > 0) {
+          const dx = this.scratchBodyScreenPt.x - cx;
+          const dy = this.scratchBodyScreenPt.y - cy;
+          const distPx = Math.hypot(dx, dy);
+          const headDistPx = Math.hypot(this.scratchScreenPt.x - cx, this.scratchScreenPt.y + 28 - cy);
+          const minDist = Math.min(distPx, headDistPx);
+          if (minDist < bestCrosshairDist) {
+            bestCrosshairDist = minDist;
+            aimedTarget = t;
+          }
+        }
+      }
+
+      const focusedState = aimedTarget?.healthState ?? this.lastEngagedTarget?.healthState ?? null;
+      this.hudController.updateTriageOverlays(entries, focusedState);
     }
 
     // Update Gore, Projectiles, Dropped Weapons & Arterial Fountains (no debug yellow lines!)

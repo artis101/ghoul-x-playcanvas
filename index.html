@@ -18,6 +18,26 @@
 
       <!-- IN-GAME FPS HUD LAYER (100% NON-BLOCKING) -->
       <div id="fps-hud" class="fps-hud">
+        <!-- FLOATING 3D-PROJECTED ENEMY HEALTH & TRIAGE PLATES -->
+        <div id="hud-world-triage-layer" class="hud-world-triage-layer"></div>
+
+        <!-- TOP-CENTER FOCUSED TARGET HEALTH BAR & TRIAGE OVERLAY -->
+        <div id="hud-target-triage-card" class="hud-target-triage-card hidden">
+          <div class="ttc-top-row">
+            <span id="hud-target-name" class="ttc-name">HOSTILE</span>
+            <span id="hud-target-triage-badge" class="ttc-badge triage-healthy">HEALTHY</span>
+          </div>
+          <div class="ttc-hp-row">
+            <div class="ttc-hp-track">
+              <div id="hud-target-hp-fill" class="ttc-hp-fill triage-healthy"></div>
+            </div>
+            <span id="hud-target-hp-text" class="ttc-hp-text">135 / 135</span>
+          </div>
+          <div id="hud-target-armor-track" class="ttc-armor-track hidden">
+            <div id="hud-target-armor-fill" class="ttc-armor-fill"></div>
+          </div>
+        </div>
+
         <!-- CENTER CROSSHAIR, HITMARKER & SNIPER OPTIC -->
         <div id="reticle-layer" class="reticle-layer">
           <div id="crosshair-standard" class="crosshair-standard">

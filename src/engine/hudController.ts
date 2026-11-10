@@ -2,12 +2,72 @@ import {
   WeaponSpec,
   AmmoSpec,
   ShotSimulationReport,
+  TargetHealthState,
 } from '../contracts/ballistics.ts';
 import { WEAPONS } from '../core/ballistics/weapons.ts';
+import {
+  CombatantTriageStatus,
+  computeCombatantTriageStatus,
+} from '../core/ballistics/solver.ts';
+
+export interface ProjectedTargetTriageEntry {
+  state: TargetHealthState;
+  screenX: number;
+  screenY: number;
+  visible: boolean;
+}
+
+interface WorldTriagePlateDom {
+  root: HTMLDivElement;
+  triageLabel: HTMLSpanElement;
+  hpNum: HTMLSpanElement;
+  hpFill: HTMLDivElement;
+  armorTrack: HTMLDivElement;
+  armorFill: HTMLDivElement;
+}
+
+function formatTriageLabel(status: CombatantTriageStatus): string {
+  switch (status) {
+    case 'HEALTHY':
+      return 'HEALTHY';
+    case 'WOUNDED':
+      return 'WOUNDED';
+    case 'MORTALLY_WOUNDED':
+      return 'MORTALLY WOUNDED';
+    case 'DEAD':
+      return 'DEAD';
+  }
+}
+
+function triageColorClass(status: CombatantTriageStatus): string {
+  switch (status) {
+    case 'HEALTHY':
+      return 'triage-healthy';
+    case 'WOUNDED':
+      return 'triage-wounded';
+    case 'MORTALLY_WOUNDED':
+      return 'triage-mortally-wounded';
+    case 'DEAD':
+      return 'triage-dead';
+  }
+}
+
+function triageCardClass(status: CombatantTriageStatus): string {
+  switch (status) {
+    case 'HEALTHY':
+      return 'card-healthy';
+    case 'WOUNDED':
+      return 'card-wounded';
+    case 'MORTALLY_WOUNDED':
+      return 'card-mortally-wounded';
+    case 'DEAD':
+      return 'card-dead';
+  }
+}
 
 /**
  * Minimalist In-Game Tactical FPS HUD Controller (Soldier of Fortune / CS / MGS style).
- * Zero debug panels or blocking chrome — pure crosshair, hitmarker, ammo/vitals corners, and fading killfeed.
+ * Zero debug panels or blocking chrome — pure crosshair, hitmarker, enemy health/triage overlay, ammo/vitals corners, and fading killfeed.
  */
 export class HudController {
   private crosshairEl: HTMLElement | null = null;
@@ -17,6 +77,17 @@ export class HudController {
   private scopeZoomLabelEl: HTMLElement | null = null;
   private scopeRangeLabelEl: HTMLElement | null = null;
   private scopeDropLabelEl: HTMLElement | null = null;
+
+  private worldTriageLayerEl: HTMLElement | null = null;
+  private worldPlates = new Map<string, WorldTriagePlateDom>();
+
+  private targetCardEl: HTMLElement | null = null;
+  private targetNameEl: HTMLElement | null = null;
+  private targetTriageBadgeEl: HTMLElement | null = null;
+  private targetHpFillEl: HTMLElement | null = null;
+  private targetHpTextEl: HTMLElement | null = null;
+  private targetArmorTrackEl: HTMLElement | null = null;
+  private targetArmorFillEl: HTMLElement | null = null;
 
   private magCountEl: HTMLElement | null = null;
   private reserveCountEl: HTMLElement | null = null;
@@ -36,6 +107,15 @@ export class HudController {
     this.scopeZoomLabelEl = document.getElementById('scope-zoom-label');
     this.scopeRangeLabelEl = document.getElementById('scope-range-label');
     this.scopeDropLabelEl = document.getElementById('scope-drop-label');
+
+    this.worldTriageLayerEl = document.getElementById('hud-world-triage-layer');
+    this.targetCardEl = document.getElementById('hud-target-triage-card');
+    this.targetNameEl = document.getElementById('hud-target-name');
+    this.targetTriageBadgeEl = document.getElementById('hud-target-triage-badge');
+    this.targetHpFillEl = document.getElementById('hud-target-hp-fill');
+    this.targetHpTextEl = document.getElementById('hud-target-hp-text');
+    this.targetArmorTrackEl = document.getElementById('hud-target-armor-track');
+    this.targetArmorFillEl = document.getElementById('hud-target-armor-fill');
 
     this.magCountEl = document.getElementById('hud-mag-count');
     this.reserveCountEl = document.getElementById('hud-reserve-count');
@@ -92,9 +172,11 @@ export class HudController {
     this.crosshairEl.style.transform = `scale(${scaleFactor.toFixed(3)})`;
   }
 
-  public triggerHitmarker(isLethal: boolean): void {
+  public triggerHitmarker(mode: 'NORMAL' | 'ARMOR' | 'LETHAL' | boolean): void {
     if (!this.hitmarkerEl) return;
-    this.hitmarkerEl.classList.toggle('lethal', isLethal);
+    const resolved = typeof mode === 'boolean' ? (mode ? 'LETHAL' : 'NORMAL') : mode;
+    this.hitmarkerEl.classList.toggle('lethal', resolved === 'LETHAL');
+    this.hitmarkerEl.classList.toggle('armor', resolved === 'ARMOR');
     this.hitmarkerEl.classList.add('active');
 
     if (this.hitmarkerTimeout !== null) {
@@ -102,7 +184,139 @@ export class HudController {
     }
     this.hitmarkerTimeout = window.setTimeout(() => {
       this.hitmarkerEl?.classList.remove('active');
-    }, isLethal ? 170 : 105);
+    }, resolved === 'LETHAL' ? 170 : 105);
+  }
+
+  public updateTriageOverlays(
+    entries: ProjectedTargetTriageEntry[],
+    focusedTarget: TargetHealthState | null
+  ): void {
+    // 1. Update floating 3D-projected health bars & triage plates above each combatant
+    if (this.worldTriageLayerEl) {
+      const seenRefs = new Set<string>();
+
+      for (const entry of entries) {
+        const key = `${entry.state.targetId}`;
+        seenRefs.add(key);
+
+        let dom = this.worldPlates.get(key);
+        if (!dom) {
+          const root = document.createElement('div');
+          root.className = 'world-triage-plate';
+
+          const top = document.createElement('div');
+          top.className = 'wtp-top';
+
+          const triageLabel = document.createElement('span');
+          triageLabel.className = 'wtp-triage triage-healthy';
+
+          const hpNum = document.createElement('span');
+          hpNum.className = 'wtp-hp-num';
+
+          top.appendChild(triageLabel);
+          top.appendChild(hpNum);
+
+          const hpTrack = document.createElement('div');
+          hpTrack.className = 'wtp-hp-track';
+          const hpFill = document.createElement('div');
+          hpFill.className = 'wtp-hp-fill triage-healthy';
+          hpTrack.appendChild(hpFill);
+
+          const armorTrack = document.createElement('div');
+          armorTrack.className = 'wtp-armor-track hidden';
+          const armorFill = document.createElement('div');
+          armorFill.className = 'wtp-armor-fill';
+          armorTrack.appendChild(armorFill);
+
+          root.appendChild(top);
+          root.appendChild(hpTrack);
+          root.appendChild(armorTrack);
+
+          this.worldTriageLayerEl.appendChild(root);
+          dom = { root, triageLabel, hpNum, hpFill, armorTrack, armorFill };
+          this.worldPlates.set(key, dom);
+        }
+
+        if (!entry.visible) {
+          dom.root.style.display = 'none';
+          continue;
+        }
+
+        dom.root.style.display = 'block';
+        dom.root.style.transform = `translate3d(${entry.screenX.toFixed(1)}px, ${entry.screenY.toFixed(1)}px, 0) translate(-50%, -100%)`;
+
+        const status = computeCombatantTriageStatus(entry.state);
+        const label = formatTriageLabel(status);
+        const colorCls = triageColorClass(status);
+        const hpClamped = entry.state.alive ? Math.max(1, Math.round(entry.state.currentHp)) : 0;
+        const hpPct = entry.state.alive
+          ? Math.max(0, Math.min(100, (entry.state.currentHp / Math.max(1, entry.state.maxHp)) * 100))
+          : 0;
+
+        dom.root.classList.toggle('is-dead', status === 'DEAD');
+        dom.triageLabel.textContent = label;
+        dom.triageLabel.className = `wtp-triage ${colorCls}`;
+        dom.hpNum.textContent = `${hpClamped}`;
+        dom.hpFill.className = `wtp-hp-fill ${colorCls}`;
+        dom.hpFill.style.width = `${hpPct.toFixed(1)}%`;
+
+        if (entry.state.hasChestArmor && entry.state.chestArmorIntegrity > 0.01 && entry.state.alive) {
+          dom.armorTrack.classList.remove('hidden');
+          dom.armorFill.style.width = `${(entry.state.chestArmorIntegrity * 100).toFixed(1)}%`;
+        } else {
+          dom.armorTrack.classList.add('hidden');
+        }
+      }
+
+      for (const [key, dom] of this.worldPlates.entries()) {
+        if (!seenRefs.has(key)) {
+          dom.root.remove();
+          this.worldPlates.delete(key);
+        }
+      }
+    }
+
+    // 2. Update top-center focused target Health Bar & Triage Card
+    if (!this.targetCardEl) return;
+    if (!focusedTarget) {
+      this.targetCardEl.classList.add('hidden');
+      return;
+    }
+
+    const status = computeCombatantTriageStatus(focusedTarget);
+    const label = formatTriageLabel(status);
+    const colorCls = triageColorClass(status);
+    const cardCls = triageCardClass(status);
+    const hpRounded = focusedTarget.alive ? Math.max(1, Math.round(focusedTarget.currentHp)) : 0;
+    const maxHpRounded = Math.round(focusedTarget.maxHp);
+    const hpPct = focusedTarget.alive
+      ? Math.max(0, Math.min(100, (focusedTarget.currentHp / Math.max(1, focusedTarget.maxHp)) * 100))
+      : 0;
+
+    this.targetCardEl.className = `hud-target-triage-card ${cardCls}`;
+
+    if (this.targetNameEl) {
+      this.targetNameEl.textContent = focusedTarget.name.split(' (')[0];
+    }
+    if (this.targetTriageBadgeEl) {
+      this.targetTriageBadgeEl.textContent = label;
+      this.targetTriageBadgeEl.className = `ttc-badge ${colorCls}`;
+    }
+    if (this.targetHpFillEl) {
+      this.targetHpFillEl.className = `ttc-hp-fill ${colorCls}`;
+      this.targetHpFillEl.style.width = `${hpPct.toFixed(1)}%`;
+    }
+    if (this.targetHpTextEl) {
+      this.targetHpTextEl.textContent = `${hpRounded} / ${maxHpRounded}`;
+    }
+    if (this.targetArmorTrackEl && this.targetArmorFillEl) {
+      if (focusedTarget.hasChestArmor && focusedTarget.chestArmorIntegrity > 0.01 && focusedTarget.alive) {
+        this.targetArmorTrackEl.classList.remove('hidden');
+        this.targetArmorFillEl.style.width = `${(focusedTarget.chestArmorIntegrity * 100).toFixed(1)}%`;
+      } else {
+        this.targetArmorTrackEl.classList.add('hidden');
+      }
+    }
   }
 
   public pushCombatFeed(
