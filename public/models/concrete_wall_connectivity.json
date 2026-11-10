@@ -1,0 +1,1570 @@
+{
+  "version": 1,
+  "wallId": "concrete_barrier_v1",
+  "nodes": [
+    {
+      "index": 0,
+      "name": "Chunk_00",
+      "isAnchored": true,
+      "localCenter": {
+        "x": -1.48007,
+        "y": 0.19911,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.31993,
+        "y": 0.19911,
+        "z": 0.14
+      },
+      "massKg": 128.98,
+      "meshVariant": 0,
+      "edges": [
+        {
+          "neighborIndex": 1,
+          "breakThresholdJ": 705.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 6,
+          "breakThresholdJ": 1357.8,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "name": "Chunk_01",
+      "isAnchored": true,
+      "localCenter": {
+        "x": -0.91105,
+        "y": 0.26335,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.34525,
+        "y": 0.26335,
+        "z": 0.14
+      },
+      "massKg": 161.76,
+      "meshVariant": 1,
+      "edges": [
+        {
+          "neighborIndex": 0,
+          "breakThresholdJ": 705.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 2,
+          "breakThresholdJ": 589.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 6,
+          "breakThresholdJ": 609.1,
+          "severed": false
+        },
+        {
+          "neighborIndex": 7,
+          "breakThresholdJ": 1451.9,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "name": "Chunk_02",
+      "isAnchored": true,
+      "localCenter": {
+        "x": -0.30501,
+        "y": 0.19389,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.30711,
+        "y": 0.19389,
+        "z": 0.14
+      },
+      "massKg": 135.82,
+      "meshVariant": 2,
+      "edges": [
+        {
+          "neighborIndex": 1,
+          "breakThresholdJ": 589.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 3,
+          "breakThresholdJ": 835.1,
+          "severed": false
+        },
+        {
+          "neighborIndex": 7,
+          "breakThresholdJ": 360.9,
+          "severed": false
+        },
+        {
+          "neighborIndex": 8,
+          "breakThresholdJ": 1120.4,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "name": "Chunk_03",
+      "isAnchored": true,
+      "localCenter": {
+        "x": 0.21083,
+        "y": 0.21263,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.2425,
+        "y": 0.21263,
+        "z": 0.14
+      },
+      "massKg": 127.39,
+      "meshVariant": 3,
+      "edges": [
+        {
+          "neighborIndex": 2,
+          "breakThresholdJ": 835.1,
+          "severed": false
+        },
+        {
+          "neighborIndex": 4,
+          "breakThresholdJ": 969.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 8,
+          "breakThresholdJ": 292.3,
+          "severed": false
+        },
+        {
+          "neighborIndex": 9,
+          "breakThresholdJ": 897.6,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "name": "Chunk_04",
+      "isAnchored": true,
+      "localCenter": {
+        "x": 0.78735,
+        "y": 0.27932,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.34528,
+        "y": 0.27932,
+        "z": 0.14
+      },
+      "massKg": 195.64,
+      "meshVariant": 4,
+      "edges": [
+        {
+          "neighborIndex": 3,
+          "breakThresholdJ": 969.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 5,
+          "breakThresholdJ": 646.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 9,
+          "breakThresholdJ": 472.8,
+          "severed": false
+        },
+        {
+          "neighborIndex": 10,
+          "breakThresholdJ": 1470.8,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "name": "Chunk_05",
+      "isAnchored": true,
+      "localCenter": {
+        "x": 1.46422,
+        "y": 0.23156,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.33578,
+        "y": 0.23156,
+        "z": 0.14
+      },
+      "massKg": 168.83,
+      "meshVariant": 5,
+      "edges": [
+        {
+          "neighborIndex": 4,
+          "breakThresholdJ": 646.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 10,
+          "breakThresholdJ": 620.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 11,
+          "breakThresholdJ": 1233.7,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "name": "Chunk_06",
+      "isAnchored": false,
+      "localCenter": {
+        "x": -1.44766,
+        "y": 0.51355,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.35234,
+        "y": 0.25347,
+        "z": 0.14
+      },
+      "massKg": 190.53,
+      "meshVariant": 6,
+      "edges": [
+        {
+          "neighborIndex": 0,
+          "breakThresholdJ": 1357.8,
+          "severed": false
+        },
+        {
+          "neighborIndex": 1,
+          "breakThresholdJ": 609.1,
+          "severed": false
+        },
+        {
+          "neighborIndex": 7,
+          "breakThresholdJ": 611.6,
+          "severed": false
+        },
+        {
+          "neighborIndex": 12,
+          "breakThresholdJ": 1555.7,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "name": "Chunk_07",
+      "isAnchored": false,
+      "localCenter": {
+        "x": -0.82994,
+        "y": 0.52283,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.33852,
+        "y": 0.30352,
+        "z": 0.14
+      },
+      "massKg": 176.29,
+      "meshVariant": 7,
+      "edges": [
+        {
+          "neighborIndex": 1,
+          "breakThresholdJ": 1451.9,
+          "severed": false
+        },
+        {
+          "neighborIndex": 2,
+          "breakThresholdJ": 360.9,
+          "severed": false
+        },
+        {
+          "neighborIndex": 6,
+          "breakThresholdJ": 611.6,
+          "severed": false
+        },
+        {
+          "neighborIndex": 8,
+          "breakThresholdJ": 598.3,
+          "severed": false
+        },
+        {
+          "neighborIndex": 12,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 13,
+          "breakThresholdJ": 1096.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 14,
+          "breakThresholdJ": 622.8,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 8,
+      "name": "Chunk_08",
+      "isAnchored": false,
+      "localCenter": {
+        "x": -0.197,
+        "y": 0.60244,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.29818,
+        "y": 0.26747,
+        "z": 0.14
+      },
+      "massKg": 134.91,
+      "meshVariant": 8,
+      "edges": [
+        {
+          "neighborIndex": 2,
+          "breakThresholdJ": 1120.4,
+          "severed": false
+        },
+        {
+          "neighborIndex": 3,
+          "breakThresholdJ": 292.3,
+          "severed": false
+        },
+        {
+          "neighborIndex": 7,
+          "breakThresholdJ": 598.3,
+          "severed": false
+        },
+        {
+          "neighborIndex": 9,
+          "breakThresholdJ": 1078.1,
+          "severed": false
+        },
+        {
+          "neighborIndex": 14,
+          "breakThresholdJ": 1109.2,
+          "severed": false
+        },
+        {
+          "neighborIndex": 15,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 9,
+      "name": "Chunk_09",
+      "isAnchored": false,
+      "localCenter": {
+        "x": 0.2404,
+        "y": 0.63939,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.34808,
+        "y": 0.23589,
+        "z": 0.14
+      },
+      "massKg": 135.68,
+      "meshVariant": 9,
+      "edges": [
+        {
+          "neighborIndex": 3,
+          "breakThresholdJ": 897.6,
+          "severed": false
+        },
+        {
+          "neighborIndex": 4,
+          "breakThresholdJ": 472.8,
+          "severed": false
+        },
+        {
+          "neighborIndex": 8,
+          "breakThresholdJ": 1078.1,
+          "severed": false
+        },
+        {
+          "neighborIndex": 10,
+          "breakThresholdJ": 399.8,
+          "severed": false
+        },
+        {
+          "neighborIndex": 14,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 15,
+          "breakThresholdJ": 1617.1,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 10,
+      "name": "Chunk_10",
+      "isAnchored": false,
+      "localCenter": {
+        "x": 0.95567,
+        "y": 0.55967,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.37627,
+        "y": 0.29158,
+        "z": 0.14
+      },
+      "massKg": 189.07,
+      "meshVariant": 10,
+      "edges": [
+        {
+          "neighborIndex": 4,
+          "breakThresholdJ": 1470.8,
+          "severed": false
+        },
+        {
+          "neighborIndex": 5,
+          "breakThresholdJ": 620.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 9,
+          "breakThresholdJ": 399.8,
+          "severed": false
+        },
+        {
+          "neighborIndex": 11,
+          "breakThresholdJ": 414.3,
+          "severed": false
+        },
+        {
+          "neighborIndex": 15,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 16,
+          "breakThresholdJ": 1402.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 17,
+          "breakThresholdJ": 628.5,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 11,
+      "name": "Chunk_11",
+      "isAnchored": false,
+      "localCenter": {
+        "x": 1.55436,
+        "y": 0.62857,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.24564,
+        "y": 0.3349,
+        "z": 0.14
+      },
+      "massKg": 132.31,
+      "meshVariant": 11,
+      "edges": [
+        {
+          "neighborIndex": 5,
+          "breakThresholdJ": 1233.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 10,
+          "breakThresholdJ": 414.3,
+          "severed": false
+        },
+        {
+          "neighborIndex": 17,
+          "breakThresholdJ": 1350.7,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 12,
+      "name": "Chunk_12",
+      "isAnchored": false,
+      "localCenter": {
+        "x": -1.44722,
+        "y": 1.02527,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.35278,
+        "y": 0.27042,
+        "z": 0.14
+      },
+      "massKg": 204.63,
+      "meshVariant": 12,
+      "edges": [
+        {
+          "neighborIndex": 6,
+          "breakThresholdJ": 1555.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 7,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 13,
+          "breakThresholdJ": 1076.3,
+          "severed": false
+        },
+        {
+          "neighborIndex": 18,
+          "breakThresholdJ": 1582.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 19,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 13,
+      "name": "Chunk_13",
+      "isAnchored": false,
+      "localCenter": {
+        "x": -0.88541,
+        "y": 1.01607,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.28395,
+        "y": 0.23823,
+        "z": 0.14
+      },
+      "massKg": 127.37,
+      "meshVariant": 13,
+      "edges": [
+        {
+          "neighborIndex": 7,
+          "breakThresholdJ": 1096.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 12,
+          "breakThresholdJ": 1076.3,
+          "severed": false
+        },
+        {
+          "neighborIndex": 14,
+          "breakThresholdJ": 762.9,
+          "severed": false
+        },
+        {
+          "neighborIndex": 18,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 19,
+          "breakThresholdJ": 1298.5,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 14,
+      "name": "Chunk_14",
+      "isAnchored": false,
+      "localCenter": {
+        "x": -0.36832,
+        "y": 0.96843,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.29697,
+        "y": 0.34551,
+        "z": 0.14
+      },
+      "massKg": 170.6,
+      "meshVariant": 14,
+      "edges": [
+        {
+          "neighborIndex": 7,
+          "breakThresholdJ": 622.8,
+          "severed": false
+        },
+        {
+          "neighborIndex": 8,
+          "breakThresholdJ": 1109.2,
+          "severed": false
+        },
+        {
+          "neighborIndex": 9,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 13,
+          "breakThresholdJ": 762.9,
+          "severed": false
+        },
+        {
+          "neighborIndex": 15,
+          "breakThresholdJ": 536.4,
+          "severed": false
+        },
+        {
+          "neighborIndex": 19,
+          "breakThresholdJ": 498.1,
+          "severed": false
+        },
+        {
+          "neighborIndex": 20,
+          "breakThresholdJ": 1060.5,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 15,
+      "name": "Chunk_15",
+      "isAnchored": false,
+      "localCenter": {
+        "x": 0.24865,
+        "y": 0.97405,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.34811,
+        "y": 0.2763,
+        "z": 0.14
+      },
+      "massKg": 169.85,
+      "meshVariant": 15,
+      "edges": [
+        {
+          "neighborIndex": 8,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 9,
+          "breakThresholdJ": 1617.1,
+          "severed": false
+        },
+        {
+          "neighborIndex": 10,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 14,
+          "breakThresholdJ": 536.4,
+          "severed": false
+        },
+        {
+          "neighborIndex": 16,
+          "breakThresholdJ": 638.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 20,
+          "breakThresholdJ": 601.8,
+          "severed": false
+        },
+        {
+          "neighborIndex": 21,
+          "breakThresholdJ": 893.3,
+          "severed": false
+        },
+        {
+          "neighborIndex": 22,
+          "breakThresholdJ": 363.4,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 16,
+      "name": "Chunk_16",
+      "isAnchored": false,
+      "localCenter": {
+        "x": 0.89026,
+        "y": 0.98775,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.32,
+        "y": 0.25168,
+        "z": 0.14
+      },
+      "massKg": 135.46,
+      "meshVariant": 16,
+      "edges": [
+        {
+          "neighborIndex": 10,
+          "breakThresholdJ": 1402.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 15,
+          "breakThresholdJ": 638.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 17,
+          "breakThresholdJ": 747.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 22,
+          "breakThresholdJ": 1419.4,
+          "severed": false
+        },
+        {
+          "neighborIndex": 23,
+          "breakThresholdJ": 241.7,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 17,
+      "name": "Chunk_17",
+      "isAnchored": false,
+      "localCenter": {
+        "x": 1.47513,
+        "y": 0.88436,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.32487,
+        "y": 0.2713,
+        "z": 0.14
+      },
+      "massKg": 151.65,
+      "meshVariant": 17,
+      "edges": [
+        {
+          "neighborIndex": 10,
+          "breakThresholdJ": 628.5,
+          "severed": false
+        },
+        {
+          "neighborIndex": 11,
+          "breakThresholdJ": 1350.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 16,
+          "breakThresholdJ": 747.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 23,
+          "breakThresholdJ": 1460.1,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 18,
+      "name": "Chunk_18",
+      "isAnchored": false,
+      "localCenter": {
+        "x": -1.45366,
+        "y": 1.41848,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.34634,
+        "y": 0.28278,
+        "z": 0.14
+      },
+      "massKg": 171.11,
+      "meshVariant": 18,
+      "edges": [
+        {
+          "neighborIndex": 12,
+          "breakThresholdJ": 1582.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 13,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 19,
+          "breakThresholdJ": 622.4,
+          "severed": false
+        },
+        {
+          "neighborIndex": 24,
+          "breakThresholdJ": 1692.8,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 19,
+      "name": "Chunk_19",
+      "isAnchored": false,
+      "localCenter": {
+        "x": -0.81393,
+        "y": 1.38113,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.34484,
+        "y": 0.2651,
+        "z": 0.14
+      },
+      "massKg": 169.75,
+      "meshVariant": 19,
+      "edges": [
+        {
+          "neighborIndex": 12,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 13,
+          "breakThresholdJ": 1298.5,
+          "severed": false
+        },
+        {
+          "neighborIndex": 14,
+          "breakThresholdJ": 498.1,
+          "severed": false
+        },
+        {
+          "neighborIndex": 18,
+          "breakThresholdJ": 622.4,
+          "severed": false
+        },
+        {
+          "neighborIndex": 20,
+          "breakThresholdJ": 288.4,
+          "severed": false
+        },
+        {
+          "neighborIndex": 24,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 25,
+          "breakThresholdJ": 925.4,
+          "severed": false
+        },
+        {
+          "neighborIndex": 26,
+          "breakThresholdJ": 737.5,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 20,
+      "name": "Chunk_20",
+      "isAnchored": false,
+      "localCenter": {
+        "x": -0.17864,
+        "y": 1.40743,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.31503,
+        "y": 0.33006,
+        "z": 0.14
+      },
+      "massKg": 165.2,
+      "meshVariant": 20,
+      "edges": [
+        {
+          "neighborIndex": 14,
+          "breakThresholdJ": 1060.5,
+          "severed": false
+        },
+        {
+          "neighborIndex": 15,
+          "breakThresholdJ": 601.8,
+          "severed": false
+        },
+        {
+          "neighborIndex": 19,
+          "breakThresholdJ": 288.4,
+          "severed": false
+        },
+        {
+          "neighborIndex": 21,
+          "breakThresholdJ": 806.2,
+          "severed": false
+        },
+        {
+          "neighborIndex": 26,
+          "breakThresholdJ": 1250.9,
+          "severed": false
+        },
+        {
+          "neighborIndex": 27,
+          "breakThresholdJ": 550.4,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 21,
+      "name": "Chunk_21",
+      "isAnchored": false,
+      "localCenter": {
+        "x": 0.37385,
+        "y": 1.43888,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.28121,
+        "y": 0.31744,
+        "z": 0.14
+      },
+      "massKg": 151.98,
+      "meshVariant": 21,
+      "edges": [
+        {
+          "neighborIndex": 15,
+          "breakThresholdJ": 893.3,
+          "severed": false
+        },
+        {
+          "neighborIndex": 20,
+          "breakThresholdJ": 806.2,
+          "severed": false
+        },
+        {
+          "neighborIndex": 22,
+          "breakThresholdJ": 1045.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 27,
+          "breakThresholdJ": 1134.9,
+          "severed": false
+        },
+        {
+          "neighborIndex": 28,
+          "breakThresholdJ": 539.1,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 22,
+      "name": "Chunk_22",
+      "isAnchored": false,
+      "localCenter": {
+        "x": 0.8119,
+        "y": 1.29417,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.33321,
+        "y": 0.28353,
+        "z": 0.14
+      },
+      "massKg": 151.36,
+      "meshVariant": 22,
+      "edges": [
+        {
+          "neighborIndex": 15,
+          "breakThresholdJ": 363.4,
+          "severed": false
+        },
+        {
+          "neighborIndex": 16,
+          "breakThresholdJ": 1419.4,
+          "severed": false
+        },
+        {
+          "neighborIndex": 21,
+          "breakThresholdJ": 1045.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 23,
+          "breakThresholdJ": 613.2,
+          "severed": false
+        },
+        {
+          "neighborIndex": 28,
+          "breakThresholdJ": 1132.8,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 23,
+      "name": "Chunk_23",
+      "isAnchored": false,
+      "localCenter": {
+        "x": 1.44624,
+        "y": 1.37407,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.35376,
+        "y": 0.24934,
+        "z": 0.14
+      },
+      "massKg": 171.91,
+      "meshVariant": 23,
+      "edges": [
+        {
+          "neighborIndex": 16,
+          "breakThresholdJ": 241.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 17,
+          "breakThresholdJ": 1460.1,
+          "severed": false
+        },
+        {
+          "neighborIndex": 22,
+          "breakThresholdJ": 613.2,
+          "severed": false
+        },
+        {
+          "neighborIndex": 28,
+          "breakThresholdJ": 278.5,
+          "severed": false
+        },
+        {
+          "neighborIndex": 29,
+          "breakThresholdJ": 1584.5,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 24,
+      "name": "Chunk_24",
+      "isAnchored": false,
+      "localCenter": {
+        "x": -1.43664,
+        "y": 1.80452,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.36336,
+        "y": 0.30533,
+        "z": 0.14
+      },
+      "massKg": 170.3,
+      "meshVariant": 24,
+      "edges": [
+        {
+          "neighborIndex": 18,
+          "breakThresholdJ": 1692.8,
+          "severed": false
+        },
+        {
+          "neighborIndex": 19,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 25,
+          "breakThresholdJ": 1092.5,
+          "severed": false
+        },
+        {
+          "neighborIndex": 30,
+          "breakThresholdJ": 1384.2,
+          "severed": false
+        },
+        {
+          "neighborIndex": 31,
+          "breakThresholdJ": 300.5,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 25,
+      "name": "Chunk_25",
+      "isAnchored": false,
+      "localCenter": {
+        "x": -0.91322,
+        "y": 1.79207,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.30344,
+        "y": 0.2237,
+        "z": 0.14
+      },
+      "massKg": 129.24,
+      "meshVariant": 25,
+      "edges": [
+        {
+          "neighborIndex": 19,
+          "breakThresholdJ": 925.4,
+          "severed": false
+        },
+        {
+          "neighborIndex": 24,
+          "breakThresholdJ": 1092.5,
+          "severed": false
+        },
+        {
+          "neighborIndex": 26,
+          "breakThresholdJ": 842.9,
+          "severed": false
+        },
+        {
+          "neighborIndex": 31,
+          "breakThresholdJ": 1427.8,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 26,
+      "name": "Chunk_26",
+      "isAnchored": false,
+      "localCenter": {
+        "x": -0.38138,
+        "y": 1.76998,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.32314,
+        "y": 0.35752,
+        "z": 0.14
+      },
+      "massKg": 178.48,
+      "meshVariant": 26,
+      "edges": [
+        {
+          "neighborIndex": 19,
+          "breakThresholdJ": 737.5,
+          "severed": false
+        },
+        {
+          "neighborIndex": 20,
+          "breakThresholdJ": 1250.9,
+          "severed": false
+        },
+        {
+          "neighborIndex": 25,
+          "breakThresholdJ": 842.9,
+          "severed": false
+        },
+        {
+          "neighborIndex": 27,
+          "breakThresholdJ": 391.1,
+          "severed": false
+        },
+        {
+          "neighborIndex": 31,
+          "breakThresholdJ": 375.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 32,
+          "breakThresholdJ": 1176.5,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 27,
+      "name": "Chunk_27",
+      "isAnchored": false,
+      "localCenter": {
+        "x": 0.22637,
+        "y": 1.8292,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.32317,
+        "y": 0.2665,
+        "z": 0.14
+      },
+      "massKg": 125.91,
+      "meshVariant": 27,
+      "edges": [
+        {
+          "neighborIndex": 20,
+          "breakThresholdJ": 550.4,
+          "severed": false
+        },
+        {
+          "neighborIndex": 21,
+          "breakThresholdJ": 1134.9,
+          "severed": false
+        },
+        {
+          "neighborIndex": 26,
+          "breakThresholdJ": 391.1,
+          "severed": false
+        },
+        {
+          "neighborIndex": 28,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 32,
+          "breakThresholdJ": 689.3,
+          "severed": false
+        },
+        {
+          "neighborIndex": 33,
+          "breakThresholdJ": 1236.6,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 28,
+      "name": "Chunk_28",
+      "isAnchored": false,
+      "localCenter": {
+        "x": 0.88012,
+        "y": 1.74908,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.34128,
+        "y": 0.28635,
+        "z": 0.14
+      },
+      "massKg": 173.68,
+      "meshVariant": 28,
+      "edges": [
+        {
+          "neighborIndex": 21,
+          "breakThresholdJ": 539.1,
+          "severed": false
+        },
+        {
+          "neighborIndex": 22,
+          "breakThresholdJ": 1132.8,
+          "severed": false
+        },
+        {
+          "neighborIndex": 23,
+          "breakThresholdJ": 278.5,
+          "severed": false
+        },
+        {
+          "neighborIndex": 27,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 29,
+          "breakThresholdJ": 800.3,
+          "severed": false
+        },
+        {
+          "neighborIndex": 33,
+          "breakThresholdJ": 654.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 34,
+          "breakThresholdJ": 1173.5,
+          "severed": false
+        },
+        {
+          "neighborIndex": 35,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 29,
+      "name": "Chunk_29",
+      "isAnchored": false,
+      "localCenter": {
+        "x": 1.47433,
+        "y": 1.68415,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.32567,
+        "y": 0.27478,
+        "z": 0.14
+      },
+      "massKg": 162.47,
+      "meshVariant": 29,
+      "edges": [
+        {
+          "neighborIndex": 23,
+          "breakThresholdJ": 1584.5,
+          "severed": false
+        },
+        {
+          "neighborIndex": 28,
+          "breakThresholdJ": 800.3,
+          "severed": false
+        },
+        {
+          "neighborIndex": 34,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 35,
+          "breakThresholdJ": 1403.9,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 30,
+      "name": "Chunk_30",
+      "isAnchored": false,
+      "localCenter": {
+        "x": -1.51261,
+        "y": 2.11562,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.28739,
+        "y": 0.28438,
+        "z": 0.14
+      },
+      "massKg": 152.19,
+      "meshVariant": 30,
+      "edges": [
+        {
+          "neighborIndex": 24,
+          "breakThresholdJ": 1384.2,
+          "severed": false
+        },
+        {
+          "neighborIndex": 31,
+          "breakThresholdJ": 703.9,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 31,
+      "name": "Chunk_31",
+      "isAnchored": false,
+      "localCenter": {
+        "x": -0.90493,
+        "y": 2.18936,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.39284,
+        "y": 0.21064,
+        "z": 0.14
+      },
+      "massKg": 191.42,
+      "meshVariant": 31,
+      "edges": [
+        {
+          "neighborIndex": 24,
+          "breakThresholdJ": 300.5,
+          "severed": false
+        },
+        {
+          "neighborIndex": 25,
+          "breakThresholdJ": 1427.8,
+          "severed": false
+        },
+        {
+          "neighborIndex": 26,
+          "breakThresholdJ": 375.7,
+          "severed": false
+        },
+        {
+          "neighborIndex": 30,
+          "breakThresholdJ": 703.9,
+          "severed": false
+        },
+        {
+          "neighborIndex": 32,
+          "breakThresholdJ": 681.5,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 32,
+      "name": "Chunk_32",
+      "isAnchored": false,
+      "localCenter": {
+        "x": -0.19026,
+        "y": 2.14032,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.38492,
+        "y": 0.25968,
+        "z": 0.14
+      },
+      "massKg": 184.08,
+      "meshVariant": 32,
+      "edges": [
+        {
+          "neighborIndex": 26,
+          "breakThresholdJ": 1176.5,
+          "severed": false
+        },
+        {
+          "neighborIndex": 27,
+          "breakThresholdJ": 689.3,
+          "severed": false
+        },
+        {
+          "neighborIndex": 31,
+          "breakThresholdJ": 681.5,
+          "severed": false
+        },
+        {
+          "neighborIndex": 33,
+          "breakThresholdJ": 753.1,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 33,
+      "name": "Chunk_33",
+      "isAnchored": false,
+      "localCenter": {
+        "x": 0.42119,
+        "y": 2.08986,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.3068,
+        "y": 0.31014,
+        "z": 0.14
+      },
+      "massKg": 170.38,
+      "meshVariant": 33,
+      "edges": [
+        {
+          "neighborIndex": 27,
+          "breakThresholdJ": 1236.6,
+          "severed": false
+        },
+        {
+          "neighborIndex": 28,
+          "breakThresholdJ": 654.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 32,
+          "breakThresholdJ": 753.1,
+          "severed": false
+        },
+        {
+          "neighborIndex": 34,
+          "breakThresholdJ": 958.8,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 34,
+      "name": "Chunk_34",
+      "isAnchored": false,
+      "localCenter": {
+        "x": 0.95714,
+        "y": 2.14585,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.33701,
+        "y": 0.25415,
+        "z": 0.14
+      },
+      "massKg": 169.33,
+      "meshVariant": 34,
+      "edges": [
+        {
+          "neighborIndex": 28,
+          "breakThresholdJ": 1173.5,
+          "severed": false
+        },
+        {
+          "neighborIndex": 29,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 33,
+          "breakThresholdJ": 958.8,
+          "severed": false
+        },
+        {
+          "neighborIndex": 35,
+          "breakThresholdJ": 1101.2,
+          "severed": false
+        }
+      ]
+    },
+    {
+      "index": 35,
+      "name": "Chunk_35",
+      "isAnchored": false,
+      "localCenter": {
+        "x": 1.50576,
+        "y": 2.13116,
+        "z": 0.0
+      },
+      "halfExtents": {
+        "x": 0.29424,
+        "y": 0.26884,
+        "z": 0.14
+      },
+      "massKg": 180.53,
+      "meshVariant": 35,
+      "edges": [
+        {
+          "neighborIndex": 28,
+          "breakThresholdJ": 180.0,
+          "severed": false
+        },
+        {
+          "neighborIndex": 29,
+          "breakThresholdJ": 1403.9,
+          "severed": false
+        },
+        {
+          "neighborIndex": 34,
+          "breakThresholdJ": 1101.2,
+          "severed": false
+        }
+      ]
+    }
+  ]
+}
