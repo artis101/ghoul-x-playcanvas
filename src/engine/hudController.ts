@@ -391,7 +391,7 @@ export class HudController {
 
     if (!isPointerLocked) {
       this.promptEl.textContent =
-        'CLICK TO ENGAGE  •  WASD MOVE  •  RMB ADS  •  1-4 WEAPON  •  B AMMO  •  R RELOAD  •  T NEW WAVE';
+        'CLICK TO ENGAGE  •  WASD MOVE  •  RMB ADS  •  1-4 WEAPON  •  B AMMO  •  G FRAG  •  R RELOAD  •  T WAVE';
       this.promptEl.style.opacity = '1';
     } else if (allHostilesDown) {
       this.promptEl.textContent = 'AREA CLEAR  —  PRESS [T] FOR NEXT HOSTILE SQUAD';
