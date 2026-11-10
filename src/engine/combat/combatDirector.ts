@@ -1576,7 +1576,7 @@ export class CombatDirector {
       g.blinkTimerS += dt;
 
       g.velocity.y += this.environment.gravity.y * dt;
-      g.velocity.scale(Math.max(0.96, 1 - dt * 0.35));
+      g.velocity.mulScalar(Math.max(0.96, 1 - dt * 0.35));
 
       g.position.x += g.velocity.x * dt;
       g.position.y += g.velocity.y * dt;
@@ -1599,7 +1599,7 @@ export class CombatDirector {
         }
         g.velocity.x *= 0.68;
         g.velocity.z *= 0.68;
-        g.angularVelocity.scale(0.65);
+        g.angularVelocity.mulScalar(0.65);
       }
 
       g.entity.setPosition(g.position.x, g.position.y, g.position.z);
