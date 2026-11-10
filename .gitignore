@@ -1,0 +1,7 @@
+# Dependencies & build output
+node_modules/
+dist/
+
+# Home directory & environment dotfiles (since workspace is /home/antigravity)
+.*
+!.gitignore

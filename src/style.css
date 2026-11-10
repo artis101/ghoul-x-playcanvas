@@ -1,0 +1,647 @@
+:root {
+  --bg-obsidian: hsl(215, 28%, 6%);
+  --panel-surface: hsla(215, 26%, 9%, 0.86);
+  --panel-elevated: hsla(215, 22%, 14%, 0.92);
+  --border-hairline: hsla(200, 18%, 32%, 0.42);
+  --border-bright: hsla(38, 92%, 56%, 0.65);
+  --text-primary: hsl(210, 20%, 95%);
+  --text-secondary: hsl(212, 14%, 68%);
+  --text-muted: hsl(214, 12%, 48%);
+  --accent-amber: hsl(38, 95%, 56%);
+  --accent-crimson: hsl(356, 84%, 54%);
+  --accent-gore: hsl(352, 90%, 42%);
+  --accent-emerald: hsl(152, 76%, 46%);
+  --accent-cyan: hsl(192, 85%, 54%);
+  --font-display: 'Chakra Petch', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+}
+
+html,
+body,
+#app-root {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: var(--bg-obsidian);
+  color: var(--text-primary);
+  font-family: var(--font-display);
+}
+
+#playcanvas-viewport {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: crosshair;
+  z-index: 1;
+}
+
+/* RETICLE & SNIPER SCOPE OVERLAY */
+.reticle-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.crosshair-standard {
+  position: relative;
+  width: 48px;
+  height: 48px;
+}
+
+.ch-line {
+  position: absolute;
+  background: hsla(38, 95%, 58%, 0.9);
+  box-shadow: 0 0 4px hsla(0, 0%, 0%, 0.85);
+}
+
+.ch-top {
+  width: 2px;
+  height: 11px;
+  left: 23px;
+  top: 2px;
+}
+
+.ch-bottom {
+  width: 2px;
+  height: 11px;
+  left: 23px;
+  bottom: 2px;
+}
+
+.ch-left {
+  height: 2px;
+  width: 11px;
+  top: 23px;
+  left: 2px;
+}
+
+.ch-right {
+  height: 2px;
+  width: 11px;
+  top: 23px;
+  right: 2px;
+}
+
+.shotgun-spread-ring {
+  position: absolute;
+  inset: -14px;
+  border: 1.5px dashed hsla(38, 95%, 56%, 0.55);
+  border-radius: 50%;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.aim-predictor-pip {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  left: 20px;
+  top: 20px;
+  border-radius: 50%;
+  background: var(--accent-crimson);
+  border: 1.5px solid #fff;
+  box-shadow: 0 0 8px var(--accent-crimson);
+  transition: transform 0.06s linear;
+}
+
+.sniper-scope-mask {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, transparent 28%, rgba(4, 7, 11, 0.96) 31%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.scope-mil-dots-h {
+  position: absolute;
+  width: 56%;
+  height: 1px;
+  background: hsla(152, 80%, 50%, 0.55);
+}
+
+.scope-mil-dots-v {
+  position: absolute;
+  height: 56%;
+  width: 1px;
+  background: hsla(152, 80%, 50%, 0.55);
+}
+
+.scope-telemetry-readout {
+  position: absolute;
+  top: calc(50% + 145px);
+  display: flex;
+  gap: 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent-emerald);
+  background: hsla(215, 30%, 6%, 0.85);
+  padding: 4px 10px;
+  border: 1px solid hsla(152, 76%, 46%, 0.35);
+}
+
+/* X-RAY KILL CAM CINEMA OVERLAY */
+.xray-cinema-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.letterbox-bar {
+  width: 100%;
+  height: 68px;
+  background: linear-gradient(90deg, rgba(5, 8, 12, 0.96), rgba(18, 8, 10, 0.94));
+  border-bottom: 1px solid hsla(356, 84%, 54%, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  pointer-events: auto;
+}
+
+.letterbox-bottom {
+  border-bottom: none;
+  border-top: 1px solid hsla(356, 84%, 54%, 0.45);
+}
+
+.xray-status-strip {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.xray-badge {
+  background: var(--accent-crimson);
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  padding: 4px 10px;
+}
+
+.xray-live-telemetry {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--accent-amber);
+}
+
+.xray-wound-ticker {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+  letter-spacing: 0.04em;
+}
+
+/* TOP BAR */
+.hud-topbar {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  right: 12px;
+  z-index: 10;
+  background: var(--panel-surface);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border-hairline);
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.brand-cluster {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-emblem {
+  width: 34px;
+  height: 34px;
+  background: linear-gradient(135deg, var(--accent-crimson), hsl(24, 90%, 45%));
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.05em;
+  color: #fff;
+}
+
+.brand-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.brand-sub {
+  color: var(--accent-amber);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.brand-meta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+
+.preset-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hud-btn {
+  background: var(--panel-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-hairline);
+  padding: 6px 10px;
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.1s ease;
+}
+
+.hud-btn:hover {
+  background: hsla(215, 20%, 22%, 0.95);
+  border-color: var(--accent-amber);
+}
+
+.hud-btn:active {
+  transform: translateY(1px);
+}
+
+.hud-btn-accent {
+  background: hsla(38, 92%, 45%, 0.22);
+  border-color: var(--accent-amber);
+  color: hsl(42, 100%, 78%);
+}
+
+.hud-btn-gore {
+  background: hsla(356, 84%, 45%, 0.25);
+  border-color: var(--accent-crimson);
+  color: hsl(356, 100%, 84%);
+}
+
+.hud-btn-secondary {
+  border-color: hsla(192, 85%, 54%, 0.45);
+  color: hsl(192, 90%, 76%);
+}
+
+.hud-btn-danger {
+  background: var(--accent-crimson);
+  border-color: #fff;
+  color: #fff;
+}
+
+/* SIDE PANELS */
+.hud-panel {
+  position: absolute;
+  top: 68px;
+  bottom: 58px;
+  width: 295px;
+  z-index: 10;
+  background: var(--panel-surface);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border-hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  overflow-y: auto;
+}
+
+.hud-left-panel {
+  left: 12px;
+}
+
+.hud-right-panel {
+  right: 12px;
+  width: 315px;
+}
+
+.panel-section {
+  background: hsla(215, 28%, 6%, 0.55);
+  border: 1px solid hsla(200, 16%, 26%, 0.38);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid hsla(200, 16%, 28%, 0.4);
+  padding-bottom: 4px;
+}
+
+.section-header h2 {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent-amber);
+}
+
+.hotkey-hint {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.weapon-selector-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.weapon-card {
+  background: var(--panel-elevated);
+  border: 1px solid var(--border-hairline);
+  padding: 6px 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+
+.weapon-card.active {
+  border-color: var(--accent-amber);
+  background: hsla(38, 85%, 46%, 0.16);
+}
+
+.weapon-card-top {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.weapon-card-sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.ammo-selector-list {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.ammo-pill {
+  flex: 1;
+  background: hsla(215, 22%, 12%, 0.9);
+  border: 1px solid var(--border-hairline);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.ammo-pill.active {
+  border-color: var(--accent-cyan);
+  color: var(--text-primary);
+  background: hsla(192, 85%, 45%, 0.2);
+}
+
+.control-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  gap: 8px;
+}
+
+.control-row input[type='range'] {
+  width: 95px;
+  accent-color: var(--accent-amber);
+}
+
+.legend-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.legend-list kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: hsla(215, 20%, 18%, 0.95);
+  border: 1px solid var(--border-hairline);
+  padding: 1px 5px;
+  color: var(--accent-amber);
+}
+
+/* TELEMETRY & GHOUL ZONE MAP */
+.status-pill {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+}
+
+.status-ready {
+  background: hsla(152, 76%, 42%, 0.2);
+  color: var(--accent-emerald);
+}
+
+.status-lethal {
+  background: hsla(356, 84%, 50%, 0.28);
+  color: hsl(356, 100%, 76%);
+}
+
+.telemetry-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.t-cell {
+  background: hsla(215, 24%, 11%, 0.85);
+  border: 1px solid hsla(200, 15%, 25%, 0.4);
+  padding: 5px 7px;
+  display: flex;
+  flex-direction: column;
+}
+
+.t-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-muted);
+}
+
+.t-val {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.hp-badge {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--accent-emerald);
+}
+
+.ghoul-zone-diagram {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+  max-height: 175px;
+  overflow-y: auto;
+}
+
+.zone-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  padding: 3px 6px;
+  background: hsla(215, 22%, 12%, 0.85);
+  border-left: 3px solid var(--accent-emerald);
+}
+
+.zone-chip.damaged {
+  border-left-color: var(--accent-amber);
+  color: hsl(38, 95%, 76%);
+}
+
+.zone-chip.severed {
+  border-left-color: var(--accent-crimson);
+  background: hsla(356, 80%, 24%, 0.45);
+  color: hsl(356, 100%, 82%);
+  text-decoration: line-through;
+}
+
+.wound-log-section {
+  flex: 1;
+  min-height: 120px;
+}
+
+.wound-channel-log {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow-y: auto;
+  max-height: 210px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.wound-entry {
+  background: hsla(215, 24%, 11%, 0.9);
+  border-left: 3px solid var(--accent-crimson);
+  padding: 5px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wound-entry-title {
+  font-weight: 700;
+  color: hsl(38, 95%, 72%);
+}
+
+.wound-entry-meta {
+  color: var(--text-secondary);
+  font-size: 9.8px;
+}
+
+/* BOTTOM BAR */
+.hud-bottom-bar {
+  position: absolute;
+  bottom: 10px;
+  left: 12px;
+  right: 12px;
+  height: 42px;
+  z-index: 10;
+  background: var(--panel-surface);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border-hairline);
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.target-selector-strip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+}
+
+.strip-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  margin-right: 4px;
+}
+
+.zone-aim-btn {
+  background: hsla(215, 22%, 14%, 0.9);
+  border: 1px solid var(--border-hairline);
+  color: var(--text-secondary);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.zone-aim-btn.active {
+  border-color: var(--accent-amber);
+  color: var(--text-primary);
+  background: hsla(38, 92%, 50%, 0.22);
+}
+
+.btn-fire-primary {
+  background: linear-gradient(135deg, var(--accent-crimson), hsl(18, 90%, 48%));
+  border: 1px solid hsl(38, 95%, 68%);
+  color: #fff;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  padding: 6px 16px;
+  cursor: pointer;
+}
+
+.btn-fire-primary:hover {
+  filter: brightness(1.12);
+}
+
+.hidden {
+  display: none !important;
+}
