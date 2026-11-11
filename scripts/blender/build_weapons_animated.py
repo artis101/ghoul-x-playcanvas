@@ -689,32 +689,115 @@ def add_slotted_flash_hider_z_pc(
         )
 
 
+def _rounded_trapezoid_pts_2d(
+    hx_pos: float,
+    hx_neg: float,
+    hy: float,
+    cf: float,
+    corner_segs: int = 1,
+    neg_first: bool = False,
+) -> List[Tuple[float, float]]:
+    """
+    CCW 2D cross-section loop with `corner_segs`-segment elliptical corner fillets.
+    - `corner_segs = 1`: crisp 8-point machined hard-surface prism
+    - `corner_segs = 3`: smooth 16-point rounded ergonomic stock / contoured pistol grip profile
+      (adjacent face angle < 30 deg so smooth-by-angle never creases rounded furniture!)
+    When `neg_first=False` (XY loft): `hx_pos` is at `+hy` (top), `hx_neg` is at `-hy` (bottom).
+    When `neg_first=True` (YZ swept loft): `hx_pos` is at `-hy` (frontstrap `-N`), `hx_neg` is at `+hy` (backstrap `+N`).
+    """
+    cf = max(0.08, min(0.48, cf))
+    cs = max(1, corner_segs)
+    ry = hy * min(0.88, cf * 1.35)
+
+    if not neg_first:
+        rx_t = hx_pos * cf
+        rx_b = hx_neg * cf
+        pts: List[Tuple[float, float]] = []
+        # Top-right corner: angle 0 -> pi/2
+        for k in range(cs + 1):
+            a = (0.5 * math.pi * k) / cs
+            pts.append(((hx_pos - rx_t) + math.cos(a) * rx_t, (hy - ry) + math.sin(a) * ry))
+        # Top-left corner: angle pi/2 -> pi
+        for k in range(cs + 1):
+            a = 0.5 * math.pi + (0.5 * math.pi * k) / cs
+            pts.append(((-hx_pos + rx_t) + math.cos(a) * rx_t, (hy - ry) + math.sin(a) * ry))
+        # Bottom-left corner: angle pi -> 3*pi/2
+        for k in range(cs + 1):
+            a = math.pi + (0.5 * math.pi * k) / cs
+            pts.append(((-hx_neg + rx_b) + math.cos(a) * rx_b, (-hy + ry) + math.sin(a) * ry))
+        # Bottom-right corner: angle 3*pi/2 -> 2*pi
+        for k in range(cs + 1):
+            a = 1.5 * math.pi + (0.5 * math.pi * k) / cs
+            pts.append(((hx_neg - rx_b) + math.cos(a) * rx_b, (-hy + ry) + math.sin(a) * ry))
+        return pts
+    else:
+        # Front (-hy) uses hx_pos (`hx_f`), Rear (+hy) uses hx_neg (`hx_r`), same CCW winding as original!
+        rx_f = hx_pos * cf
+        rx_r = hx_neg * cf
+        pts = []
+        # Front-right -> Front-left along -hy, then Rear-left -> Rear-right along +hy (clockwise in (x,n) = outward w/ flip)
+        # Keep exact same winding direction as original 8-pt pts_2d:
+        # 1) Front-left corner (-hx_f+rx_f, -hy) -> (-hx_f, -hy+ry)
+        for k in range(cs + 1):
+            a = 1.5 * math.pi - (0.5 * math.pi * k) / cs  # 3pi/2 -> pi
+            pts.append(((-hx_pos + rx_f) + math.cos(a) * rx_f, (-hy + ry) + math.sin(a) * ry))
+        # 2) Rear-left corner (-hx_r, +hy-ry) -> (-hx_r+rx_r, +hy)
+        for k in range(cs + 1):
+            a = math.pi - (0.5 * math.pi * k) / cs  # pi -> pi/2
+            pts.append(((-hx_neg + rx_r) + math.cos(a) * rx_r, (hy - ry) + math.sin(a) * ry))
+        # 3) Rear-right corner (+hx_r-rx_r, +hy) -> (+hx_r, +hy-ry)
+        for k in range(cs + 1):
+            a = 0.5 * math.pi - (0.5 * math.pi * k) / cs  # pi/2 -> 0
+            pts.append(((hx_neg - rx_r) + math.cos(a) * rx_r, (hy - ry) + math.sin(a) * ry))
+        # 4) Front-right corner (+hx_f, -hy+ry) -> (+hx_f-rx_f, -hy)
+        for k in range(cs + 1):
+            a = 2.0 * math.pi - (0.5 * math.pi * k) / cs  # 2pi -> 3pi/2
+            pts.append(((hx_pos - rx_f) + math.cos(a) * rx_f, (-hy + ry) + math.sin(a) * ry))
+        return pts
+
+
 def add_profile_loft_pc(
     bm: bmesh.types.BMesh,
     stations: Sequence[Tuple[float, float, float, float, float, float, float, float]],
     mat_idx: int = 0,
+    corner_segs: int = 1,
+    cap_bevel_start: float = 0.0,
+    cap_bevel_end: float = 0.0,
 ) -> List[bmesh.types.BMVert]:
     """
-    Lofts an 8-point chamfered-trapezoid cross-section across arbitrary 3D stations:
+    Lofts a filleted-trapezoid cross-section across arbitrary 3D stations:
       station = `(cx, cy, cz, hx_top, hx_bot, hy, chamfer_frac, pitch_deg)`
-    Produces sculpted grips, stocks, receivers, handguards, and polygonal Desert Eagle barrels!
+    Set `corner_segs=3` and `cap_bevel_* > 0` for pillowy-smooth rounded stocks & cheek risers!
     """
+    st_list = list(stations)
+    if cap_bevel_start > 1e-5 and len(st_list) >= 2:
+        s0, s1 = st_list[0], st_list[1]
+        dx, dy, dz = s1[0] - s0[0], s1[1] - s0[1], s1[2] - s0[2]
+        seg_len = max(1e-5, math.sqrt(dx * dx + dy * dy + dz * dz))
+        b = min(cap_bevel_start, seg_len * 0.35)
+        ux, uy, uz = dx / seg_len, dy / seg_len, dz / seg_len
+        st_list = [
+            (s0[0], s0[1], s0[2], s0[3] * 0.80, s0[4] * 0.80, s0[5] * 0.82, min(0.46, s0[6] + 0.08), s0[7]),
+            (s0[0] + ux * b * 0.45, s0[1] + uy * b * 0.45, s0[2] + uz * b * 0.45, s0[3] * 0.93, s0[4] * 0.93, s0[5] * 0.94, s0[6], s0[7]),
+            (s0[0] + ux * b, s0[1] + uy * b, s0[2] + uz * b, s0[3], s0[4], s0[5], s0[6], s0[7]),
+        ] + st_list[1:]
+    if cap_bevel_end > 1e-5 and len(st_list) >= 2:
+        s_prev, s_end = st_list[-2], st_list[-1]
+        dx, dy, dz = s_end[0] - s_prev[0], s_end[1] - s_prev[1], s_end[2] - s_prev[2]
+        seg_len = max(1e-5, math.sqrt(dx * dx + dy * dy + dz * dz))
+        b = min(cap_bevel_end, seg_len * 0.35)
+        ux, uy, uz = dx / seg_len, dy / seg_len, dz / seg_len
+        st_list = st_list[:-1] + [
+            (s_end[0] - ux * b, s_end[1] - uy * b, s_end[2] - uz * b, s_end[3], s_end[4], s_end[5], s_end[6], s_end[7]),
+            (s_end[0] - ux * b * 0.45, s_end[1] - uy * b * 0.45, s_end[2] - uz * b * 0.45, s_end[3] * 0.93, s_end[4] * 0.93, s_end[5] * 0.94, s_end[6], s_end[7]),
+            (s_end[0], s_end[1], s_end[2], s_end[3] * 0.80, s_end[4] * 0.80, s_end[5] * 0.82, min(0.46, s_end[6] + 0.08), s_end[7]),
+        ]
+
     rings: List[List[bmesh.types.BMVert]] = []
     centers: List[Vector] = []
 
-    for cx, cy, cz, hx_t, hx_b, hy, cf, pitch_deg in stations:
-        cf = max(0.08, min(0.48, cf))
-        # 8-point CCW loop in PlayCanvas XY plane (+X right, +Y up) viewed from +Z looking -Z:
-        pts_2d = [
-            (hx_t * (1.0 - cf), hy),
-            (-hx_t * (1.0 - cf), hy),
-            (-hx_t, hy * (1.0 - cf * 1.15)),
-            (-hx_b, -hy * (1.0 - cf * 1.15)),
-            (-hx_b * (1.0 - cf), -hy),
-            (hx_b * (1.0 - cf), -hy),
-            (hx_b, -hy * (1.0 - cf * 1.15)),
-            (hx_t, hy * (1.0 - cf * 1.15)),
-        ]
+    for cx, cy, cz, hx_t, hx_b, hy, cf, pitch_deg in st_list:
+        pts_2d = _rounded_trapezoid_pts_2d(hx_t, hx_b, hy, cf, corner_segs=corner_segs, neg_first=False)
         rot = _rot_pc_to_bl_matrix(pitch_deg=pitch_deg)
         c_bl = pc_to_bl(cx, cy, cz)
         centers.append(c_bl)
@@ -724,13 +807,12 @@ def add_profile_loft_pc(
             ring.append(bm.verts.new(v_bl))
         rings.append(ring)
 
-    # Check progression direction relative to ring normal so faces always point outward
-    n_pts = 8
+    n_pts = len(rings[0])
     d_prog = centers[-1] - centers[0]
-    # Test cross product of ring edge 0->1 and progression
-    e01 = rings[0][1].co - rings[0][0].co
+    mid_idx = max(1, n_pts // 4)
+    e01 = rings[0][mid_idx].co - rings[0][0].co
     out_guess = e01.cross(d_prog)
-    radial_0 = ((rings[0][0].co + rings[0][1].co) * 0.5) - centers[0]
+    radial_0 = ((rings[0][0].co + rings[0][mid_idx].co) * 0.5) - centers[0]
     flip = out_guess.dot(radial_0) < 0.0
 
     for i in range(len(rings) - 1):
@@ -762,21 +844,46 @@ def add_swept_loft_yz_pc(
     bm: bmesh.types.BMesh,
     stations: Sequence[Tuple[float, float, float, float, float, float, float]],
     mat_idx: int = 0,
+    corner_segs: int = 1,
+    cap_bevel_start: float = 0.0,
+    cap_bevel_end: float = 0.0,
 ) -> List[bmesh.types.BMVert]:
     """
-    Sweeps an 8-point chamfered cross-section along any curved or angled spine in the PlayCanvas YZ plane
+    Sweeps a filleted cross-section along any curved or angled spine in the PlayCanvas YZ plane
     (pistol grips, curved STANAG magazines, flared magwells, open U-bow trigger guards, curved triggers, grenade spoons):
       station = `(cx, cy, cz, hx_neg_n, hx_pos_n, h_depth, chamfer_frac)`
-    At every station `i`, the cross-section normal `N_i = T_i.cross(+X)` is strictly perpendicular to the local
-    path tangent `T_i`, guaranteeing uniform full 3D depth with zero pinching or twist even across 180-deg bows!
-    For downward grips/magazines (`dy < 0`), `-N_i` points forward (`-Z_pc` frontstrap) and `+N_i` points rearward (`+Z_pc` backstrap).
+    Set `corner_segs=3` for contoured ergonomic grips & curved STANAG magazines!
     """
-    centers = [pc_to_bl(s[0], s[1], s[2]) for s in stations]
-    n_st = len(stations)
+    st_list = list(stations)
+    if cap_bevel_start > 1e-5 and len(st_list) >= 2:
+        s0, s1 = st_list[0], st_list[1]
+        dx, dy, dz = s1[0] - s0[0], s1[1] - s0[1], s1[2] - s0[2]
+        seg_len = max(1e-5, math.sqrt(dx * dx + dy * dy + dz * dz))
+        b = min(cap_bevel_start, seg_len * 0.35)
+        ux, uy, uz = dx / seg_len, dy / seg_len, dz / seg_len
+        st_list = [
+            (s0[0], s0[1], s0[2], s0[3] * 0.80, s0[4] * 0.80, s0[5] * 0.82, min(0.46, s0[6] + 0.08)),
+            (s0[0] + ux * b * 0.45, s0[1] + uy * b * 0.45, s0[2] + uz * b * 0.45, s0[3] * 0.93, s0[4] * 0.93, s0[5] * 0.94, s0[6]),
+            (s0[0] + ux * b, s0[1] + uy * b, s0[2] + uz * b, s0[3], s0[4], s0[5], s0[6]),
+        ] + st_list[1:]
+    if cap_bevel_end > 1e-5 and len(st_list) >= 2:
+        s_prev, s_end = st_list[-2], st_list[-1]
+        dx, dy, dz = s_end[0] - s_prev[0], s_end[1] - s_prev[1], s_end[2] - s_prev[2]
+        seg_len = max(1e-5, math.sqrt(dx * dx + dy * dy + dz * dz))
+        b = min(cap_bevel_end, seg_len * 0.35)
+        ux, uy, uz = dx / seg_len, dy / seg_len, dz / seg_len
+        st_list = st_list[:-1] + [
+            (s_end[0] - ux * b, s_end[1] - uy * b, s_end[2] - uz * b, s_end[3], s_end[4], s_end[5], s_end[6]),
+            (s_end[0] - ux * b * 0.45, s_end[1] - uy * b * 0.45, s_end[2] - uz * b * 0.45, s_end[3] * 0.93, s_end[4] * 0.93, s_end[5] * 0.94, s_end[6]),
+            (s_end[0], s_end[1], s_end[2], s_end[3] * 0.80, s_end[4] * 0.80, s_end[5] * 0.82, min(0.46, s_end[6] + 0.08)),
+        ]
+
+    centers = [pc_to_bl(s[0], s[1], s[2]) for s in st_list]
+    n_st = len(st_list)
     x_axis = Vector((1.0, 0.0, 0.0))
     rings: List[List[bmesh.types.BMVert]] = []
 
-    for i, (_, _, _, hx_f, hx_r, hd, cf) in enumerate(stations):
+    for i, (_, _, _, hx_f, hx_r, hd, cf) in enumerate(st_list):
         if i == 0:
             tang = centers[1] - centers[0]
         elif i == n_st - 1:
@@ -785,7 +892,6 @@ def add_swept_loft_yz_pc(
             t0 = (centers[i] - centers[i - 1]).normalized()
             t1 = (centers[i + 1] - centers[i]).normalized()
             tang = t0 + t1
-        # Project tangent onto Blender YZ plane so X stays clean lateral right
         tang_yz = Vector((0.0, tang.y, tang.z))
         if tang_yz.length < 1e-7:
             tang_yz = Vector((0.0, 0.0, -1.0))
@@ -793,17 +899,7 @@ def add_swept_loft_yz_pc(
             tang_yz.normalize()
         n_dir = tang_yz.cross(x_axis).normalized()
 
-        cf = max(0.08, min(0.48, cf))
-        pts_2d = [
-            (hx_f * (1.0 - cf), -hd),
-            (-hx_f * (1.0 - cf), -hd),
-            (-hx_f, -hd * (1.0 - cf * 1.15)),
-            (-hx_r, hd * (1.0 - cf * 1.15)),
-            (-hx_r * (1.0 - cf), hd),
-            (hx_r * (1.0 - cf), hd),
-            (hx_r, hd * (1.0 - cf * 1.15)),
-            (hx_f, -hd * (1.0 - cf * 1.15)),
-        ]
+        pts_2d = _rounded_trapezoid_pts_2d(hx_f, hx_r, hd, cf, corner_segs=corner_segs, neg_first=True)
         c_bl = centers[i]
         ring: List[bmesh.types.BMVert] = []
         for lx, ln in pts_2d:
@@ -811,11 +907,12 @@ def add_swept_loft_yz_pc(
             ring.append(bm.verts.new(v_bl))
         rings.append(ring)
 
-    n_pts = 8
+    n_pts = len(rings[0])
     d_prog = centers[1] - centers[0]
-    e01 = rings[0][1].co - rings[0][0].co
+    mid_idx = max(1, n_pts // 4)
+    e01 = rings[0][mid_idx].co - rings[0][0].co
     out_guess = e01.cross(d_prog)
-    radial_0 = ((rings[0][0].co + rings[0][1].co) * 0.5) - centers[0]
+    radial_0 = ((rings[0][0].co + rings[0][mid_idx].co) * 0.5) - centers[0]
     flip = out_guess.dot(radial_0) < 0.0
 
     for i in range(len(rings) - 1):
@@ -940,6 +1037,126 @@ def _add_prism_tooth_pc(
         f.smooth = True
 
 
+def add_custom_poly_z_pc(
+    bm: bmesh.types.BMesh,
+    pts_xy_ccw: Sequence[Tuple[float, float]],
+    z_stations: Sequence[Tuple[float, float, float]],
+    mat_idx: int = 0,
+) -> List[bmesh.types.BMVert]:
+    """
+    Lofts an arbitrary CCW 2D polygon `pts_xy_ccw` (in PlayCanvas XY coordinates) across
+    `z_stations = [(z_pc, scale_x, scale_y), ...]` for crisp polygonal/triangular barrels & slides!
+    """
+    cx = sum(p[0] for p in pts_xy_ccw) / len(pts_xy_ccw)
+    cy = sum(p[1] for p in pts_xy_ccw) / len(pts_xy_ccw)
+    rings: List[List[bmesh.types.BMVert]] = []
+    centers: List[Vector] = []
+    for z_pc, sx, sy in z_stations:
+        c_bl = pc_to_bl(cx, cy, z_pc)
+        centers.append(c_bl)
+        ring: List[bmesh.types.BMVert] = []
+        for px, py in pts_xy_ccw:
+            lx = cx + (px - cx) * sx
+            ly = cy + (py - cy) * sy
+            ring.append(bm.verts.new(pc_to_bl(lx, ly, z_pc)))
+        rings.append(ring)
+
+    n_pts = len(pts_xy_ccw)
+    d_prog = centers[-1] - centers[0]
+    e01 = rings[0][1].co - rings[0][0].co
+    out_guess = e01.cross(d_prog)
+    radial_0 = ((rings[0][0].co + rings[0][1].co) * 0.5) - centers[0]
+    flip = out_guess.dot(radial_0) < 0.0
+
+    for i in range(len(rings) - 1):
+        r0, r1 = rings[i], rings[i + 1]
+        for s in range(n_pts):
+            sn = (s + 1) % n_pts
+            quad = (r0[s], r1[s], r1[sn], r0[sn]) if flip else (r0[s], r0[sn], r1[sn], r1[s])
+            f = bm.faces.new(quad)
+            f.material_index = mat_idx
+            f.smooth = True
+
+    c_start = bm.verts.new(centers[0])
+    c_end = bm.verts.new(centers[-1])
+    for s in range(n_pts):
+        sn = (s + 1) % n_pts
+        t0 = (c_start, rings[0][s], rings[0][sn]) if flip else (c_start, rings[0][sn], rings[0][s])
+        t1 = (c_end, rings[-1][sn], rings[-1][s]) if flip else (c_end, rings[-1][s], rings[-1][sn])
+        f0 = bm.faces.new(t0)
+        f1 = bm.faces.new(t1)
+        f0.material_index = mat_idx
+        f1.material_index = mat_idx
+        f0.smooth = True
+        f1.smooth = True
+
+    return [v for r in rings for v in r] + [c_start, c_end]
+
+
+def add_contoured_grip_pc(
+    bm: bmesh.types.BMesh,
+    y_top: float,
+    z_top: float,
+    length_y: float,
+    rake_deg: float,
+    half_w: float,
+    half_depth: float,
+    mat_idx: int,
+    groove_amp: float = 0.0028,
+    palm_swell: float = 0.0052,
+    heel_flare: float = 1.10,
+) -> List[bmesh.types.BMVert]:
+    """
+    Sculpted ergonomic tactical pistol grip (16-point oval cross-section, `corner_segs=3`) with:
+      - `rake_deg` (~18-21 deg) natural combat grip angle
+      - Swept upper beavertail tang transition
+      - 3 sculpted finger-groove scallops & ridges along the frontstrap
+      - Rounded mid-palm backstrap & lateral swell
+      - Flared, multi-step rounded bevel heel cap (`cap_bevel_end=0.0042`)
+    """
+    rake_rad = math.radians(rake_deg)
+    tan_r = math.tan(rake_rad)
+    stations: List[Tuple[float, float, float, float, float, float, float]] = []
+    n_steps = 11
+    for i in range(n_steps):
+        t = i / (n_steps - 1)
+        py = y_top - length_y * t
+        z_spine = z_top + (length_y * tan_r) * t
+
+        # Backstrap contour: swept beavertail at top (t=0) + mid-palm arch swell (t=0.45) + heel flare (t=1)
+        back_ext = (
+            half_depth
+            + palm_swell * math.sin(math.pi * min(1.0, t * 1.08)) ** 1.15
+            + (0.0045 * ((1.0 - t / 0.22) ** 2) if t < 0.22 else 0.0)
+            + (0.0032 * (((t - 0.84) / 0.16) ** 1.5) if t > 0.84 else 0.0)
+        )
+
+        # Frontstrap contour: trigger-guard undercut at top + 3 finger grooves & ridges + heel lip!
+        if t < 0.16:
+            front_ext = half_depth * (0.86 + 0.14 * (t / 0.16))
+        elif t <= 0.86:
+            u = (t - 0.16) / 0.70  # 0..1 across 3 finger grooves (cos(6*pi*u): ridges at 0, 1/3, 2/3, 1; valleys between!)
+            front_ext = half_depth + groove_amp * math.cos(6.0 * math.pi * u)
+        else:
+            u_h = (t - 0.86) / 0.14
+            front_ext = half_depth + groove_amp + 0.0030 * u_h
+
+        # Lateral palm-swell width (`hx`)
+        swell_w = 1.0 + 0.10 * math.sin(math.pi * t)
+        if t > 0.86:
+            swell_w = max(swell_w, 1.0 + (heel_flare - 1.0) * ((t - 0.86) / 0.14))
+        hx_f = half_w * 0.92 * swell_w
+        hx_r = half_w * 1.04 * swell_w
+
+        hd = 0.5 * (front_ext + back_ext)
+        cz = z_spine + 0.5 * (back_ext - front_ext)
+        stations.append((0.0, py, cz, hx_f, hx_r, hd, 0.45))
+
+    return add_swept_loft_yz_pc(
+        bm, stations, mat_idx=mat_idx, corner_segs=3, cap_bevel_start=0.0025, cap_bevel_end=0.0042
+    )
+
+
 def add_picatinny_rail_pc(
     bm: bmesh.types.BMesh,
     cx: float,
@@ -949,6 +1166,9 @@ def add_picatinny_rail_pc(
     direction: str = "+Y",
     mat_idx: int = 0,
     tooth_pitch: float = 0.010,
+    rail_half_w: float = 0.0106,
+    base_h: float = 0.0022,
+    tooth_h: float = 0.0026,
 ) -> None:
     """
     True MIL-STD-1913 Toothed Picatinny Rail along Z (`z_start -> z_end`):
@@ -960,9 +1180,6 @@ def add_picatinny_rail_pc(
     span = z_hi - z_lo
     z_mid = 0.5 * (z_hi + z_lo)
 
-    rail_half_w = 0.0106  # 21.2mm MIL-STD-1913 width
-    base_h = 0.0022
-    tooth_h = 0.0026
     tooth_hz = tooth_pitch * 0.28
 
     num_teeth = max(2, int(span / tooth_pitch))
@@ -1365,37 +1582,40 @@ def build_m590_shotgun(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
         half_width_x=0.0062, band_thick=0.0036, guard_mat_idx=1, trigger_mat_idx=0,
     )
 
-    # Sculpted Tactical SGA-Style Ergonomic Stock + Contoured Pistol Grip Wrist + Vented Rubber Buttpad
+    # Sculpted Tactical SGA-Style Ergonomic Stock (16-pt rounded oval cross-section + beveled ends!)
     add_profile_loft_pc(
         bm,
         [
-            (0.0, -0.002, 0.036, 0.016, 0.018, 0.024, 0.30, -14.0),
-            (0.0, -0.022, 0.072, 0.015, 0.017, 0.021, 0.34, -26.0),  # Contoured grip wrist
-            (0.0, -0.026, 0.112, 0.016, 0.018, 0.026, 0.30, -8.0),
-            (0.0, -0.016, 0.185, 0.017, 0.019, 0.039, 0.26, 4.0),    # Raised cheek comb
-            (0.0, -0.022, 0.278, 0.018, 0.020, 0.052, 0.24, 2.0),
+            (0.0, 0.002, 0.034, 0.0165, 0.0182, 0.025, 0.44, -10.0),
+            (0.0, -0.016, 0.068, 0.0148, 0.0162, 0.021, 0.46, -24.0),  # Smoothly rounded ergonomic grip wrist
+            (0.0, -0.024, 0.108, 0.0158, 0.0175, 0.026, 0.44, -8.0),
+            (0.0, -0.016, 0.165, 0.0168, 0.0185, 0.038, 0.42, 4.0),    # Rounded raised cheek comb
+            (0.0, -0.020, 0.228, 0.0175, 0.0192, 0.047, 0.40, 2.0),
+            (0.0, -0.024, 0.278, 0.0180, 0.0198, 0.053, 0.38, 2.0),
         ],
         mat_idx=2,
+        corner_segs=3,
+        cap_bevel_start=0.0045,
+        cap_bevel_end=0.0040,
     )
-    # Dedicated sculpted tactical pistol grip sweep under wrist
-    add_swept_loft_yz_pc(
+    # Contoured tactical pistol grip under wrist (20-deg rake, finger-groove frontstrap, palm swell, rounded heel!)
+    add_contoured_grip_pc(
         bm,
-        [
-            (0.0, -0.016, 0.022, 0.0150, 0.0160, 0.020, 0.32),
-            (0.0, -0.052, 0.036, 0.0162, 0.0178, 0.023, 0.34),
-            (0.0, -0.086, 0.050, 0.0155, 0.0170, 0.022, 0.34),
-            (0.0, -0.104, 0.058, 0.0172, 0.0188, 0.024, 0.26),
-        ],
-        mat_idx=2,
+        y_top=-0.012, z_top=0.020, length_y=0.094, rake_deg=20.5,
+        half_w=0.0155, half_depth=0.0205, mat_idx=2,
+        groove_amp=0.0028, palm_swell=0.0052, heel_flare=1.10,
     )
-    # Thick ventilated black rubber recoil buttpad (`z = 0.278 .. 0.302`)
+    # Thick rounded black rubber recoil buttpad (`z = 0.276 .. 0.304`)
     add_profile_loft_pc(
         bm,
         [
-            (0.0, -0.022, 0.278, 0.0185, 0.0205, 0.053, 0.24, 2.0),
-            (0.0, -0.023, 0.302, 0.0175, 0.0195, 0.052, 0.28, 2.0),
+            (0.0, -0.024, 0.276, 0.0184, 0.0202, 0.054, 0.38, 2.0),
+            (0.0, -0.025, 0.304, 0.0174, 0.0192, 0.053, 0.42, 2.0),
         ],
         mat_idx=3,
+        corner_segs=3,
+        cap_bevel_start=0.0025,
+        cap_bevel_end=0.0055,
     )
 
     finalize_weapon_part(
@@ -1559,28 +1779,43 @@ def build_silver_talon_50ae(mats: Dict[str, bpy.types.Material], scene_col: bpy.
         ],
         mat_idx=0,
     )
-    # Under-dustcover accessory Picatinny slots
-    add_picatinny_rail_pc(bm, 0.0, -0.005, -0.145, -0.268, direction="-Y", mat_idx=0, tooth_pitch=0.011)
+    # Under-dustcover accessory Picatinny slots (narrow pistol frame width)
+    add_picatinny_rail_pc(
+        bm, 0.0, -0.005, -0.145, -0.268, direction="-Y", mat_idx=0,
+        tooth_pitch=0.011, rail_half_w=0.0082, base_h=0.0016, tooth_h=0.0020,
+    )
     # Frame controls: takedown lever + slide catch lever + mag release button
     add_box_pc(bm, (-0.0185, 0.008, -0.072), (0.0022, 0.0048, 0.014), bevel=0.0008, mat_idx=1)
     add_box_pc(bm, (-0.0185, 0.012, -0.022), (0.0020, 0.0042, 0.018), bevel=0.0008, mat_idx=1)
     add_cylinder_axis_pc(bm, (-0.0195, -0.012, 0.002), (-0.0155, -0.012, 0.002), 0.0042, sides=14, mat_idx=1)
 
-    # Iconic Desert Eagle XIX Polygonal / Triangular 6" Fixed Barrel (`z = -0.088 .. -0.288`)!
-    # Narrow angled top rib (`hx_top = 0.0105`) widening to muscular slab flanks (`hx_bot = 0.0182`)!
-    add_profile_loft_pc(
+    # Iconic Desert Eagle Mark XIX Triangular / Polygonal 6" Fixed Barrel (`z = -0.088 .. -0.289`)!
+    # Unmistakable steep 44-deg angled upper triangular slopes tapering to a narrow 12.0mm flat top rib!
+    deagle_barrel_poly_ccw = [
+        (0.0060, 0.0510),   # Narrow top-right rib edge (12mm total top flat!)
+        (-0.0060, 0.0510),  # Narrow top-left rib edge
+        (-0.0188, 0.0305),  # Steep 44-deg triangular upper-left facet shoulder!
+        (-0.0188, 0.0170),  # Vertical lower-left slab flank
+        (-0.0152, 0.0135),  # Lower-left dustcover chamfer
+        (0.0152, 0.0135),   # Lower-right dustcover chamfer
+        (0.0188, 0.0170),   # Vertical lower-right slab flank
+        (0.0188, 0.0305),   # Steep 44-deg triangular upper-right facet shoulder!
+    ]
+    add_custom_poly_z_pc(
         bm,
+        deagle_barrel_poly_ccw,
         [
-            (0.0, 0.032, -0.088, 0.0108, 0.0182, 0.0195, 0.22, 0.0),
-            (0.0, 0.032, -0.284, 0.0108, 0.0182, 0.0195, 0.22, 0.0),
-            (0.0, 0.032, -0.288, 0.0098, 0.0168, 0.0182, 0.26, 0.0),
+            (-0.086, 0.96, 0.96),
+            (-0.090, 1.00, 1.00),
+            (-0.284, 1.00, 1.00),
+            (-0.289, 0.91, 0.91),  # Crisp beveled triangular muzzle crown!
         ],
         mat_idx=0,
     )
     # Recessed dark `.50 AE` (12.7mm!) polygonal rifled muzzle crown & hollow bore
     add_hollow_barrel_z_pc(
-        bm, 0.0, 0.032,
-        [(-0.240, 0.0105), (-0.2885, 0.0102)],
+        bm, 0.0, 0.031,
+        [(-0.240, 0.0102), (-0.2892, 0.0098)],
         bore_radius=0.0066,
         bore_depth=0.065,
         sides=24,
@@ -1588,15 +1823,18 @@ def build_silver_talon_50ae(mats: Dict[str, bpy.types.Material], scene_col: bpy.
         bore_mat_idx=4,
         rifling_lands=6,
     )
-    # Signature deep machined side lightening flutes along both barrel flanks!
+    # Signature deep machined lightening flutes: one on the 44-deg triangular slope + one on the lower vertical flank!
     for sx in (-1.0, 1.0):
-        for fy, fh in [(0.034, 0.0038), (0.024, 0.0028)]:
-            add_box_pc(bm, (sx * 0.0174, fy, -0.192), (0.0016, fh, 0.072), bevel=0.0006, mat_idx=1, roll_deg=sx * 10.0)
-    # Integral top Picatinny / Weaver scope slots machined along the fixed 6" barrel rib!
-    add_picatinny_rail_pc(bm, 0.0, 0.051, -0.105, -0.252, direction="+Y", mat_idx=0, tooth_pitch=0.014)
+        add_box_pc(bm, (sx * 0.0128, 0.0402, -0.190), (0.0014, 0.0036, 0.072), bevel=0.0006, mat_idx=1, roll_deg=sx * 32.0)
+        add_box_pc(bm, (sx * 0.0184, 0.0235, -0.190), (0.0014, 0.0030, 0.072), bevel=0.0006, mat_idx=1)
+    # Integral Weaver/Picatinny barrel scope slots strictly within the narrow 12mm top rib (leaving triangular slopes exposed!)
+    add_picatinny_rail_pc(
+        bm, 0.0, 0.0510, -0.105, -0.252, direction="+Y", mat_idx=0,
+        tooth_pitch=0.014, rail_half_w=0.0058, base_h=0.0008, tooth_h=0.0018,
+    )
 
     # Dovetailed Front Combat Blade Sight + Glowing Tritium Dot
-    add_box_pc(bm, (0.0, 0.052, -0.272), (0.0075, 0.0022, 0.008), bevel=0.0006, mat_idx=1)
+    add_box_pc(bm, (0.0, 0.052, -0.272), (0.0058, 0.0020, 0.008), bevel=0.0006, mat_idx=1)
     add_box_pc(bm, (0.0, 0.058, -0.272), (0.0024, 0.0055, 0.0075), bevel=0.0007, mat_idx=1, pitch_deg=-14.0)
     add_box_pc(bm, (0.0, 0.060, -0.266), (0.0014, 0.0016, 0.0015), bevel=0.0003, mat_idx=3)
 
@@ -1606,19 +1844,12 @@ def build_silver_talon_50ae(mats: Dict[str, bpy.types.Material], scene_col: bpy.
         half_width_x=0.0065, band_thick=0.0038, guard_mat_idx=0, trigger_mat_idx=1,
     )
 
-    # Contoured Wrap-Around Stippled Hogue Rubber Grip with organic finger swells & palm swell!
-    add_swept_loft_yz_pc(
+    # Contoured Wrap-Around Stippled Hogue Rubber Grip (18.5-deg rake, 3 deep Hogue finger grooves, palm-swell backstrap!)
+    add_contoured_grip_pc(
         bm,
-        [
-            (0.0, -0.006, 0.008, 0.0168, 0.0175, 0.0255, 0.28),
-            (0.0, -0.028, 0.014, 0.0180, 0.0188, 0.0285, 0.34),
-            (0.0, -0.044, 0.019, 0.0176, 0.0192, 0.0268, 0.34),
-            (0.0, -0.062, 0.024, 0.0188, 0.0196, 0.0292, 0.35),
-            (0.0, -0.080, 0.029, 0.0180, 0.0192, 0.0272, 0.34),
-            (0.0, -0.100, 0.035, 0.0184, 0.0190, 0.0282, 0.32),
-            (0.0, -0.115, 0.039, 0.0194, 0.0200, 0.0300, 0.24),  # Flared magwell lip
-        ],
-        mat_idx=2,
+        y_top=-0.004, z_top=0.006, length_y=0.112, rake_deg=18.5,
+        half_w=0.0176, half_depth=0.0255, mat_idx=2,
+        groove_amp=0.0034, palm_swell=0.0060, heel_flare=1.12,
     )
 
     finalize_weapon_part(
@@ -1627,22 +1858,35 @@ def build_silver_talon_50ae(mats: Dict[str, bpy.types.Material], scene_col: bpy.
         arm, "Bone_Root", col, angle_deg=38.0,
     )
 
-    # Reciprocating Brushed Chrome Slide (`Bone_Slide`):
-    # Open-top Desert Eagle slide housing + twin forward gas-rod side prongs + open ejection port + serrations + ambi safety!
+    # Reciprocating Brushed Chrome Slide (`Bone_Slide`) matching the Desert Eagle triangular/polygonal top profile!
     bm = bmesh.new()
-    # Rear breech housing (`z = 0.056 .. -0.022`)
-    add_profile_loft_pc(
+    deagle_slide_poly_ccw = [
+        (0.0068, 0.0505),
+        (-0.0068, 0.0505),
+        (-0.0192, 0.0305),
+        (-0.0192, 0.0110),
+        (0.0192, 0.0110),
+        (0.0192, 0.0305),
+    ]
+    add_custom_poly_z_pc(
         bm,
+        deagle_slide_poly_ccw,
         [
-            (0.0, 0.028, 0.056, 0.0132, 0.0188, 0.0195, 0.24, -6.0),
-            (0.0, 0.028, 0.044, 0.0138, 0.0192, 0.0200, 0.22, 0.0),
-            (0.0, 0.028, -0.022, 0.0138, 0.0192, 0.0200, 0.22, 0.0),
+            (0.056, 0.92, 0.94),
+            (0.051, 1.00, 1.00),
+            (-0.022, 1.00, 1.00),
         ],
         mat_idx=0,
     )
-    # Left slide wall & twin lower slide rails continuing forward around open ejection port (`z = -0.022 .. -0.105`)
-    add_box_pc(bm, (-0.0152, 0.027, -0.062), (0.0040, 0.0185, 0.042), bevel=0.0015, mat_idx=0)
-    add_box_pc(bm, (0.0158, 0.015, -0.062), (0.0035, 0.0065, 0.042), bevel=0.0012, mat_idx=0)  # Lower right rail under open ejection port!
+    # Left slide prong & lower right rail continuing forward around open ejection port (`z = -0.022 .. -0.102`)
+    left_prong_ccw = [
+        (-0.0095, 0.0465),
+        (-0.0192, 0.0305),
+        (-0.0192, 0.0110),
+        (-0.0125, 0.0110),
+    ]
+    add_custom_poly_z_pc(bm, left_prong_ccw, [(-0.020, 1.0, 1.0), (-0.102, 1.0, 1.0)], mat_idx=0)
+    add_box_pc(bm, (0.0158, 0.015, -0.062), (0.0035, 0.0048, 0.042), bevel=0.0012, mat_idx=0)  # Lower right rail under open ejection port!
     # Visible dark rotary bolt head & extractor inside open ejection port
     add_cylinder_z_pc(bm, 0.0, 0.030, -0.020, -0.088, 0.0098, 0.0098, sides=18, mat_idx=1)
     # Crisp angled rear slide serrations (7 deep grooves on both sides)
@@ -1666,8 +1910,26 @@ def build_silver_talon_50ae(mats: Dict[str, bpy.types.Material], scene_col: bpy.
 
     # Heavy 7-Round .50 AE Magazine + Visible Brass Cartridge with Copper Hollow-Point Bullet (`Bone_Mag`)
     bm = bmesh.new()
-    add_box_pc(bm, (0.0, -0.062, 0.022), (0.0132, 0.056, 0.0215), bevel=0.002, mat_idx=0, pitch_deg=16.0)
-    add_box_pc(bm, (0.0, -0.121, 0.039), (0.0185, 0.0065, 0.0285), bevel=0.0022, mat_idx=1, pitch_deg=16.0)
+    add_swept_loft_yz_pc(
+        bm,
+        [
+            (0.0, -0.008, 0.009, 0.0128, 0.0128, 0.0195, 0.24),
+            (0.0, -0.115, 0.045, 0.0128, 0.0128, 0.0195, 0.24),
+        ],
+        mat_idx=0,
+        corner_segs=2,
+    )
+    add_swept_loft_yz_pc(
+        bm,
+        [
+            (0.0, -0.115, 0.046, 0.0182, 0.0192, 0.0275, 0.42),
+            (0.0, -0.124, 0.049, 0.0172, 0.0182, 0.0265, 0.44),
+        ],
+        mat_idx=1,
+        corner_segs=3,
+        cap_bevel_start=0.0020,
+        cap_bevel_end=0.0035,
+    )
     # Visible .50 AE brass case + copper JHP hollow-point bullet seated at top of magazine!
     add_lathe_z_pc(bm, 0.0, -0.003, [(0.024, 0.0069), (-0.008, 0.0068)], sides=18, mat_idx=2)
     add_hollow_barrel_z_pc(
@@ -1810,72 +2072,84 @@ def build_msg90_sniper(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
         half_width_x=0.0060, band_thick=0.0034, guard_mat_idx=2, trigger_mat_idx=0,
     )
 
-    # Ergonomic PSG1/MSG90 Stippled Target Pistol Grip + Adjustable Target Palm Shelf!
-    add_swept_loft_yz_pc(
+    # Ergonomic PSG1/MSG90 Stippled Target Pistol Grip (19-deg rake, finger grooves, target palm swell) + Rounded Palm Shelf!
+    add_contoured_grip_pc(
         bm,
-        [
-            (0.0, -0.024, 0.015, 0.0155, 0.0165, 0.0215, 0.30),
-            (0.0, -0.058, 0.025, 0.0175, 0.0188, 0.0245, 0.34),
-            (0.0, -0.092, 0.035, 0.0172, 0.0184, 0.0240, 0.34),
-            (0.0, -0.116, 0.042, 0.0165, 0.0175, 0.0225, 0.30),
-        ],
-        mat_idx=2,
+        y_top=-0.022, z_top=0.014, length_y=0.095, rake_deg=19.0,
+        half_w=0.0168, half_depth=0.0220, mat_idx=2,
+        groove_amp=0.0028, palm_swell=0.0058, heel_flare=1.08,
     )
-    # Adjustable wide contoured palm shelf + steel locking dial at grip base
+    # Adjustable wide contoured FDE palm shelf + steel locking dial at grip base
     add_swept_loft_yz_pc(
         bm,
         [
-            (0.0, -0.116, 0.042, 0.0255, 0.0240, 0.0275, 0.24),
-            (0.0, -0.124, 0.044, 0.0225, 0.0210, 0.0255, 0.28),
+            (0.0, -0.115, 0.046, 0.0255, 0.0240, 0.0280, 0.42),
+            (0.0, -0.124, 0.049, 0.0225, 0.0210, 0.0260, 0.44),
         ],
         mat_idx=3,
+        corner_segs=3,
+        cap_bevel_start=0.0025,
+        cap_bevel_end=0.0030,
     )
-    add_cylinder_z_pc(bm, 0.0, -0.130, 0.040, 0.052, 0.0075, 0.0075, sides=16, mat_idx=0)
+    add_cylinder_z_pc(bm, 0.0, -0.130, 0.044, 0.056, 0.0075, 0.0075, sides=16, mat_idx=0)
 
-    # Precision Adjustable MSG90 Buttstock + Elevated FDE Cheek-Riser + Dual Adjustment Rods & Thumbwheels!
+    # Precision Adjustable MSG90 Buttstock (16-pt rounded oval cross-section + beveled ends!)
     add_profile_loft_pc(
         bm,
         [
-            (0.0, 0.006, 0.062, 0.0155, 0.0185, 0.026, 0.26, 0.0),
-            (0.0, 0.002, 0.145, 0.0165, 0.0190, 0.036, 0.26, 0.0),
-            (0.0, -0.004, 0.285, 0.0175, 0.0195, 0.044, 0.24, 0.0),
+            (0.0, 0.008, 0.062, 0.0155, 0.0182, 0.026, 0.42, 0.0),
+            (0.0, 0.003, 0.145, 0.0165, 0.0190, 0.036, 0.40, 0.0),
+            (0.0, -0.002, 0.225, 0.0172, 0.0194, 0.041, 0.40, 0.0),
+            (0.0, -0.006, 0.285, 0.0176, 0.0198, 0.045, 0.38, 0.0),
         ],
         mat_idx=2,
+        corner_segs=3,
+        cap_bevel_start=0.0040,
+        cap_bevel_end=0.0045,
     )
-    # Sculpted saddle-shaped FDE Cheek Riser (`y = 0.048`, `z = 0.125 .. 0.255`) + steel riser posts
+    # Sculpted saddle-shaped FDE Cheek Riser (`y = 0.048`, `z = 0.122 .. 0.255`) with pillowy rounded bevels!
     for pz in (0.155, 0.225):
         add_cylinder_axis_pc(bm, (0.0, 0.024, pz), (0.0, 0.048, pz), 0.0045, sides=14, mat_idx=0)
     add_profile_loft_pc(
         bm,
         [
-            (0.0, 0.048, 0.122, 0.0185, 0.0205, 0.011, 0.34, -8.0),
-            (0.0, 0.051, 0.188, 0.0195, 0.0215, 0.0125, 0.36, 0.0),
-            (0.0, 0.048, 0.255, 0.0185, 0.0205, 0.011, 0.34, 8.0),
+            (0.0, 0.047, 0.122, 0.0185, 0.0205, 0.0115, 0.45, -8.0),
+            (0.0, 0.051, 0.188, 0.0195, 0.0218, 0.0130, 0.46, 0.0),
+            (0.0, 0.047, 0.255, 0.0185, 0.0205, 0.0115, 0.45, 8.0),
         ],
         mat_idx=3,
+        corner_segs=3,
+        cap_bevel_start=0.0055,
+        cap_bevel_end=0.0055,
     )
-    # Thumbwheel adjustment dials on right side of stock + steel length-of-pull rods + rubber buttpad
+    # Thumbwheel adjustment dials on right side of stock + steel length-of-pull rods + rounded rubber buttpad
     for wy in (0.018, -0.016):
         add_cylinder_axis_pc(bm, (0.015, wy, 0.245), (0.022, wy, 0.245), 0.0095, sides=18, mat_idx=0)
         add_cylinder_z_pc(bm, 0.0, wy, 0.282, 0.326, 0.0055, 0.0055, sides=14, mat_idx=0)
     add_profile_loft_pc(
         bm,
         [
-            (0.0, -0.008, 0.324, 0.0195, 0.0210, 0.056, 0.24, 0.0),
-            (0.0, -0.008, 0.346, 0.0185, 0.0200, 0.055, 0.28, 0.0),
+            (0.0, -0.008, 0.324, 0.0192, 0.0208, 0.056, 0.38, 0.0),
+            (0.0, -0.008, 0.348, 0.0182, 0.0198, 0.055, 0.42, 0.0),
         ],
         mat_idx=5,
+        corner_segs=3,
+        cap_bevel_start=0.0030,
+        cap_bevel_end=0.0050,
     )
 
     # Polygonal Ventilated Free-Float Handguard (`z = -0.220 .. -0.490`) + Upper HK Cocking Tube
     add_profile_loft_pc(
         bm,
         [
-            (0.0, 0.006, -0.220, 0.0175, 0.0225, 0.022, 0.28, 0.0),
-            (0.0, 0.006, -0.478, 0.0160, 0.0205, 0.020, 0.28, 0.0),
-            (0.0, 0.007, -0.492, 0.0145, 0.0175, 0.018, 0.32, 0.0),
+            (0.0, 0.006, -0.220, 0.0175, 0.0225, 0.022, 0.36, 0.0),
+            (0.0, 0.006, -0.478, 0.0160, 0.0205, 0.020, 0.36, 0.0),
+            (0.0, 0.007, -0.492, 0.0145, 0.0175, 0.018, 0.40, 0.0),
         ],
         mat_idx=2,
+        corner_segs=2,
+        cap_bevel_start=0.0035,
+        cap_bevel_end=0.0035,
     )
     # Recessed dark cooling slots along both sides of handguard + bottom T-slot rail
     for slot_i in range(5):
@@ -2136,42 +2410,48 @@ def build_m4a1_carbine(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
         half_width_x=0.0056, band_thick=0.0030, guard_mat_idx=1, trigger_mat_idx=0,
     )
 
-    # Contoured Stippled A2 / Magpul-Style Pistol Grip with sculpted A2 finger swell & swept beavertail
-    add_swept_loft_yz_pc(
+    # Contoured Stippled A2 / Magpul-Style Pistol Grip (20-deg rake, finger-groove frontstrap, rounded palm swell!)
+    add_contoured_grip_pc(
         bm,
-        [
-            (0.0, -0.016, 0.011, 0.0148, 0.0158, 0.0195, 0.30),
-            (0.0, -0.044, 0.022, 0.0160, 0.0170, 0.0215, 0.34),
-            (0.0, -0.058, 0.026, 0.0166, 0.0174, 0.0242, 0.32),  # A2 finger swell
-            (0.0, -0.082, 0.038, 0.0158, 0.0168, 0.0215, 0.34),
-            (0.0, -0.106, 0.048, 0.0172, 0.0182, 0.0235, 0.26),
-        ],
-        mat_idx=2,
+        y_top=-0.014, z_top=0.010, length_y=0.094, rake_deg=20.0,
+        half_w=0.0152, half_depth=0.0195, mat_idx=2,
+        groove_amp=0.0028, palm_swell=0.0050, heel_flare=1.09,
     )
 
-    # Castle Nut + 6-Position Mil-Spec Buffer Tube + FDE SOPMOD Crane Collapsible Stock + Rubber Buttpad!
+    # Castle Nut + 6-Position Mil-Spec Buffer Tube + Rounded FDE SOPMOD Crane Collapsible Stock + Rubber Buttpad!
     add_cylinder_z_pc(bm, 0.0, 0.016, 0.056, 0.072, 0.0182, 0.0182, sides=20, mat_idx=0)  # Castle nut
     add_cylinder_z_pc(bm, 0.0, 0.016, 0.072, 0.268, 0.0148, 0.0148, sides=24, mat_idx=1)  # Receiver extension tube
-    # SOPMOD Crane sloped cheek-weld saddle + twin side battery storage tubes in Flat Dark Earth!
+    # SOPMOD Crane sloped teardrop cheek-weld saddle (16-pt smooth rounded cross-section + 5mm rounded end bevels!)
     add_profile_loft_pc(
         bm,
         [
-            (0.0, 0.008, 0.118, 0.0175, 0.0155, 0.028, 0.32, 0.0),
-            (0.0, 0.002, 0.195, 0.0245, 0.0165, 0.042, 0.30, 0.0),
-            (0.0, -0.008, 0.278, 0.0235, 0.0175, 0.054, 0.26, 0.0),
+            (0.0, 0.010, 0.118, 0.0185, 0.0135, 0.026, 0.44, 0.0),
+            (0.0, 0.005, 0.158, 0.0245, 0.0138, 0.035, 0.45, 0.0),
+            (0.0, -0.001, 0.215, 0.0255, 0.0142, 0.046, 0.44, 0.0),
+            (0.0, -0.009, 0.278, 0.0245, 0.0152, 0.056, 0.42, 0.0),
         ],
         mat_idx=3,
+        corner_segs=3,
+        cap_bevel_start=0.0055,
+        cap_bevel_end=0.0045,
     )
     for sx in (-1.0, 1.0):
-        add_cylinder_z_pc(bm, sx * 0.0165, 0.018, 0.125, 0.276, 0.0105, 0.0105, sides=18, mat_idx=3)
-    add_box_pc(bm, (0.0, -0.032, 0.188), (0.0095, 0.012, 0.034), bevel=0.002, mat_idx=2, pitch_deg=-8.0)  # Stock latch lever
+        add_lathe_z_pc(
+            bm, sx * 0.0168, 0.017,
+            [(0.122, 0.0085), (0.128, 0.0112), (0.272, 0.0112), (0.277, 0.0090)],
+            sides=20, mat_idx=3,
+        )
+    add_box_pc(bm, (0.0, -0.032, 0.188), (0.0095, 0.012, 0.034), bevel=0.003, bevel_segs=2, mat_idx=2, pitch_deg=-8.0)  # Stock latch lever
     add_profile_loft_pc(
         bm,
         [
-            (0.0, -0.010, 0.278, 0.0215, 0.0185, 0.055, 0.26, 0.0),
-            (0.0, -0.010, 0.296, 0.0205, 0.0175, 0.054, 0.30, 0.0),
+            (0.0, -0.010, 0.277, 0.0225, 0.0160, 0.056, 0.40, 0.0),
+            (0.0, -0.010, 0.298, 0.0215, 0.0152, 0.055, 0.44, 0.0),
         ],
         mat_idx=6,
+        corner_segs=3,
+        cap_bevel_start=0.0025,
+        cap_bevel_end=0.0055,
     )
 
     # Full Top Receiver Picatinny Rail + RIS II Free-Float Quad-Rail Handguard (`z = -0.175 .. -0.382`)!
@@ -2198,16 +2478,13 @@ def build_m4a1_carbine(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
 
     # Ribbed FDE Tactical Polymer Rail Panels (left & right) + Stubby Tango/KAC Vertical Foregrip!
     for sx in (-1.0, 1.0):
-        add_box_pc(bm, (sx * 0.0258, 0.016, -0.275), (0.0028, 0.0125, 0.064), bevel=0.0015, mat_idx=3)
-    add_box_pc(bm, (0.0, -0.016, -0.272), (0.0145, 0.0065, 0.018), bevel=0.0018, mat_idx=2)  # Foregrip rail clamp
-    add_lathe_z_pc(
-        bm, 0.0, -0.052, [(-0.272, 0.014), (-0.2721, 0.014)], sides=12, mat_idx=2
-    ) if False else None
-    add_cylinder_axis_pc(bm, (0.0, -0.018, -0.272), (0.0, -0.088, -0.272), 0.0148, 0.0135, sides=22, mat_idx=2)
-    add_cylinder_axis_pc(bm, (0.0, -0.088, -0.272), (0.0, -0.095, -0.272), 0.0155, 0.0142, sides=22, mat_idx=3)
+        add_box_pc(bm, (sx * 0.0258, 0.016, -0.275), (0.0028, 0.0125, 0.064), bevel=0.0024, bevel_segs=2, mat_idx=3)
+    add_box_pc(bm, (0.0, -0.016, -0.272), (0.0145, 0.0065, 0.018), bevel=0.0022, bevel_segs=2, mat_idx=2)  # Foregrip rail clamp
+    add_cylinder_axis_pc(bm, (0.0, -0.018, -0.272), (0.0, -0.088, -0.272), 0.0148, 0.0135, sides=24, mat_idx=2)
+    add_cylinder_axis_pc(bm, (0.0, -0.088, -0.272), (0.0, -0.095, -0.272), 0.0155, 0.0142, sides=24, mat_idx=3)
 
     # AN/PEQ-15 FDE Tactical Laser/IR Aiming Module on Forward Top Rail (`z = -0.318`)!
-    add_box_pc(bm, (0.0, 0.051, -0.318), (0.024, 0.0085, 0.038), bevel=0.0025, mat_idx=3)
+    add_box_pc(bm, (0.0, 0.051, -0.318), (0.024, 0.0085, 0.038), bevel=0.0032, bevel_segs=2, mat_idx=3)
     add_cylinder_z_pc(bm, -0.012, 0.052, -0.354, -0.364, 0.0055, 0.0052, sides=16, mat_idx=1)  # IR illuminator bezel
     add_cylinder_z_pc(bm, 0.012, 0.052, -0.354, -0.362, 0.0042, 0.0040, sides=14, mat_idx=4)   # Coated laser emitter lens
     add_cylinder_axis_pc(bm, (0.0, 0.059, -0.312), (0.0, 0.064, -0.312), 0.0068, sides=14, mat_idx=2)  # Mode dial
@@ -2247,13 +2524,13 @@ def build_m4a1_carbine(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
     add_cylinder_axis_pc(bm, (0.0, 0.065, -0.422), (0.0, 0.074, -0.422), 0.0012, sides=10, mat_idx=0)  # Front sight post!
     add_box_pc(bm, (0.0, -0.001, -0.426), (0.0055, 0.0055, 0.009), bevel=0.001, mat_idx=0)             # Bayonet lug
 
-    # EOTech EXPS3 Holographic Weapon Sight (`z = -0.058`) with Protective Hood, Battery Tube & Glowing Reticle!
-    add_box_pc(bm, (0.0, 0.048, -0.058), (0.0185, 0.0055, 0.046), bevel=0.0015, mat_idx=1)  # QD rail base
+    # EOTech EXPS3 Holographic Weapon Sight (`z = -0.058`) with Rounded Protective Hood, Battery Tube & Glowing Reticle!
+    add_box_pc(bm, (0.0, 0.048, -0.058), (0.0185, 0.0055, 0.046), bevel=0.0020, bevel_segs=2, mat_idx=1)  # QD rail base
     add_cylinder_axis_pc(bm, (0.012, 0.054, -0.092), (0.023, 0.054, -0.092), 0.0082, sides=18, mat_idx=3)  # Transverse CR123 battery cap
     # Open protective aluminum hood: left wall, right wall, arched roof (hollow sight window!)
     for sx in (-1.0, 1.0):
-        add_box_pc(bm, (sx * 0.0175, 0.068, -0.052), (0.0024, 0.016, 0.036), bevel=0.0012, mat_idx=3)
-    add_box_pc(bm, (0.0, 0.083, -0.052), (0.0195, 0.0028, 0.036), bevel=0.0012, mat_idx=3)
+        add_box_pc(bm, (sx * 0.0175, 0.068, -0.052), (0.0025, 0.016, 0.036), bevel=0.0018, bevel_segs=2, mat_idx=3)
+    add_box_pc(bm, (0.0, 0.083, -0.052), (0.0195, 0.0032, 0.036), bevel=0.0022, bevel_segs=2, mat_idx=3)
     # Multi-coated holographic combiner glass + glowing crimson EOTech 68-MOA ring & 1-MOA center dot!
     add_box_pc(bm, (0.0, 0.067, -0.052), (0.0145, 0.0125, 0.0018), bevel=0.0004, mat_idx=4)
     add_torus_pc(bm, (0.0, 0.067, -0.0495), axis="Z", major_r=0.0052, minor_r=0.0006, major_segs=20, minor_segs=8, mat_idx=5)
@@ -2268,36 +2545,46 @@ def build_m4a1_carbine(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
         arm, "Bone_Root", col, angle_deg=38.0,
     )
 
-    # Smoothly Curved 30-Round STANAG Aluminum/Steel Magazine + Stamped Ribs + 5.56mm Brass Round (`Bone_Mag`)
+    # Authentic Curved 30-Round STANAG Aluminum/Steel Magazine + Curved Stamped Ribs + 5.56mm Brass Round (`Bone_Mag`)!
+    # Circular STANAG arc (`R = 0.285m`, sweeping forward from 4 deg at magwell lip to 31 deg at floorplate!)
     bm = bmesh.new()
-    mag_curve = [
-        (0.0, -0.018, -0.097, 0.0114, 0.0114, 0.0305, 0.16),
-        (0.0, -0.056, -0.099, 0.0116, 0.0116, 0.0308, 0.16),
-        (0.0, -0.096, -0.105, 0.0116, 0.0116, 0.0308, 0.16),
-        (0.0, -0.134, -0.115, 0.0116, 0.0116, 0.0308, 0.16),
-        (0.0, -0.166, -0.126, 0.0116, 0.0116, 0.0308, 0.16),
-    ]
-    add_swept_loft_yz_pc(bm, mag_curve, mat_idx=0)
-    # Flared FDE Magpul ranger floorplate following bottom magazine tangent
+    mag_R = 0.285
+    th_start = math.radians(5.0)
+    th_end = math.radians(32.0)
+
+    def _stanag_pt(frac: float) -> Tuple[float, float]:
+        th = th_start + (th_end - th_start) * frac
+        my = -0.032 - mag_R * (math.sin(th) - math.sin(th_start))
+        mz = -0.099 - mag_R * (math.cos(th_start) - math.cos(th))
+        return (my, mz)
+
+    mag_curve = [(0.0, -0.016, -0.098, 0.0114, 0.0114, 0.0305, 0.26)]
+    for m_i in range(8):
+        my, mz = _stanag_pt(m_i / 7.0)
+        mag_curve.append((0.0, my, mz, 0.0116, 0.0116, 0.0308, 0.28))
+    add_swept_loft_yz_pc(bm, mag_curve, mat_idx=0, corner_segs=2)
+
+    # Flared FDE Magpul ranger floorplate continuing along the 32-deg bottom STANAG tangent!
+    fy0, fz0 = _stanag_pt(0.98)
+    fy1, fz1 = _stanag_pt(1.06)
     add_swept_loft_yz_pc(
         bm,
         [
-            (0.0, -0.165, -0.1255, 0.0132, 0.0132, 0.0332, 0.18),
-            (0.0, -0.174, -0.1290, 0.0126, 0.0126, 0.0322, 0.22),
+            (0.0, fy0, fz0, 0.0134, 0.0134, 0.0335, 0.30),
+            (0.0, fy1, fz1, 0.0126, 0.0126, 0.0325, 0.34),
         ],
         mat_idx=1,
+        corner_segs=2,
+        cap_bevel_start=0.0018,
+        cap_bevel_end=0.0028,
     )
-    # 3 Curved longitudinal STANAG side stiffening ribs along magazine body!
-    for rib_z_off in (-0.015, 0.0, 0.015):
-        add_swept_loft_yz_pc(
-            bm,
-            [
-                (0.0, -0.044, -0.098 + rib_z_off, 0.0125, 0.0125, 0.0024, 0.28),
-                (0.0, -0.098, -0.105 + rib_z_off, 0.0125, 0.0125, 0.0024, 0.28),
-                (0.0, -0.152, -0.121 + rib_z_off, 0.0125, 0.0125, 0.0024, 0.28),
-            ],
-            mat_idx=0,
-        )
+    # 3 Curved longitudinal STANAG side stiffening ribs following the exact magazine arc!
+    for rib_z_off in (-0.0145, 0.0, 0.0145):
+        rib_pts = []
+        for r_i in range(6):
+            ry, rz = _stanag_pt(0.08 + 0.84 * (r_i / 5.0))
+            rib_pts.append((0.0, ry, rz + rib_z_off, 0.0126, 0.0126, 0.0024, 0.32))
+        add_swept_loft_yz_pc(bm, rib_pts, mat_idx=0, corner_segs=1)
     # Visible 5.56x45mm NATO brass cartridge + copper FMJ bullet in feed lips
     add_lathe_z_pc(bm, 0.0, -0.019, [(-0.072, 0.0048), (-0.104, 0.0046), (-0.110, 0.0031)], sides=14, mat_idx=2)
     add_lathe_z_pc(bm, 0.0, -0.019, [(-0.110, 0.0030), (-0.122, 0.0009)], sides=14, mat_idx=3)
