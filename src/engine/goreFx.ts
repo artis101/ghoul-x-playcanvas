@@ -1237,6 +1237,7 @@ export class GoreAndBallisticsFxManager {
       const puff = this.mistPuffs[i];
       puff.life += dt;
       if (puff.life >= puff.maxLife) {
+        puff.material.destroy();
         puff.entity.destroy();
         this.mistPuffs.splice(i, 1);
         continue;
@@ -1355,7 +1356,10 @@ export class GoreAndBallisticsFxManager {
   public clearAll(): void {
     for (const p of this.activeProjectiles) p.entity.destroy();
     for (const d of this.bloodDrops) d.entity.destroy();
-    for (const m of this.mistPuffs) m.entity.destroy();
+    for (const m of this.mistPuffs) {
+      m.material.destroy();
+      m.entity.destroy();
+    }
     for (const g of this.gibChunks) g.entity.destroy();
     for (const s of this.boneShards) s.entity.destroy();
     for (const b of this.bloodPools) b.entity.destroy();

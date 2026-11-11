@@ -2950,6 +2950,10 @@ export class MayhemDirector {
     this.destroyed = true;
 
     this.clearTransientExplosionAndImpactFx();
+    this.dustPlumeTemplateMat.destroy();
+    this.darkSmokeTemplateMat.destroy();
+    this.shockwaveRingTemplateMat.destroy();
+    this.flashCoreTemplateMat.destroy();
     this.bulletTime.destroy();
     this.barrels.destroy();
     this.brassCasingPool.destroy();
@@ -2964,11 +2968,13 @@ export class MayhemDirector {
 
   private clearTransientExplosionAndImpactFx(): void {
     for (const lobe of this.fireballLobes) {
+      lobe.material.destroy();
       lobe.entity.destroy();
     }
     this.fireballLobes.length = 0;
 
     for (const plume of this.billowPlumes) {
+      plume.material.destroy();
       plume.entity.destroy();
     }
     this.billowPlumes.length = 0;
@@ -2980,6 +2986,7 @@ export class MayhemDirector {
       const lobe = this.fireballLobes[i];
       lobe.elapsedS += dt;
       if (lobe.elapsedS >= lobe.durationS) {
+        lobe.material.destroy();
         lobe.entity.destroy();
         this.fireballLobes.splice(i, 1);
         continue;
@@ -3042,6 +3049,7 @@ export class MayhemDirector {
       const p = this.billowPlumes[i];
       p.elapsedS += dt;
       if (p.elapsedS >= p.durationS) {
+        p.material.destroy();
         p.entity.destroy();
         this.billowPlumes.splice(i, 1);
         continue;

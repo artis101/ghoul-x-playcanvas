@@ -361,6 +361,7 @@ export class ArsenalManager {
   private muzzleFlashTimeout: ReturnType<typeof globalThis.setTimeout> | null = null;
 
   private readonly smokeWisps: BarrelSmokeWisp[] = [];
+  private readonly activeViewmodelMaterials: pc.StandardMaterial[] = [];
   private smokeRootEntity: pc.Entity | null = null;
   private shotVisualCounter = 0;
 
@@ -434,6 +435,11 @@ export class ArsenalManager {
       this.weaponViewmodelEntity.children[0].destroy();
     }
 
+    for (const clonedMat of this.activeViewmodelMaterials) {
+      clonedMat.destroy();
+    }
+    this.activeViewmodelMaterials.length = 0;
+
     const device = resolveGraphicsDeviceFromEntity(this.cameraEntity);
     const assetId = toWeaponAssetId(this.currentWeapon.id);
 
@@ -496,6 +502,47 @@ export class ArsenalManager {
       }
     };
 
+    const applyMinSmoothness = (targetMat: pc.StandardMaterial, minSmoothness: number): void => {
+      if (targetMat.glossMap) return;
+      if (targetMat.glossInvert) {
+        targetMat.gloss = Math.min(targetMat.gloss ?? 1.0, 1.0 - minSmoothness);
+      } else {
+        targetMat.gloss = Math.max(targetMat.gloss || 0, minSmoothness);
+      }
+    };
+
+    const applySmoothnessRange = (
+      targetMat: pc.StandardMaterial,
+      minSmoothness: number,
+      maxSmoothness: number,
+      defaultSmoothness: number
+    ): void => {
+      if (targetMat.glossMap) return;
+      if (targetMat.glossInvert) {
+        const curRoughness = targetMat.gloss ?? (1.0 - defaultSmoothness);
+        targetMat.gloss = Math.max(
+          1.0 - maxSmoothness,
+          Math.min(curRoughness, 1.0 - minSmoothness)
+        );
+      } else {
+        targetMat.gloss = Math.max(
+          minSmoothness,
+          Math.min(targetMat.gloss || defaultSmoothness, maxSmoothness)
+        );
+      }
+    };
+
+    const applyClearCoat = (
+      targetMat: pc.StandardMaterial,
+      coatAmount: number,
+      coatSmoothness: number
+    ): void => {
+      targetMat.clearCoat = coatAmount;
+      targetMat.clearCoatGloss = targetMat.clearCoatGlossInvert
+        ? 1.0 - coatSmoothness
+        : coatSmoothness;
+    };
+
     const renderComponents = root.findComponents('render') as pc.RenderComponent[];
     for (const rc of renderComponents) {
       for (const mi of rc.meshInstances) {
@@ -525,6 +572,8 @@ export class ArsenalManager {
 
           mat.fresnelModel = pc.FRESNEL_SCHLICK;
           mat.useMetalness = true;
+          mat.enableGGXSpecular = true;
+          mat.useSkybox = true;
 
           const isOpticLens =
             hint.includes('lens') ||
@@ -551,56 +600,46 @@ export class ArsenalManager {
           const isWood = hint.includes('wood') || hint.includes('walnut');
 
           if (isOpticLens) {
-            mat.metalness = Math.min(mat.metalness || 0.1, 0.15);
-            mat.gloss = Math.max(mat.gloss || 0, 0.95);
-            mat.clearCoat = 0.92;
-            mat.clearCoatGloss = 0.98;
+            if (!mat.metalnessMap) {
+              mat.metalness = Math.min(mat.metalness || 0.1, 0.15);
+            }
+            if (mat.glossMap) {
+              mat.gloss = 1.0;
+            } else {
+              mat.gloss = mat.glossInvert ? 0.05 : 0.95;
+            }
+            applyClearCoat(mat, 0.92, 0.98);
           } else if (isChromeOrSilver) {
             if (!mat.metalnessMap) {
               mat.metalness = Math.max(mat.metalness || 0, 0.92);
             }
-            if (!mat.glossMap) {
-              mat.gloss = Math.max(mat.gloss || 0, 0.84);
-            }
-            mat.clearCoat = 0.28;
-            mat.clearCoatGloss = 0.9;
+            applyMinSmoothness(mat, 0.84);
+            applyClearCoat(mat, 0.28, 0.9);
           } else if (isBrass) {
             if (!mat.metalnessMap) {
               mat.metalness = Math.max(mat.metalness || 0, 0.9);
             }
-            if (!mat.glossMap) {
-              mat.gloss = Math.max(mat.gloss || 0, 0.85);
-            }
-            mat.clearCoat = 0.25;
-            mat.clearCoatGloss = 0.88;
+            applyMinSmoothness(mat, 0.85);
+            applyClearCoat(mat, 0.25, 0.88);
           } else if (isPolymerOrGrip) {
             if (!mat.metalnessMap) {
               mat.metalness = Math.min(mat.metalness || 0.08, 0.12);
             }
-            if (!mat.glossMap) {
-              mat.gloss = Math.max(0.38, Math.min(mat.gloss || 0.46, 0.54));
-            }
-            mat.clearCoat = 0.12;
-            mat.clearCoatGloss = 0.58;
+            applySmoothnessRange(mat, 0.38, 0.54, 0.46);
+            applyClearCoat(mat, 0.12, 0.58);
           } else if (isWood) {
             if (!mat.metalnessMap) {
               mat.metalness = 0.04;
             }
-            if (!mat.glossMap) {
-              mat.gloss = Math.max(mat.gloss || 0, 0.62);
-            }
-            mat.clearCoat = 0.35;
-            mat.clearCoatGloss = 0.78;
+            applyMinSmoothness(mat, 0.62);
+            applyClearCoat(mat, 0.35, 0.78);
           } else {
             // Parkerized / anodized ordnance steel receiver, barrel, bolt & rails
             if (!mat.metalnessMap) {
               mat.metalness = Math.max(mat.metalness || 0, 0.8);
             }
-            if (!mat.glossMap) {
-              mat.gloss = Math.max(mat.gloss || 0, 0.7);
-            }
-            mat.clearCoat = 0.22;
-            mat.clearCoatGloss = 0.78;
+            applyMinSmoothness(mat, 0.7);
+            applyClearCoat(mat, 0.22, 0.78);
           }
 
           if (mat.normalMap) {
@@ -612,6 +651,7 @@ export class ArsenalManager {
 
           mat.update();
           clonedBySource.set(srcMat, mat);
+          this.activeViewmodelMaterials.push(mat);
         }
 
         mi.material = mat;
@@ -737,7 +777,10 @@ export class ArsenalManager {
 
     if (this.smokeWisps.length >= 20) {
       const oldest = this.smokeWisps.shift();
-      oldest?.entity.destroy();
+      if (oldest) {
+        oldest.material.destroy();
+        oldest.entity.destroy();
+      }
     }
 
     const fxAssets = getOrCreateViewmodelFxAssets(device);
@@ -980,6 +1023,7 @@ export class ArsenalManager {
         const w = this.smokeWisps[i];
         w.elapsedS += dt;
         if (w.elapsedS >= w.durationS) {
+          w.material.destroy();
           w.entity.destroy();
           this.smokeWisps.splice(i, 1);
           continue;
