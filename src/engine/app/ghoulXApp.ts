@@ -183,6 +183,7 @@ export class GhoulXApplication implements IGhoulXApp {
         glbRegistry: this.glbRegistry,
         isLineOfSightBlocked: (from, to) => this.destructionManager.isLineOfSightBlocked(from, to),
         getCoverBreachVersion: () => this.destructionManager.breachVersion,
+        getPlayerEyePosition: () => this.fpsController.getEyePosition(),
       }
     );
 

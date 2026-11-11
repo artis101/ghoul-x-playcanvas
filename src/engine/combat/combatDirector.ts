@@ -65,6 +65,7 @@ export class CombatDirector {
   private mayhemDirector: MayhemDirector | null = null;
   private tacticalAi: TacticalCombatAiSystem | null = null;
   private combatAudio: CombatAudioEngine | null = null;
+  private getPlayerEyePosition?: CombatDirectorSubsystems['getPlayerEyePosition'];
   private glbRegistry: GlbModelRegistry | null = null;
 
   private readonly activeGrenades: ActiveFragGrenade[] = [];
@@ -98,6 +99,7 @@ export class CombatDirector {
     if (s.tacticalAi) this.tacticalAi = s.tacticalAi;
     if (s.combatAudio) this.combatAudio = s.combatAudio;
     if (s.glbRegistry) this.glbRegistry = s.glbRegistry;
+    if (s.getPlayerEyePosition) this.getPlayerEyePosition = s.getPlayerEyePosition;
     if (s.isLineOfSightBlocked) this.isLineOfSightBlocked = s.isLineOfSightBlocked;
   }
 
@@ -123,7 +125,7 @@ export class CombatDirector {
   }
 
   private getViewerPosVec3(): Vec3Like {
-    return vec3(0, 1.62, 0);
+    return this.getPlayerEyePosition?.() ?? vec3(0, 1.62, 0);
   }
 
   public fireWeapon(weapon: WeaponSpec, ammo: AmmoSpec, origin: Vec3Like, aimDir: Vec3Like): void {

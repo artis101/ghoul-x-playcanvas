@@ -23,6 +23,7 @@ import type {
   EnemyTracerFireEvent,
   PlayerCombatVitals,
 } from './tacticalAiTypes.ts';
+import { wrapAngleRad, yawToward } from './combatantArmEvaluation.ts';
 import { ARCHETYPE_TUNING, SIDEARM_M9_TUNING } from './archetypeTuning.ts';
 
 export interface BurstContext {
@@ -31,6 +32,7 @@ export interface BurstContext {
   tracerPool: HardwareInstancedPool | null;
   rapierWorld: RapierPhysicsWorld | null;
   interceptEnemyShotCover?: (origin: Vec3Like, dir: Vec3Like, maxDist: number) => EnemyCoverShotInterceptResult;
+  playFireVisual?: (targetId: string, usingSidearm: boolean) => Vec3Like | undefined;
   onEnemyFireTracer?: (event: EnemyTracerFireEvent) => void;
   onPlayerDamaged?: (vitals: Readonly<PlayerCombatVitals>, event: EnemyTracerFireEvent) => void;
   resolveExposedPlayerAimPoint: (hs: TargetHealthState, agent: EnemyAiAgentRuntime, playerEye: Vec3Like) => Vec3Like | null;
@@ -69,6 +71,10 @@ export function stepWeaponBurstFire(
   }
 
   agent.lastAimTargetWorld = copyVec3(exposedAimTarget);
+
+  // Grounded ragdolls aim with the sidearm arm pose. Standing enemies turn their whole body.
+  const aimYaw = yawToward(hs.worldPosition, exposedAimTarget, hs.yawRad);
+  if (!hs.isRagdollActive && Math.abs(wrapAngleRad(aimYaw - hs.yawRad)) > Math.PI / 12) return;
 
   if (agent.burstShotsRemaining <= 0) {
     if (agent.fireCooldownTimerS <= 0) {
@@ -184,7 +190,10 @@ export function emitEnemyTracerShot(
     }
   }
 
-  const muzzleOrigin = blockedByCover && distance(coreOrigin, impactPointWorld) < 0.48 ? coreOrigin : rawMuzzleOrigin;
+  const visualMuzzle = ctx.playFireVisual?.(hs.targetId, usingSidearm);
+  const muzzleOrigin = blockedByCover && distance(coreOrigin, impactPointWorld) < 0.48
+    ? coreOrigin
+    : visualMuzzle ?? rawMuzzleOrigin;
   const tracerSpeedMs = usingSidearm ? SIDEARM_M9_TUNING.tracerSpeedMs : tuning.tracerSpeedMs;
   const rawChip = usingSidearm ? SIDEARM_M9_TUNING.baseChipDamage : tuning.baseChipDamage;
 
@@ -210,12 +219,15 @@ export function emitEnemyTracerShot(
   }
 
   if (ctx.tracerPool) {
-    const quat = computeTracerOrientationQuat(shotDir);
+    const tracerDir = visualMuzzle && muzzleOrigin === visualMuzzle
+      ? normalize(sub(impactPointWorld, muzzleOrigin))
+      : shotDir;
+    const quat = computeTracerOrientationQuat(tracerDir);
     const flightDist = distance(muzzleOrigin, impactPointWorld);
     const ttl = Math.max(0.05, Math.min(0.28, flightDist / tracerSpeedMs));
     ctx.tracerPool.spawnKinematicParticle(
       muzzleOrigin,
-      scale(shotDir, tracerSpeedMs),
+      scale(tracerDir, tracerSpeedMs),
       vec3(0, 0, 0),
       { x: 0.024, y: 0.024, z: 0.95 },
       0,

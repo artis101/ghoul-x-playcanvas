@@ -38,6 +38,7 @@ export interface CombatDirectorSubsystems {
   glbRegistry?: GlbModelRegistry | null;
   isLineOfSightBlocked?: (fromWorld: Vec3Like, toWorld: Vec3Like) => boolean;
   getCoverBreachVersion?: () => number;
+  getPlayerEyePosition?: () => Vec3Like;
 }
 
 export interface ActiveBlastFlashFx {

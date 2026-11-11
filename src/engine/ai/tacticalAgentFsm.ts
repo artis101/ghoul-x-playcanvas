@@ -10,7 +10,7 @@ import type {
   EnemyTacticalAiState,
 } from './tacticalAiTypes.ts';
 import { ARCHETYPE_TUNING } from './archetypeTuning.ts';
-import { approachAngleRad } from './combatantArmEvaluation.ts';
+import { approachAngleRad, yawToward } from './combatantArmEvaluation.ts';
 import { syncAgentArmamentAndSidearm } from './agentArmamentController.ts';
 import { computeAlertedPeekTarget, type PeekPlanCacheEntry } from './tacticalCoverFinder.ts';
 import { moveHorizontalClamped } from './tacticalLocomotion.ts';
@@ -108,10 +108,10 @@ export function stepSingleEnemyAgent(
     hs.posture = 'DISARMED';
   }
 
-  const toPlayer = sub(playerEyeWorldPos, hs.worldPosition);
-  const horizDist = Math.hypot(toPlayer.x, toPlayer.z);
-  const desiredYawRad =
-    horizDist > 1e-3 ? Math.atan2(toPlayer.x, toPlayer.z) : hs.yawRad;
+  const turnTowardPlayer = (turnSpeed: number) => {
+    const desiredYaw = yawToward(hs.worldPosition, playerEyeWorldPos, hs.yawRad);
+    hs.yawRad = approachAngleRad(hs.yawRad, desiredYaw, turnSpeed * dt);
+  };
 
   // 4. State-specific movement, posture & combat logic
   switch (agent.state) {
@@ -124,6 +124,8 @@ export function stepSingleEnemyAgent(
         1.4 * dt
       );
 
+      const toPlayer = sub(playerEyeWorldPos, hs.worldPosition);
+      const horizDist = Math.hypot(toPlayer.x, toPlayer.z);
       const guardFwd = { x: Math.sin(hs.yawRad), y: 0, z: Math.cos(hs.yawRad) };
       const dirToPlayer =
         horizDist > 1e-3
@@ -175,7 +177,7 @@ export function stepSingleEnemyAgent(
           ctx.rapierWorld
         );
       }
-      hs.yawRad = approachAngleRad(hs.yawRad, desiredYawRad, 2.8 * dt);
+      turnTowardPlayer(2.8);
 
       if (agent.staggerTimerS <= 0 && agent.neurogenicShockTimerS <= 0) {
         if (legCrippled) {
@@ -199,6 +201,7 @@ export function stepSingleEnemyAgent(
 
       const cycleRate =
         agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded ? 1.55 : 1.0;
+      const previousPeekTime = agent.peekCycleTimerS;
       agent.peekCycleTimerS += dt * cycleRate;
 
       if (aimProfile.clutchingWound) {
@@ -207,7 +210,7 @@ export function stepSingleEnemyAgent(
         const retreatX = agent.coverAnchorWorld.x - agent.peekSign * 0.25;
         const retreatZ = agent.coverAnchorWorld.z - 0.35;
         moveHorizontalClamped(hs, retreatX, retreatZ, 0.95 * dt, ctx.rapierWorld);
-        hs.yawRad = approachAngleRad(hs.yawRad, desiredYawRad, 1.8 * dt);
+        turnTowardPlayer(1.8);
         break;
       }
 
@@ -226,8 +229,8 @@ export function stepSingleEnemyAgent(
           agent.berserkerAdvanceOffsetM + 1.25 * dt
         );
       } else if (agent.resolveProfile === 'GRITTY_REGULAR' && agent.suppression > 0.62) {
-        if (phase < 0.08) {
-          agent.peekSign = (agent.peekSign === 1 ? -1 : 1) as -1 | 1;
+        if (Math.floor(previousPeekTime / cyclePeriodS) !== Math.floor(agent.peekCycleTimerS / cyclePeriodS)) {
+          agent.peekSign = agent.peekSign === 1 ? -1 : 1;
         }
         agent.isPeekingOut = phase >= 0.2 && phase <= 0.88;
       } else {
@@ -269,7 +272,7 @@ export function stepSingleEnemyAgent(
           : peekPlan.goalZ;
       moveHorizontalClamped(hs, goalX, goalZ, effectiveStrafeSpeed * dt, ctx.rapierWorld);
 
-      hs.yawRad = approachAngleRad(hs.yawRad, desiredYawRad, 5.4 * dt);
+      turnTowardPlayer(5.4);
       if (!hs.isRagdollActive) {
         if (hs.rupturedOrgans.size > 0 && hs.zoneIntegrity.TORSO_LOWER_ABDOMEN < 65) {
           hs.posture = 'GUT_HURT';
@@ -300,7 +303,7 @@ export function stepSingleEnemyAgent(
         moveHorizontalClamped(hs, crawlTargetX, crawlTargetZ, 0.35 * dt, ctx.rapierWorld);
       }
 
-      hs.yawRad = approachAngleRad(hs.yawRad, desiredYawRad, 2.8 * dt);
+      turnTowardPlayer(2.8);
 
       if (aimProfile.canReturnFire) {
         stepWeaponBurstFire(dt, hs, agent, aimProfile, playerEyeWorldPos, ctx.burstCtx);

@@ -1,5 +1,5 @@
 import * as pc from 'playcanvas';
-import type { GlbModelRegistry, WeaponAssetId, WeaponGlbInstance } from '../assets/glbLoader.ts';
+import type { GlbModelRegistry, WeaponGlbInstance } from '../assets/glbLoader.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
 import type { OffhandSidearmRig } from './offhandSidearmTypes.ts';
 
@@ -18,7 +18,7 @@ export function createOffhandSidearmRig(
 
   if (glbRegistry) {
     try {
-      glbInstance = glbRegistry.instantiateWeapon('weapon_beretta_m9' as WeaponAssetId, {
+      glbInstance = glbRegistry.instantiateWeapon('weapon_beretta_m9', {
         castShadows: true,
         receiveShadows: true,
       });
@@ -72,7 +72,6 @@ export function createOffhandSidearmRig(
     lastHand: null,
     clonedMaterials,
     cachedBoneEntities: new Map(),
-    cachedZoneEntities: new Map(),
   };
 }
 
@@ -85,5 +84,4 @@ export function destroyOffhandSidearmRig(rig: OffhandSidearmRig): void {
   }
   rig.holderEntity.destroy();
   rig.cachedBoneEntities.clear();
-  rig.cachedZoneEntities.clear();
 }

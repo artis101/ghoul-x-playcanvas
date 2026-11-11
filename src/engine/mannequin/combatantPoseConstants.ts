@@ -71,6 +71,7 @@ export const REST_RAGDOLL_FRAMES: ReadonlyMap<GhoulZoneId, RestRagdollBoneFrame>
     const restRotInv = restRot.clone().invert();
     map.set(zone, {
       restPos: new pc.Vec3(b.position.x, b.position.y, b.position.z),
+      restDistalPos: new pc.Vec3(b.distalPosition.x, b.distalPosition.y, b.distalPosition.z),
       restRot,
       restRotInv,
     });

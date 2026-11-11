@@ -1,7 +1,30 @@
 import * as pc from 'playcanvas';
 import type { GhoulZoneId, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
-import type { CombatantGlbInstance } from '../assets/glbLoader.ts';
+import type { BoneBindPose, CombatantGlbInstance } from '../assets/glbLoader.ts';
+import { ALL_AUX_PARTICLES, AUX_PARTICLE_REST_LOCAL } from '../../core/ghoul/anatomy.ts';
 import { basisToQuat, REST_RAGDOLL_FRAMES } from './combatantPoseConstants.ts';
+
+const RETARGETED_ARM_BINDS = new WeakMap<BoneBindPose, BoneBindPose>();
+
+function getColliderBind(glb: CombatantGlbInstance, zone: GhoulZoneId): BoneBindPose | undefined {
+  const bind = glb.boneBindPoses.get(zone);
+  const isArm = zone.startsWith('UPPER_ARM_') || zone.startsWith('FOREARM_') || zone.startsWith('HAND_');
+  if (!bind || !isArm) return bind;
+
+  const cached = RETARGETED_ARM_BINDS.get(bind);
+  if (cached) return cached;
+  const rest = REST_RAGDOLL_FRAMES.get(zone);
+  if (!rest || bind.modelPos.distance(rest.restPos) < 0.001) return bind;
+
+  // The mesh binds in an A-pose and the collider rig rests with arms forward.
+  // Match arm joints by pivot and align their longitudinal axes.
+  const limbAxis = new pc.Vec3().sub2(rest.restDistalPos, rest.restPos).normalize();
+  const modelAxis = bind.modelRot.transformVector(pc.Vec3.UP);
+  const modelRot = new pc.Quat().setFromDirections(modelAxis, limbAxis).mul(bind.modelRot);
+  const colliderBind = { modelPos: rest.restPos, modelRot };
+  RETARGETED_ARM_BINDS.set(bind, colliderBind);
+  return colliderBind;
+}
 
 export class CombatantBoneSync {
   private readonly tmpMat4 = new pc.Mat4();
@@ -20,7 +43,7 @@ export class CombatantBoneSync {
     forward: Vec3Like
   ): void {
     basisToQuat(right, up, forward, this.tmpMat4, this.tmpQuat);
-    entity.setLocalRotation(this.tmpQuat);
+    entity.setRotation(this.tmpQuat);
   }
 
   public applyRagdollBoneToGlbJoint(
@@ -29,7 +52,7 @@ export class CombatantBoneSync {
     healthState: TargetHealthState
   ): void {
     const boneNode = glb.boneNodes.get(zone);
-    const bind = glb.boneBindPoses.get(zone);
+    const bind = getColliderBind(glb, zone);
     const rest = REST_RAGDOLL_FRAMES.get(zone);
     if (!boneNode || !bind || !rest) return;
 
@@ -84,32 +107,62 @@ export class CombatantBoneSync {
     boneNode.setRotation(this.tmpWorldQuat);
   }
 
-  public alignZoneNodeFromAnimatedGlbJoint(
+  public readAnimatedBone(
     glb: CombatantGlbInstance,
     zone: GhoulZoneId,
-    zoneNode: pc.Entity
-  ): boolean {
+    state: TargetHealthState
+  ): void {
     const boneNode = glb.boneNodes.get(zone);
-    const bind = glb.boneBindPoses.get(zone);
+    const bind = getColliderBind(glb, zone);
     const rest = REST_RAGDOLL_FRAMES.get(zone);
-    if (!boneNode || !bind || !rest) return false;
+    const bone = state.ragdollBones[zone];
+    if (!boneNode || !bind || !rest || bone.componentId !== 'BODY') return;
 
     const pAnim = boneNode.getPosition();
-    const qAnim = boneNode.getRotation();
-
     this.tmpBindInvQuat.copy(bind.modelRot).invert();
-    this.tmpDeltaQuat.mul2(qAnim, this.tmpBindInvQuat);
+    this.tmpDeltaQuat.mul2(boneNode.getRotation(), this.tmpBindInvQuat);
     this.tmpWorldQuat.mul2(this.tmpDeltaQuat, rest.restRot);
 
     this.tmpOffsetVec.sub2(bind.modelPos, rest.restPos);
     this.tmpDeltaQuat.transformVector(this.tmpOffsetVec, this.tmpRotOffsetVec);
+    const position = {
+      x: pAnim.x - this.tmpRotOffsetVec.x,
+      y: pAnim.y - this.tmpRotOffsetVec.y,
+      z: pAnim.z - this.tmpRotOffsetVec.z,
+    };
+    Object.assign(bone.position, position);
+    Object.assign(bone.prevPosition, position);
+    this.tmpOffsetVec.sub2(rest.restDistalPos, bind.modelPos);
+    this.tmpDeltaQuat.transformVector(this.tmpOffsetVec, this.tmpRotOffsetVec);
+    this.tmpRotOffsetVec.add(pAnim);
+    Object.assign(bone.distalPosition, this.tmpRotOffsetVec);
+    this.readAxis(pc.Vec3.RIGHT, bone.basisRight);
+    this.readAxis(pc.Vec3.UP, bone.basisUp);
+    this.readAxis(pc.Vec3.BACK, bone.basisForward);
+  }
 
-    zoneNode.setLocalPosition(
-      pAnim.x - this.tmpRotOffsetVec.x,
-      pAnim.y - this.tmpRotOffsetVec.y,
-      pAnim.z - this.tmpRotOffsetVec.z
-    );
-    zoneNode.setLocalRotation(this.tmpWorldQuat);
-    return true;
+  public readAnimatedAuxParticles(glb: CombatantGlbInstance, state: TargetHealthState): void {
+    for (const id of ALL_AUX_PARTICLES) {
+      const aux = state.auxParticles[id];
+      const node = glb.boneNodes.get(aux.parentZone);
+      const bind = getColliderBind(glb, aux.parentZone);
+      if (!node || !bind || aux.componentId !== 'BODY') continue;
+
+      this.tmpBindInvQuat.copy(bind.modelRot).invert();
+      this.tmpDeltaQuat.mul2(node.getRotation(), this.tmpBindInvQuat);
+      const rest = AUX_PARTICLE_REST_LOCAL[id].localPos;
+      this.tmpOffsetVec.set(rest.x, rest.y, rest.z).sub(bind.modelPos);
+      this.tmpDeltaQuat.transformVector(this.tmpOffsetVec, this.tmpRotOffsetVec);
+      this.tmpRotOffsetVec.add(node.getPosition());
+      Object.assign(aux.position, this.tmpRotOffsetVec);
+      Object.assign(aux.prevPosition, this.tmpRotOffsetVec);
+    }
+  }
+
+  private readAxis(axis: pc.Vec3, out: Vec3Like): void {
+    this.tmpWorldQuat.transformVector(axis, this.tmpOffsetVec);
+    out.x = this.tmpOffsetVec.x;
+    out.y = this.tmpOffsetVec.y;
+    out.z = this.tmpOffsetVec.z;
   }
 }

@@ -1,3 +1,4 @@
+import type { BurstContext } from './tacticalBurstAndTracers.ts';
 import * as pc from 'playcanvas';
 import type { TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
 import { HardwareInstancedPool } from '../physics/instancedPool.ts';
@@ -183,6 +184,10 @@ export class TacticalCombatAiSystem {
     }
   }
 
+  public isGuarding(targetId: string): boolean {
+    return this.agents.get(targetId)?.state === 'PATROL_GUARD';
+  }
+
   public getSidearmVisualState(targetId: string): EnemySidearmVisualState {
     return getSidearmVisualState(this.agents.get(targetId));
   }
@@ -266,7 +271,8 @@ export class TacticalCombatAiSystem {
   public update(
     dt: number,
     targets: readonly TargetHealthState[],
-    playerEyeWorldPos: Vec3Like
+    playerEyeWorldPos: Vec3Like,
+    playFireVisual?: BurstContext['playFireVisual']
   ): void {
     if (this.destroyed || !Number.isFinite(dt) || dt <= 0) return;
 
@@ -294,6 +300,7 @@ export class TacticalCombatAiSystem {
         rapierWorld: this.rapierWorld,
         interceptEnemyShotCover: this.interceptEnemyShotCover,
         onEnemyFireTracer: this.onEnemyFireTracer,
+        playFireVisual,
         onPlayerDamaged: this.onPlayerDamaged,
         resolveExposedPlayerAimPoint: resolveAim,
       },

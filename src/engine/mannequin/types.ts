@@ -24,6 +24,7 @@ export interface ZoneMeshBundle {
 
 export interface RestRagdollBoneFrame {
   restPos: pc.Vec3;
+  restDistalPos: pc.Vec3;
   restRot: pc.Quat;
   restRotInv: pc.Quat;
 }

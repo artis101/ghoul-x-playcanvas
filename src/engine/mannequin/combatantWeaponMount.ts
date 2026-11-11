@@ -1,11 +1,12 @@
-import * as pc from 'playcanvas';
-import {
+import type * as pc from 'playcanvas';
+import type {
   GhoulZoneId,
   TargetHealthState,
   Vec3Like,
 } from '../../contracts/ballistics.ts';
 import {
   add,
+  dot,
   length,
   normalize,
   scale,
@@ -18,12 +19,17 @@ import {
   type GlbModelRegistry,
   type WeaponGlbInstance,
 } from '../assets/glbLoader.ts';
+import { getPreferredPrimaryHand, isArmChainIntactAndFunctional } from '../ai/combatantArmEvaluation.ts';
+import { CombatantSupportGrip } from './combatantSupportGrip.ts';
+import { CombatantWeaponGrip } from './combatantWeaponGrip.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
 
 export class CombatantWeaponMount {
   public heldWeaponNode: pc.Entity | null = null;
   public heldWeaponGlb: WeaponGlbInstance | null = null;
-  private wasWeaponHeld = true;
+  private wasWeaponHeld = false;
+  private readonly supportGrip = new CombatantSupportGrip();
+  private readonly grip = new CombatantWeaponGrip();
 
   public attachGlbWeaponIfReady(
     glbRegistry: GlbModelRegistry,
@@ -36,14 +42,11 @@ export class CombatantWeaponMount {
 
     try {
       const wInst = glbRegistry.instantiateWeapon(weaponAssetId, {
-        castShadows: false,
+        castShadows: true,
         receiveShadows: true,
       });
       if (wInst.animComponent) {
         wInst.animComponent.playing = false;
-      }
-      if (this.heldWeaponNode) {
-        this.heldWeaponNode.destroy();
       }
       this.heldWeaponGlb = wInst;
       this.heldWeaponNode = wInst.rootEntity;
@@ -57,31 +60,24 @@ export class CombatantWeaponMount {
   public syncWeaponPosition(
     healthState: TargetHealthState,
     glb: CombatantGlbInstance | null,
-    fxManager?: GoreAndBallisticsFxManager
+    fxManager?: GoreAndBallisticsFxManager,
+    guarding = false
   ): void {
-    const isSouthpaw = healthState.isLeftHanded;
-    const triggerHandZone: GhoulZoneId = isSouthpaw ? 'HAND_RIGHT' : 'HAND_LEFT';
-    const supportHandZone: GhoulZoneId = isSouthpaw ? 'HAND_LEFT' : 'HAND_RIGHT';
+    const triggerHand = getPreferredPrimaryHand(healthState);
+    const supportHand = triggerHand === 'LEFT' ? 'RIGHT' : 'LEFT';
+    const triggerHandZone: GhoulZoneId = `HAND_${triggerHand}`;
+    const supportHandZone: GhoulZoneId = `HAND_${supportHand}`;
 
     const shouldHoldWeapon =
       !healthState.weaponDropped &&
-      healthState.alive &&
+      healthState.alive && healthState.currentHp > 0 &&
       !healthState.isRagdollActive &&
-      !healthState.severedZones.has(triggerHandZone);
+      isArmChainIntactAndFunctional(healthState, triggerHand);
 
     if (this.wasWeaponHeld && !shouldHoldWeapon) {
-      this.wasWeaponHeld = false;
-      if (this.heldWeaponNode) this.heldWeaponNode.enabled = false;
-      if (fxManager) {
+      if (fxManager && this.heldWeaponNode) {
         const trigBone = healthState.ragdollBones[triggerHandZone];
-        const glbHandNode = glb?.boneNodes.get(triggerHandZone);
-        const dropPos = glbHandNode
-          ? vec3(
-              glbHandNode.getPosition().x,
-              glbHandNode.getPosition().y,
-              glbHandNode.getPosition().z
-            )
-          : trigBone.position;
+        const dropPos = this.heldWeaponNode.getPosition();
         fxManager.spawnDroppedWeaponProp(
           healthState.archetype,
           dropPos,
@@ -90,6 +86,7 @@ export class CombatantWeaponMount {
       }
     }
 
+    this.wasWeaponHeld = shouldHoldWeapon && this.heldWeaponNode !== null;
     if (this.heldWeaponNode) {
       this.heldWeaponNode.enabled = shouldHoldWeapon;
     }
@@ -111,31 +108,25 @@ export class CombatantWeaponMount {
       const glbTrigNode = glb?.boneNodes.get(triggerHandZone);
       const glbSuppNode = glb?.boneNodes.get(supportHandZone);
 
-      if (glb && glbTrigNode && glbSuppNode) {
+      const canUseSupport =
+        healthState.posture === 'COMBAT_READY' && healthState.activeReaction.type === 'NONE' &&
+        isArmChainIntactAndFunctional(healthState, supportHand);
+      if (glbTrigNode) {
         const pT = glbTrigNode.getPosition();
         const uT = glbTrigNode.up;
-        const pS = glbSuppNode.getPosition();
-        const uS = glbSuppNode.up;
-
         palmTrig = vec3(pT.x + uT.x * 0.052, pT.y + uT.y * 0.052, pT.z + uT.z * 0.052);
-        const palmSupp = vec3(pS.x + uS.x * 0.05, pS.y + uS.y * 0.05, pS.z + uS.z * 0.05);
 
-        const isOneHanded =
-          weaponId === 'silver_talon_50ae' ||
-          healthState.archetype === 'SKINHEAD_PUNK' ||
-          healthState.posture === 'GUT_HURT' ||
-          healthState.posture === 'THROAT_CLUTCH' ||
-          healthState.severedZones.has(supportHandZone);
+        const handAim = vec3(uT.x, uT.y * 0.35, uT.z);
+        gunFwd = normalize(add(scale(handAim, 0.32), scale(charFwd, 0.68)));
 
-        const aimSpan = sub(palmSupp, add(palmTrig, vec3(0, forendRiseOffset, 0)));
-        if (!isOneHanded && length(aimSpan) > 0.08) {
-          gunFwd = normalize(add(scale(normalize(aimSpan), 0.88), scale(charFwd, 0.12)));
-        } else {
-          const handAim = vec3(uT.x, uT.y * 0.35, uT.z);
-          gunFwd =
-            length(handAim) > 0.15
-              ? normalize(add(scale(normalize(handAim), 0.32), scale(charFwd, 0.68)))
-              : normalize(charFwd);
+        if (canUseSupport && weaponId !== 'silver_talon_50ae' && glbSuppNode) {
+          const pS = glbSuppNode.getPosition();
+          const uS = glbSuppNode.up;
+          const palmSupp = vec3(pS.x + uS.x * 0.05, pS.y + uS.y * 0.05, pS.z + uS.z * 0.05);
+          const aimSpan = sub(palmSupp, add(palmTrig, vec3(0, forendRiseOffset, 0)));
+          if (length(aimSpan) > 0.08 && (guarding || dot(aimSpan, charFwd) > 0.07)) {
+            gunFwd = normalize(aimSpan);
+          }
         }
       } else {
         const handTrig = healthState.ragdollBones[triggerHandZone];
@@ -143,21 +134,21 @@ export class CombatantWeaponMount {
         gunFwd = normalize(charFwd);
       }
 
-      this.heldWeaponNode.setPosition(palmTrig.x, palmTrig.y, palmTrig.z);
-      const yawDeg = (Math.atan2(gunFwd.x, gunFwd.z) * 180) / Math.PI;
-      const pitchDeg = (Math.asin(Math.max(-1, Math.min(1, gunFwd.y))) * 180) / Math.PI;
-      this.heldWeaponNode.setEulerAngles(-pitchDeg, yawDeg, 0);
+      this.grip.align(this.heldWeaponNode, this.heldWeaponNode, weaponId, palmTrig, gunFwd);
+      if (glb && canUseSupport) this.supportGrip.sync(glb, supportHand, this.heldWeaponNode, weaponId);
     }
   }
 
+  public playFire(): Vec3Like | undefined {
+    const weapon = this.heldWeaponGlb;
+    if (!weapon?.rootEntity.enabled) return undefined;
+    weapon.playFire?.();
+    return weapon.muzzleNode?.getPosition();
+  }
+
   public destroy(): void {
-    if (this.heldWeaponGlb) {
-      this.heldWeaponGlb.destroy();
-      this.heldWeaponGlb = null;
-    }
-    if (this.heldWeaponNode) {
-      this.heldWeaponNode.destroy();
-      this.heldWeaponNode = null;
-    }
+    this.heldWeaponGlb?.destroy();
+    this.heldWeaponGlb = null;
+    this.heldWeaponNode = null;
   }
 }

@@ -1,4 +1,4 @@
-import type { EnemyArchetypeId, TargetHealthState } from '../../contracts/ballistics.ts';
+import type { EnemyArchetypeId, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
 import type { ActiveFiringHand, CombatantResolveProfile } from './tacticalAiTypes.ts';
 
 export function hashCombatantTargetId(targetId: string): number {
@@ -62,6 +62,12 @@ export function approachAngleRad(current: number, target: number, maxStep: numbe
     return wrapAngleRad(target);
   }
   return wrapAngleRad(current + Math.sign(diff) * maxStep);
+}
+
+export function yawToward(from: Vec3Like, to: Vec3Like, fallbackYaw: number): number {
+  const x = to.x - from.x;
+  const z = to.z - from.z;
+  return Math.hypot(x, z) > 1e-3 ? Math.atan2(x, z) : fallbackYaw;
 }
 
 export function resolveDefaultCombatantProfile(

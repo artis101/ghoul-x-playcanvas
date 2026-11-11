@@ -1,6 +1,6 @@
 import * as pc from 'playcanvas';
 import { ALL_GHOUL_ZONES } from '../../core/ghoul/anatomy.ts';
-import type { GhoulZoneId, TargetHealthState } from '../../contracts/ballistics.ts';
+import type { GhoulZoneId, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
 import type { GlbModelRegistry, CombatantGlbInstance } from '../assets/glbLoader.ts';
 import type { EngineMaterialPalette } from '../materials.ts';
 import { type ArchetypeRetroMaterialSet, getArchetypeRetroMaterials } from '../retroTextures.ts';
@@ -9,6 +9,7 @@ import type { GlbZoneMaterialPair, ZoneMeshBundle } from './types.ts';
 import { TOPOLOGICAL_GHOUL_ZONES } from './combatantPoseConstants.ts';
 import { setupCombatantGlbInstance } from './combatantGlbSetup.ts';
 import { CombatantAnimController } from './combatantAnimController.ts';
+import { CombatantLocomotion } from './combatantLocomotion.ts';
 import { CombatantBoneSync } from './combatantBoneSync.ts';
 import { CombatantDismemberment } from './combatantDismemberment.ts';
 import { CombatantVisualGoreSync } from './combatantVisualGoreSync.ts';
@@ -29,6 +30,7 @@ export class GhoulMannequinEntity {
   public isXRayActive = false;
 
   private readonly animController = new CombatantAnimController();
+  private readonly locomotion = new CombatantLocomotion();
   private readonly boneSync = new CombatantBoneSync();
   private readonly dismemberment = new CombatantDismemberment();
   private readonly visualGoreSync = new CombatantVisualGoreSync();
@@ -107,7 +109,7 @@ export class GhoulMannequinEntity {
     );
   }
 
-  public syncFromHealthState(_dt: number, elapsedTime: number): void {
+  public syncFromHealthState(dt: number, elapsedTime: number, guarding = false): void {
     const headgearAttached = this.dismemberment.syncHeadgear(this.healthState, this.fxManager);
     const glb = this.combatantGlb;
     const isFullRagdoll = this.healthState.isRagdollActive || !this.healthState.alive;
@@ -126,14 +128,18 @@ export class GhoulMannequinEntity {
         }
         glb.rootEntity.syncHierarchy();
       } else {
-        this.animController.syncAnimation(glb, this.healthState);
+        this.animController.syncAnimation(glb, this.healthState, guarding);
         glb.rootEntity.setPosition(
           this.healthState.worldPosition.x,
           this.healthState.worldPosition.y,
           this.healthState.worldPosition.z
         );
         glb.rootEntity.setEulerAngles(0, (this.healthState.yawRad * 180) / Math.PI, 0);
-        glb.rootEntity.syncHierarchy();
+        if (glb.animComponent) {
+          const posture = this.healthState.posture;
+          const standing = posture === 'COMBAT_READY' || posture === 'DISARMED';
+          this.locomotion.sync(glb, this.healthState, dt, standing && this.healthState.activeReaction.type === 'NONE');
+        }
 
         if (this.healthState.severedZones.size > 0) {
           for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
@@ -144,18 +150,10 @@ export class GhoulMannequinEntity {
           glb.rootEntity.syncHierarchy();
         }
       }
-    } else {
-      for (const [zone, bundle] of this.zoneBundles) {
-        const boneState = this.healthState.ragdollBones[zone];
-        bundle.zoneNode.setLocalPosition(boneState.position.x, boneState.position.y, boneState.position.z);
-        this.boneSync.setEntityBasisRotation(bundle.zoneNode, boneState.basisRight, boneState.basisUp, boneState.basisForward);
-        if (bundle.boneNodes[0]) {
-          bundle.boneNodes[0].setPosition(boneState.position.x, boneState.position.y, boneState.position.z);
-        }
-      }
     }
 
-    this.weaponMount.syncWeaponPosition(this.healthState, glb, this.fxManager);
+    this.weaponMount.syncWeaponPosition(this.healthState, glb, this.fxManager, guarding);
+    this.syncPoseAttachments();
     this.dismemberment.syncStumps(this.zoneBundles, this.healthState);
     this.woundDecals.syncSurfaceWounds(this.healthState, this.zoneBundles, this.materials);
     this.visualGoreSync.refreshIfDirty(
@@ -170,6 +168,23 @@ export class GhoulMannequinEntity {
     );
 
     this.visualGoreSync.pulseXRayOrgans(glb, this.healthState, this.isXRayActive, elapsedTime);
+  }
+
+  public syncPoseAttachments(): void {
+    const state = this.healthState;
+    const glb = this.combatantGlb;
+    const animated = glb && state.alive && !state.isRagdollActive;
+    for (const [zone, bundle] of this.zoneBundles) {
+      if (animated) this.boneSync.readAnimatedBone(glb, zone, state);
+      const bone = state.ragdollBones[zone];
+      bundle.zoneNode.setPosition(bone.position.x, bone.position.y, bone.position.z);
+      this.boneSync.setEntityBasisRotation(bundle.zoneNode, bone.basisRight, bone.basisUp, bone.basisForward);
+    }
+    if (animated) this.boneSync.readAnimatedAuxParticles(glb, state);
+  }
+
+  public playWeaponFire(): Vec3Like | undefined {
+    return this.weaponMount.playFire();
   }
 
   public destroy(): void {

@@ -1,22 +1,20 @@
 import * as pc from 'playcanvas';
 import type { GhoulZoneId, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
-import { add, copyVec3, cross, dot, length, normalize, scale, sub, vec3 } from '../../core/ballistics/vec3.ts';
-import type { CombatantGlbInstance } from '../assets/glbLoader.ts';
+import { add, copyVec3, dot, length, normalize, scale, sub, vec3 } from '../../core/ballistics/vec3.ts';
+import { safeOrthonormalBasis } from '../../core/ghoul/anatomy/ragdollBasisMath.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
 import { isArmChainIntactAndFunctional, type ActiveFiringHand, type TacticalCombatAiSystem } from '../ai/tacticalCombatAi.ts';
 import type { OffhandSidearmRig } from './offhandSidearmTypes.ts';
-import { basisVectorsToQuat, REST_ARM_BONE_FRAMES } from './offhandSidearmTypes.ts';
+import { basisToQuat } from '../mannequin/combatantPoseConstants.ts';
+import { CombatantWeaponGrip } from '../mannequin/combatantWeaponGrip.ts';
+import { CombatantBoneSync } from '../mannequin/combatantBoneSync.ts';
 
 export class OffhandSidearmSync {
   private readonly scratchMat4 = new pc.Mat4();
   private readonly scratchQuat = new pc.Quat();
-  private readonly scratchRagQuat = new pc.Quat();
-  private readonly scratchDeltaQuat = new pc.Quat();
-  private readonly scratchWorldQuat = new pc.Quat();
-  private readonly scratchBindInvQuat = new pc.Quat();
-  private readonly scratchOffsetVec = new pc.Vec3();
-  private readonly scratchRotOffsetVec = new pc.Vec3();
+  private readonly grip = new CombatantWeaponGrip();
+  private readonly boneSync = new CombatantBoneSync();
 
   public sync(
     target: GhoulMannequinEntity,
@@ -24,7 +22,7 @@ export class OffhandSidearmSync {
     rig: OffhandSidearmRig,
     tacticalAi: TacticalCombatAiSystem | null,
     fxManager: GoreAndBallisticsFxManager
-  ): void {
+  ): boolean {
     const hs = target.healthState;
     const sidearmState = tacticalAi?.getSidearmVisualState(hs.targetId);
     const hand: ActiveFiringHand | null = sidearmState?.hand ?? null;
@@ -37,14 +35,12 @@ export class OffhandSidearmSync {
         rig.wasHeldLastFrame = false;
         const dropZone: GhoulZoneId = rig.lastHand === 'LEFT' ? 'HAND_LEFT' : 'HAND_RIGHT';
         const handBone = hs.ragdollBones[dropZone];
-        const glbHandNode = target.combatantGlb?.boneNodes.get(dropZone);
-        const dropPos = glbHandNode
-          ? vec3(glbHandNode.getPosition().x, glbHandNode.getPosition().y, glbHandNode.getPosition().z)
-          : handBone.position;
-        fxManager.spawnDroppedWeaponProp('SKINHEAD_PUNK', dropPos, handBone.velocity);
+        if (rig.glbInstance) {
+          fxManager.spawnDroppedWeaponProp('SKINHEAD_PUNK', rig.holderEntity.getPosition(), handBone.velocity);
+        }
       }
       rig.holderEntity.enabled = false;
-      return;
+      return false;
     }
 
     const activeHand = hand!;
@@ -58,22 +54,7 @@ export class OffhandSidearmSync {
     const handTipAuxId = activeHand === 'LEFT' ? 'HAND_TIP_LEFT' : 'HAND_TIP_RIGHT';
     const sideSign = activeHand === 'LEFT' ? -1 : 1;
 
-    let pUpper = copyVec3(hs.ragdollBones[upperArmZone].position);
-    if (target.combatantGlb && !hs.isRagdollActive) {
-      const glbUpper = target.combatantGlb.boneNodes.get(upperArmZone);
-      const bindUpper = target.combatantGlb.boneBindPoses.get(upperArmZone);
-      const restUpper = REST_ARM_BONE_FRAMES.get(upperArmZone);
-      if (glbUpper && bindUpper && restUpper) {
-        const pAnim = glbUpper.getPosition();
-        const qAnim = glbUpper.getRotation();
-        this.scratchBindInvQuat.copy(bindUpper.modelRot).invert();
-        this.scratchDeltaQuat.mul2(qAnim, this.scratchBindInvQuat);
-        this.scratchOffsetVec.sub2(bindUpper.modelPos, restUpper.restPos);
-        this.scratchDeltaQuat.transformVector(this.scratchOffsetVec, this.scratchRotOffsetVec);
-        pUpper = vec3(pAnim.x - this.scratchRotOffsetVec.x, pAnim.y - this.scratchRotOffsetVec.y, pAnim.z - this.scratchRotOffsetVec.z);
-      }
-    }
-
+    const pUpper = copyVec3(hs.ragdollBones[upperArmZone].position);
     const charFwd = vec3(Math.sin(hs.yawRad), 0, Math.cos(hs.yawRad));
     const charRight = vec3(-Math.cos(hs.yawRad), 0, Math.sin(hs.yawRad));
     const aimTarget = sidearmState?.aimTargetWorld ?? vec3(viewerWorldPos.x, viewerWorldPos.y - 0.16, viewerWorldPos.z);
@@ -101,13 +82,7 @@ export class OffhandSidearmSync {
     const pHand = add(pForearm, scale(forearmDir, 0.25));
 
     const worldUp = vec3(0, 1, 0);
-    const computeBasis = (segFwd: Vec3Like) => {
-      let r = cross(worldUp, segFwd);
-      if (length(r) < 1e-4) r = vec3(1, 0, 0);
-      r = normalize(r);
-      return { right: r, up: normalize(cross(segFwd, r)), forward: segFwd };
-    };
-
+    const computeBasis = (dir: Vec3Like) => safeOrthonormalBasis(scale(dir, -1), worldUp, charRight);
     const applyBone = (zone: GhoulZoneId, pos: Vec3Like, basis: { right: Vec3Like; up: Vec3Like; forward: Vec3Like }) => {
       const b = hs.ragdollBones[zone];
       b.position = copyVec3(pos);
@@ -127,63 +102,34 @@ export class OffhandSidearmSync {
     }
 
     if (target.combatantGlb) {
-      this.applyPosedJoint(target.combatantGlb, hs, upperArmZone);
-      this.applyPosedJoint(target.combatantGlb, hs, forearmZone);
-      this.applyPosedJoint(target.combatantGlb, hs, handZone);
+      this.boneSync.applyRagdollBoneToGlbJoint(target.combatantGlb, upperArmZone, hs);
+      this.boneSync.applyRagdollBoneToGlbJoint(target.combatantGlb, forearmZone, hs);
+      this.boneSync.applyRagdollBoneToGlbJoint(target.combatantGlb, handZone, hs);
       target.combatantGlb.rootEntity.syncHierarchy();
     } else {
       for (const z of [upperArmZone, forearmZone, handZone] as const) {
         let customBone = rig.cachedBoneEntities.get(z);
         if (customBone === undefined) {
-          const found = target.rootEntity.findByName(`Bone_${z}`);
+          const found = target.rootEntity.children.find((node) => node.name === `Bone_${z}`);
           customBone = found instanceof pc.Entity ? found : null;
           rig.cachedBoneEntities.set(z, customBone);
         }
         if (customBone) {
           const b = hs.ragdollBones[z];
           customBone.setPosition(b.position.x, b.position.y, b.position.z);
-          basisVectorsToQuat(b.basisRight, b.basisUp, b.basisForward, this.scratchMat4, this.scratchQuat);
+          basisToQuat(b.basisRight, b.basisUp, b.basisForward, this.scratchMat4, this.scratchQuat);
           customBone.setRotation(this.scratchQuat);
         }
       }
     }
 
-    let gripPos = pHand;
-    if (target.combatantGlb) {
-      const glbHand = target.combatantGlb.boneNodes.get(handZone);
-      if (glbHand) {
-        const gp = glbHand.getPosition();
-        gripPos = vec3(gp.x, gp.y, gp.z);
-      }
+    if (rig.glbInstance) {
+      const glbHand = target.combatantGlb?.boneNodes.get(handZone);
+      const palm = glbHand
+        ? add(glbHand.getPosition(), scale(glbHand.up, 0.052))
+        : add(pHand, scale(armAimDir, 0.052));
+      this.grip.align(rig.holderEntity, rig.glbInstance.rootEntity, 'silver_talon_50ae', palm, armAimDir);
     }
-
-    const zBack = scale(armAimDir, -1);
-    let xRight = cross(worldUp, zBack);
-    if (length(xRight) < 1e-4) xRight = vec3(1, 0, 0);
-    xRight = normalize(xRight);
-    const yUp = normalize(cross(zBack, xRight));
-
-    rig.holderEntity.setLocalPosition(gripPos.x + armAimDir.x * 0.042, gripPos.y + 0.012, gripPos.z + armAimDir.z * 0.042);
-    basisVectorsToQuat(xRight, yUp, zBack, this.scratchMat4, this.scratchQuat);
-    rig.holderEntity.setLocalRotation(this.scratchQuat);
-  }
-
-  private applyPosedJoint(glb: CombatantGlbInstance, hs: TargetHealthState, zone: GhoulZoneId): void {
-    const boneNode = glb.boneNodes.get(zone);
-    const bind = glb.boneBindPoses.get(zone);
-    const rest = REST_ARM_BONE_FRAMES.get(zone);
-    if (!boneNode || !bind || !rest) return;
-
-    const boneState = hs.ragdollBones[zone];
-    if (!boneState) return;
-
-    basisVectorsToQuat(boneState.basisRight, boneState.basisUp, boneState.basisForward, this.scratchMat4, this.scratchRagQuat);
-    this.scratchDeltaQuat.mul2(this.scratchRagQuat, rest.restRotInv);
-    this.scratchWorldQuat.mul2(this.scratchDeltaQuat, bind.modelRot);
-    this.scratchOffsetVec.sub2(bind.modelPos, rest.restPos);
-    this.scratchDeltaQuat.transformVector(this.scratchOffsetVec, this.scratchRotOffsetVec);
-
-    boneNode.setPosition(boneState.position.x + this.scratchRotOffsetVec.x, boneState.position.y + this.scratchRotOffsetVec.y, boneState.position.z + this.scratchRotOffsetVec.z);
-    boneNode.setRotation(this.scratchWorldQuat);
+    return true;
   }
 }

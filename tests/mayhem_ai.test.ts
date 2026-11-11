@@ -420,6 +420,51 @@ describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
   // 3. TacticalCombatAiSystem
   // ==========================================================================
   describe('3. TacticalCombatAiSystem (State Machine, Cover Peek & Trauma Accuracy)', () => {
+    it('turns toward the live player position before firing at someone behind it', () => {
+      const app = createHeadlessPlayCanvasApp();
+      const materials = getOrCreateMaterials();
+      const fx = new GoreAndBallisticsFxManager(app, materials);
+      const hud = new HudController();
+      const eye = vec3(0, 1.62, -18);
+      const shotYaw: number[] = [];
+      const targetId = 'target_0';
+      const ai = new TacticalCombatAiSystem({
+        onEnemyFireTracer: (event) => {
+          if (event.targetId === targetId) shotYaw.push(enemy.yawRad);
+        },
+      });
+      const director = new CombatDirector(app, materials, fx, hud, undefined, {
+        tacticalAi: ai,
+        getPlayerEyePosition: () => eye,
+      });
+
+      director.spawnAllTargets();
+      const enemy = director.targets.find((target) => target.healthState.targetId === targetId)!.healthState;
+
+      try {
+        ai.notifyGunshotOrExplosion(enemy.worldPosition);
+        const agent = ai.getAgent(targetId)!;
+        agent.peekCycleTimerS = 1;
+        agent.burstShotsRemaining = 1;
+        enemy.yawRad = 0;
+
+        director.update(0.05, 0.05, null, hud);
+        expect(shotYaw).toHaveLength(0);
+        expect(Math.abs(enemy.yawRad)).toBeGreaterThan(0.1);
+
+        for (let i = 2; i <= 25; i++) director.update(0.05, i * 0.05, null, hud);
+        expect(shotYaw.length).toBeGreaterThan(0);
+        const toEye = normalize(vec3(eye.x - enemy.worldPosition.x, 0, eye.z - enemy.worldPosition.z));
+        expect(Math.sin(enemy.yawRad) * toEye.x + Math.cos(enemy.yawRad) * toEye.z).toBeGreaterThan(0.99);
+        expect(Math.cos(shotYaw[0])).toBeLessThan(-0.9);
+      } finally {
+        director.destroy();
+        ai.destroy();
+        fx.clearAll();
+        app.destroy();
+      }
+    });
+
     it('transitions PATROL_GUARD -> ALERTED_ENGAGING -> DOWNED_CRAWLING -> DEAD and degrades aim 4.5x on leg trauma', () => {
       const stateHistory: EnemyTacticalAiState[] = [];
       const firedTracers: EnemyTracerFireEvent[] = [];

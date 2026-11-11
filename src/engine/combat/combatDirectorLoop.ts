@@ -69,18 +69,28 @@ export function stepCombatDirectorLoop(
   const viewerPos = ctx.getViewerPosVec3();
   if (ctx.tacticalAi) {
     const states = ctx.targets.map((t) => t.healthState);
-    ctx.tacticalAi.update(dt, states, viewerPos);
+    ctx.tacticalAi.update(dt, states, viewerPos, (targetId, usingSidearm) => {
+      if (usingSidearm) {
+        const rig = ctx.offhandSidearmRigs.get(targetId);
+        if (!rig?.holderEntity.enabled) return undefined;
+        rig.glbInstance?.playFire?.();
+        return rig.glbInstance?.muzzleNode?.getPosition();
+      }
+      return ctx.targets.find((target) => target.healthState.targetId === targetId)?.playWeaponFire();
+    });
   }
 
   for (const t of ctx.targets) {
     stepRagdollPhysics(t.healthState, dt, 0.0);
-    t.syncFromHealthState(dt, totalElapsedTimeS);
+    t.syncFromHealthState(dt, totalElapsedTimeS, ctx.tacticalAi?.isGuarding(t.healthState.targetId));
     let rig = ctx.offhandSidearmRigs.get(t.healthState.targetId);
     if (!rig) {
       rig = createOffhandSidearmRig(t, ctx.glbRegistry);
       ctx.offhandSidearmRigs.set(t.healthState.targetId, rig);
     }
-    ctx.offhandSync.sync(t, viewerPos, rig, ctx.tacticalAi, ctx.fxManager);
+    if (ctx.offhandSync.sync(t, viewerPos, rig, ctx.tacticalAi, ctx.fxManager)) {
+      t.syncPoseAttachments();
+    }
   }
 
   ctx.hudTargetTracker.projectTargets(
