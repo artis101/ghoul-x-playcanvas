@@ -1,4 +1,8 @@
 import * as pc from 'playcanvas';
+import {
+  applyRetroEnvironmentTextures,
+  createProceduralNormalAndGlossMaps,
+} from './retroTextures.ts';
 
 export interface EngineMaterialPalette {
   // Tactical intact flesh & gear
@@ -44,9 +48,37 @@ export interface EngineMaterialPalette {
 }
 
 let cachedPalette: EngineMaterialPalette | null = null;
+const upgradedDevices = new WeakSet<pc.GraphicsDevice>();
+
+function configurePbrDielectric(
+  mat: pc.StandardMaterial,
+  diffuse: [number, number, number],
+  gloss: number,
+  specular: [number, number, number] = [0.06, 0.06, 0.06]
+): void {
+  mat.diffuse = new pc.Color(diffuse[0], diffuse[1], diffuse[2]);
+  mat.specular = new pc.Color(specular[0], specular[1], specular[2]);
+  mat.gloss = gloss;
+  mat.enableGGXSpecular = true;
+  mat.fresnelModel = pc.FRESNEL_SCHLICK;
+}
+
+function configurePbrMetal(
+  mat: pc.StandardMaterial,
+  diffuse: [number, number, number],
+  metalness: number,
+  gloss: number
+): void {
+  mat.diffuse = new pc.Color(diffuse[0], diffuse[1], diffuse[2]);
+  mat.useMetalness = true;
+  mat.metalness = metalness;
+  mat.gloss = gloss;
+  mat.enableGGXSpecular = true;
+  mat.fresnelModel = pc.FRESNEL_SCHLICK;
+}
 
 /**
- * Creates and caches the complete material palette for GHOUL-X PlayCanvas rendering.
+ * Creates and caches the complete PlayCanvas 2.4 PBR material palette for GHOUL-X rendering.
  */
 export function getOrCreateMaterials(): EngineMaterialPalette {
   if (cachedPalette) {
@@ -56,34 +88,25 @@ export function getOrCreateMaterials(): EngineMaterialPalette {
   // 1. Tactical outer gear & skin
   const tacticalOlive = new pc.StandardMaterial();
   tacticalOlive.name = 'tacticalOlive';
-  tacticalOlive.diffuse = new pc.Color(0.24, 0.28, 0.18);
-  tacticalOlive.specular = new pc.Color(0.08, 0.08, 0.08);
-  tacticalOlive.shininess = 20;
+  configurePbrDielectric(tacticalOlive, [0.22, 0.26, 0.17], 0.26, [0.05, 0.05, 0.05]);
   tacticalOlive.update();
 
   const tacticalArmorVest = new pc.StandardMaterial();
   tacticalArmorVest.name = 'tacticalArmorVest';
-  tacticalArmorVest.diffuse = new pc.Color(0.12, 0.14, 0.13);
-  tacticalArmorVest.specular = new pc.Color(0.15, 0.15, 0.15);
-  tacticalArmorVest.shininess = 35;
+  configurePbrMetal(tacticalArmorVest, [0.15, 0.17, 0.18], 0.35, 0.44);
   tacticalArmorVest.update();
 
   const skinTone = new pc.StandardMaterial();
   skinTone.name = 'skinTone';
-  skinTone.diffuse = new pc.Color(0.76, 0.58, 0.46);
-  skinTone.specular = new pc.Color(0.06, 0.06, 0.06);
-  skinTone.shininess = 15;
+  configurePbrDielectric(skinTone, [0.76, 0.58, 0.46], 0.36, [0.05, 0.045, 0.04]);
   skinTone.update();
 
   const bootsDark = new pc.StandardMaterial();
   bootsDark.name = 'bootsDark';
-  bootsDark.diffuse = new pc.Color(0.09, 0.09, 0.1);
-  bootsDark.specular = new pc.Color(0.12, 0.12, 0.12);
-  bootsDark.shininess = 25;
+  configurePbrMetal(bootsDark, [0.11, 0.12, 0.13], 0.55, 0.48);
   bootsDark.update();
 
   // 2. Translucent X-Ray outer silhouette
-  // Opacity: 0.22, BLEND_NORMAL, cyan/blue rim emissive so internal skeleton & organs shine through
   const xraySkinMat = new pc.StandardMaterial();
   xraySkinMat.name = 'xraySkinMat';
   xraySkinMat.diffuse = new pc.Color(0.05, 0.25, 0.45);
@@ -92,120 +115,98 @@ export function getOrCreateMaterials(): EngineMaterialPalette {
   xraySkinMat.blendType = pc.BLEND_NORMAL;
   xraySkinMat.depthWrite = false;
   xraySkinMat.cull = pc.CULLFACE_BACK;
+  xraySkinMat.enableGGXSpecular = true;
+  xraySkinMat.fresnelModel = pc.FRESNEL_SCHLICK;
+  xraySkinMat.gloss = 0.78;
   xraySkinMat.update();
 
   // 3. Cortical Bone & Fractured Bone
   const boneMat = new pc.StandardMaterial();
   boneMat.name = 'boneMat';
-  boneMat.diffuse = new pc.Color(0.92, 0.89, 0.78); // warm ivory
-  boneMat.specular = new pc.Color(0.3, 0.3, 0.28);
-  boneMat.shininess = 40;
+  configurePbrDielectric(boneMat, [0.91, 0.88, 0.77], 0.54, [0.14, 0.14, 0.12]);
   boneMat.update();
 
   const shatteredBoneMat = new pc.StandardMaterial();
   shatteredBoneMat.name = 'shatteredBoneMat';
-  shatteredBoneMat.diffuse = new pc.Color(0.95, 0.25, 0.15);
-  shatteredBoneMat.emissive = new pc.Color(0.85, 0.15, 0.05);
-  shatteredBoneMat.specular = new pc.Color(0.4, 0.4, 0.4);
-  shatteredBoneMat.shininess = 50;
+  configurePbrDielectric(shatteredBoneMat, [0.94, 0.24, 0.15], 0.68, [0.22, 0.16, 0.14]);
+  shatteredBoneMat.emissive = new pc.Color(0.75, 0.12, 0.04);
   shatteredBoneMat.update();
 
-  // 4. Vital Organs
+  // 4. Vital Organs (wet serous membrane sheen under IBL)
   const brainMat = new pc.StandardMaterial();
   brainMat.name = 'brainMat';
-  brainMat.diffuse = new pc.Color(0.82, 0.38, 0.48); // pulsing rose/magenta
-  brainMat.emissive = new pc.Color(0.25, 0.05, 0.1);
-  brainMat.shininess = 30;
+  configurePbrDielectric(brainMat, [0.78, 0.36, 0.46], 0.84, [0.20, 0.14, 0.16]);
+  brainMat.emissive = new pc.Color(0.18, 0.03, 0.06);
   brainMat.update();
 
   const heartMat = new pc.StandardMaterial();
   heartMat.name = 'heartMat';
-  heartMat.diffuse = new pc.Color(0.85, 0.04, 0.08); // vivid arterial red
-  heartMat.emissive = new pc.Color(0.35, 0.02, 0.02);
-  heartMat.specular = new pc.Color(0.4, 0.1, 0.1);
-  heartMat.shininess = 65; // wet sheen
+  configurePbrDielectric(heartMat, [0.72, 0.04, 0.07], 0.90, [0.28, 0.10, 0.10]);
+  heartMat.emissive = new pc.Color(0.24, 0.015, 0.018);
   heartMat.update();
 
   const lungMat = new pc.StandardMaterial();
   lungMat.name = 'lungMat';
-  lungMat.diffuse = new pc.Color(0.75, 0.42, 0.48); // vascular pink
-  lungMat.opacity = 0.85;
+  configurePbrDielectric(lungMat, [0.74, 0.40, 0.46], 0.76, [0.14, 0.10, 0.11]);
+  lungMat.opacity = 0.86;
   lungMat.blendType = pc.BLEND_NORMAL;
-  lungMat.shininess = 20;
   lungMat.update();
 
   const liverGutMat = new pc.StandardMaterial();
   liverGutMat.name = 'liverGutMat';
-  liverGutMat.diffuse = new pc.Color(0.45, 0.12, 0.12); // deep maroon
-  liverGutMat.specular = new pc.Color(0.3, 0.1, 0.1);
-  liverGutMat.shininess = 50; // wet sheen
+  configurePbrDielectric(liverGutMat, [0.40, 0.09, 0.10], 0.88, [0.24, 0.10, 0.10]);
   liverGutMat.update();
 
   const arteryMat = new pc.StandardMaterial();
   arteryMat.name = 'arteryMat';
-  arteryMat.diffuse = new pc.Color(0.95, 0.02, 0.02);
-  arteryMat.emissive = new pc.Color(0.65, 0.01, 0.01); // glowing crimson
+  configurePbrDielectric(arteryMat, [0.88, 0.02, 0.03], 0.88, [0.25, 0.08, 0.08]);
+  arteryMat.emissive = new pc.Color(0.55, 0.01, 0.01);
   arteryMat.update();
 
-  // 5. Soldier of Fortune Gore
+  // 5. Visceral GHOUL Gore & Arterial Blood
   const goreStumpMat = new pc.StandardMaterial();
   goreStumpMat.name = 'goreStumpMat';
-  goreStumpMat.diffuse = new pc.Color(0.48, 0.02, 0.04); // deep wet visceral crimson
-  goreStumpMat.specular = new pc.Color(0.5, 0.1, 0.1);
-  goreStumpMat.shininess = 80;
+  configurePbrDielectric(goreStumpMat, [0.38, 0.02, 0.035], 0.91, [0.28, 0.09, 0.09]);
+  goreStumpMat.emissive = new pc.Color(0.03, 0.002, 0.003);
   goreStumpMat.update();
 
   const exposedBoneMat = new pc.StandardMaterial();
   exposedBoneMat.name = 'exposedBoneMat';
-  exposedBoneMat.diffuse = new pc.Color(0.98, 0.96, 0.93); // stark white bone marrow
-  exposedBoneMat.specular = new pc.Color(0.35, 0.35, 0.35);
-  exposedBoneMat.shininess = 60;
+  configurePbrMetal(exposedBoneMat, [0.95, 0.93, 0.89], 0.18, 0.72);
   exposedBoneMat.update();
 
   const bloodPoolMat = new pc.StandardMaterial();
   bloodPoolMat.name = 'bloodPoolMat';
-  bloodPoolMat.diffuse = new pc.Color(0.32, 0.01, 0.02);
-  bloodPoolMat.specular = new pc.Color(0.6, 0.1, 0.1);
-  bloodPoolMat.opacity = 0.88;
+  configurePbrDielectric(bloodPoolMat, [0.24, 0.008, 0.015], 0.95, [0.34, 0.09, 0.09]);
+  bloodPoolMat.opacity = 0.90;
   bloodPoolMat.blendType = pc.BLEND_NORMAL;
-  bloodPoolMat.shininess = 90; // wet pool reflection
   bloodPoolMat.update();
 
   const bloodDropMat = new pc.StandardMaterial();
   bloodDropMat.name = 'bloodDropMat';
-  bloodDropMat.diffuse = new pc.Color(0.65, 0.02, 0.04);
-  bloodDropMat.emissive = new pc.Color(0.2, 0.0, 0.01);
-  bloodDropMat.shininess = 75;
+  configurePbrDielectric(bloodDropMat, [0.52, 0.015, 0.028], 0.92, [0.28, 0.08, 0.08]);
+  bloodDropMat.emissive = new pc.Color(0.08, 0.002, 0.004);
   bloodDropMat.update();
 
   const gibChunkMat = new pc.StandardMaterial();
   gibChunkMat.name = 'gibChunkMat';
-  gibChunkMat.diffuse = new pc.Color(0.5, 0.06, 0.08);
-  gibChunkMat.specular = new pc.Color(0.4, 0.1, 0.1);
-  gibChunkMat.shininess = 70;
+  configurePbrDielectric(gibChunkMat, [0.42, 0.035, 0.05], 0.88, [0.24, 0.08, 0.08]);
   gibChunkMat.update();
 
   const woundGoreMat = new pc.StandardMaterial();
   woundGoreMat.name = 'woundGoreMat';
-  woundGoreMat.diffuse = new pc.Color(0.38, 0.02, 0.03);
-  woundGoreMat.specular = new pc.Color(0.3, 0.05, 0.05);
-  woundGoreMat.shininess = 60;
+  configurePbrDielectric(woundGoreMat, [0.32, 0.015, 0.025], 0.89, [0.24, 0.07, 0.07]);
   woundGoreMat.update();
 
   // 6. Ballistics & Projectiles
   const brassBulletMat = new pc.StandardMaterial();
   brassBulletMat.name = 'brassBulletMat';
-  brassBulletMat.diffuse = new pc.Color(0.85, 0.65, 0.25);
-  brassBulletMat.specular = new pc.Color(0.9, 0.75, 0.4);
-  brassBulletMat.shininess = 85;
-  brassBulletMat.metalness = 0.8;
+  configurePbrMetal(brassBulletMat, [0.90, 0.71, 0.30], 0.92, 0.84);
   brassBulletMat.update();
 
   const copperPelletMat = new pc.StandardMaterial();
   copperPelletMat.name = 'copperPelletMat';
-  copperPelletMat.diffuse = new pc.Color(0.72, 0.42, 0.25);
-  copperPelletMat.specular = new pc.Color(0.8, 0.5, 0.3);
-  copperPelletMat.shininess = 70;
+  configurePbrMetal(copperPelletMat, [0.80, 0.46, 0.28], 0.90, 0.78);
   copperPelletMat.update();
 
   const shockwaveRingMat = new pc.StandardMaterial();
@@ -227,37 +228,31 @@ export function getOrCreateMaterials(): EngineMaterialPalette {
   pelletTrailMat.depthWrite = false;
   pelletTrailMat.update();
 
-  // 7. Environment & Arena Floor
+  // 7. Environment & Tactical Firing Range
   const floorGridMat = new pc.StandardMaterial();
   floorGridMat.name = 'floorGridMat';
-  floorGridMat.diffuse = new pc.Color(0.08, 0.1, 0.13);
-  floorGridMat.specular = new pc.Color(0.05, 0.05, 0.05);
-  floorGridMat.shininess = 15;
+  configurePbrMetal(floorGridMat, [0.11, 0.13, 0.16], 0.06, 0.48);
   floorGridMat.update();
 
   const rangeDistanceMarkerMat = new pc.StandardMaterial();
   rangeDistanceMarkerMat.name = 'rangeDistanceMarkerMat';
-  rangeDistanceMarkerMat.diffuse = new pc.Color(0.92, 0.72, 0.18);
-  rangeDistanceMarkerMat.emissive = new pc.Color(0.3, 0.2, 0.05);
+  configurePbrDielectric(rangeDistanceMarkerMat, [0.92, 0.70, 0.16], 0.45, [0.10, 0.10, 0.08]);
+  rangeDistanceMarkerMat.emissive = new pc.Color(0.24, 0.16, 0.03);
   rangeDistanceMarkerMat.update();
 
   const barrierConcreteMat = new pc.StandardMaterial();
   barrierConcreteMat.name = 'barrierConcreteMat';
-  barrierConcreteMat.diffuse = new pc.Color(0.28, 0.3, 0.32);
-  barrierConcreteMat.specular = new pc.Color(0.08, 0.08, 0.08);
-  barrierConcreteMat.shininess = 10;
+  configurePbrMetal(barrierConcreteMat, [0.34, 0.36, 0.38], 0.04, 0.28);
   barrierConcreteMat.update();
 
   const sandbagMat = new pc.StandardMaterial();
   sandbagMat.name = 'sandbagMat';
-  sandbagMat.diffuse = new pc.Color(0.42, 0.36, 0.24);
-  sandbagMat.specular = new pc.Color(0.04, 0.04, 0.04);
-  sandbagMat.shininess = 8;
+  configurePbrDielectric(sandbagMat, [0.44, 0.38, 0.26], 0.22, [0.04, 0.04, 0.04]);
   sandbagMat.update();
 
   const targetStandMat = new pc.StandardMaterial();
   targetStandMat.name = 'targetStandMat';
-  targetStandMat.diffuse = new pc.Color(0.18, 0.18, 0.2);
+  configurePbrMetal(targetStandMat, [0.22, 0.24, 0.27], 0.82, 0.58);
   targetStandMat.update();
 
   cachedPalette = {
@@ -291,4 +286,75 @@ export function getOrCreateMaterials(): EngineMaterialPalette {
   };
 
   return cachedPalette;
+}
+
+/**
+ * Attaches procedural tangent-space normal maps and gloss/roughness maps to the arena concrete,
+ * floor slabs, sandbags, structural steel, and visceral GHOUL gore/organ shaders.
+ */
+export function upgradePaletteWithProceduralPbrMaps(
+  device: pc.GraphicsDevice,
+  palette: EngineMaterialPalette
+): void {
+  applyRetroEnvironmentTextures(device, palette.floorGridMat, palette.barrierConcreteMat);
+
+  if (upgradedDevices.has(device)) {
+    return;
+  }
+  upgradedDevices.add(device);
+
+  // 1. Visceral muscle-fascia & cerebral sulci micro-normal + wet gloss map for gore/organs
+  const { normalMap: goreNormal, glossMap: goreGloss } = createProceduralNormalAndGlossMaps(
+    device,
+    'visceral_gore_tissue',
+    64,
+    (_x, _y, u, v) => {
+      const fibers =
+        Math.sin(u * Math.PI * 12 + Math.sin(v * Math.PI * 6) * 1.4) * 0.32 +
+        Math.cos(v * Math.PI * 10 - Math.sin(u * Math.PI * 8) * 1.2) * 0.24;
+      const wetFilm = 0.78 + (Math.sin(u * Math.PI * 8) * Math.cos(v * Math.PI * 8) * 0.5 + 0.5) * 0.20;
+      return { height: fibers, gloss: wetFilm };
+    },
+    2.2
+  );
+
+  for (const goreMat of [
+    palette.goreStumpMat,
+    palette.woundGoreMat,
+    palette.gibChunkMat,
+    palette.brainMat,
+    palette.heartMat,
+    palette.liverGutMat,
+  ]) {
+    goreMat.normalMap = goreNormal;
+    goreMat.bumpiness = goreMat === palette.brainMat ? 1.35 : 1.05;
+    goreMat.glossMap = goreGloss;
+    goreMat.glossMapChannel = 'g';
+    goreMat.update();
+  }
+
+  palette.bloodPoolMat.normalMap = goreNormal;
+  palette.bloodPoolMat.bumpiness = 0.25;
+  palette.bloodPoolMat.update();
+
+  // 2. Coarse burlap weave normal + gloss map for sandbags & ballistic cover
+  const { normalMap: burlapNormal, glossMap: burlapGloss } = createProceduralNormalAndGlossMaps(
+    device,
+    'burlap_sandbag_weave',
+    64,
+    (x, y) => {
+      const weave = Math.sin(x * Math.PI * 0.5) * 0.28 + Math.sin(y * Math.PI * 0.5) * 0.28;
+      const gloss = 0.16 + ((x + y) % 4 === 0 ? 0.08 : 0.0);
+      return { height: weave, gloss };
+    },
+    1.8
+  );
+
+  palette.sandbagMat.normalMap = burlapNormal;
+  palette.sandbagMat.normalMapTiling = new pc.Vec2(4, 4);
+  palette.sandbagMat.bumpiness = 0.95;
+  palette.sandbagMat.glossMap = burlapGloss;
+  palette.sandbagMat.glossMapChannel = 'g';
+  palette.sandbagMat.glossMapTiling = new pc.Vec2(4, 4);
+  palette.sandbagMat.update();
 }

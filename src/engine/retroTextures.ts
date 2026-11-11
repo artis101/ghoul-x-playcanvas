@@ -1,13 +1,6 @@
 import * as pc from 'playcanvas';
 import { EnemyArchetypeId } from '../contracts/ballistics.ts';
 
-const BAYER_4X4 = [
-  [0, 8, 2, 10],
-  [12, 4, 14, 6],
-  [3, 11, 1, 9],
-  [15, 7, 13, 5],
-];
-
 type RGB = [number, number, number];
 
 function clampByte(v: number): number {
@@ -20,10 +13,40 @@ function hash2d(x: number, y: number, seed: number): number {
   return (n & 0xffff) / 0xffff;
 }
 
+function valueNoise2d(x: number, y: number, period: number, seed: number): number {
+  const xi = Math.floor(x);
+  const yi = Math.floor(y);
+  const xf = x - xi;
+  const yf = y - yi;
+  const sx = xf * xf * (3 - 2 * xf);
+  const sy = yf * yf * (3 - 2 * yf);
+
+  const x0 = ((xi % period) + period) % period;
+  const x1 = (x0 + 1) % period;
+  const y0 = ((yi % period) + period) % period;
+  const y1 = (y0 + 1) % period;
+
+  const n00 = hash2d(x0, y0, seed);
+  const n10 = hash2d(x1, y0, seed);
+  const n01 = hash2d(x0, y1, seed);
+  const n11 = hash2d(x1, y1, seed);
+
+  const nx0 = n00 + (n10 - n00) * sx;
+  const nx1 = n01 + (n11 - n01) * sx;
+  return nx0 + (nx1 - nx0) * sy;
+}
+
+function getDeviceAnisotropy(device: pc.GraphicsDevice): number {
+  if (device instanceof pc.NullGraphicsDevice) {
+    return 1;
+  }
+  return Math.max(1, Math.min(16, device.maxAnisotropy || 1));
+}
+
 /**
- * Creates a crisp nearest-neighbor PS1/PS2 pixel-art pc.Texture from a procedural pixel painter.
+ * Creates a filtered, mipmapped, anisotropic PBR albedo texture from a procedural pixel painter.
  */
-function createRetroPixelTexture(
+function createTacticalAlbedoTexture(
   device: pc.GraphicsDevice,
   name: string,
   size: number,
@@ -35,11 +58,12 @@ function createRetroPixelTexture(
     width: size,
     height: size,
     format: pc.PIXELFORMAT_RGBA8,
-    mipmaps: false,
-    minFilter: pc.FILTER_NEAREST,
-    magFilter: pc.FILTER_NEAREST,
+    mipmaps: true,
+    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
     addressU: pc.ADDRESS_REPEAT,
     addressV: pc.ADDRESS_REPEAT,
+    anisotropy: getDeviceAnisotropy(device),
   });
 
   const pixels = tex.lock() as Uint8Array;
@@ -49,29 +73,27 @@ function createRetroPixelTexture(
       const v = y / size;
       let [r, g, b] = painter(x, y, u, v);
 
-      // Apply authentic PS1 15-bit / 5-6-5 color quantization + ordered 4x4 Bayer dithering!
-      const bayer = (BAYER_4X4[y & 3][x & 3] / 16.0 - 0.5) * 14.0;
-      r = Math.floor(clampByte(r + bayer) / 8) * 8;
-      g = Math.floor(clampByte(g + bayer) / 8) * 8;
-      b = Math.floor(clampByte(b + bayer) / 8) * 8;
+      // Subtle micro-grain instead of harsh 5-bit posterization
+      const grain = (hash2d(x, y, 17) - 0.5) * 4.0;
+      r += grain;
+      g += grain;
+      b += grain;
 
-      // Optional Soldier of Fortune GHOUL blood-soaked laceration overlay
+      // Optional GHOUL arterial laceration overlay
       if (bloodSplatterSeed > 0) {
         const cx = u - 0.5;
         const cy = v - 0.5;
-        const n1 = hash2d(x >> 1, y >> 1, bloodSplatterSeed);
+        const n1 = valueNoise2d(u * 12, v * 12, 12, bloodSplatterSeed);
         const n2 = hash2d(x, y, bloodSplatterSeed + 99);
         const dist = Math.sqrt(cx * cx * 0.8 + cy * cy * 1.1) - n1 * 0.28;
         if (dist < 0.14) {
-          // Deep exposed muscle gash
-          r = n2 > 0.35 ? 118 : 74;
-          g = n2 > 0.35 ? 10 : 6;
-          b = n2 > 0.35 ? 14 : 8;
-        } else if (dist < 0.28 || n1 > 0.84) {
-          // Soaked crimson blood stain on fabric/skin
-          r = Math.round(r * 0.3 + 125 * 0.7);
-          g = Math.round(g * 0.12 + 8 * 0.88);
-          b = Math.round(b * 0.12 + 12 * 0.88);
+          r = n2 > 0.35 ? 108 : 68;
+          g = n2 > 0.35 ? 9 : 5;
+          b = n2 > 0.35 ? 12 : 7;
+        } else if (dist < 0.28 || n1 > 0.82) {
+          r = r * 0.28 + 112 * 0.72;
+          g = g * 0.12 + 8 * 0.88;
+          b = b * 0.12 + 11 * 0.88;
         }
       }
 
@@ -86,13 +108,124 @@ function createRetroPixelTexture(
   return tex;
 }
 
-function makePs1Material(name: string, tex: pc.Texture, gloss = 0.18): pc.StandardMaterial {
+/**
+ * Generates paired tangent-space normal map + monochrome gloss map from a tileable height/gloss field.
+ */
+export function createProceduralNormalAndGlossMaps(
+  device: pc.GraphicsDevice,
+  baseName: string,
+  size: number,
+  heightAndGloss: (x: number, y: number, u: number, v: number) => { height: number; gloss: number },
+  normalStrength = 2.4
+): { normalMap: pc.Texture; glossMap: pc.Texture } {
+  const heights = new Float32Array(size * size);
+  const glosses = new Float32Array(size * size);
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const sample = heightAndGloss(x, y, x / size, y / size);
+      const i = y * size + x;
+      heights[i] = sample.height;
+      glosses[i] = sample.gloss;
+    }
+  }
+
+  const aniso = getDeviceAnisotropy(device);
+  const normalMap = new pc.Texture(device, {
+    name: `${baseName}_normal`,
+    width: size,
+    height: size,
+    format: pc.PIXELFORMAT_RGBA8,
+    mipmaps: true,
+    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
+    addressU: pc.ADDRESS_REPEAT,
+    addressV: pc.ADDRESS_REPEAT,
+    anisotropy: aniso,
+  });
+
+  const glossMap = new pc.Texture(device, {
+    name: `${baseName}_gloss`,
+    width: size,
+    height: size,
+    format: pc.PIXELFORMAT_RGBA8,
+    mipmaps: true,
+    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
+    addressU: pc.ADDRESS_REPEAT,
+    addressV: pc.ADDRESS_REPEAT,
+    anisotropy: aniso,
+  });
+
+  const nPixels = normalMap.lock() as Uint8Array;
+  const gPixels = glossMap.lock() as Uint8Array;
+
+  for (let y = 0; y < size; y++) {
+    const ym = (y - 1 + size) % size;
+    const yp = (y + 1) % size;
+    for (let x = 0; x < size; x++) {
+      const xm = (x - 1 + size) % size;
+      const xp = (x + 1) % size;
+
+      const hL = heights[y * size + xm];
+      const hR = heights[y * size + xp];
+      const hD = heights[ym * size + x];
+      const hU = heights[yp * size + x];
+
+      const dx = (hL - hR) * normalStrength;
+      const dy = (hD - hU) * normalStrength;
+      const dz = 1.0;
+      const invLen = 1.0 / Math.hypot(dx, dy, dz);
+
+      const idx = (y * size + x) * 4;
+      nPixels[idx] = clampByte((dx * invLen * 0.5 + 0.5) * 255);
+      nPixels[idx + 1] = clampByte((dy * invLen * 0.5 + 0.5) * 255);
+      nPixels[idx + 2] = clampByte((dz * invLen * 0.5 + 0.5) * 255);
+      nPixels[idx + 3] = 255;
+
+      const gByte = clampByte(glosses[y * size + x] * 255);
+      gPixels[idx] = gByte;
+      gPixels[idx + 1] = gByte;
+      gPixels[idx + 2] = gByte;
+      gPixels[idx + 3] = 255;
+    }
+  }
+
+  normalMap.unlock();
+  glossMap.unlock();
+  return { normalMap, glossMap };
+}
+
+interface TacticalMaterialOptions {
+  gloss?: number;
+  metalness?: number;
+  useMetalness?: boolean;
+  normalMap?: pc.Texture | null;
+  bumpiness?: number;
+}
+
+function makeTacticalMaterial(
+  name: string,
+  tex: pc.Texture,
+  opts: TacticalMaterialOptions = {}
+): pc.StandardMaterial {
   const mat = new pc.StandardMaterial();
   mat.name = name;
   mat.diffuse = new pc.Color(1, 1, 1);
   mat.diffuseMap = tex;
-  mat.specular = new pc.Color(0.08, 0.08, 0.08);
-  mat.gloss = gloss;
+  mat.enableGGXSpecular = true;
+  mat.fresnelModel = pc.FRESNEL_SCHLICK;
+  if (opts.useMetalness) {
+    mat.useMetalness = true;
+    mat.metalness = opts.metalness ?? 0.8;
+  } else {
+    mat.specular = new pc.Color(0.06, 0.06, 0.06);
+  }
+  mat.gloss = opts.gloss ?? 0.28;
+  if (opts.normalMap) {
+    mat.normalMap = opts.normalMap;
+    mat.bumpiness = opts.bumpiness ?? 0.75;
+  }
   mat.pixelSnap = false;
   mat.update();
   return mat;
@@ -125,246 +258,274 @@ export interface ArchetypeRetroMaterialSet {
   weaponFurnitureMat: pc.StandardMaterial;
 }
 
-const cachedArchetypeSets = new Map<EnemyArchetypeId, ArchetypeRetroMaterialSet>();
+interface DeviceSharedFabricMaps {
+  fabricNormal: pc.Texture;
+  metalNormal: pc.Texture;
+}
+
+const cachedArchetypeByDevice = new WeakMap<
+  pc.GraphicsDevice,
+  Map<EnemyArchetypeId, ArchetypeRetroMaterialSet>
+>();
+const cachedFabricMapsByDevice = new WeakMap<pc.GraphicsDevice, DeviceSharedFabricMaps>();
+const cachedEnvMapsByDevice = new WeakMap<
+  pc.GraphicsDevice,
+  {
+    floorDiffuse: pc.Texture;
+    floorNormal: pc.Texture;
+    floorGloss: pc.Texture;
+    wallDiffuse: pc.Texture;
+    wallNormal: pc.Texture;
+    wallGloss: pc.Texture;
+  }
+>();
+
+function getSharedFabricMaps(device: pc.GraphicsDevice): DeviceSharedFabricMaps {
+  const existing = cachedFabricMapsByDevice.get(device);
+  if (existing) return existing;
+
+  const { normalMap: fabricNormal } = createProceduralNormalAndGlossMaps(
+    device,
+    'tactical_ripstop_weave',
+    64,
+    (x, y, u, v) => {
+      const warp = Math.sin(x * Math.PI * 0.5) * 0.18;
+      const weft = Math.sin(y * Math.PI * 0.5) * 0.18;
+      const crease = (valueNoise2d(u * 8, v * 8, 8, 71) - 0.5) * 0.45;
+      return { height: warp + weft + crease, gloss: 0.28 };
+    },
+    1.6
+  );
+
+  const { normalMap: metalNormal } = createProceduralNormalAndGlossMaps(
+    device,
+    'brushed_gunmetal',
+    64,
+    (_x, y, u, v) => {
+      const brush = (valueNoise2d(u * 4, v * 32, 32, 83) - 0.5) * 0.25;
+      const mill = Math.sin(y * 0.8) * 0.06;
+      return { height: brush + mill, gloss: 0.68 };
+    },
+    1.2
+  );
+
+  const shared = { fabricNormal, metalNormal };
+  cachedFabricMapsByDevice.set(device, shared);
+  return shared;
+}
 
 /**
- * Generates and caches PS1/PS2 pixel-art materials (both intact & GHOUL lacerated variants) for each enemy archetype.
+ * Generates and caches PBR tactical fallback materials (intact & GHOUL lacerated variants) for each enemy archetype.
  */
 export function getArchetypeRetroMaterials(
   device: pc.GraphicsDevice,
   archetype: EnemyArchetypeId
 ): ArchetypeRetroMaterialSet {
-  const existing = cachedArchetypeSets.get(archetype);
+  let deviceMap = cachedArchetypeByDevice.get(device);
+  if (!deviceMap) {
+    deviceMap = new Map<EnemyArchetypeId, ArchetypeRetroMaterialSet>();
+    cachedArchetypeByDevice.set(device, deviceMap);
+  }
+  const existing = deviceMap.get(archetype);
   if (existing) return existing;
 
   const S = 64;
+  const { fabricNormal, metalNormal } = getSharedFabricMaps(device);
 
-  // Shared tactical boots (laced front, dark leather creases, lug sole)
-  const bootTex = createRetroPixelTexture(device, `${archetype}_boot`, S, (x, y, u, v) => {
-    const grain = (hash2d(x, y, 11) - 0.5) * 14;
-    // Sole rim at bottom
+  const bootTex = createTacticalAlbedoTexture(device, `${archetype}_boot`, S, (x, y, u, v) => {
+    const grain = (hash2d(x, y, 11) - 0.5) * 10;
     if (v < 0.18) {
-      const tread = x % 6 < 3 ? -12 : 8;
+      const tread = x % 6 < 3 ? -10 : 6;
       return [24 + tread, 24 + tread, 26 + tread];
     }
-    // Laces strip down front center (u near 0.5)
-    if (Math.abs(u - 0.5) < 0.09 && v > 0.25 && v < 0.85) {
+    if (Math.abs(u - 0.5) < 0.08 && v > 0.25 && v < 0.85) {
       const rung = y % 5 === 0;
-      return rung ? [76, 76, 80] : [18, 18, 20];
+      return rung ? [72, 72, 76] : [18, 18, 20];
     }
-    const crease = Math.sin(v * 18) * 8;
+    const crease = Math.sin(v * 18) * 6;
     return [34 + grain + crease, 33 + grain + crease, 37 + grain + crease];
   });
 
-  const kneePadTex = createRetroPixelTexture(device, `${archetype}_kneepad`, 32, (x, y, u, v) => {
+  const kneePadTex = createTacticalAlbedoTexture(device, `${archetype}_kneepad`, S, (x, y, u, v) => {
     const border = u < 0.12 || u > 0.88 || v < 0.12 || v > 0.88;
-    const rivet = (x === 6 || x === 25) && (y === 6 || y === 25);
+    const rivet = (Math.abs(u - 0.2) < 0.04 || Math.abs(u - 0.8) < 0.04) &&
+      (Math.abs(v - 0.2) < 0.04 || Math.abs(v - 0.8) < 0.04);
     if (rivet) return [135, 138, 142];
     if (border) return [24, 26, 28];
-    const n = (hash2d(x, y, 21) - 0.5) * 12;
+    const n = (hash2d(x, y, 21) - 0.5) * 8;
     return [46 + n, 49 + n, 52 + n];
   });
 
-  const weaponMetalTex = createRetroPixelTexture(device, `${archetype}_gunmetal`, 32, (x, y, _u, v) => {
-    const n = (hash2d(x, y, 77) - 0.5) * 16;
-    const vent = y % 4 === 0 && x > 10 && x < 26 ? -18 : 0;
-    const highlight = Math.abs(v - 0.55) < 0.08 ? 22 : 0;
-    return [56 + n + vent + highlight, 60 + n + vent + highlight, 66 + n + vent + highlight];
+  const weaponMetalTex = createTacticalAlbedoTexture(device, `${archetype}_gunmetal`, S, (x, y, _u, v) => {
+    const n = (hash2d(x, y, 77) - 0.5) * 10;
+    const vent = y % 8 === 0 && x > 20 && x < 52 ? -14 : 0;
+    const highlight = Math.abs(v - 0.55) < 0.08 ? 18 : 0;
+    return [72 + n + vent + highlight, 76 + n + vent + highlight, 84 + n + vent + highlight];
   });
 
-  const weaponWoodOrPolyTex = createRetroPixelTexture(
+  const weaponWoodOrPolyTex = createTacticalAlbedoTexture(
     device,
     `${archetype}_gunfurn`,
-    32,
-    (x, y, u, _v) => {
+    S,
+    (x, y, u, v) => {
       if (archetype === 'MILITIA_GUNNER' || archetype === 'SNIPER_OPERATIVE') {
-        // Classic AK / SVD warm varnished wood grain!
-        const streak = Math.sin(y * 0.9 + hash2d(x >> 2, y, 55) * 2.5) * 16;
-        return [128 + streak, 68 + streak * 0.5, 32 + streak * 0.3];
+        const streak = Math.sin(v * 28 + valueNoise2d(u * 6, v * 12, 12, 55) * 2.5) * 14;
+        return [122 + streak, 66 + streak * 0.5, 34 + streak * 0.3];
       }
-      const checkering = (x + y) % 2 === 0 && u > 0.25 && u < 0.75 ? -10 : 4;
+      const checkering = (x + y) % 2 === 0 && u > 0.25 && u < 0.75 ? -8 : 3;
       return [38 + checkering, 40 + checkering, 44 + checkering];
     }
   );
 
-  // Archetype-specific pixel painters!
   const headPainter = (x: number, y: number, u: number, v: number): RGB => {
-    const n = (hash2d(x, y, 101) - 0.5) * 14;
-    // Front face occupies u in [0.28, 0.72] when cylindrical UV wraps with +Z at u = 0.5
+    const n = (hash2d(x, y, 101) - 0.5) * 10;
     const du = Math.abs(u - 0.5);
 
     if (archetype === 'MILITIA_GUNNER') {
-      // Black 3-hole knit balaclava with menacing eye cutouts!
-      const knit = (x % 2 === 0 ? 4 : -4) + (y % 3 === 0 ? -5 : 2);
-      // Eye openings around v = 0.52, u = 0.41 and 0.59
+      const knit = (x % 2 === 0 ? 3 : -3) + (y % 3 === 0 ? -4 : 2);
       if (v > 0.44 && v < 0.60 && du > 0.04 && du < 0.16) {
-        // Skin around eyes + dark pupil center
         if (v > 0.49 && v < 0.56 && Math.abs(du - 0.10) < 0.03) {
-          return [22, 18, 16]; // pupil
+          return [22, 18, 16];
         }
         if (v > 0.49 && v < 0.56 && Math.abs(du - 0.10) < 0.05) {
-          return [215, 210, 205]; // sclera
+          return [215, 210, 205];
         }
         return [186 + n, 142 + n, 112 + n];
       }
       return [34 + knit + n * 0.5, 36 + knit + n * 0.5, 38 + knit + n * 0.5];
     }
 
-    // Skin base tone
     const baseSkin: RGB =
       archetype === 'SKINHEAD_PUNK'
-        ? [206, 156, 126]
+        ? [204, 154, 124]
         : archetype === 'HEAVY_ENFORCER'
-          ? [188, 140, 110]
-          : [212, 168, 138];
+          ? [186, 138, 108]
+          : [210, 166, 136];
 
     let [r, g, b] = [baseSkin[0] + n, baseSkin[1] + n, baseSkin[2] + n];
 
-    // Camo face paint stripes for Siberian Sniper!
     if (archetype === 'SNIPER_OPERATIVE' && du < 0.25) {
       const stripe = Math.sin(u * 26 + v * 12);
       if (stripe > 0.55 && v > 0.25 && v < 0.65) {
-        r -= 75;
-        g -= 52;
-        b -= 68;
+        r -= 72;
+        g -= 50;
+        b -= 64;
       }
     }
 
-    // Shaved scalp stubble / hair on back & crown
     if (v > 0.72 || du > 0.27) {
       if (archetype === 'SKINHEAD_PUNK') {
-        // Buzzed scalp + center mohawk base
-        if (du < 0.06 && v > 0.62) return [165 + n, 28, 28];
+        if (du < 0.06 && v > 0.62) return [162 + n, 28, 28];
         return [r * 0.78, g * 0.76, b * 0.76];
       }
-      return [68 + n, 54 + n, 44 + n];
+      return [66 + n, 52 + n, 42 + n];
     }
 
-    // Brow & Eyes on front face (v ~ 0.48..0.62)
     if (v > 0.58 && v < 0.64 && du > 0.03 && du < 0.18) {
-      return [48, 36, 28]; // angry furrowed eyebrows
+      return [48, 36, 28];
     }
     if (v > 0.48 && v < 0.57 && du > 0.05 && du < 0.16) {
-      if (Math.abs(du - 0.105) < 0.028) return [24, 22, 20]; // pupil
-      return [222, 218, 212]; // eye white
+      if (Math.abs(du - 0.105) < 0.028) return [24, 22, 20];
+      return [222, 218, 212];
     }
-    // Nose bridge shadow
     if (du < 0.035 && v > 0.34 && v < 0.54) {
-      return [r - 22, g - 20, b - 18];
+      return [r - 20, g - 18, b - 16];
     }
 
     return [r, g, b];
   };
 
   const jawPainter = (x: number, y: number, u: number, v: number): RGB => {
-    const n = (hash2d(x, y, 109) - 0.5) * 14;
+    const n = (hash2d(x, y, 109) - 0.5) * 10;
     const du = Math.abs(u - 0.5);
     if (archetype === 'MILITIA_GUNNER') {
-      // Balaclava mouth hole
       if (du < 0.09 && v > 0.35 && v < 0.65) {
         return v > 0.46 && v < 0.54 ? [78, 28, 28] : [175 + n, 130 + n, 102 + n];
       }
       return [32 + n * 0.5, 34 + n * 0.5, 36 + n * 0.5];
     }
-    // Gritty 5-o'clock stubble & grimacing mouth line
     if (du < 0.10 && v > 0.48 && v < 0.58) {
       return [76, 36, 34];
     }
-    const stubble = (x + y) % 2 === 0 ? -18 : -4;
+    const stubble = (x + y) % 2 === 0 ? -12 : -4;
     return [182 + stubble + n, 136 + stubble + n, 108 + stubble + n];
   };
 
   const torsoPainter = (x: number, y: number, u: number, v: number): RGB => {
-    const n = (hash2d(x, y, 203) - 0.5) * 16;
+    const n = (hash2d(x, y, 203) - 0.5) * 10;
     const du = Math.abs(u - 0.5);
 
     if (archetype === 'SKINHEAD_PUNK') {
-      // Classic SoF NYC Subway Punk: Black studded leather biker vest open over stained white ribbed tank-top!
       if (du < 0.11 && v < 0.85) {
-        const rib = x % 3 === 0 ? -14 : 6;
-        return [198 + rib + n, 194 + rib + n, 184 + rib + n];
+        const rib = x % 3 === 0 ? -12 : 5;
+        return [196 + rib + n, 192 + rib + n, 182 + rib + n];
       }
-      // Silver studs along lapels
       if (Math.abs(du - 0.13) < 0.025 && y % 8 < 2) {
         return [205, 210, 218];
       }
-      // Red skull/anarchy back patch hint on rear (du > 0.38)
       if (du > 0.39 && v > 0.35 && v < 0.72) {
-        return [155 + n, 26, 24];
+        return [150 + n, 26, 24];
       }
-      const leatherCrease = Math.sin(v * 16 + u * 8) * 10;
+      const leatherCrease = Math.sin(v * 16 + u * 8) * 8;
       return [32 + leatherCrease + n * 0.6, 32 + leatherCrease + n * 0.6, 36 + leatherCrease + n * 0.6];
     }
 
     if (archetype === 'MILITIA_GUNNER') {
-      // Olive drab M65 field jacket with khaki Soviet chest rig straps & center zipper!
-      if (du < 0.02) return [42, 46, 36]; // zipper seam
-      // Diagonal/vertical harness straps
+      if (du < 0.02) return [42, 46, 36];
       if (Math.abs(du - 0.14) < 0.035) {
-        return [118 + n, 104 + n, 72 + n];
+        return [116 + n, 102 + n, 70 + n];
       }
-      // Horizontal chest mag bandolier
       if (v > 0.25 && v < 0.48 && du < 0.24) {
-        const pocketSeam = x % 8 === 0 ? -20 : 6;
-        return [112 + pocketSeam + n, 98 + pocketSeam + n, 66 + pocketSeam + n];
+        const pocketSeam = x % 8 === 0 ? -16 : 5;
+        return [110 + pocketSeam + n, 96 + pocketSeam + n, 64 + pocketSeam + n];
       }
-      const fold = Math.sin(v * 20) * 9;
+      const fold = Math.sin(v * 20) * 7;
       return [74 + fold + n, 84 + fold + n, 56 + fold + n];
     }
 
     if (archetype === 'HEAVY_ENFORCER') {
-      // Charcoal Kevlar diamond-weave ballistic plate carrier + yellow/white SWAT/ENFORCER stencil!
-      const weave = (x + y) % 4 === 0 ? 10 : -6;
-      // Stencil bar across upper chest
+      const weave = (x + y) % 4 === 0 ? 8 : -5;
       if (du < 0.14 && v > 0.62 && v < 0.74 && x % 3 !== 0) {
-        return [215, 182, 58];
+        return [210, 178, 56];
       }
-      // Plate border lines
       if (Math.abs(du - 0.19) < 0.02 || Math.abs(v - 0.2) < 0.03) {
         return [24, 28, 32];
       }
-      return [48 + weave + n * 0.5, 54 + weave + n * 0.5, 60 + weave + n * 0.5];
+      return [48 + weave + n * 0.5, 54 + weave + n * 0.5, 62 + weave + n * 0.5];
     }
 
-    // SNIPER_OPERATIVE: Winter Arctic/Urban Splinter Camo Parka + dark leather cross-strap!
     if (Math.abs(u - v * 0.5 - 0.25) < 0.035) {
-      return [46 + n, 36 + n, 28 + n]; // diagonal sniper sling
+      return [46 + n, 36 + n, 28 + n];
     }
-    const c1 = hash2d(x >> 3, y >> 3, 311);
-    const c2 = hash2d((x + 5) >> 2, (y + 3) >> 2, 317);
-    if (c1 > 0.66) return [88 + n, 98 + n, 106 + n];
-    if (c2 < 0.3) return [52 + n, 60 + n, 66 + n];
-    return [142 + n, 148 + n, 152 + n];
+    const c1 = valueNoise2d(u * 8, v * 8, 8, 311);
+    const c2 = valueNoise2d(u * 14, v * 14, 14, 317);
+    if (c1 > 0.62) return [88 + n, 98 + n, 108 + n];
+    if (c2 < 0.34) return [54 + n, 62 + n, 70 + n];
+    return [136 + n, 142 + n, 148 + n];
   };
 
   const legsPainter = (x: number, y: number, u: number, v: number): RGB => {
-    const n = (hash2d(x, y, 401) - 0.5) * 14;
-    const crease = Math.sin(v * 22 + u * 6) * 8;
-    const cellX = Math.floor(x / 6);
-    const cellY = Math.floor(y / 6);
-    const blotch = hash2d(cellX, cellY, 409);
+    const n = (hash2d(x, y, 401) - 0.5) * 10;
+    const crease = Math.sin(v * 22 + u * 6) * 7;
+    const blotch = valueNoise2d(u * 10, v * 10, 10, 409);
 
     if (archetype === 'SKINHEAD_PUNK') {
-      // Classic SoF Urban Grey/Black/White Camo Cargo Pants!
-      if (blotch > 0.68) return [158 + n + crease, 162 + n + crease, 166 + n + crease];
-      if (blotch < 0.32) return [36 + n + crease, 38 + n + crease, 42 + n + crease];
+      if (blotch > 0.66) return [152 + n + crease, 156 + n + crease, 162 + n + crease];
+      if (blotch < 0.34) return [38 + n + crease, 40 + n + crease, 44 + n + crease];
       return [88 + n + crease, 92 + n + crease, 98 + n + crease];
     }
 
     if (archetype === 'MILITIA_GUNNER') {
-      // Classic Woodland M81 Camo BDU trousers!
-      if (blotch > 0.72) return [98 + n + crease, 76 + n + crease, 48 + n + crease];
-      if (blotch < 0.28) return [32 + n + crease, 36 + n + crease, 28 + n + crease];
+      if (blotch > 0.68) return [96 + n + crease, 74 + n + crease, 48 + n + crease];
+      if (blotch < 0.30) return [32 + n + crease, 36 + n + crease, 28 + n + crease];
       return [62 + n + crease, 78 + n + crease, 48 + n + crease];
     }
 
     if (archetype === 'HEAVY_ENFORCER') {
-      // Tactical Navy-Slate SWAT Ripstop BDU trousers
-      const ripstop = x % 4 === 0 || y % 4 === 0 ? -5 : 3;
+      const ripstop = x % 4 === 0 || y % 4 === 0 ? -4 : 3;
       return [42 + ripstop + n + crease, 52 + ripstop + n + crease, 68 + ripstop + n + crease];
     }
 
-    // SNIPER_OPERATIVE: Gorka Olive-Khaki Canvas Field Pants
     if (v > 0.28 && v < 0.72 && blotch > 0.55) {
       return [92 + n + crease, 88 + n + crease, 64 + n + crease];
     }
@@ -372,38 +533,34 @@ export function getArchetypeRetroMaterials(
   };
 
   const armPainter = (isForearm: boolean) => (x: number, y: number, u: number, v: number): RGB => {
-    const n = (hash2d(x, y, 503) - 0.5) * 14;
+    const n = (hash2d(x, y, 503) - 0.5) * 10;
     if (archetype === 'SKINHEAD_PUNK') {
-      // Bare muscular arms + dark tribal/barbed-wire pixel tattoo on bicep!
-      const muscleShade = Math.cos((u - 0.5) * Math.PI * 2) * 14;
+      const muscleShade = Math.cos((u - 0.5) * Math.PI * 2) * 12;
       if (!isForearm && v > 0.42 && v < 0.58 && (x + y) % 3 === 0) {
-        return [42, 54, 58]; // tattoo band
+        return [42, 54, 58];
       }
-      return [204 + muscleShade + n, 152 + muscleShade + n, 120 + muscleShade + n];
+      return [202 + muscleShade + n, 150 + muscleShade + n, 118 + muscleShade + n];
     }
     if (archetype === 'MILITIA_GUNNER' && isForearm && v < 0.55) {
-      // Rolled-up jacket sleeves exposing bare forearms!
       return [186 + n, 142 + n, 112 + n];
     }
     return torsoPainter(x, y, u, v);
   };
 
   const beltPelvisPainter = (x: number, y: number, u: number, v: number): RGB => {
-    // Top 28% is tactical web belt + brass/steel buckle at front center!
     if (v > 0.72) {
       if (Math.abs(u - 0.5) < 0.07) {
-        return [178, 162, 92]; // belt buckle
+        return [178, 162, 92];
       }
-      const grommet = x % 6 === 0 && y % 3 === 0 ? 35 : 0;
+      const grommet = x % 6 === 0 && y % 3 === 0 ? 32 : 0;
       return [30 + grommet, 32 + grommet, 30 + grommet];
     }
     return legsPainter(x, y, u, v);
   };
 
   const handGlovePainter = (x: number, y: number, _u: number, v: number): RGB => {
-    const n = (hash2d(x, y, 601) - 0.5) * 12;
+    const n = (hash2d(x, y, 601) - 0.5) * 8;
     if (archetype === 'SKINHEAD_PUNK' || archetype === 'MILITIA_GUNNER') {
-      // Fingerless black leather tactical gloves! Bare fingers at v < 0.35
       if (v < 0.36) {
         return [192 + n, 145 + n, 114 + n];
       }
@@ -413,115 +570,205 @@ export function getArchetypeRetroMaterials(
   };
 
   const headgearPainter = (x: number, y: number, u: number, v: number): RGB => {
-    const n = (hash2d(x, y, 701) - 0.5) * 14;
+    const n = (hash2d(x, y, 701) - 0.5) * 10;
     if (archetype === 'SKINHEAD_PUNK') {
-      // Crimson Punk Mohawk spikes!
-      return [185 + n, 24 + Math.max(0, n), 28];
+      return [182 + n, 24 + Math.max(0, n), 28];
     }
     if (archetype === 'SNIPER_OPERATIVE') {
-      // Iconic Crimson Spetsnaz Beret with gold flash badge over left temple!
       if (Math.abs(u - 0.42) < 0.05 && v > 0.25 && v < 0.65) {
         return [220, 185, 52];
       }
-      if (v < 0.16) return [24, 24, 26]; // black leather headband rim
-      return [148 + n, 22 + n * 0.3, 32 + n * 0.3];
+      if (v < 0.16) return [24, 24, 26];
+      return [146 + n, 22 + n * 0.3, 32 + n * 0.3];
     }
     if (archetype === 'HEAVY_ENFORCER') {
-      // Dark Slate PASGT Kevlar Helmet with camo scrim band
       if (v > 0.32 && v < 0.46) return [30 + n, 34 + n, 32 + n];
       return [54 + n, 62 + n, 68 + n];
     }
-    // MILITIA_GUNNER: Ribbed dark olive watch cap / balaclava crown
-    const rib = x % 3 === 0 ? -10 : 6;
+    const rib = x % 3 === 0 ? -8 : 5;
     return [44 + rib + n * 0.4, 48 + rib + n * 0.4, 38 + rib + n * 0.4];
   };
 
   const visorPainter = (x: number, y: number, _u: number, v: number): RGB => {
-    const glint = x + y > 24 && x + y < 30 ? 65 : 0;
+    const glint = x + y > 48 && x + y < 60 ? 55 : 0;
     if (archetype === 'HEAVY_ENFORCER') {
-      // Ballistic amber-gold tactical goggles!
       return [195 + glint, 138 + glint, 28 + glint];
     }
-    // Dark wraparound punk shades
     return [22 + glint, 28 + glint + (v > 0.6 ? 18 : 0), 36 + glint];
   };
 
   const pouchPainter = (x: number, y: number, u: number, v: number): RGB => {
-    const n = (hash2d(x, y, 809) - 0.5) * 12;
-    const flap = Math.abs(v - 0.62) < 0.05 ? -22 : 0;
+    const n = (hash2d(x, y, 809) - 0.5) * 10;
+    const flap = Math.abs(v - 0.62) < 0.05 ? -20 : 0;
     const snap = Math.abs(u - 0.5) < 0.12 && Math.abs(v - 0.52) < 0.08;
     if (snap) return [155, 150, 118];
     if (archetype === 'HEAVY_ENFORCER') return [36 + flap + n, 40 + flap + n, 45 + flap + n];
     return [96 + flap + n, 88 + flap + n, 58 + flap + n];
   };
 
+  const fabricOpts: TacticalMaterialOptions = { gloss: 0.24, normalMap: fabricNormal, bumpiness: 0.7 };
+  const goreOpts: TacticalMaterialOptions = { gloss: 0.84, normalMap: fabricNormal, bumpiness: 0.9 };
+  const skinOpts: TacticalMaterialOptions = { gloss: 0.36, normalMap: fabricNormal, bumpiness: 0.35 };
+
   const set: ArchetypeRetroMaterialSet = {
-    headMat: makePs1Material(`${archetype}_head`, createRetroPixelTexture(device, `${archetype}_head`, S, headPainter)),
-    headBloodyMat: makePs1Material(`${archetype}_head_gore`, createRetroPixelTexture(device, `${archetype}_head_gore`, S, headPainter, 11)),
-    jawMat: makePs1Material(`${archetype}_jaw`, createRetroPixelTexture(device, `${archetype}_jaw`, 32, jawPainter)),
-    jawBloodyMat: makePs1Material(`${archetype}_jaw_gore`, createRetroPixelTexture(device, `${archetype}_jaw_gore`, 32, jawPainter, 17)),
-    torsoMat: makePs1Material(`${archetype}_torso`, createRetroPixelTexture(device, `${archetype}_torso`, S, torsoPainter)),
-    torsoBloodyMat: makePs1Material(`${archetype}_torso_gore`, createRetroPixelTexture(device, `${archetype}_torso_gore`, S, torsoPainter, 23)),
-    abdomenMat: makePs1Material(`${archetype}_abd`, createRetroPixelTexture(device, `${archetype}_abd`, S, torsoPainter)),
-    abdomenBloodyMat: makePs1Material(`${archetype}_abd_gore`, createRetroPixelTexture(device, `${archetype}_abd_gore`, S, torsoPainter, 31)),
-    pelvisMat: makePs1Material(`${archetype}_pelvis`, createRetroPixelTexture(device, `${archetype}_pelvis`, S, beltPelvisPainter)),
-    pelvisBloodyMat: makePs1Material(`${archetype}_pelvis_gore`, createRetroPixelTexture(device, `${archetype}_pelvis_gore`, S, beltPelvisPainter, 41)),
-    upperArmMat: makePs1Material(`${archetype}_uarm`, createRetroPixelTexture(device, `${archetype}_uarm`, S, armPainter(false))),
-    upperArmBloodyMat: makePs1Material(`${archetype}_uarm_gore`, createRetroPixelTexture(device, `${archetype}_uarm_gore`, S, armPainter(false), 53)),
-    forearmMat: makePs1Material(`${archetype}_farm`, createRetroPixelTexture(device, `${archetype}_farm`, S, armPainter(true))),
-    forearmBloodyMat: makePs1Material(`${archetype}_farm_gore`, createRetroPixelTexture(device, `${archetype}_farm_gore`, S, armPainter(true), 59)),
-    handMat: makePs1Material(`${archetype}_hand`, createRetroPixelTexture(device, `${archetype}_hand`, 32, handGlovePainter)),
-    legsMat: makePs1Material(`${archetype}_legs`, createRetroPixelTexture(device, `${archetype}_legs`, S, legsPainter)),
-    legsBloodyMat: makePs1Material(`${archetype}_legs_gore`, createRetroPixelTexture(device, `${archetype}_legs_gore`, S, legsPainter, 67)),
-    kneePadMat: makePs1Material(`${archetype}_kneepad`, kneePadTex, 0.3),
-    bootMat: makePs1Material(`${archetype}_boot`, bootTex, 0.28),
-    headgearMat: makePs1Material(`${archetype}_headgear`, createRetroPixelTexture(device, `${archetype}_headgear`, 32, headgearPainter)),
-    visorMat: makePs1Material(`${archetype}_visor`, createRetroPixelTexture(device, `${archetype}_visor`, 32, visorPainter), 0.7),
-    pouchWebbingMat: makePs1Material(`${archetype}_pouch`, createRetroPixelTexture(device, `${archetype}_pouch`, 32, pouchPainter)),
-    weaponMetalMat: makePs1Material(`${archetype}_wmetal`, weaponMetalTex, 0.45),
-    weaponFurnitureMat: makePs1Material(`${archetype}_wfurn`, weaponWoodOrPolyTex, 0.25),
+    headMat: makeTacticalMaterial(`${archetype}_head`, createTacticalAlbedoTexture(device, `${archetype}_head`, S, headPainter), skinOpts),
+    headBloodyMat: makeTacticalMaterial(`${archetype}_head_gore`, createTacticalAlbedoTexture(device, `${archetype}_head_gore`, S, headPainter, 11), goreOpts),
+    jawMat: makeTacticalMaterial(`${archetype}_jaw`, createTacticalAlbedoTexture(device, `${archetype}_jaw`, S, jawPainter), skinOpts),
+    jawBloodyMat: makeTacticalMaterial(`${archetype}_jaw_gore`, createTacticalAlbedoTexture(device, `${archetype}_jaw_gore`, S, jawPainter, 17), goreOpts),
+    torsoMat: makeTacticalMaterial(`${archetype}_torso`, createTacticalAlbedoTexture(device, `${archetype}_torso`, S, torsoPainter), fabricOpts),
+    torsoBloodyMat: makeTacticalMaterial(`${archetype}_torso_gore`, createTacticalAlbedoTexture(device, `${archetype}_torso_gore`, S, torsoPainter, 23), goreOpts),
+    abdomenMat: makeTacticalMaterial(`${archetype}_abd`, createTacticalAlbedoTexture(device, `${archetype}_abd`, S, torsoPainter), fabricOpts),
+    abdomenBloodyMat: makeTacticalMaterial(`${archetype}_abd_gore`, createTacticalAlbedoTexture(device, `${archetype}_abd_gore`, S, torsoPainter, 31), goreOpts),
+    pelvisMat: makeTacticalMaterial(`${archetype}_pelvis`, createTacticalAlbedoTexture(device, `${archetype}_pelvis`, S, beltPelvisPainter), fabricOpts),
+    pelvisBloodyMat: makeTacticalMaterial(`${archetype}_pelvis_gore`, createTacticalAlbedoTexture(device, `${archetype}_pelvis_gore`, S, beltPelvisPainter, 41), goreOpts),
+    upperArmMat: makeTacticalMaterial(`${archetype}_uarm`, createTacticalAlbedoTexture(device, `${archetype}_uarm`, S, armPainter(false)), fabricOpts),
+    upperArmBloodyMat: makeTacticalMaterial(`${archetype}_uarm_gore`, createTacticalAlbedoTexture(device, `${archetype}_uarm_gore`, S, armPainter(false), 53), goreOpts),
+    forearmMat: makeTacticalMaterial(`${archetype}_farm`, createTacticalAlbedoTexture(device, `${archetype}_farm`, S, armPainter(true)), fabricOpts),
+    forearmBloodyMat: makeTacticalMaterial(`${archetype}_farm_gore`, createTacticalAlbedoTexture(device, `${archetype}_farm_gore`, S, armPainter(true), 59), goreOpts),
+    handMat: makeTacticalMaterial(`${archetype}_hand`, createTacticalAlbedoTexture(device, `${archetype}_hand`, S, handGlovePainter), { gloss: 0.34, normalMap: fabricNormal, bumpiness: 0.6 }),
+    legsMat: makeTacticalMaterial(`${archetype}_legs`, createTacticalAlbedoTexture(device, `${archetype}_legs`, S, legsPainter), fabricOpts),
+    legsBloodyMat: makeTacticalMaterial(`${archetype}_legs_gore`, createTacticalAlbedoTexture(device, `${archetype}_legs_gore`, S, legsPainter, 67), goreOpts),
+    kneePadMat: makeTacticalMaterial(`${archetype}_kneepad`, kneePadTex, { gloss: 0.46, normalMap: fabricNormal, bumpiness: 0.55 }),
+    bootMat: makeTacticalMaterial(`${archetype}_boot`, bootTex, { gloss: 0.42, normalMap: fabricNormal, bumpiness: 0.65 }),
+    headgearMat: makeTacticalMaterial(`${archetype}_headgear`, createTacticalAlbedoTexture(device, `${archetype}_headgear`, S, headgearPainter), { gloss: 0.34, normalMap: fabricNormal, bumpiness: 0.6 }),
+    visorMat: makeTacticalMaterial(`${archetype}_visor`, createTacticalAlbedoTexture(device, `${archetype}_visor`, S, visorPainter), { gloss: 0.90, useMetalness: true, metalness: 0.65 }),
+    pouchWebbingMat: makeTacticalMaterial(`${archetype}_pouch`, createTacticalAlbedoTexture(device, `${archetype}_pouch`, S, pouchPainter), fabricOpts),
+    weaponMetalMat: makeTacticalMaterial(`${archetype}_wmetal`, weaponMetalTex, { gloss: 0.68, useMetalness: true, metalness: 0.85, normalMap: metalNormal, bumpiness: 0.9 }),
+    weaponFurnitureMat: makeTacticalMaterial(`${archetype}_wfurn`, weaponWoodOrPolyTex, { gloss: 0.38, normalMap: fabricNormal, bumpiness: 0.5 }),
   };
 
-  cachedArchetypeSets.set(archetype, set);
+  deviceMap.set(archetype, set);
   return set;
 }
 
 /**
- * Applies crisp PS1/PS2 nearest-neighbor pixel-art concrete tile & hazard textures to the tactical depot environment.
+ * Applies high-resolution PBR albedo, tangent-space normal, and gloss/roughness maps
+ * to the firing-range concrete slab floor and reinforced jersey barriers.
  */
 export function applyRetroEnvironmentTextures(
   device: pc.GraphicsDevice,
   floorMat: pc.StandardMaterial,
   concreteMat: pc.StandardMaterial
 ): void {
-  const floorTex = createRetroPixelTexture(device, 'ps1_depot_floor', 64, (x, y, _u, _v) => {
-    const n = (hash2d(x, y, 901) - 0.5) * 14;
-    const seam = x === 0 || y === 0 || x === 32 || y === 32;
-    const bevel = x === 1 || y === 1 || x === 33 || y === 33;
-    if (seam) return [18, 22, 26];
-    if (bevel) return [46, 52, 60];
-    const stain = hash2d(x >> 3, y >> 3, 907) > 0.78 ? -8 : 0;
-    return [34 + n + stain, 39 + n + stain, 46 + n + stain];
-  });
+  let envMaps = cachedEnvMapsByDevice.get(device);
+  if (!envMaps) {
+    const S = 128;
 
+    const floorDiffuse = createTacticalAlbedoTexture(device, 'pbr_range_floor_albedo', S, (x, y, u, v) => {
+      const fine = (hash2d(x, y, 901) - 0.5) * 10;
+      const macro = (valueNoise2d(u * 6, v * 6, 6, 903) - 0.5) * 16;
+      const half = S >> 1;
+      const dxSeam = Math.min(x, S - x, Math.abs(x - half));
+      const dySeam = Math.min(y, S - y, Math.abs(y - half));
+      const seamDist = Math.min(dxSeam, dySeam);
+
+      if (seamDist === 0) {
+        return [16, 19, 24];
+      }
+      if (seamDist === 1) {
+        return [48, 54, 62];
+      }
+      const scuff = valueNoise2d(u * 12, v * 12, 12, 907) > 0.72 ? -8 : 0;
+      return [38 + fine + macro + scuff, 43 + fine + macro + scuff, 50 + fine + macro + scuff];
+    });
+
+    const { normalMap: floorNormal, glossMap: floorGloss } = createProceduralNormalAndGlossMaps(
+      device,
+      'pbr_range_floor',
+      S,
+      (x, y, u, v) => {
+        const half = S >> 1;
+        const dxSeam = Math.min(x, S - x, Math.abs(x - half));
+        const dySeam = Math.min(y, S - y, Math.abs(y - half));
+        const seamDist = Math.min(dxSeam, dySeam);
+        const seamGroove = seamDist === 0 ? -0.65 : seamDist === 1 ? -0.22 : 0.0;
+
+        const brush = Math.sin(v * Math.PI * 32) * 0.04;
+        const pitting = (valueNoise2d(u * 24, v * 24, 24, 911) - 0.5) * 0.24;
+        const polishPatch = valueNoise2d(u * 5, v * 5, 5, 913);
+        const gloss = seamDist <= 1 ? 0.16 : 0.34 + polishPatch * 0.36;
+        return { height: seamGroove + brush + pitting, gloss };
+      },
+      2.6
+    );
+
+    const wallDiffuse = createTacticalAlbedoTexture(device, 'pbr_concrete_barrier_albedo', S, (x, y, u, v) => {
+      const fine = (hash2d(x, y, 919) - 0.5) * 12;
+      const mottling = (valueNoise2d(u * 8, v * 8, 8, 923) - 0.5) * 20;
+
+      // Industrial safety hazard chevron band along barrier base
+      if (v < 0.16) {
+        const stripePhase = Math.floor((u * 8 + v * 6) * 2) & 1;
+        const wear = valueNoise2d(u * 20, v * 20, 20, 929) > 0.76 ? -28 : 0;
+        if (stripePhase === 0) {
+          return [198 + fine * 0.5 + wear, 152 + fine * 0.5 + wear, 28];
+        }
+        return [26 + fine * 0.4, 28 + fine * 0.4, 31 + fine * 0.4];
+      }
+
+      // Formwork tie-rod recesses & horizontal pour lines
+      const formLine = y % 32 === 0 ? -18 : y % 32 === 1 ? 8 : 0;
+      const tieX = Math.min(Math.abs(u - 0.25), Math.abs(u - 0.75));
+      const tieY = Math.min(Math.abs(v - 0.42), Math.abs(v - 0.76));
+      const tieDist = Math.hypot(tieX * 2.2, tieY);
+      const tieShade = tieDist < 0.032 ? -28 : 0;
+
+      const base = 92 + fine + mottling + formLine + tieShade;
+      return [base, base + 3, base + 7];
+    });
+
+    const { normalMap: wallNormal, glossMap: wallGloss } = createProceduralNormalAndGlossMaps(
+      device,
+      'pbr_concrete_barrier',
+      S,
+      (_x, y, u, v) => {
+        const pores = (valueNoise2d(u * 28, v * 28, 28, 937) - 0.5) * 0.34;
+        const coarse = (valueNoise2d(u * 8, v * 8, 8, 941) - 0.5) * 0.22;
+        const formSeam = y % 32 === 0 ? -0.55 : 0.0;
+        const tieX = Math.min(Math.abs(u - 0.25), Math.abs(u - 0.75));
+        const tieY = Math.min(Math.abs(v - 0.42), Math.abs(v - 0.76));
+        const tieDent = Math.hypot(tieX * 2.2, tieY) < 0.032 ? -0.6 : 0.0;
+        const gloss = v < 0.16 ? 0.44 : 0.22 + valueNoise2d(u * 10, v * 10, 10, 947) * 0.18;
+        return { height: pores + coarse + formSeam + tieDent, gloss };
+      },
+      2.8
+    );
+
+    envMaps = { floorDiffuse, floorNormal, floorGloss, wallDiffuse, wallNormal, wallGloss };
+    cachedEnvMapsByDevice.set(device, envMaps);
+  }
+
+  const floorTiling = new pc.Vec2(20, 80);
   floorMat.diffuse = new pc.Color(1, 1, 1);
-  floorMat.diffuseMap = floorTex;
-  floorMat.diffuseMapTiling = new pc.Vec2(20, 80);
+  floorMat.diffuseMap = envMaps.floorDiffuse;
+  floorMat.diffuseMapTiling = floorTiling;
+  floorMat.normalMap = envMaps.floorNormal;
+  floorMat.normalMapTiling = floorTiling.clone();
+  floorMat.bumpiness = 1.15;
+  floorMat.glossMap = envMaps.floorGloss;
+  floorMat.glossMapChannel = 'g';
+  floorMat.glossMapTiling = floorTiling.clone();
+  floorMat.gloss = 0.85;
+  floorMat.useMetalness = true;
+  floorMat.metalness = 0.06;
+  floorMat.enableGGXSpecular = true;
+  floorMat.fresnelModel = pc.FRESNEL_SCHLICK;
   floorMat.update();
 
-  const wallTex = createRetroPixelTexture(device, 'ps1_concrete_barrier', 64, (x, y, _u, v) => {
-    const n = (hash2d(x, y, 919) - 0.5) * 18;
-    // Classic 1999 industrial yellow-black hazard stripe along base!
-    if (v < 0.18) {
-      const diag = ((x + y) >> 3) & 1;
-      return diag === 0 ? [196 + n * 0.4, 152 + n * 0.4, 28] : [26, 28, 30];
-    }
-    const formLine = y % 16 === 0 ? -16 : 0;
-    return [84 + n + formLine, 88 + n + formLine, 92 + n + formLine];
-  });
-
+  const wallTiling = new pc.Vec2(3, 1);
   concreteMat.diffuse = new pc.Color(1, 1, 1);
-  concreteMat.diffuseMap = wallTex;
-  concreteMat.diffuseMapTiling = new pc.Vec2(3, 1);
+  concreteMat.diffuseMap = envMaps.wallDiffuse;
+  concreteMat.diffuseMapTiling = wallTiling;
+  concreteMat.normalMap = envMaps.wallNormal;
+  concreteMat.normalMapTiling = wallTiling.clone();
+  concreteMat.bumpiness = 1.25;
+  concreteMat.glossMap = envMaps.wallGloss;
+  concreteMat.glossMapChannel = 'g';
+  concreteMat.glossMapTiling = wallTiling.clone();
+  concreteMat.gloss = 0.78;
+  concreteMat.useMetalness = true;
+  concreteMat.metalness = 0.04;
+  concreteMat.enableGGXSpecular = true;
+  concreteMat.fresnelModel = pc.FRESNEL_SCHLICK;
   concreteMat.update();
 }
