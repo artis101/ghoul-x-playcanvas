@@ -1,5 +1,5 @@
 import * as pc from 'playcanvas';
-import { vec3 } from './core/ballistics/vec3.ts';
+import { scale, vec3 } from './core/ballistics/vec3.ts';
 import { getOrCreateMaterials, EngineMaterialPalette } from './engine/materials.ts';
 import { applyRetroEnvironmentTextures } from './engine/retroTextures.ts';
 import { GoreAndBallisticsFxManager } from './engine/goreFx.ts';
@@ -45,11 +45,24 @@ export class GhoulXApplication {
       mouse: new pc.Mouse(this.canvas),
       touch: new pc.TouchDevice(this.canvas),
       keyboard: new pc.Keyboard(window),
+      graphicsDeviceOptions: {
+        antialias: true,
+        powerPreference: 'high-performance',
+        alpha: false,
+      },
     });
+    this.app.graphicsDevice.maxPixelRatio = Math.min(window.devicePixelRatio || 1, 2);
 
     this.app.setCanvasFillMode(pc.FILLMODE_FILL_WINDOW);
     this.app.setCanvasResolution(pc.RESOLUTION_AUTO);
-    window.addEventListener('resize', () => this.app.resizeCanvas());
+    this.app.resizeCanvas();
+    window.addEventListener('resize', () => {
+      this.app.graphicsDevice.maxPixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      this.app.resizeCanvas();
+    });
+
+    this.app.scene.exposure = 1.22;
+    this.app.scene.ambientLight = new pc.Color(0.14, 0.17, 0.22);
 
     this.rapierWorld = new RapierPhysicsWorld();
     this.materials = getOrCreateMaterials();
@@ -106,6 +119,16 @@ export class GhoulXApplication {
         this.destructionManager.isLineOfSightBlocked(from, to),
       interceptEnemyShotCover: (origin, dir, maxDistM) =>
         this.destructionManager.interceptEnemyShot(origin, dir, maxDistM),
+      onEnemyFireTracer: (ev) => {
+        if (ev.blockedByCover) {
+          this.mayhemDirector.spawnSurfaceImpactFx(
+            ev.impactPointWorld,
+            scale(ev.shotDirectionWorld, -1),
+            'CONCRETE_INTACT',
+            420
+          );
+        }
+      },
       onPlayerDamaged: () => {
         this.hudController.triggerPlayerDamageFlash();
         this.fpsController.applyCameraShake(1.15, 0.16);
@@ -222,9 +245,11 @@ export class GhoulXApplication {
     const aim = this.fpsController.getAimDirection();
     const eyeVec = vec3(eye.x, eye.y, eye.z);
     const aimVec = vec3(aim.x, aim.y, aim.z);
+    const muzzleWorld = this.arsenalManager.muzzleFlashEntity.getPosition();
+    const muzzleVec = vec3(muzzleWorld.x, muzzleWorld.y, muzzleWorld.z);
 
     this.combatAudio.playWeaponFire(weapon.id, ammo.type, this.fpsController.isAimingDownSights);
-    this.mayhemDirector.onPlayerWeaponFired(eyeVec, aimVec, weapon, ammo);
+    this.mayhemDirector.onPlayerWeaponFired(eyeVec, aimVec, weapon, ammo, muzzleVec);
     this.tacticalAi.notifyGunshotOrExplosion(eyeVec, 40.0, 0.24);
     this.combatDirector.fireWeapon(weapon, ammo, eyeVec, aimVec);
   }

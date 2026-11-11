@@ -39,6 +39,26 @@ export class FpsController {
   private readonly callbacks: FpsInputCallbacks;
   private readonly scratchPrevPos = new pc.Vec3();
 
+  // Smooth ADS interpolation & scope transition state
+  private adsBlend = 0;
+  private currentFov = 68;
+  private sniperScopeVisible = false;
+
+  // Weighty multi-axis recoil & rifling torsion state
+  private recoilYaw = 0;
+  private recoilCameraRoll = 0;
+  private vmRecoilPitchDeg = 0;
+  private vmRecoilRollDeg = 0;
+  private vmRecoilOffsetY = 0;
+  private recoilShotSign = 1;
+
+  // Physiological breathing & mouse-look inertia micro-sway
+  private breathClockS = 0;
+  private moveBobBlend = 0;
+  private swayYawOffset = 0;
+  private swayPitchOffset = 0;
+
+  // Blast camera shake state
   private shakeTimerS = 0;
   private shakeDurationS = 0.001;
   private shakeIntensityDeg = 0;
@@ -62,8 +82,10 @@ export class FpsController {
     this.cameraEntity.addComponent('camera', {
       clearColor: new pc.Color(0.05, 0.07, 0.10),
       fov: 68,
-      nearClip: 0.08,
+      nearClip: 0.05,
       farClip: 400,
+      toneMapping: pc.TONEMAP_ACES,
+      gammaCorrection: pc.GAMMA_SRGB,
     });
     this.cameraEntity.setPosition(this.playerPos.x, this.playerPos.y, this.playerPos.z);
     app.root.addChild(this.cameraEntity);
@@ -83,9 +105,23 @@ export class FpsController {
       if (!this.isPointerLocked) return;
 
       const sensitivity = this.isAimingDownSights ? 0.075 : 0.15;
-      this.cameraYaw -= e.movementX * sensitivity;
-      this.cameraPitch -= e.movementY * sensitivity;
+      const deltaYaw = e.movementX * sensitivity;
+      const deltaPitch = e.movementY * sensitivity;
+
+      this.cameraYaw -= deltaYaw;
+      this.cameraPitch -= deltaPitch;
       this.cameraPitch = Math.max(-85, Math.min(85, this.cameraPitch));
+
+      // Impart subtle rotational inertia lag to the first-person weapon rig
+      const swayScale = this.isAimingDownSights ? 0.32 : 1.0;
+      this.swayYawOffset = Math.max(
+        -2.6,
+        Math.min(2.6, this.swayYawOffset - deltaYaw * 0.28 * swayScale)
+      );
+      this.swayPitchOffset = Math.max(
+        -2.2,
+        Math.min(2.2, this.swayPitchOffset - deltaPitch * 0.24 * swayScale)
+      );
     });
 
     this.canvas.addEventListener('mousedown', (e) => {
@@ -179,8 +215,27 @@ export class FpsController {
   }
 
   public applyRecoilKick(recoilKickDeg: number): void {
-    this.recoilPitch = Math.min(8.0, this.recoilPitch + recoilKickDeg * 0.72);
-    this.recoilOffsetZ = 0.075;
+    const adsBrace = this.isAimingDownSights ? 0.68 : 1.0;
+    this.recoilShotSign = -this.recoilShotSign;
+
+    this.recoilPitch = Math.min(8.0, this.recoilPitch + recoilKickDeg * 0.72 * adsBrace);
+    this.recoilYaw = Math.max(
+      -2.2,
+      Math.min(2.2, this.recoilYaw + this.recoilShotSign * recoilKickDeg * 0.11 * adsBrace)
+    );
+    this.recoilCameraRoll = Math.max(
+      -2.4,
+      Math.min(2.4, this.recoilCameraRoll + this.recoilShotSign * recoilKickDeg * 0.16 * adsBrace)
+    );
+
+    const kickNorm = Math.min(1.6, Math.max(0.45, recoilKickDeg / 3.2));
+    this.recoilOffsetZ = Math.min(0.105, Math.max(this.recoilOffsetZ, 0.058 * kickNorm * adsBrace));
+    this.vmRecoilPitchDeg = Math.min(11.5, this.vmRecoilPitchDeg + recoilKickDeg * 1.18 * adsBrace);
+    this.vmRecoilRollDeg = Math.max(
+      -6.5,
+      Math.min(6.5, this.vmRecoilRollDeg + this.recoilShotSign * recoilKickDeg * 0.55 * adsBrace)
+    );
+    this.vmRecoilOffsetY = Math.min(0.022, this.vmRecoilOffsetY + 0.0065 * kickNorm * adsBrace);
   }
 
   public applyCameraShake(intensityDeg: number, durationS = 0.36): void {
@@ -192,29 +247,11 @@ export class FpsController {
 
   public setAimDownSights(active: boolean, weapon: WeaponSpec): void {
     this.isAimingDownSights = active;
-    const isSniper = weapon.role === 'SNIPER';
-    const vm = this.cameraEntity.findByName('WeaponViewmodel') as pc.Entity | null;
-
-    if (active) {
-      const zoom = weapon.scopeZoomLevels[0] || 1.6;
-      if (this.cameraEntity.camera) {
-        this.cameraEntity.camera.fov = 68 / Math.max(1.25, zoom);
-      }
-      if (vm) {
-        vm.setLocalPosition(0, -0.145, -0.32);
-      }
-      if (isSniper) {
-        this.hudController.setScopeOverlay(true, zoom, 42.0, 0);
-      } else {
-        this.hudController.setScopeOverlay(false);
-      }
-    } else {
-      if (this.cameraEntity.camera) {
-        this.cameraEntity.camera.fov = 68;
-      }
-      if (vm) {
-        vm.setLocalPosition(0.24, -0.22, -0.48);
-      }
+    if (!active && this.sniperScopeVisible) {
+      this.sniperScopeVisible = false;
+      this.hudController.setScopeOverlay(false);
+    } else if (active && weapon.role !== 'SNIPER') {
+      this.sniperScopeVisible = false;
       this.hudController.setScopeOverlay(false);
     }
   }
@@ -230,13 +267,49 @@ export class FpsController {
       this.callbacks.onTriggerPull();
     }
 
-    // Recoil Recovery
-    if (this.recoilPitch > 0) {
-      this.recoilPitch = Math.max(0, this.recoilPitch - dt * 24);
+    // Smooth ADS Blend & Dynamic FOV Transition
+    const targetAds = this.isAimingDownSights ? 1.0 : 0.0;
+    const adsLerp = 1 - Math.exp(-15.5 * dt);
+    this.adsBlend += (targetAds - this.adsBlend) * adsLerp;
+    if (Math.abs(targetAds - this.adsBlend) < 0.002) {
+      this.adsBlend = targetAds;
     }
-    if (this.recoilOffsetZ > 0) {
-      this.recoilOffsetZ = Math.max(0, this.recoilOffsetZ - dt * 0.45);
+
+    const zoom = currentWeapon.scopeZoomLevels[0] || 1.6;
+    const targetFov = this.isAimingDownSights ? 68 / Math.max(1.25, zoom) : 68;
+    this.currentFov += (targetFov - this.currentFov) * (1 - Math.exp(-16.5 * dt));
+    if (this.cameraEntity.camera) {
+      this.cameraEntity.camera.fov = this.currentFov;
     }
+
+    const isSniper = currentWeapon.role === 'SNIPER';
+    const shouldShowScope = this.isAimingDownSights && isSniper && this.adsBlend >= 0.74;
+    if (shouldShowScope !== this.sniperScopeVisible) {
+      this.sniperScopeVisible = shouldShowScope;
+      if (shouldShowScope) {
+        this.hudController.setScopeOverlay(true, zoom, 42.0, 0);
+      } else {
+        this.hudController.setScopeOverlay(false);
+      }
+    }
+
+    // Weighty Dual-Stage Exponential Recoil & Sway Recovery
+    const camDecay = Math.exp(-15.0 * dt);
+    this.recoilPitch *= camDecay;
+    if (this.recoilPitch < 0.002) this.recoilPitch = 0;
+    this.recoilYaw *= camDecay;
+    this.recoilCameraRoll *= Math.exp(-18.0 * dt);
+
+    const vmDecay = Math.exp(-13.5 * dt);
+    this.recoilOffsetZ *= vmDecay;
+    if (this.recoilOffsetZ < 0.0004) this.recoilOffsetZ = 0;
+    this.vmRecoilPitchDeg *= Math.exp(-14.5 * dt);
+    this.vmRecoilRollDeg *= Math.exp(-16.0 * dt);
+    this.vmRecoilOffsetY *= Math.exp(-15.0 * dt);
+
+    const swayDecay = Math.exp(-13.0 * dt);
+    this.swayYawOffset *= swayDecay;
+    this.swayPitchOffset *= swayDecay;
 
     // Blast Camera Shake Decay
     let shakePitchOffset = 0;
@@ -257,7 +330,7 @@ export class FpsController {
 
     // First-Person WASD Movement & Depot Bounds Clamping
     this.scratchPrevPos.copy(this.playerPos);
-    const moveSpeed = 5.0 * dt;
+    const moveSpeed = (this.isAimingDownSights ? 3.4 : 5.0) * dt;
     const yawRad = (this.cameraYaw * Math.PI) / 180;
     const fwdX = -Math.sin(yawRad);
     const fwdZ = -Math.cos(yawRad);
@@ -265,6 +338,7 @@ export class FpsController {
     const rightZ = -Math.sin(yawRad);
 
     let moving = false;
+    let strafeSign = 0;
     if (this.keysPressed['KeyW']) {
       this.playerPos.x += fwdX * moveSpeed;
       this.playerPos.z += fwdZ * moveSpeed;
@@ -279,11 +353,13 @@ export class FpsController {
       this.playerPos.x -= rightX * moveSpeed;
       this.playerPos.z -= rightZ * moveSpeed;
       moving = true;
+      strafeSign -= 1;
     }
     if (this.keysPressed['KeyD']) {
       this.playerPos.x += rightX * moveSpeed;
       this.playerPos.z += rightZ * moveSpeed;
       moving = true;
+      strafeSign += 1;
     }
 
     if (this.resolveHorizontalMovement) {
@@ -294,35 +370,71 @@ export class FpsController {
     this.playerPos.x = Math.max(-8.2, Math.min(8.2, this.playerPos.x));
     this.playerPos.z = Math.max(-52.0, Math.min(6.0, this.playerPos.z));
 
+    this.breathClockS += dt;
     if (moving) {
-      this.moveBobPhase += dt * 10.5;
+      this.moveBobPhase += dt * (this.isAimingDownSights ? 8.2 : 10.5);
     }
+    const targetBobBlend = moving ? 1.0 : 0.0;
+    this.moveBobBlend += (targetBobBlend - this.moveBobBlend) * (1 - Math.exp(-11.0 * dt));
 
-    this.cameraEntity.setPosition(this.playerPos.x, this.playerPos.y, this.playerPos.z);
+    // Subtle headstride vertical micro-bob on eye camera
+    const camHeadBobY =
+      Math.sin(this.moveBobPhase * 2.0) * 0.008 * this.moveBobBlend * (1 - this.adsBlend * 0.65);
+
+    this.cameraEntity.setPosition(
+      this.playerPos.x,
+      this.playerPos.y + camHeadBobY,
+      this.playerPos.z
+    );
     this.cameraEntity.setEulerAngles(
       this.cameraPitch + this.recoilPitch + shakePitchOffset,
-      this.cameraYaw + shakeYawOffset,
-      shakeRollOffset
+      this.cameraYaw + this.recoilYaw + shakeYawOffset,
+      this.recoilCameraRoll + shakeRollOffset
     );
 
-    const baseVmX = this.isAimingDownSights ? 0 : 0.24;
-    const baseVmY = this.isAimingDownSights ? -0.145 : -0.22;
-    const baseVmZ = this.isAimingDownSights ? -0.32 : -0.48;
-    const reloadDipY = reloadTimerS > 0 ? -Math.sin((reloadTimerS / 0.65) * Math.PI) * 0.14 : 0;
-    const bobX = moving && !this.isAimingDownSights ? Math.cos(this.moveBobPhase * 0.5) * 0.008 : 0;
-    const bobY =
-      moving && !this.isAimingDownSights ? Math.abs(Math.sin(this.moveBobPhase)) * -0.009 : 0;
+    // Smooth hip-to-ADS cheek-weld pose + shoulder transition arc
+    const baseVmX = 0.24 * (1 - this.adsBlend);
+    const transitionArcDipY = Math.sin(this.adsBlend * Math.PI) * -0.014;
+    const baseVmY = -0.22 + (-0.145 - -0.22) * this.adsBlend + transitionArcDipY;
+    const baseVmZ = -0.48 + (-0.32 - -0.48) * this.adsBlend;
+
+    // Physiological Lissajous respiratory breathing micro-sway
+    const breathAtten = 1 - this.adsBlend * 0.76;
+    const breathX = Math.cos(this.breathClockS * 0.92) * 0.0022 * breathAtten;
+    const breathY = Math.sin(this.breathClockS * 1.84) * 0.0028 * breathAtten;
+    const breathPitchDeg = Math.sin(this.breathClockS * 1.84 - 0.4) * 0.22 * breathAtten;
+
+    // Figure-8 stride weapon bob + strafe tilt
+    const strideAtten = this.moveBobBlend * (1 - this.adsBlend * 0.78);
+    const bobX = Math.cos(this.moveBobPhase) * 0.0085 * strideAtten;
+    const bobY = Math.abs(Math.sin(this.moveBobPhase)) * -0.0095 * strideAtten;
+    const bobRollDeg = Math.sin(this.moveBobPhase) * 0.85 * strideAtten - strafeSign * 1.15 * strideAtten;
+
+    // Reload dip & cant
+    const reloadPhase = reloadTimerS > 0 ? Math.sin((reloadTimerS / 0.65) * Math.PI) : 0;
+    const reloadDipY = -reloadPhase * 0.135;
+    const reloadRollDeg = reloadPhase * 14.0;
+    const reloadPitchDeg = -reloadPhase * 9.5;
+
+    // Mouse-look inertia translation & subtle tactical hip cant (-1.75 deg -> 0 deg in ADS)
+    const swayTransX = this.swayYawOffset * 0.0045;
+    const swayTransY = -this.swayPitchOffset * 0.004;
+    const hipCantRollDeg = -1.75 * (1 - this.adsBlend);
 
     weaponViewmodelEntity.setLocalPosition(
-      baseVmX + bobX,
-      baseVmY + bobY + reloadDipY,
+      baseVmX + breathX + bobX + swayTransX,
+      baseVmY + breathY + bobY + swayTransY + reloadDipY - this.vmRecoilOffsetY,
       baseVmZ + this.recoilOffsetZ
     );
-    weaponViewmodelEntity.enabled = !(this.isAimingDownSights && currentWeapon.role === 'SNIPER');
+    weaponViewmodelEntity.setLocalEulerAngles(
+      this.vmRecoilPitchDeg + breathPitchDeg + this.swayPitchOffset * 0.65 + reloadPitchDeg,
+      this.swayYawOffset * 0.85,
+      hipCantRollDeg + bobRollDeg + this.vmRecoilRollDeg - this.swayYawOffset * 0.55 + reloadRollDeg
+    );
+    weaponViewmodelEntity.enabled = !this.sniperScopeVisible;
 
     // Dynamic Crosshair Bloom
-    const bloom = 1.0 + this.recoilPitch * 0.08 + (moving ? 0.16 : 0);
-    const hideCrosshair = this.isAimingDownSights && currentWeapon.role === 'SNIPER';
-    this.hudController.setCrosshairBloom(bloom, hideCrosshair);
+    const bloom = 1.0 + this.recoilPitch * 0.08 + this.moveBobBlend * 0.16 * (1 - this.adsBlend * 0.5);
+    this.hudController.setCrosshairBloom(bloom, this.sniperScopeVisible);
   }
 }
