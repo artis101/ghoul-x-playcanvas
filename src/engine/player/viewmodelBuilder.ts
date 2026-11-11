@@ -4,6 +4,7 @@ import type { GlbModelRegistry, WeaponGlbInstance } from '../assets/glbLoader.ts
 import { toWeaponAssetId, resolveGraphicsDeviceFromEntity } from './arsenalTypes.ts';
 import { createMuzzleFlashStarEntity } from './muzzleFlashStar.ts';
 import { upgradeViewmodelMaterials } from './viewmodelMaterials.ts';
+import { mountViewmodelHands } from './viewmodelHands.ts';
 
 export interface BuiltViewmodel {
   activeGlb: WeaponGlbInstance | null;
@@ -28,18 +29,22 @@ export function buildWeaponViewmodel(
   const assetId = toWeaponAssetId(weapon.id);
 
   if (assetId && glbRegistry?.isLoaded(assetId)) {
+    let glbInst: WeaponGlbInstance | null = null;
     try {
-      const glbInst = glbRegistry.instantiateWeapon(assetId, {
+      glbInst = glbRegistry.instantiateWeapon(assetId, {
         castShadows: false,
         receiveShadows: true,
       });
       parentEntity.addChild(glbInst.rootEntity);
       upgradeViewmodelMaterials(glbInst.rootEntity, weapon.id, device, activeMaterials);
+      if (device) mountViewmodelHands(glbInst, device, activeMaterials);
       const { flashRoot, baseScale } = createMuzzleFlashStarEntity(device, weapon.role);
       glbInst.muzzleNode.addChild(flashRoot);
       return { activeGlb: glbInst, flashEntity: flashRoot, baseScale };
     } catch {
-      // Fall through to fallback
+      glbInst?.destroy();
+      for (const material of activeMaterials) material.destroy();
+      activeMaterials.length = 0;
     }
   }
 

@@ -25,10 +25,12 @@ export function handleTriggerPull(app: IGhoulXApp): void {
 }
 
 export function handleThrowGrenade(app: IGhoulXApp): void {
-  app.fpsController.syncCameraTransform();
-  const eye = app.fpsController.getEyePosition();
-  const aim = app.fpsController.getAimDirection();
-  app.combatDirector.throwFragGrenade(vec3(eye.x, eye.y, eye.z), vec3(aim.x, aim.y, aim.z));
+  app.arsenalManager.showGrenadeThrow(() => {
+    app.fpsController.syncCameraTransform();
+    const eye = app.fpsController.getEyePosition();
+    const aim = app.fpsController.getAimDirection();
+    app.combatDirector.throwFragGrenade(vec3(eye.x, eye.y, eye.z), vec3(aim.x, aim.y, aim.z));
+  });
 }
 
 export function handleToggleBulletTime(app: IGhoulXApp): void {

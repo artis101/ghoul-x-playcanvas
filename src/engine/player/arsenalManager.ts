@@ -8,6 +8,9 @@ import { type WeaponAmmoState, resolveGraphicsDeviceFromEntity } from './arsenal
 import { BarrelSmokeSystem } from './muzzleSmokeFx.ts';
 import { AmmoInventory } from './ammoInventory.ts';
 import { buildWeaponViewmodel } from './viewmodelBuilder.ts';
+import { mountViewmodelHands } from './viewmodelHands.ts';
+
+const GRENADE_GESTURE_SECONDS = 0.24;
 
 export class ArsenalManager {
   public readonly weaponViewmodelEntity: pc.Entity;
@@ -32,6 +35,12 @@ export class ArsenalManager {
   private muzzleFlashBaseScale = 1.0;
   private fireAnimReturnTimerS = 0;
   private shotVisualCounter = 0;
+  private grenadeGesture: {
+    model: WeaponGlbInstance;
+    materials: pc.StandardMaterial[];
+    elapsed: number;
+    release: () => void;
+  } | null = null;
 
   constructor(
     cameraEntity: pc.Entity,
@@ -65,6 +74,7 @@ export class ArsenalManager {
       this.activeViewmodelMaterials
     );
     this.activeWeaponGlb = res.activeGlb;
+    if (this.grenadeGesture && this.activeWeaponGlb) this.activeWeaponGlb.rootEntity.enabled = false;
     this.muzzleFlashBaseScale = res.baseScale;
     return res.flashEntity;
   }
@@ -104,7 +114,7 @@ export class ArsenalManager {
   }
 
   public tryConsumeRoundForShot(): boolean {
-    if (this.fireCooldownTimerS > 0 || this.reloadTimerS > 0) return false;
+    if (this.grenadeGesture || this.fireCooldownTimerS > 0 || this.reloadTimerS > 0) return false;
     if (!this.inventory.consumeShot(this.currentWeapon.id)) {
       this.startReload(false);
       return false;
@@ -134,6 +144,49 @@ export class ArsenalManager {
     return true;
   }
 
+  public showGrenadeThrow(release: () => void): void {
+    if (this.grenadeGesture) return;
+    const device = resolveGraphicsDeviceFromEntity(this.cameraEntity);
+    if (!device || !this.glbRegistry?.isLoaded('frag_grenade')) {
+      release();
+      return;
+    }
+
+    const materials: pc.StandardMaterial[] = [];
+    let model: WeaponGlbInstance | null = null;
+    try {
+      model = this.glbRegistry.instantiateWeapon('frag_grenade');
+      mountViewmodelHands(model, device, materials);
+      model.rootEntity.setLocalPosition(0.24, -0.35, -0.47);
+      this.cameraEntity.addChild(model.rootEntity);
+    } catch {
+      model?.destroy();
+      for (const material of materials) material.destroy();
+      release();
+      return;
+    }
+
+    if (this.activeWeaponGlb) this.activeWeaponGlb.rootEntity.enabled = false;
+    this.grenadeGesture = { model, materials, elapsed: 0, release };
+  }
+
+  private updateGrenadeThrow(dt: number): void {
+    const gesture = this.grenadeGesture;
+    if (!gesture) return;
+    gesture.elapsed += dt;
+    const t = Math.min(1, gesture.elapsed / GRENADE_GESTURE_SECONDS);
+    const lift = Math.sin(t * Math.PI / 2);
+    gesture.model.rootEntity.setLocalPosition(0.24 - 0.11 * lift, -0.35 + 0.25 * lift, -0.47 - 0.18 * t);
+    gesture.model.rootEntity.setLocalEulerAngles(-15 + 32 * t, 0, 18 * (1 - t));
+    if (t < 1) return;
+
+    this.grenadeGesture = null;
+    gesture.model.destroy();
+    for (const material of gesture.materials) material.destroy();
+    if (this.activeWeaponGlb) this.activeWeaponGlb.rootEntity.enabled = true;
+    gesture.release();
+  }
+
   public startReload(allTargetsDead: boolean, onRespawnAll?: () => void): void {
     if (this.reloadTimerS > 0) return;
     if (!this.inventory.prepareReload(this.currentWeapon.id, allTargetsDead, onRespawnAll)) return;
@@ -151,6 +204,7 @@ export class ArsenalManager {
   }
 
   public update(dt: number): void {
+    this.updateGrenadeThrow(dt);
     if (this.fireCooldownTimerS > 0) this.fireCooldownTimerS -= dt;
     if (this.muzzleFlashTimerS > 0) {
       this.muzzleFlashTimerS = Math.max(0, this.muzzleFlashTimerS - dt);
