@@ -2,12 +2,14 @@ import * as pc from 'playcanvas';
 import {
   GhoulZoneId,
   TargetHealthState,
+  Vec3Like,
 } from '../contracts/ballistics.ts';
 import {
   ALL_GHOUL_ZONES,
+  createTargetHealthState,
   updateStandingCombatPose,
 } from '../core/ghoul/anatomy.ts';
-import { add, cross, length, normalize, scale } from '../core/ballistics/vec3.ts';
+import { add, cross, length, normalize, scale, sub, vec3 } from '../core/ballistics/vec3.ts';
 import { EngineMaterialPalette } from './materials.ts';
 import {
   ArchetypeRetroMaterialSet,
@@ -22,7 +24,9 @@ import {
 import {
   CombatantAnimationClipName,
   CombatantGlbInstance,
+  getArchetypeWeaponAssetId,
   GlbModelRegistry,
+  WeaponGlbInstance,
 } from './assets/glbLoader.ts';
 import { GoreAndBallisticsFxManager } from './goreFx.ts';
 
@@ -38,6 +42,7 @@ export interface ZoneMeshBundle {
   fleshMeshInstances: pc.MeshInstance[];
   intactMaterials: pc.StandardMaterial[];
   laceratedMaterials: pc.StandardMaterial[];
+  woundDecalNodes: pc.Entity[];
   boneNodes: pc.Entity[];
   organNodes: pc.Entity[];
   proximalStumpNode?: pc.Entity;
@@ -47,17 +52,101 @@ export interface ZoneMeshBundle {
 }
 
 /**
- * Class GhoulMannequinEntity renders an authentic 1998–2001 PS1/PS2 / Soldier of Fortune (2000)
- * sculpted low-poly combatant driven by a 22-zone PBD articulated ragdoll skeleton.
- *
- * Features:
- * - Faceted low-poly anatomy with 64x64 nearest-neighbor Bayer-dithered pixel-art textures
- * - 4 distinct enemy archetypes (NYC Skinhead Punk, Balkan Militia Gunner, Kosovo Heavy Enforcer, Spetsnaz Sniper)
- * - Shootable detachable headgear (helmets, berets, shades, watch-caps) & droppable 3D weapons (MP5, AK-47, 12G, SVD)
- * - Soldier of Fortune GHOUL gore: localized lacerated bloody textures, 3D entry/exit wound decals,
- *   parent-socket + detached-limb bloody stumps with protruding white cortical bone, CRANIAL_POP,
- *   and non-detaching EVISCERATED open-stomach wounds
- * - Full 3D quaternion alignment from orthonormal bone basis vectors (zero joint gaps or gimbal lock)
+ * Parent-before-child topological ordering of all 22 GHOUL zones so setting world-space
+ * transforms on `Bone_${zone}` nodes never gets overwritten by an ancestor bone update.
+ */
+const TOPOLOGICAL_GHOUL_ZONES: readonly GhoulZoneId[] = [
+  'PELVIS_GROIN',
+  'TORSO_LOWER_ABDOMEN',
+  'TORSO_UPPER_THORAX',
+  'NECK_CERVICAL',
+  'HEAD_CRANIUM',
+  'HEAD_FACE_JAW',
+  'SHOULDER_LEFT',
+  'UPPER_ARM_LEFT',
+  'FOREARM_LEFT',
+  'HAND_LEFT',
+  'SHOULDER_RIGHT',
+  'UPPER_ARM_RIGHT',
+  'FOREARM_RIGHT',
+  'HAND_RIGHT',
+  'THIGH_LEFT',
+  'KNEE_LEFT',
+  'SHIN_LEFT',
+  'FOOT_LEFT',
+  'THIGH_RIGHT',
+  'KNEE_RIGHT',
+  'SHIN_RIGHT',
+  'FOOT_RIGHT',
+] as const;
+
+interface RestRagdollBoneFrame {
+  restPos: pc.Vec3;
+  restRot: pc.Quat;
+  restRotInv: pc.Quat;
+}
+
+function basisToQuat(
+  right: Vec3Like,
+  up: Vec3Like,
+  forward: Vec3Like,
+  tmpMat: pc.Mat4,
+  outQuat: pc.Quat
+): pc.Quat {
+  const d = tmpMat.data;
+  d[0] = right.x;
+  d[1] = right.y;
+  d[2] = right.z;
+  d[3] = 0;
+
+  d[4] = up.x;
+  d[5] = up.y;
+  d[6] = up.z;
+  d[7] = 0;
+
+  d[8] = forward.x;
+  d[9] = forward.y;
+  d[10] = forward.z;
+  d[11] = 0;
+
+  d[12] = 0;
+  d[13] = 0;
+  d[14] = 0;
+  d[15] = 1;
+
+  outQuat.setFromMat4(tmpMat);
+  return outQuat;
+}
+
+const REST_RAGDOLL_FRAMES: ReadonlyMap<GhoulZoneId, RestRagdollBoneFrame> = (() => {
+  const refState = createTargetHealthState('__glb_rest_ref__', 'RestRef', vec3(0, 0, 0), 0);
+  const mat = new pc.Mat4();
+  const map = new Map<GhoulZoneId, RestRagdollBoneFrame>();
+  for (const zone of ALL_GHOUL_ZONES) {
+    const b = refState.ragdollBones[zone];
+    const restRot = basisToQuat(b.basisRight, b.basisUp, b.basisForward, mat, new pc.Quat());
+    const restRotInv = restRot.clone().invert();
+    map.set(zone, {
+      restPos: new pc.Vec3(b.position.x, b.position.y, b.position.z),
+      restRot,
+      restRotInv,
+    });
+  }
+  return map;
+})();
+
+interface GlbZoneMaterialPair {
+  meshInstance: pc.MeshInstance;
+  intactMat: pc.Material;
+  laceratedMat: pc.Material;
+}
+
+/**
+ * Class GhoulMannequinEntity renders a sculpted 22-zone tactical combatant driven by
+ * baked Blender 5.2 animations (right-handed ~87.5% & southpaw ~12.5%) and a 22-zone PBD
+ * articulated ragdoll & GHOUL dismemberment skeleton — keeping the sculpted Blender GLB
+ * active across ALL states (healthy, wounded, eviscerated, dismembered, and KIA/ragdoll)
+ * with zero fallback swaps to legacy meshes once loaded.
  */
 export class GhoulMannequinEntity {
   public readonly rootEntity: pc.Entity;
@@ -70,6 +159,8 @@ export class GhoulMannequinEntity {
   private zoneBundles: Map<GhoulZoneId, ZoneMeshBundle> = new Map();
   private headgearNode: pc.Entity | null = null;
   private heldWeaponNode: pc.Entity | null = null;
+  private heldWeaponGlb: WeaponGlbInstance | null = null;
+  private glbExpected = false;
   private wasHeadgearIntact = true;
   private wasWeaponHeld = true;
   private syncedSurfaceWoundCount = 0;
@@ -79,11 +170,19 @@ export class GhoulMannequinEntity {
   private brainEntity: pc.Entity | null = null;
 
   public combatantGlb: CombatantGlbInstance | null = null;
-  private readonly glbOriginalMaterials = new Map<pc.MeshInstance, pc.Material>();
-  private activeGlbClip: CombatantAnimationClipName | null = null;
+  private readonly glbZoneMaterialPairs = new Map<GhoulZoneId, GlbZoneMaterialPair[]>();
+  private readonly glbGearOriginalMaterials = new Map<pc.MeshInstance, pc.Material>();
+  private readonly clonedGlbMaterials: pc.StandardMaterial[] = [];
+  private activeGlbClipKey: string | null = null;
 
   private readonly tmpMat4 = new pc.Mat4();
   private readonly tmpQuat = new pc.Quat();
+  private readonly tmpRagQuat = new pc.Quat();
+  private readonly tmpDeltaQuat = new pc.Quat();
+  private readonly tmpWorldQuat = new pc.Quat();
+  private readonly tmpBindInvQuat = new pc.Quat();
+  private readonly tmpOffsetVec = new pc.Vec3();
+  private readonly tmpRotOffsetVec = new pc.Vec3();
 
   constructor(
     app: pc.AppBase,
@@ -96,6 +195,7 @@ export class GhoulMannequinEntity {
     this.healthState = healthState;
     this.materials = materials;
     this.fxManager = fxManager;
+    this.glbExpected = Boolean(glbRegistry);
     this.retroMats = getArchetypeRetroMaterials(app.graphicsDevice, healthState.archetype);
 
     // Keep rootEntity at world origin (0,0,0) identity so every zoneNode uses exact world-space coordinates
@@ -104,17 +204,144 @@ export class GhoulMannequinEntity {
     this.rootEntity.setEulerAngles(0, 0, 0);
 
     this.buildCombatant();
-    if (glbRegistry && glbRegistry.isLoaded('ghoul_combatant')) {
-      this.attachCombatantGlb(glbRegistry);
+    if (glbRegistry) {
+      this.attachWeaponGlbIfReady(glbRegistry);
+      if (glbRegistry.isLoaded('ghoul_combatant')) {
+        this.attachCombatantGlb(glbRegistry);
+      }
     }
     this.syncFromHealthState(0, 0);
   }
 
+  private attachWeaponGlbIfReady(glbRegistry: GlbModelRegistry): void {
+    if (this.heldWeaponGlb) return;
+    const weaponAssetId = getArchetypeWeaponAssetId(this.healthState.archetype);
+    if (!glbRegistry.isLoaded(weaponAssetId)) return;
+
+    try {
+      const wInst = glbRegistry.instantiateWeapon(weaponAssetId, {
+        castShadows: true,
+        receiveShadows: true,
+      });
+      if (wInst.animComponent) {
+        wInst.animComponent.playing = false;
+      }
+      if (this.heldWeaponNode) {
+        this.heldWeaponNode.destroy();
+      }
+      this.heldWeaponGlb = wInst;
+      this.heldWeaponNode = wInst.rootEntity;
+      this.heldWeaponNode.enabled = this.wasWeaponHeld;
+      this.rootEntity.addChild(this.heldWeaponNode);
+    } catch {
+      // Keep existing heldWeaponNode if headless/null graphics context skips weapon container
+    }
+  }
+
+  /**
+   * Clones a Blender GLB `StandardMaterial` with optional archetype diffuse multiplier & bloody laceration variant,
+   * reusing the packed Blender PBR textures without duplicating GPU texture memory.
+   */
+  private createArchetypeAndBloodyGlbMaterials(
+    srcMat: pc.Material,
+    zone: GhoulZoneId,
+    primIndex: number,
+    bareArmMat: pc.Material | null
+  ): { intactMat: pc.Material; laceratedMat: pc.Material } {
+    const arch = this.healthState.archetype;
+    let baseSource = srcMat;
+
+    // NYC Skinhead Punk wears a sleeveless biker vest showing bare muscular arms!
+    if (
+      arch === 'SKINHEAD_PUNK' &&
+      bareArmMat &&
+      primIndex === 0 &&
+      (zone === 'SHOULDER_LEFT' ||
+        zone === 'SHOULDER_RIGHT' ||
+        zone === 'UPPER_ARM_LEFT' ||
+        zone === 'UPPER_ARM_RIGHT')
+    ) {
+      baseSource = bareArmMat;
+    }
+
+    if (!(baseSource instanceof pc.StandardMaterial)) {
+      return { intactMat: baseSource, laceratedMat: this.materials.goreStumpMat };
+    }
+
+    const intactClone = baseSource.clone();
+    this.clonedGlbMaterials.push(intactClone);
+
+    // Apply subtle archetype uniform palette variation on primary garment primitives while preserving baked textures
+    if (primIndex === 0) {
+      const isTorsoShirt = zone === 'TORSO_UPPER_THORAX' || zone === 'TORSO_LOWER_ABDOMEN';
+      const isSleeve =
+        zone === 'SHOULDER_LEFT' ||
+        zone === 'SHOULDER_RIGHT' ||
+        zone === 'UPPER_ARM_LEFT' ||
+        zone === 'UPPER_ARM_RIGHT';
+      const isForearmSkin = zone === 'FOREARM_LEFT' || zone === 'FOREARM_RIGHT';
+      const isTrousers =
+        zone === 'PELVIS_GROIN' ||
+        zone === 'THIGH_LEFT' ||
+        zone === 'THIGH_RIGHT' ||
+        zone === 'KNEE_LEFT' ||
+        zone === 'KNEE_RIGHT' ||
+        zone === 'SHIN_LEFT' ||
+        zone === 'SHIN_RIGHT';
+
+      if (arch === 'SKINHEAD_PUNK') {
+        if (isTorsoShirt) {
+          intactClone.diffuse.set(0.55, 0.55, 0.60);
+        } else if (isTrousers) {
+          intactClone.diffuse.set(0.76, 0.80, 0.86);
+        }
+      } else if (arch === 'HEAVY_ENFORCER') {
+        if (isTorsoShirt || isSleeve || isTrousers) {
+          intactClone.diffuse.set(0.50, 0.58, 0.72);
+        } else if (isForearmSkin) {
+          // Full-sleeve dark Kevlar SWAT uniform
+          intactClone.diffuseMap = null;
+          intactClone.diffuse.set(0.14, 0.17, 0.22);
+        }
+      } else if (arch === 'SNIPER_OPERATIVE') {
+        if (isTorsoShirt || isSleeve) {
+          intactClone.diffuse.set(1.32, 1.36, 1.40);
+        } else if (isTrousers) {
+          intactClone.diffuse.set(1.16, 1.12, 0.90);
+        }
+      }
+      intactClone.update();
+    }
+
+    const bloodyClone = intactClone.clone();
+    this.clonedGlbMaterials.push(bloodyClone);
+    bloodyClone.diffuse.set(0.56, 0.08, 0.09);
+    bloodyClone.emissive.set(0.10, 0.01, 0.012);
+    bloodyClone.gloss = 0.72;
+    bloodyClone.update();
+
+    return { intactMat: intactClone, laceratedMat: bloodyClone };
+  }
+
+  /**
+   * Unblocks procedural fallback only if GLB network/file preloading fails outright.
+   */
+  public allowProceduralFallback(): void {
+    if (!this.combatantGlb) {
+      this.glbExpected = false;
+      this.syncFromHealthState(0, 0);
+    }
+  }
+
   /**
    * Attaches the sculpted & rigged Blender 5.2 `ghoul_combatant.glb` 22-zone hierarchy
-   * (with ESAPI plate carrier, PASGT helmet, sculpted X-Ray anatomy, and 5 baked animations).
+   * (with ESAPI plate carrier, PASGT helmet, tactical visor, Spetsnaz beret, punk mohawk,
+   * eviscerated gut cavity, sculpted X-Ray anatomy, and right-handed + southpaw animations).
    */
   public attachCombatantGlb(glbRegistry: GlbModelRegistry): boolean {
+    this.glbExpected = true;
+    this.attachWeaponGlbIfReady(glbRegistry);
+
     if (this.combatantGlb || !glbRegistry.isLoaded('ghoul_combatant')) {
       return false;
     }
@@ -124,35 +351,78 @@ export class GhoulMannequinEntity {
         castShadows: true,
         receiveShadows: true,
         initialClip: 'CombatReadyIdle',
+        southpaw: this.healthState.isLeftHanded,
       });
       this.combatantGlb = inst;
-      this.activeGlbClip = 'CombatReadyIdle';
+      this.activeGlbClipKey = `CombatReadyIdle_${this.healthState.isLeftHanded ? 'L' : 'R'}`;
       this.rootEntity.addChild(inst.rootEntity);
 
-      // Cache original PBR materials on outer Zone_* + Gear_* meshes so [X] X-Ray toggles cleanly
-      for (const zEnt of inst.zoneEntities.values()) {
-        if (zEnt.render) {
-          for (const mi of zEnt.render.meshInstances) {
-            if (mi.material) {
-              this.glbOriginalMaterials.set(mi, mi.material);
-            }
+      // Extract bare forearm skin material reference so sleeveless archetypes can share packed skin texture
+      const forearmSampleMat =
+        inst.zoneEntities.get('FOREARM_LEFT')?.render?.meshInstances?.[0]?.material ?? null;
+
+      // Build per-zone intact & bloody PBR material pairs so LACERATED zones never swap models
+      for (const [zone, zEnt] of inst.zoneEntities) {
+        if (!zEnt.render) continue;
+        const pairs: GlbZoneMaterialPair[] = [];
+        zEnt.render.meshInstances.forEach((mi, idx) => {
+          const orig = mi.material;
+          if (orig) {
+            const { intactMat, laceratedMat } = this.createArchetypeAndBloodyGlbMaterials(
+              orig,
+              zone,
+              idx,
+              forearmSampleMat
+            );
+            mi.material = intactMat;
+            pairs.push({ meshInstance: mi, intactMat, laceratedMat });
           }
+        });
+        this.glbZoneMaterialPairs.set(zone, pairs);
+      }
+
+      // Cache & tint archetype headgear/armor materials for clean [X] X-Ray toggling
+      for (const gearEnt of [
+        inst.esapiPlateCarrier,
+        inst.pasgtHelmet,
+        inst.tacticalVisor,
+        inst.spetsnazBeret,
+        inst.punkMohawk,
+        inst.evisceratedGut,
+      ]) {
+        if (!gearEnt?.render) continue;
+        for (const mi of gearEnt.render.meshInstances) {
+          if (!mi.material) continue;
+          let gearMat = mi.material;
+          if (
+            this.healthState.archetype === 'HEAVY_ENFORCER' &&
+            (gearEnt === inst.pasgtHelmet || gearEnt === inst.esapiPlateCarrier) &&
+            gearMat instanceof pc.StandardMaterial
+          ) {
+            const swatGear = gearMat.clone();
+            this.clonedGlbMaterials.push(swatGear);
+            swatGear.diffuse.set(0.55, 0.62, 0.72);
+            swatGear.update();
+            mi.material = swatGear;
+            gearMat = swatGear;
+          }
+          this.glbGearOriginalMaterials.set(mi, gearMat);
         }
       }
-      for (const gearEnt of [inst.esapiPlateCarrier, inst.pasgtHelmet]) {
-        if (gearEnt?.render) {
-          for (const mi of gearEnt.render.meshInstances) {
-            if (mi.material) {
-              this.glbOriginalMaterials.set(mi, mi.material);
-            }
-          }
-        }
+
+      // Permanently disable legacy procedural flesh & headgear meshes once Blender GLB is attached!
+      for (const bundle of this.zoneBundles.values()) {
+        bundle.fleshNode.enabled = false;
+      }
+      if (this.headgearNode) {
+        this.headgearNode.enabled = false;
       }
 
       this.syncFromHealthState(0, 0);
       return true;
     } catch {
       this.combatantGlb = null;
+      this.glbExpected = false;
       return false;
     }
   }
@@ -163,11 +433,13 @@ export class GhoulMannequinEntity {
       this.rootEntity.addChild(zoneNode);
 
       const fleshNode = new pc.Entity(`Flesh_${zone}`);
+      fleshNode.enabled = !this.glbExpected;
       zoneNode.addChild(fleshNode);
 
       const fleshMeshInstances: pc.MeshInstance[] = [];
       const intactMaterials: pc.StandardMaterial[] = [];
       const laceratedMaterials: pc.StandardMaterial[] = [];
+      const woundDecalNodes: pc.Entity[] = [];
       const boneNodes: pc.Entity[] = [];
       const organNodes: pc.Entity[] = [];
 
@@ -194,6 +466,7 @@ export class GhoulMannequinEntity {
         fleshMeshInstances,
         intactMaterials,
         laceratedMaterials,
+        woundDecalNodes,
         boneNodes,
         organNodes,
         proximalStumpNode,
@@ -203,12 +476,13 @@ export class GhoulMannequinEntity {
       });
     }
 
-    // Build held 3D PS1/PS2 firearm (MP5, AK-47, Combat 12G, or SVD Dragunov)
+    // Fallback weapon entity (immediately replaced by Blender weapon GLB when glbRegistry is loaded)
     this.heldWeaponNode = buildEnemyWeaponEntity(
       this.app.graphicsDevice,
       this.healthState.archetype,
       this.retroMats
     );
+    this.heldWeaponNode.enabled = !this.glbExpected;
     this.rootEntity.addChild(this.heldWeaponNode);
   }
 
@@ -263,7 +537,6 @@ export class GhoulMannequinEntity {
       case 'TORSO_UPPER_THORAX': {
         addPart('HeroicThorax', lib.thoraxHeroic, rm.torsoMat, rm.torsoBloodyMat);
 
-        // Tactical 3D chest rig mag pouches (for armed military/SWAT archetypes)
         if (this.healthState.archetype !== 'SKINHEAD_PUNK') {
           for (const side of [-1, 1]) {
             const pouch = addPart(
@@ -290,7 +563,6 @@ export class GhoulMannequinEntity {
           intactAbdomenNode
         );
 
-        // Soldier of Fortune EVISCERATED stomach wound group (toggled on heavy gut blast without breaking spine!)
         const evisceratedAbdomenNode = new pc.Entity('AbdomenEvisceratedGroup');
         evisceratedAbdomenNode.enabled = false;
         fleshNode.addChild(evisceratedAbdomenNode);
@@ -299,7 +571,6 @@ export class GhoulMannequinEntity {
         attachCustomMesh(outerCrater, lib.abdomenEvisceratedOuter, rm.abdomenBloodyMat, true);
         evisceratedAbdomenNode.addChild(outerCrater);
 
-        // Deep wet crimson visceral cavity inside hollowed gut
         const gutCore = new pc.Entity('VisceralGutCore');
         gutCore.addComponent('render', {
           type: 'box',
@@ -309,7 +580,6 @@ export class GhoulMannequinEntity {
         gutCore.setLocalPosition(0, 0.085, 0.032);
         evisceratedAbdomenNode.addChild(gutCore);
 
-        // Jagged white lower rib tips framing top of stomach crater
         for (const side of [-1, 1]) {
           const ribTip = new pc.Entity(`BrokenRib_${side}`);
           ribTip.addComponent('render', {
@@ -322,7 +592,6 @@ export class GhoulMannequinEntity {
           evisceratedAbdomenNode.addChild(ribTip);
         }
 
-        // Hanging glistening entrail coils
         for (let i = 0; i < 3; i++) {
           const coil = new pc.Entity(`EntrailLoop_${i}`);
           coil.addComponent('render', {
@@ -341,14 +610,14 @@ export class GhoulMannequinEntity {
       case 'PELVIS_GROIN': {
         addPart('PelvisBelt', lib.pelvisBelt, rm.pelvisMat, rm.pelvisBloodyMat);
 
-        // Right hip sidearm/utility pouch & rear canteen pouch
+        const holsterSign = this.healthState.isLeftHanded ? 1 : -1;
         const sideHolster = addPart(
           'HipHolster',
           lib.ammoPouch,
           rm.pouchWebbingMat,
           rm.pelvisBloodyMat
         );
-        sideHolster.setLocalPosition(0.168, 0.05, 0.01);
+        sideHolster.setLocalPosition(holsterSign * 0.168, 0.05, 0.01);
         sideHolster.setLocalScale(0.75, 1.15, 1.1);
 
         const rearPouch = addPart(
@@ -571,7 +840,8 @@ export class GhoulMannequinEntity {
   }
 
   /**
-   * Builds internal 3D skeleton & organs for optional [X] Anatomical X-Ray Inspector mode.
+   * Builds internal 3D skeleton & organs for optional [X] Anatomical X-Ray Inspector mode
+   * (used only in headless fallback when `ghoul_combatant.glb` is not loaded).
    */
   private buildZoneInternalAnatomy(
     zone: GhoulZoneId,
@@ -727,14 +997,44 @@ export class GhoulMannequinEntity {
 
   private refreshZoneMaterialsAndAnatomy(): void {
     const xrayMat = this.materials.xraySkinMat;
+    const isHeadPopped = this.healthState.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP';
+
+    if (this.combatantGlb) {
+      // Sculpted Blender GLB materials: X-Ray translucent shell vs Bloody Lacerated vs Intact Archetype PBR
+      this.combatantGlb.setXRayVisible(this.isXRayActive);
+      if (this.combatantGlb.internalAnatomyEntities.organBrain) {
+        this.combatantGlb.internalAnatomyEntities.organBrain.enabled =
+          this.isXRayActive && !isHeadPopped;
+      }
+      if (this.combatantGlb.internalAnatomyEntities.skeletSkull) {
+        this.combatantGlb.internalAnatomyEntities.skeletSkull.enabled =
+          isHeadPopped || this.isXRayActive;
+      }
+
+      for (const [zone, pairs] of this.glbZoneMaterialPairs) {
+        const goreMode = this.healthState.zoneGoreMode[zone];
+        const isBloody = goreMode === 'LACERATED' || goreMode === 'EVISCERATED';
+        for (const pair of pairs) {
+          pair.meshInstance.material = this.isXRayActive
+            ? xrayMat
+            : isBloody
+              ? pair.laceratedMat
+              : pair.intactMat;
+        }
+      }
+
+      for (const [mi, origMat] of this.glbGearOriginalMaterials) {
+        mi.material = this.isXRayActive ? xrayMat : origMat;
+      }
+    }
 
     for (const [zone, bundle] of this.zoneBundles) {
       const goreMode = this.healthState.zoneGoreMode[zone];
-      const isPoppedHead =
-        goreMode === 'CRANIAL_POP' && (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW');
+      const isPoppedZone =
+        isHeadPopped && (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW');
 
       for (const b of bundle.boneNodes) {
-        b.enabled = this.isXRayActive && !isPoppedHead && this.combatantGlb === null;
+        b.enabled = this.isXRayActive && !isPoppedZone && this.combatantGlb === null && !this.glbExpected;
         if (b.render) {
           b.render.material =
             this.healthState.fracturedBones.size > 0 && goreMode !== 'INTACT'
@@ -743,17 +1043,23 @@ export class GhoulMannequinEntity {
         }
       }
       for (const o of bundle.organNodes) {
-        o.enabled = this.isXRayActive && !isPoppedHead && this.combatantGlb === null;
+        o.enabled = this.isXRayActive && !isPoppedZone && this.combatantGlb === null && !this.glbExpected;
       }
 
-      for (let i = 0; i < bundle.fleshMeshInstances.length; i++) {
-        const mi = bundle.fleshMeshInstances[i];
-        if (this.isXRayActive) {
-          mi.material = xrayMat;
-        } else if (goreMode === 'LACERATED' || goreMode === 'EVISCERATED') {
-          mi.material = bundle.laceratedMaterials[i] || bundle.intactMaterials[i];
-        } else {
-          mi.material = bundle.intactMaterials[i];
+      for (const decal of bundle.woundDecalNodes) {
+        decal.enabled = !isPoppedZone && !this.isXRayActive;
+      }
+
+      if (!this.combatantGlb && !this.glbExpected) {
+        for (let i = 0; i < bundle.fleshMeshInstances.length; i++) {
+          const mi = bundle.fleshMeshInstances[i];
+          if (this.isXRayActive) {
+            mi.material = xrayMat;
+          } else if (goreMode === 'LACERATED' || goreMode === 'EVISCERATED') {
+            mi.material = bundle.laceratedMaterials[i] || bundle.intactMaterials[i];
+          } else {
+            mi.material = bundle.intactMaterials[i];
+          }
         }
       }
     }
@@ -761,37 +1067,91 @@ export class GhoulMannequinEntity {
 
   private setEntityBasisRotation(
     entity: pc.Entity,
-    right: { x: number; y: number; z: number },
-    up: { x: number; y: number; z: number },
-    forward: { x: number; y: number; z: number }
+    right: Vec3Like,
+    up: Vec3Like,
+    forward: Vec3Like
   ): void {
-    const d = this.tmpMat4.data;
-    d[0] = right.x;
-    d[1] = right.y;
-    d[2] = right.z;
-    d[3] = 0;
-
-    d[4] = up.x;
-    d[5] = up.y;
-    d[6] = up.z;
-    d[7] = 0;
-
-    d[8] = forward.x;
-    d[9] = forward.y;
-    d[10] = forward.z;
-    d[11] = 0;
-
-    d[12] = 0;
-    d[13] = 0;
-    d[14] = 0;
-    d[15] = 1;
-
-    this.tmpQuat.setFromMat4(this.tmpMat4);
+    basisToQuat(right, up, forward, this.tmpMat4, this.tmpQuat);
     entity.setLocalRotation(this.tmpQuat);
   }
 
   /**
-   * Spawns 3D entry/exit wound decals directly onto hit bones so bullet holes & blowouts stick to the character!
+   * Drives a single Blender GLB `Bone_${zone}` joint in world space from `healthState.ragdollBones[zone]`
+   * using the exact bind-pose delta bijection so arbitrary Blender bone rolls/offsets cancel cleanly.
+   */
+  private applyRagdollBoneToGlbJoint(glb: CombatantGlbInstance, zone: GhoulZoneId): void {
+    const boneNode = glb.boneNodes.get(zone);
+    const bind = glb.boneBindPoses.get(zone);
+    const rest = REST_RAGDOLL_FRAMES.get(zone);
+    if (!boneNode || !bind || !rest) return;
+
+    const boneState = this.healthState.ragdollBones[zone];
+    basisToQuat(
+      boneState.basisRight,
+      boneState.basisUp,
+      boneState.basisForward,
+      this.tmpMat4,
+      this.tmpRagQuat
+    );
+
+    // qDelta = qRag * restRot^-1
+    this.tmpDeltaQuat.mul2(this.tmpRagQuat, rest.restRotInv);
+    // qWorld = qDelta * bindRot
+    this.tmpWorldQuat.mul2(this.tmpDeltaQuat, bind.modelRot);
+
+    // pWorld = pRag + qDelta * (bindPos - restPos)
+    this.tmpOffsetVec.sub2(bind.modelPos, rest.restPos);
+    this.tmpDeltaQuat.transformVector(this.tmpOffsetVec, this.tmpRotOffsetVec);
+
+    boneNode.setPosition(
+      boneState.position.x + this.tmpRotOffsetVec.x,
+      boneState.position.y + this.tmpRotOffsetVec.y,
+      boneState.position.z + this.tmpRotOffsetVec.z
+    );
+    boneNode.setRotation(this.tmpWorldQuat);
+  }
+
+  /**
+   * Inverse of `applyRagdollBoneToGlbJoint`: aligns `bundle.zoneNode` to `combatantGlb`'s live
+   * animated `Bone_${zone}` world transform so 3D bullet wound decals & bloody socket stumps
+   * ride seamlessly on the animated Blender GLB with zero jump on ragdoll transition!
+   */
+  private alignZoneNodeFromAnimatedGlbJoint(
+    glb: CombatantGlbInstance,
+    zone: GhoulZoneId,
+    zoneNode: pc.Entity
+  ): boolean {
+    const boneNode = glb.boneNodes.get(zone);
+    const bind = glb.boneBindPoses.get(zone);
+    const rest = REST_RAGDOLL_FRAMES.get(zone);
+    if (!boneNode || !bind || !rest) return false;
+
+    const pAnim = boneNode.getPosition();
+    const qAnim = boneNode.getRotation();
+
+    // qDelta = qAnim * bindRot^-1
+    this.tmpBindInvQuat.copy(bind.modelRot).invert();
+    this.tmpDeltaQuat.mul2(qAnim, this.tmpBindInvQuat);
+
+    // qZoneWorld = qDelta * restRot
+    this.tmpWorldQuat.mul2(this.tmpDeltaQuat, rest.restRot);
+
+    // pZoneWorld = pAnim - qDelta * (bindPos - restPos)
+    this.tmpOffsetVec.sub2(bind.modelPos, rest.restPos);
+    this.tmpDeltaQuat.transformVector(this.tmpOffsetVec, this.tmpRotOffsetVec);
+
+    zoneNode.setLocalPosition(
+      pAnim.x - this.tmpRotOffsetVec.x,
+      pAnim.y - this.tmpRotOffsetVec.y,
+      pAnim.z - this.tmpRotOffsetVec.z
+    );
+    zoneNode.setLocalRotation(this.tmpWorldQuat);
+    return true;
+  }
+
+  /**
+   * Spawns 3D entry/exit wound decals directly onto `zoneNode` so bullet holes & blowouts
+   * stick to the sculpted Blender GLB character across animations, dismemberment, and ragdoll!
    */
   private syncSurfaceWoundDecals(): void {
     while (this.syncedSurfaceWoundCount < this.healthState.surfaceWounds.length) {
@@ -815,12 +1175,14 @@ export class GhoulMannequinEntity {
       const r = sw.radiusM * 2.0;
       decal.setLocalScale(r, r, r * 0.55);
       decal.setLocalPosition(sw.localOffset.x, sw.localOffset.y, sw.localOffset.z);
-      bundle.fleshNode.addChild(decal);
+      bundle.zoneNode.addChild(decal);
+      bundle.woundDecalNodes.push(decal);
     }
   }
 
   /**
-   * Synchronizes all 22 low-poly anatomical zones, GHOUL stumps, headgear, weapons, and wounds every frame.
+   * Synchronizes all 22 anatomical zones, Blender GLB animations & ragdoll joints, GHOUL stumps,
+   * archetype headgear, held/dropped weapons, and surface wounds every frame.
    */
   public syncFromHealthState(_dt: number, elapsedTime: number): void {
     // 1. Update procedural combat breathing / pain / crouch pose if standing & alive
@@ -828,10 +1190,16 @@ export class GhoulMannequinEntity {
       updateStandingCombatPose(this.healthState, elapsedTime);
     }
 
+    const isSouthpaw = this.healthState.isLeftHanded;
+    const triggerHandZone: GhoulZoneId = isSouthpaw ? 'HAND_RIGHT' : 'HAND_LEFT';
+    const triggerForearmZone: GhoulZoneId = isSouthpaw ? 'FOREARM_RIGHT' : 'FOREARM_LEFT';
+    const triggerUpperArmZone: GhoulZoneId = isSouthpaw ? 'UPPER_ARM_RIGHT' : 'UPPER_ARM_LEFT';
+    const supportHandZone: GhoulZoneId = isSouthpaw ? 'HAND_LEFT' : 'HAND_RIGHT';
+
     // 2. Check detached headgear transition (shoot-off helmet / beret / shades!)
+    const isCranialPopped = this.healthState.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP';
     const isHeadPoppedOrSevered =
-      this.healthState.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP' ||
-      this.healthState.severedZones.has('HEAD_CRANIUM');
+      isCranialPopped || this.healthState.severedZones.has('HEAD_CRANIUM');
     const headgearNowAttached = this.healthState.headgearIntact && !isHeadPoppedOrSevered;
 
     if (this.wasHeadgearIntact && !headgearNowAttached) {
@@ -839,7 +1207,7 @@ export class GhoulMannequinEntity {
       if (this.headgearNode) {
         this.headgearNode.enabled = false;
       }
-      if (this.fxManager && this.healthState.zoneGoreMode.HEAD_CRANIUM !== 'CRANIAL_POP') {
+      if (this.fxManager) {
         const headBone = this.healthState.ragdollBones.HEAD_CRANIUM;
         this.fxManager.spawnDetachedHeadgearProp(
           this.healthState.archetype,
@@ -849,82 +1217,74 @@ export class GhoulMannequinEntity {
       }
     }
 
-    // 3. Check weapon disarm / death / ragdoll weapon drop transition!
-    const shouldHoldWeapon =
-      !this.healthState.weaponDropped &&
-      this.healthState.alive &&
-      !this.healthState.isRagdollActive &&
-      !this.healthState.severedZones.has('HAND_RIGHT') &&
-      !this.healthState.severedZones.has('FOREARM_RIGHT') &&
-      !this.healthState.severedZones.has('UPPER_ARM_RIGHT');
+    // 3. Synchronize sculpted Blender `ghoul_combatant.glb` across ALL states (NEVER swap back to old skins!)
+    const glb = this.combatantGlb;
+    const isFullRagdoll = this.healthState.isRagdollActive || !this.healthState.alive;
 
-    if (this.wasWeaponHeld && !shouldHoldWeapon) {
-      this.wasWeaponHeld = false;
-      this.healthState.weaponDropped = true;
-      if (this.heldWeaponNode) {
-        this.heldWeaponNode.enabled = false;
+    if (glb) {
+      glb.rootEntity.enabled = true;
+
+      const arch = this.healthState.archetype;
+      const isEviscerated = this.healthState.zoneGoreMode.TORSO_LOWER_ABDOMEN === 'EVISCERATED';
+
+      // Head & abdomen gore submesh visibility on the Blender GLB
+      glb.setZoneVisible('HEAD_CRANIUM', !isCranialPopped);
+      glb.setZoneVisible('HEAD_FACE_JAW', !isCranialPopped);
+      glb.setZoneVisible('TORSO_LOWER_ABDOMEN', !isEviscerated || this.isXRayActive);
+      if (glb.evisceratedGut) {
+        glb.evisceratedGut.enabled = isEviscerated && !this.isXRayActive;
       }
-      if (this.fxManager) {
-        const handR = this.healthState.ragdollBones.HAND_RIGHT;
-        this.fxManager.spawnDroppedWeaponProp(
-          this.healthState.archetype,
-          handR.position,
-          handR.velocity
-        );
-      }
-    }
 
-    // Orient held weapon in combatant's hands when active
-    if (shouldHoldWeapon && this.heldWeaponNode) {
-      const handR = this.healthState.ragdollBones.HAND_RIGHT;
-      const thorax = this.healthState.ragdollBones.TORSO_UPPER_THORAX;
-      this.heldWeaponNode.setLocalPosition(handR.position.x, handR.position.y, handR.position.z);
+      // Per-archetype modular Blender 3D armor & headgear visibility
+      const showPlateCarrier =
+        !this.isXRayActive &&
+        (arch === 'HEAVY_ENFORCER' || arch === 'MILITIA_GUNNER' || arch === 'SNIPER_OPERATIVE');
+      const showPasgtHelmet =
+        !this.isXRayActive &&
+        headgearNowAttached &&
+        (arch === 'HEAVY_ENFORCER' || arch === 'MILITIA_GUNNER');
+      const showVisor =
+        !this.isXRayActive &&
+        headgearNowAttached &&
+        (arch === 'HEAVY_ENFORCER' || arch === 'SKINHEAD_PUNK');
+      const showBeret =
+        !this.isXRayActive && headgearNowAttached && arch === 'SNIPER_OPERATIVE';
+      const showMohawk =
+        !this.isXRayActive && !isCranialPopped && arch === 'SKINHEAD_PUNK';
 
-      // Barrel aims forward across chest toward player (+Forward slightly angled inward)
-      const gunFwd = normalize(
-        add(scale(thorax.basisForward, 0.94), scale(thorax.basisRight, -0.26))
-      );
-      const gunRight = normalize(cross(thorax.basisUp, gunFwd));
-      const gunUp = normalize(cross(gunFwd, gunRight));
-      this.setEntityBasisRotation(this.heldWeaponNode, gunRight, gunUp, gunFwd);
-    }
+      glb.setArmorVisible(showPlateCarrier, showPasgtHelmet);
+      if (glb.tacticalVisor) glb.tacticalVisor.enabled = showVisor;
+      if (glb.spetsnazBeret) glb.spetsnazBeret.enabled = showBeret;
+      if (glb.punkMohawk) glb.punkMohawk.enabled = showMohawk;
 
-    const useAnimatedGlb =
-      this.combatantGlb !== null &&
-      !this.healthState.isRagdollActive &&
-      this.healthState.alive &&
-      this.healthState.severedZones.size === 0 &&
-      this.healthState.zoneGoreMode.HEAD_CRANIUM !== 'CRANIAL_POP' &&
-      this.healthState.zoneGoreMode.TORSO_LOWER_ABDOMEN !== 'EVISCERATED';
+      if (isFullRagdoll) {
+        // Full Ragdoll / KIA: freeze AnimComponent and drive ALL 22 Blender bones directly from PBD ragdoll!
+        if (glb.animComponent) {
+          glb.animComponent.playing = false;
+        }
+        this.activeGlbClipKey = null;
+        glb.rootEntity.setPosition(0, 0, 0);
+        glb.rootEntity.setEulerAngles(0, 0, 0);
 
-    if (this.combatantGlb) {
-      this.combatantGlb.rootEntity.enabled = useAnimatedGlb;
-      if (useAnimatedGlb) {
-        this.combatantGlb.rootEntity.setPosition(
+        for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
+          this.applyRagdollBoneToGlbJoint(glb, zone);
+        }
+        glb.rootEntity.syncHierarchy();
+      } else {
+        // Living & Upright/Kneeling/Crawling: play right-handed or southpaw Blender NLA clip!
+        if (glb.animComponent && !glb.animComponent.playing) {
+          glb.animComponent.playing = true;
+        }
+        glb.rootEntity.setPosition(
           this.healthState.worldPosition.x,
           this.healthState.worldPosition.y,
           this.healthState.worldPosition.z
         );
-        this.combatantGlb.rootEntity.setEulerAngles(
+        glb.rootEntity.setEulerAngles(
           0,
           (this.healthState.yawRad * 180) / Math.PI,
           0
         );
-
-        const arch = this.healthState.archetype;
-        const hasPlate =
-          arch === 'HEAVY_ENFORCER' ||
-          arch === 'MILITIA_GUNNER' ||
-          arch === 'SNIPER_OPERATIVE';
-        const hasHelmet =
-          this.healthState.headgearIntact &&
-          (arch === 'HEAVY_ENFORCER' || arch === 'MILITIA_GUNNER');
-        this.combatantGlb.setArmorVisible(hasPlate && !this.isXRayActive, hasHelmet && !this.isXRayActive);
-        this.combatantGlb.setXRayVisible(this.isXRayActive);
-
-        for (const [mi, origMat] of this.glbOriginalMaterials) {
-          mi.material = this.isXRayActive ? this.materials.xraySkinMat : origMat;
-        }
 
         const desiredClip: CombatantAnimationClipName =
           this.healthState.posture === 'LEG_BUCKLED'
@@ -936,18 +1296,132 @@ export class GhoulMannequinEntity {
                   this.healthState.posture === 'DISARMED'
                 ? 'HitStaggerChest'
                 : 'CombatReadyIdle';
-        if (desiredClip !== this.activeGlbClip) {
-          this.combatantGlb.playClip(desiredClip, 0.12, 1.0);
-          this.activeGlbClip = desiredClip;
+        const clipKey = `${desiredClip}_${isSouthpaw ? 'L' : 'R'}`;
+        if (clipKey !== this.activeGlbClipKey) {
+          glb.playClip(desiredClip, 0.12, 1.0, isSouthpaw);
+          this.activeGlbClipKey = clipKey;
+        }
+
+        // Sync animated hierarchy first, then override ONLY severed limb subtrees so living amputees
+        // keep animating their torso/legs while their severed Blender GLB limb tumbles across the floor!
+        glb.rootEntity.syncHierarchy();
+        if (this.healthState.severedZones.size > 0) {
+          for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
+            if (this.healthState.ragdollBones[zone].componentId !== 'BODY') {
+              this.applyRagdollBoneToGlbJoint(glb, zone);
+            }
+          }
+          glb.rootEntity.syncHierarchy();
         }
       }
     }
 
-    if (this.headgearNode) {
-      this.headgearNode.enabled = headgearNowAttached && !useAnimatedGlb;
+    // 4. Weapon disarm / death / ragdoll weapon drop transition & live hand attachment
+    const shouldHoldWeapon =
+      !this.healthState.weaponDropped &&
+      this.healthState.alive &&
+      !this.healthState.isRagdollActive &&
+      !this.healthState.severedZones.has(triggerHandZone) &&
+      !this.healthState.severedZones.has(triggerForearmZone) &&
+      !this.healthState.severedZones.has(triggerUpperArmZone);
+
+    if (this.wasWeaponHeld && !shouldHoldWeapon) {
+      this.wasWeaponHeld = false;
+      this.healthState.weaponDropped = true;
+      if (this.heldWeaponNode) {
+        this.heldWeaponNode.enabled = false;
+      }
+      if (this.fxManager) {
+        const trigBone = this.healthState.ragdollBones[triggerHandZone];
+        const glbHandNode = glb?.boneNodes.get(triggerHandZone);
+        const dropPos = glbHandNode
+          ? vec3(
+              glbHandNode.getPosition().x,
+              glbHandNode.getPosition().y,
+              glbHandNode.getPosition().z
+            )
+          : trigBone.position;
+        this.fxManager.spawnDroppedWeaponProp(
+          this.healthState.archetype,
+          dropPos,
+          trigBone.velocity
+        );
+      }
     }
 
-    // 4. Synchronize all 22 anatomical bone nodes via full 3D orthonormal basis quaternions
+    if (this.heldWeaponNode) {
+      this.heldWeaponNode.enabled = shouldHoldWeapon && (glb !== null || !this.glbExpected);
+    }
+
+    if (shouldHoldWeapon && this.heldWeaponNode) {
+      const charFwd = vec3(
+        Math.sin(this.healthState.yawRad),
+        0,
+        Math.cos(this.healthState.yawRad)
+      );
+      let gripPos: Vec3Like;
+      let gunFwd: Vec3Like;
+
+      const glbTrigNode = glb?.boneNodes.get(triggerHandZone);
+      const glbSuppNode = glb?.boneNodes.get(supportHandZone);
+
+      if (glb && glbTrigNode && glbSuppNode) {
+        const pT = glbTrigNode.getPosition();
+        const pS = glbSuppNode.getPosition();
+        gripPos = vec3(pT.x, pT.y, pT.z);
+
+        const handSpan = sub(vec3(pS.x, pS.y, pS.z), gripPos);
+        const isOneHandedOrClutching =
+          this.healthState.archetype === 'SKINHEAD_PUNK' ||
+          this.healthState.posture === 'GUT_HURT' ||
+          this.healthState.posture === 'THROAT_CLUTCH' ||
+          this.healthState.severedZones.has(supportHandZone);
+
+        if (!isOneHandedOrClutching && length(handSpan) > 0.08) {
+          gunFwd = normalize(add(scale(normalize(handSpan), 0.72), scale(charFwd, 0.28)));
+        } else {
+          gunFwd = normalize(charFwd);
+        }
+      } else {
+        const handTrig = this.healthState.ragdollBones[triggerHandZone];
+        const thorax = this.healthState.ragdollBones.TORSO_UPPER_THORAX;
+        gripPos = handTrig.position;
+        const inwardSign = isSouthpaw ? -0.22 : 0.22;
+        gunFwd = normalize(
+          add(scale(thorax.basisForward, 0.95), scale(thorax.basisRight, inwardSign))
+        );
+      }
+
+      const worldUp = vec3(0, 1, 0);
+      if (this.heldWeaponGlb) {
+        // Blender weapon GLBs have barrel along -Z, top rail along +Y, ejection port along +X!
+        const zBack = scale(gunFwd, -1);
+        let xRight = cross(worldUp, zBack);
+        if (length(xRight) < 1e-4) xRight = vec3(1, 0, 0);
+        xRight = normalize(xRight);
+        const yUp = normalize(cross(zBack, xRight));
+        this.heldWeaponNode.setLocalPosition(
+          gripPos.x + gunFwd.x * 0.04,
+          gripPos.y + 0.015,
+          gripPos.z + gunFwd.z * 0.04
+        );
+        this.setEntityBasisRotation(this.heldWeaponNode, xRight, yUp, zBack);
+      } else {
+        let gunRight = cross(worldUp, gunFwd);
+        if (length(gunRight) < 1e-4) gunRight = vec3(1, 0, 0);
+        gunRight = normalize(gunRight);
+        const gunUp = normalize(cross(gunFwd, gunRight));
+        this.heldWeaponNode.setLocalPosition(gripPos.x, gripPos.y, gripPos.z);
+        this.setEntityBasisRotation(this.heldWeaponNode, gunRight, gunUp, gunFwd);
+      }
+    }
+
+    const useRetroFallback = glb === null && !this.glbExpected;
+    if (this.headgearNode) {
+      this.headgearNode.enabled = headgearNowAttached && useRetroFallback;
+    }
+
+    // 5. Synchronize all 22 zoneNodes (for GHOUL bloody bone stumps & 3D bullet wound decals)
     for (const zone of ALL_GHOUL_ZONES) {
       const bundle = this.zoneBundles.get(zone);
       if (!bundle) continue;
@@ -956,35 +1430,47 @@ export class GhoulMannequinEntity {
       const goreMode = this.healthState.zoneGoreMode[zone];
       const isSevered = this.healthState.severedZones.has(zone);
 
-      bundle.zoneNode.setLocalPosition(
-        boneState.position.x,
-        boneState.position.y,
-        boneState.position.z
-      );
-      this.setEntityBasisRotation(
-        bundle.zoneNode,
-        boneState.basisRight,
-        boneState.basisUp,
-        boneState.basisForward
-      );
+      const alignedToAnimGlb =
+        glb !== null &&
+        !isFullRagdoll &&
+        boneState.componentId === 'BODY' &&
+        this.alignZoneNodeFromAnimatedGlbJoint(glb, zone, bundle.zoneNode);
 
-      // Cranial pop obliterates upper head & jaw while leaving bloody stump on NECK_CERVICAL
-      if (goreMode === 'CRANIAL_POP' && (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW')) {
+      if (!alignedToAnimGlb) {
+        bundle.zoneNode.setLocalPosition(
+          boneState.position.x,
+          boneState.position.y,
+          boneState.position.z
+        );
+        this.setEntityBasisRotation(
+          bundle.zoneNode,
+          boneState.basisRight,
+          boneState.basisUp,
+          boneState.basisForward
+        );
+      }
+
+      // Legacy procedural flesh stays PERMANENTLY disabled whenever Blender GLB pipeline is active!
+      if (isCranialPopped && (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW')) {
         bundle.fleshNode.enabled = false;
         if (bundle.proximalStumpNode) bundle.proximalStumpNode.enabled = false;
         continue;
       }
 
-      bundle.fleshNode.enabled = !useAnimatedGlb;
+      bundle.fleshNode.enabled = useRetroFallback;
 
-      // Toggle intact vs eviscerated open-stomach cavity on TORSO_LOWER_ABDOMEN
-      if (zone === 'TORSO_LOWER_ABDOMEN' && bundle.intactAbdomenNode && bundle.evisceratedAbdomenNode) {
+      if (
+        useRetroFallback &&
+        zone === 'TORSO_LOWER_ABDOMEN' &&
+        bundle.intactAbdomenNode &&
+        bundle.evisceratedAbdomenNode
+      ) {
         const isEviscerated = goreMode === 'EVISCERATED';
         bundle.intactAbdomenNode.enabled = !isEviscerated;
         bundle.evisceratedAbdomenNode.enabled = isEviscerated;
       }
 
-      // Show proximal stump cap on detached limb root (where its component separated from its parent!)
+      // Show proximal stump cap + protruding cortical bone on detached limb root
       if (bundle.proximalStumpNode) {
         const parentZone = this.getParentZone(zone);
         const parentComp = parentZone ? this.healthState.ragdollBones[parentZone].componentId : 'BODY';
@@ -996,26 +1482,34 @@ export class GhoulMannequinEntity {
       for (const socketStump of bundle.distalChildStumps) {
         const childBone = this.healthState.ragdollBones[socketStump.childZone];
         const childPopped =
-          socketStump.childZone === 'HEAD_CRANIUM' &&
-          this.healthState.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP';
+          socketStump.childZone === 'HEAD_CRANIUM' && isCranialPopped;
         socketStump.node.enabled = childPopped || childBone.componentId !== boneState.componentId;
       }
     }
 
-    // 5. Sync 3D entry/exit bullet wound decals & lacerated pixel-art textures
+    // 6. Sync 3D entry/exit bullet wound decals & zone material states
     this.syncSurfaceWoundDecals();
     this.refreshZoneMaterialsAndAnatomy();
 
-    // 6. Optional X-Ray Organ Pulsation when [X] Inspector is enabled
+    // 7. Optional X-Ray Organ Pulsation when [X] Inspector is enabled
     if (this.isXRayActive && this.healthState.alive) {
       const bpmHz = (this.healthState.heartRateBpm / 60) * Math.PI * 2;
-      if (this.heartEntity) {
-        const pulse = 1.0 + Math.sin(elapsedTime * bpmHz) * 0.12;
-        this.heartEntity.setLocalScale(0.10 * pulse, 0.11 * pulse, 0.10 * pulse);
-      }
-      if (this.brainEntity) {
-        const bPulse = 1.0 + Math.sin(elapsedTime * 2.5) * 0.04;
-        this.brainEntity.setLocalScale(0.12 * bPulse, 0.12 * bPulse, 0.13 * bPulse);
+      const pulse = 1.0 + Math.sin(elapsedTime * bpmHz) * 0.10;
+      const bPulse = 1.0 + Math.sin(elapsedTime * 2.5) * 0.04;
+      if (glb) {
+        if (glb.internalAnatomyEntities.organHeart) {
+          glb.internalAnatomyEntities.organHeart.setLocalScale(pulse, pulse, pulse);
+        }
+        if (glb.internalAnatomyEntities.organBrain) {
+          glb.internalAnatomyEntities.organBrain.setLocalScale(bPulse, bPulse, bPulse);
+        }
+      } else {
+        if (this.heartEntity) {
+          this.heartEntity.setLocalScale(0.10 * pulse, 0.11 * pulse, 0.10 * pulse);
+        }
+        if (this.brainEntity) {
+          this.brainEntity.setLocalScale(0.12 * bPulse, 0.12 * bPulse, 0.13 * bPulse);
+        }
       }
     }
   }
@@ -1048,11 +1542,21 @@ export class GhoulMannequinEntity {
   }
 
   public destroy(): void {
+    if (this.heldWeaponGlb) {
+      this.heldWeaponGlb.destroy();
+      this.heldWeaponGlb = null;
+      this.heldWeaponNode = null;
+    }
     if (this.combatantGlb) {
       this.combatantGlb.destroy();
       this.combatantGlb = null;
     }
-    this.glbOriginalMaterials.clear();
+    for (const m of this.clonedGlbMaterials) {
+      m.destroy();
+    }
+    this.clonedGlbMaterials.length = 0;
+    this.glbZoneMaterialPairs.clear();
+    this.glbGearOriginalMaterials.clear();
     this.rootEntity.destroy();
     this.zoneBundles.clear();
   }

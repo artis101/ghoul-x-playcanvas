@@ -281,6 +281,31 @@ export class MarchingGlassPane {
   }
 
   /**
+   * Synchronizes the 2D grid cell states from an external continuous `[0, 1] x [0, 1]`
+   * fracture state sampler (such as `ArmoredVoronoiGlassPane`) in zero heap allocations.
+   */
+  public syncFromUvSampler(
+    sampleStateAtUv: (u: number, v: number) => GlassCellState,
+  ): void {
+    let surviving = 0;
+    const invW = 1 / this.gridW;
+    const invH = 1 / this.gridH;
+    for (let r = 0; r < this.gridH; r++) {
+      const v = (r + 0.5) * invH;
+      const rowOffset = r * this.gridW;
+      for (let c = 0; c < this.gridW; c++) {
+        const u = (c + 0.5) * invW;
+        const st = sampleStateAtUv(u, v);
+        this.cells[rowOffset + c] = st;
+        if (st !== GLASS_CELL_VOID) {
+          surviving++;
+        }
+      }
+    }
+    this.survivingCount = surviving;
+  }
+
+  /**
    * Applies a ballistic or blast impact at normalized `(u, v)`:
    * - If the impacted cell is already broken (`0`), returns immediately with `alreadyBrokenHole: true`
    *   unless `radiusM` spans wider intact cells (e.g. blast shockwave).
@@ -560,12 +585,12 @@ export class MarchingGlassPane {
         outUvs[uvCursor++] = uv.u0;
         outUvs[uvCursor++] = uv.v1;
 
-        // Subtle frosted highlight tint for spiderweb-cracked cells (`state === 2`)
+        // Smooth frosted highlight tint for spiderweb-cracked cells (`state === 2`)
         const isCracked = state === GLASS_CELL_CRACKED || mask !== 255;
-        const rC = isCracked ? 0.94 : 0.78;
-        const gC = isCracked ? 0.98 : 0.91;
+        const rC = isCracked ? 0.92 : 0.84;
+        const gC = isCracked ? 0.97 : 0.93;
         const bC = 1.0;
-        const aC = isCracked ? 1.0 : 0.85;
+        const aC = isCracked ? 0.94 : 0.9;
         if (colCursor + 16 <= outColors.length) {
           for (let k = 0; k < 4; k++) {
             outColors[colCursor++] = rC;

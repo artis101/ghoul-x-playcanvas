@@ -954,6 +954,8 @@ export function simulateShot(
                 physEffect = `${col.label} Fractured — Structural Leg Collapse`;
                 combatantEffectsSet.add(physEffect);
               } else if (
+                col.ghoulZone === 'UPPER_ARM_LEFT' ||
+                col.ghoulZone === 'FOREARM_LEFT' ||
                 col.ghoulZone === 'UPPER_ARM_RIGHT' ||
                 col.ghoulZone === 'FOREARM_RIGHT'
               ) {
@@ -966,12 +968,15 @@ export function simulateShot(
               }
             }
 
-            if (
-              (col.ghoulZone === 'HAND_RIGHT' ||
+            const isTriggerArmZone = target.isLeftHanded
+              ? col.ghoulZone === 'HAND_RIGHT' ||
                 col.ghoulZone === 'FOREARM_RIGHT' ||
-                col.ghoulZone === 'UPPER_ARM_RIGHT') &&
-              energyDeposited >= 65
-            ) {
+                col.ghoulZone === 'UPPER_ARM_RIGHT'
+              : col.ghoulZone === 'HAND_LEFT' ||
+                col.ghoulZone === 'FOREARM_LEFT' ||
+                col.ghoulZone === 'UPPER_ARM_LEFT';
+
+            if (isTriggerArmZone && energyDeposited >= 65) {
               weaponDisarmed = true;
               combatantEffectsSet.add('Weapon Arm Trauma — Dropped Firearm');
             }
@@ -1303,10 +1308,15 @@ export function simulateShot(
           combatantEffectsSet.add(`GHOUL Clean Sever — ${GHOUL_ZONE_HIERARCHY[zone].label} Amputated`);
         }
 
+        const severDisarmsTrigger = target.isLeftHanded
+          ? zone === 'HAND_RIGHT'
+          : zone === 'HAND_LEFT';
         if (
+          severDisarmsTrigger ||
+          zone === 'UPPER_ARM_LEFT' ||
+          zone === 'FOREARM_LEFT' ||
           zone === 'UPPER_ARM_RIGHT' ||
-          zone === 'FOREARM_RIGHT' ||
-          zone === 'HAND_RIGHT'
+          zone === 'FOREARM_RIGHT'
         ) {
           weaponDisarmed = true;
         }
@@ -1670,6 +1680,7 @@ export function applyShotReportToTarget(
       }
       if (w.ghoulZone === 'UPPER_ARM_LEFT' || w.ghoulZone === 'FOREARM_LEFT') {
         target.leftArmFunctional = false;
+        target.weaponDropped = true;
       }
       if (w.ghoulZone === 'UPPER_ARM_RIGHT' || w.ghoulZone === 'FOREARM_RIGHT') {
         target.rightArmFunctional = false;
@@ -1814,10 +1825,15 @@ export function applyShotReportToTarget(
     }
     if (dism.zone === 'UPPER_ARM_LEFT' || dism.zone === 'FOREARM_LEFT' || dism.zone === 'HAND_LEFT') {
       target.leftArmFunctional = false;
+      if (!target.isLeftHanded || dism.zone !== 'HAND_LEFT') {
+        target.weaponDropped = true;
+      }
     }
     if (dism.zone === 'UPPER_ARM_RIGHT' || dism.zone === 'FOREARM_RIGHT' || dism.zone === 'HAND_RIGHT') {
       target.rightArmFunctional = false;
-      target.weaponDropped = true;
+      if (target.isLeftHanded || dism.zone !== 'HAND_RIGHT') {
+        target.weaponDropped = true;
+      }
     }
   }
 
@@ -1875,6 +1891,7 @@ export function applyShotReportToTarget(
       hitZone === 'HAND_LEFT'
     ) {
       rxType = 'ARM_WRENCH_LEFT';
+      if (target.weaponDropped) target.posture = 'DISARMED';
     } else if (
       hitZone === 'SHOULDER_RIGHT' ||
       hitZone === 'UPPER_ARM_RIGHT' ||

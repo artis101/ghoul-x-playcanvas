@@ -434,6 +434,268 @@ export class DestructionManager {
   }
 
   /**
+   * Breach-aware visual line-of-sight query across `[fromWorld, toWorld]`:
+   * - Casts across `[0, dist - 0.02]` so hugging cover (`< 0.10m` away) still reliably blocks sight.
+   * - Intact opaque cover (`CONCRETE_*`, `BRICK_MASONRY`, `STEEL`, `WOOD_STUD`) always blocks sight.
+   * - `WOOD_DRYWALL` blocks sight UNLESS the ray passes through an already blown-open Clipper2 hole.
+   * - Transparent glass (`GLASS_MARCHING_256`, `GLASS_VORONOI`) does NOT block visual sight.
+   */
+  public isLineOfSightBlocked(fromWorld: Vec3Like, toWorld: Vec3Like): boolean {
+    if (this.destroyed) return false;
+
+    const delta = sub(toWorld, fromWorld);
+    const dist = length(delta);
+    if (dist <= 0.05) return false;
+
+    const dir = scale(delta, 1 / dist);
+    const maxDist = Math.max(0.01, dist - 0.02);
+    const hits = this.rapierWorld.castPenetrationRay(fromWorld, dir, maxDist);
+
+    for (let i = 0; i < hits.length; i++) {
+      const h = hits[i];
+      if (h.distanceM > maxDist) continue;
+      const mat = h.surface.material;
+
+      if (mat === 'GLASS_MARCHING_256' || mat === 'GLASS_VORONOI') {
+        continue;
+      }
+
+      if (mat === 'WOOD_DRYWALL') {
+        if (
+          this.isWoodWallRayInOpenHole(
+            h.surface.objectId,
+            fromWorld,
+            dir,
+            maxDist,
+            h.pointWorld,
+          )
+        ) {
+          continue;
+        }
+        return true;
+      }
+
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Intercepts an enemy bullet segment `[origin, origin + normDir * maxDistM]` against arena cover:
+   * - Passes cleanly through blown-open breaches in wood/brick/concrete walls.
+   * - Fractures/shatters glass windows when enemies fire through glass panes.
+   * - Stops enemy rounds on intact solid cover (`CONCRETE_*`, `BRICK_MASONRY`, `STEEL`, `WOOD_STUD`,
+   *   and intact `WOOD_DRYWALL`), stamping POM craters / splinters without unfair wallbang damage.
+   */
+  public interceptEnemyShot(
+    origin: Vec3Like,
+    dir: Vec3Like,
+    maxDistM: number,
+    kineticEnergyJ = 460,
+  ): { blocked: boolean; impactPointWorld?: Vec3Like } {
+    if (this.destroyed || maxDistM <= 0) {
+      return { blocked: false };
+    }
+
+    const normDir = normalize(dir);
+    const rawHits = this.rapierWorld.castPenetrationRay(origin, normDir, maxDistM);
+    if (rawHits.length === 0) {
+      return { blocked: false };
+    }
+
+    const orderedObjects: Array<{
+      readonly key: string;
+      readonly firstHit: PenetrationRayHit;
+      lastDistM: number;
+      hitStud: boolean;
+    }> = [];
+    const indexByKey = new Map<string, number>();
+
+    for (let i = 0; i < rawHits.length; i++) {
+      const h = rawHits[i];
+      if (h.distanceM > maxDistM) continue;
+      const groupKind = this.classifyHitGroup(h.surface);
+      const key = `${groupKind}:${h.surface.objectId}`;
+      const existingIdx = indexByKey.get(key);
+      if (existingIdx !== undefined) {
+        orderedObjects[existingIdx].lastDistM = Math.max(
+          orderedObjects[existingIdx].lastDistM,
+          h.distanceM,
+        );
+        if (h.surface.material === 'WOOD_STUD') {
+          orderedObjects[existingIdx].hitStud = true;
+        }
+      } else {
+        indexByKey.set(key, orderedObjects.length);
+        orderedObjects.push({
+          key,
+          firstHit: h,
+          lastDistM: h.distanceM,
+          hitStud: h.surface.material === 'WOOD_STUD',
+        });
+      }
+    }
+
+    let curEnergyJ = Math.max(60, kineticEnergyJ);
+    let curSpeedMs = 390;
+    const listenerPos = this.getListenerPos
+      ? this.getListenerPos()
+      : { x: 0, y: 1.62, z: 0 };
+
+    for (let i = 0; i < orderedObjects.length; i++) {
+      const entry = orderedObjects[i];
+      const hit = entry.firstHit;
+      const mat = hit.surface.material;
+      const objId = hit.surface.objectId;
+
+      const startDistM = Math.max(0, hit.distanceM - 0.06);
+      const endDistM = Math.min(
+        maxDistM + 0.04,
+        entry.lastDistM + Math.max(0.18, hit.surface.thicknessM + 0.14),
+      );
+      const segLenM = Math.max(0.08, endDistM - startDistM);
+      const segOrigin = add(origin, scale(normDir, startDistM));
+
+      if (mat === 'GLASS_MARCHING_256' || mat === 'GLASS_VORONOI') {
+        const res = this.glassSystem.handleRaySegment({
+          originWorld: segOrigin,
+          directionWorld: normDir,
+          maxDistanceM: segLenM,
+          kineticEnergyJ: curEnergyJ,
+          speedMs: curSpeedMs,
+          caliberRadiusM: 0.0045,
+          isArmorPiercing: false,
+        });
+        if (!res) continue;
+
+        const energyLost = curEnergyJ - res.remainingEnergyJ;
+        if (energyLost > 1.0 || res.stopped) {
+          this.combatAudio?.playMaterialImpact(
+            res.hitMaterial ?? mat,
+            res.impactPointWorld ?? hit.pointWorld,
+            curEnergyJ,
+            listenerPos,
+          );
+        }
+
+        curEnergyJ = Math.max(0, res.remainingEnergyJ);
+        curSpeedMs = Math.max(0, res.remainingSpeedMs);
+        if (res.stopped || curEnergyJ <= 15 || curSpeedMs <= 25) {
+          return {
+            blocked: true,
+            impactPointWorld: res.impactPointWorld ?? hit.pointWorld,
+          };
+        }
+        continue;
+      }
+
+      if (mat === 'WOOD_DRYWALL' || mat === 'WOOD_STUD') {
+        if (
+          !entry.hitStud &&
+          this.isWoodWallRayInOpenHole(objId, origin, normDir, maxDistM, hit.pointWorld)
+        ) {
+          continue;
+        }
+
+        const res = this.woodWalls.handleRaySegment({
+          originWorld: segOrigin,
+          directionWorld: normDir,
+          maxDistanceM: segLenM,
+          kineticEnergyJ: Math.min(220, curEnergyJ),
+          speedMs: 310,
+          caliberRadiusM: 0.0045,
+          isArmorPiercing: false,
+        });
+        const impactPt = res?.impactPointWorld ?? hit.pointWorld;
+        this.combatAudio?.playMaterialImpact(
+          entry.hitStud ? 'WOOD_STUD' : 'WOOD_DRYWALL',
+          impactPt,
+          curEnergyJ,
+          listenerPos,
+        );
+        return {
+          blocked: true,
+          impactPointWorld: impactPt,
+        };
+      }
+
+      if (mat === 'BRICK_MASONRY') {
+        const res = this.brickWalls.handleRaySegment({
+          originWorld: segOrigin,
+          directionWorld: normDir,
+          maxDistanceM: segLenM,
+          kineticEnergyJ: Math.min(320, curEnergyJ),
+          speedMs: 340,
+          caliberRadiusM: 0.0045,
+          isArmorPiercing: false,
+        });
+        const impactPt = res?.impactPointWorld ?? hit.pointWorld;
+        this.combatAudio?.playMaterialImpact(
+          'BRICK_MASONRY',
+          impactPt,
+          curEnergyJ,
+          listenerPos,
+        );
+        return {
+          blocked: true,
+          impactPointWorld: impactPt,
+        };
+      }
+
+      if (mat === 'CONCRETE_CHUNKS' || mat === 'CONCRETE_INTACT') {
+        let impactPt = hit.pointWorld;
+        if (this.concreteWalls.getWall(objId)) {
+          const res = this.concreteWalls.handleRaySegment({
+            originWorld: segOrigin,
+            directionWorld: normDir,
+            maxDistanceM: segLenM,
+            kineticEnergyJ: curEnergyJ,
+            speedMs: curSpeedMs,
+            caliberRadiusM: 0.0045,
+            isArmorPiercing: false,
+          });
+          if (res?.impactPointWorld) {
+            impactPt = res.impactPointWorld;
+          }
+        } else {
+          this.pomDecals.spawnCraterImpact(
+            hit.pointWorld,
+            hit.normalWorld,
+            normDir,
+            curEnergyJ,
+            0.0045,
+          );
+        }
+        this.combatAudio?.playMaterialImpact(
+          mat,
+          impactPt,
+          curEnergyJ,
+          listenerPos,
+        );
+        return {
+          blocked: true,
+          impactPointWorld: impactPt,
+        };
+      }
+
+      // STEEL (including intact hazard barrels — stop hostile fire with metallic ricochet without friendly-fire detonation)
+      this.combatAudio?.playMaterialImpact(
+        'STEEL',
+        hit.pointWorld,
+        curEnergyJ,
+        listenerPos,
+      );
+      return {
+        blocked: true,
+        impactPointWorld: hit.pointWorld,
+      };
+    }
+
+    return { blocked: false };
+  }
+
+  /**
    * Routes high-explosive blasts (M67 frag grenades and detonating red hazard barrels) across
    * all destructible subsystems + Rapier dynamic rigid bodies with recursion protection.
    */
@@ -734,5 +996,52 @@ export class DestructionManager {
     }
 
     return false;
+  }
+
+  private isWoodWallRayInOpenHole(
+    objectId: string,
+    rayOrigin: Vec3Like,
+    unitDir: Vec3Like,
+    maxDist: number,
+    fallbackPointWorld: Vec3Like,
+  ): boolean {
+    const wall = this.woodWalls.getWall(objectId);
+    if (!wall) return false;
+
+    const relOx = rayOrigin.x - wall.centerWorld.x;
+    const relOy = rayOrigin.y - wall.centerWorld.y;
+    const relOz = rayOrigin.z - wall.centerWorld.z;
+
+    const localOx = relOx * wall.cosYaw - relOz * wall.sinYaw;
+    const localOy = relOy;
+    const localOz = relOx * wall.sinYaw + relOz * wall.cosYaw;
+
+    const localDx = unitDir.x * wall.cosYaw - unitDir.z * wall.sinYaw;
+    const localDy = unitDir.y;
+    const localDz = unitDir.x * wall.sinYaw + unitDir.z * wall.cosYaw;
+
+    let hitLocalX: number;
+    let hitLocalY: number;
+    if (Math.abs(localDz) > 1e-5) {
+      const tMid = -localOz / localDz;
+      if (tMid >= -wall.thicknessM && tMid <= maxDist + wall.thicknessM) {
+        hitLocalX = localOx + localDx * tMid;
+        hitLocalY = localOy + localDy * tMid;
+      } else {
+        const rx = fallbackPointWorld.x - wall.centerWorld.x;
+        const rz = fallbackPointWorld.z - wall.centerWorld.z;
+        hitLocalX = rx * wall.cosYaw - rz * wall.sinYaw;
+        hitLocalY = fallbackPointWorld.y - wall.centerWorld.y;
+      }
+    } else {
+      const rx = fallbackPointWorld.x - wall.centerWorld.x;
+      const rz = fallbackPointWorld.z - wall.centerWorld.z;
+      hitLocalX = rx * wall.cosYaw - rz * wall.sinYaw;
+      hitLocalY = fallbackPointWorld.y - wall.centerWorld.y;
+    }
+
+    const u = hitLocalX + wall.widthM * 0.5;
+    const v = hitLocalY + wall.heightM * 0.5;
+    return isPointInOpenHole(wall.panelState, u, v);
   }
 }

@@ -62,9 +62,9 @@ export class GhoulXApplication {
     this.hudController = new HudController();
     this.combatAudio = new CombatAudioEngine();
     this.glbRegistry = new GlbModelRegistry(this.app);
-    this.fxManager = new GoreAndBallisticsFxManager(this.app, this.materials);
+    this.fxManager = new GoreAndBallisticsFxManager(this.app, this.materials, this.glbRegistry);
 
-    this.arenaBuilder = new ArenaBuilder(this.app, this.materials);
+    this.arenaBuilder = new ArenaBuilder(this.app, this.materials, this.rapierWorld);
     this.arenaBuilder.build();
 
     this.mayhemDirector = new MayhemDirector({
@@ -102,6 +102,10 @@ export class GhoulXApplication {
     this.tacticalAi = new TacticalCombatAiSystem({
       app: this.app,
       rapierWorld: this.rapierWorld,
+      isLineOfSightBlocked: (from, to) =>
+        this.destructionManager.isLineOfSightBlocked(from, to),
+      interceptEnemyShotCover: (origin, dir, maxDistM) =>
+        this.destructionManager.interceptEnemyShot(origin, dir, maxDistM),
       onPlayerDamaged: () => {
         this.hudController.triggerPlayerDamageFlash();
         this.fpsController.applyCameraShake(1.15, 0.16);
@@ -155,6 +159,8 @@ export class GhoulXApplication {
         tacticalAi: this.tacticalAi,
         combatAudio: this.combatAudio,
         glbRegistry: this.glbRegistry,
+        isLineOfSightBlocked: (from, to) =>
+          this.destructionManager.isLineOfSightBlocked(from, to),
       }
     );
 
@@ -194,12 +200,14 @@ export class GhoulXApplication {
     void this.glbRegistry
       .preloadAll()
       .then(() => {
+        this.fxManager.attachGlbRegistry(this.glbRegistry);
         this.arsenalManager.attachGlbRegistry(this.glbRegistry);
         this.destructionManager.upgradeWithGlbAssets(this.glbRegistry);
         this.combatDirector.upgradeTargetsWithGlb(this.glbRegistry);
       })
       .catch((err: unknown) => {
         console.warn('GLB preload skipped/fallback to procedural retro meshes:', err);
+        this.combatDirector.notifyGlbPreloadFailed();
       });
   }
 

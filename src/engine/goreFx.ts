@@ -14,6 +14,10 @@ import {
   buildArchetypeHeadgearEntity,
   buildEnemyWeaponEntity,
 } from './retroMeshBuilder.ts';
+import {
+  getArchetypeWeaponAssetId,
+  GlbModelRegistry,
+} from './assets/glbLoader.ts';
 
 export interface ActiveProjectileFx {
   entity: pc.Entity;
@@ -91,12 +95,18 @@ export class GoreAndBallisticsFxManager {
   private gibChunks: GibChunk[] = [];
   private boneShards: BoneShardSpark[] = [];
   private arterialFountains: ArterialFountainStream[] = [];
+  private glbRegistry: GlbModelRegistry | null = null;
 
-  constructor(app: pc.AppBase, materials: EngineMaterialPalette) {
+  constructor(app: pc.AppBase, materials: EngineMaterialPalette, glbRegistry?: GlbModelRegistry | null) {
     this.app = app;
     this.materials = materials;
+    this.glbRegistry = glbRegistry ?? null;
     this.fxRoot = new pc.Entity('GoreAndBallisticsFxRoot');
     this.app.root.addChild(this.fxRoot);
+  }
+
+  public attachGlbRegistry(glbRegistry: GlbModelRegistry): void {
+    this.glbRegistry = glbRegistry;
   }
 
   /**
@@ -160,8 +170,14 @@ export class GoreAndBallisticsFxManager {
     worldPos: Vec3Like,
     shotDir: Vec3Like
   ): void {
-    const mats = getArchetypeRetroMaterials(this.app.graphicsDevice, archetype);
-    const prop = buildArchetypeHeadgearEntity(this.app.graphicsDevice, archetype, mats);
+    let prop: pc.Entity | null = null;
+    if (this.glbRegistry && this.glbRegistry.isLoaded('ghoul_combatant')) {
+      prop = this.glbRegistry.instantiateDetachedHeadgearProp(archetype);
+    }
+    if (!prop) {
+      const mats = getArchetypeRetroMaterials(this.app.graphicsDevice, archetype);
+      prop = buildArchetypeHeadgearEntity(this.app.graphicsDevice, archetype, mats);
+    }
     prop.setPosition(worldPos.x, worldPos.y, worldPos.z);
     this.fxRoot.addChild(prop);
 
@@ -194,8 +210,21 @@ export class GoreAndBallisticsFxManager {
     worldPos: Vec3Like,
     inheritedVel: Vec3Like
   ): void {
-    const mats = getArchetypeRetroMaterials(this.app.graphicsDevice, archetype);
-    const gun = buildEnemyWeaponEntity(this.app.graphicsDevice, archetype, mats);
+    let gun: pc.Entity | null = null;
+    const weaponId = getArchetypeWeaponAssetId(archetype);
+    if (this.glbRegistry && this.glbRegistry.isLoaded(weaponId)) {
+      const inst = this.glbRegistry.instantiateWeapon(weaponId, {
+        castShadows: true,
+        receiveShadows: true,
+      });
+      if (inst.animComponent) {
+        inst.animComponent.playing = false;
+      }
+      gun = inst.rootEntity;
+    } else {
+      const mats = getArchetypeRetroMaterials(this.app.graphicsDevice, archetype);
+      gun = buildEnemyWeaponEntity(this.app.graphicsDevice, archetype, mats);
+    }
     gun.setPosition(worldPos.x, worldPos.y, worldPos.z);
     this.fxRoot.addChild(gun);
 

@@ -564,5 +564,242 @@ describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
 
       ai.destroy();
     });
+
+    it('prevents PATROL_GUARD proximity wallhacks (<= 6.5m) through solid wood, brick, and concrete walls even when hugging < 0.15m', () => {
+      const world = new RapierPhysicsWorld();
+      const firedTracers: EnemyTracerFireEvent[] = [];
+
+      try {
+        // Build 3 opaque cover walls: wood (185 J), brick (1600 J), and concrete (12000 J)
+        world.createStaticBox(
+          { x: 0, y: 1.2, z: -6.0 },
+          { x: 2.0, y: 1.2, z: 0.06 },
+          undefined,
+          {
+            material: 'WOOD_DRYWALL',
+            objectId: 'test_wood_wall',
+            thicknessM: 0.12,
+            penetrationResistanceJ: 185,
+          },
+        );
+        world.createStaticBox(
+          { x: 0, y: 1.1, z: -14.0 },
+          { x: 2.0, y: 1.1, z: 0.1 },
+          undefined,
+          {
+            material: 'BRICK_MASONRY',
+            objectId: 'test_brick_wall',
+            thicknessM: 0.2,
+            penetrationResistanceJ: 1600,
+          },
+        );
+        world.createStaticBox(
+          { x: 0, y: 1.15, z: -22.0 },
+          { x: 2.0, y: 1.15, z: 0.14 },
+          undefined,
+          {
+            material: 'CONCRETE_INTACT',
+            objectId: 'test_concrete_wall',
+            thicknessM: 0.28,
+            penetrationResistanceJ: 12000,
+          },
+        );
+
+        const ai = new TacticalCombatAiSystem({
+          rapierWorld: world,
+          onEnemyFireTracer: (ev) => firedTracers.push(ev),
+        });
+
+        const woodGuard = createTargetHealthState(
+          'guard_wood',
+          'Wood Guard',
+          { x: 0, y: 0, z: -6.55 },
+          0,
+          'SKINHEAD_PUNK',
+        );
+        const brickGuard = createTargetHealthState(
+          'guard_brick',
+          'Brick Guard',
+          { x: 0, y: 0, z: -14.65 },
+          0,
+          'MILITIA_GUNNER',
+        );
+        const concreteGuard = createTargetHealthState(
+          'guard_concrete',
+          'Concrete Guard',
+          { x: 0, y: 0, z: -22.75 },
+          0,
+          'HEAVY_ENFORCER',
+        );
+
+        ai.registerWaveTargets([woodGuard, brickGuard, concreteGuard], false);
+
+        // Player hugs < 0.12m from the front face of each wall (horizDist ~ 0.7m, well inside <= 6.5m!)
+        const hugPositions = [
+          { x: 0, y: 1.55, z: -5.84 },   // 0.10m from wood front face (-5.94)
+          { x: 0, y: 1.55, z: -13.8 },   // 0.10m from brick front face (-13.90)
+          { x: 0, y: 1.55, z: -21.76 },  // 0.10m from concrete front face (-21.86)
+        ];
+
+        for (const playerPos of hugPositions) {
+          for (let step = 0; step < 25; step++) {
+            ai.update(0.05, [woodGuard, brickGuard, concreteGuard], playerPos);
+          }
+        }
+
+        expect(ai.getAgent('guard_wood')!.state).toBe('PATROL_GUARD');
+        expect(ai.getAgent('guard_brick')!.state).toBe('PATROL_GUARD');
+        expect(ai.getAgent('guard_concrete')!.state).toBe('PATROL_GUARD');
+        expect(firedTracers).toHaveLength(0);
+
+        // Once player steps out past the right edge of the wood wall (x = 3.2, z = -5.8) with clear LOS,
+        // the guard within <= 6.5m immediately spots the player!
+        for (let step = 0; step < 6; step++) {
+          ai.update(0.05, [woodGuard], { x: 3.2, y: 1.62, z: -5.8 });
+        }
+        expect(ai.getAgent('guard_wood')!.state).toBe('ALERTED_ENGAGING');
+
+        ai.destroy();
+      } finally {
+        world.destroy();
+      }
+    });
+
+    it('blocks alerted & downed enemy fire through solid wood/brick/sill cover (even at < 0.15m) and peeks wide enough around 3.0m walls', () => {
+      // Part A: Sealed full-lane wood partition + low concrete sill protect cover-hugging player 100%
+      const sealedWorld = new RapierPhysicsWorld();
+      const sealedShots: EnemyTracerFireEvent[] = [];
+      try {
+        sealedWorld.createStaticBox(
+          { x: 0, y: 1.2, z: -7.0 },
+          { x: 9.5, y: 1.2, z: 0.06 },
+          undefined,
+          {
+            material: 'WOOD_DRYWALL',
+            objectId: 'sealed_wood_partition',
+            thicknessM: 0.12,
+            penetrationResistanceJ: 185,
+          },
+        );
+        sealedWorld.createStaticBox(
+          { x: 0, y: 0.65, z: -3.5 },
+          { x: 3.0, y: 0.65, z: 0.12 },
+          undefined,
+          {
+            material: 'CONCRETE_INTACT',
+            objectId: 'low_concrete_barricade',
+            thicknessM: 0.24,
+            penetrationResistanceJ: 12000,
+          },
+        );
+
+        const ai = new TacticalCombatAiSystem({
+          rapierWorld: sealedWorld,
+          initialPlayerHealth: 100,
+          initialPlayerArmor: 50,
+          onEnemyFireTracer: (ev) => sealedShots.push(ev),
+        });
+
+        // Enemy pressed close (0.42m) behind wood wall (previously 0.38m muzzle + 0.25m skip + 185J < 350J wallhacked!)
+        const standingEnemy = createTargetHealthState(
+          'standing_behind_wood',
+          'Wood Gunner',
+          { x: 0, y: 0, z: -7.48 },
+          0,
+          'MILITIA_GUNNER',
+        );
+        const downedEnemy = createTargetHealthState(
+          'downed_behind_wood',
+          'Downed Crawler',
+          { x: -1.5, y: 0, z: -7.48 },
+          0,
+          'SKINHEAD_PUNK',
+        );
+        downedEnemy.leftLegFunctional = false;
+
+        ai.registerWaveTargets([standingEnemy, downedEnemy], false);
+        ai.notifyGunshotOrExplosion({ x: 0, y: 1.5, z: -6.8 }, 30.0);
+
+        // Player hugs 0.10m in front of the wood wall (-6.94 + 0.10 = -6.84)
+        for (let i = 0; i < 70; i++) {
+          ai.update(0.05, [standingEnemy, downedEnemy], { x: 0, y: 1.55, z: -6.84 });
+        }
+
+        expect(sealedShots).toHaveLength(0);
+        expect(ai.playerVitals.health).toBe(100);
+        expect(ai.playerVitals.armor).toBe(50);
+
+        // Now place an alerted gunner in front of the wood wall (z = -5.5), while player crouches (y = 1.05)
+        // hugging 0.10m behind the 1.30m-tall concrete barricade at z = -3.5 (back/front faces -3.62 / -3.38)
+        const frontGunner = createTargetHealthState(
+          'front_gunner',
+          'Front Gunner',
+          { x: 0, y: 0, z: -5.5 },
+          0,
+          'MILITIA_GUNNER',
+        );
+        ai.registerWaveTargets([frontGunner], false);
+        ai.notifyGunshotOrExplosion({ x: 0, y: 1.0, z: -3.2 }, 25.0);
+
+        for (let i = 0; i < 60; i++) {
+          ai.update(0.05, [frontGunner], { x: 0, y: 1.05, z: -3.28 });
+        }
+        expect(sealedShots.filter((s) => s.hitPlayer)).toHaveLength(0);
+        expect(ai.playerVitals.health).toBe(100);
+        expect(ai.playerVitals.armor).toBe(50);
+
+        ai.destroy();
+      } finally {
+        sealedWorld.destroy();
+      }
+
+      // Part B: 3.0m-wide solid cover -> alerted enemy dynamically peeks past x = ±1.5m edge to acquire LOS and fire!
+      const peekWorld = new RapierPhysicsWorld();
+      const peekShots: EnemyTracerFireEvent[] = [];
+      try {
+        peekWorld.createStaticBox(
+          { x: 0, y: 1.15, z: -8.0 },
+          { x: 1.5, y: 1.15, z: 0.12 },
+          undefined,
+          {
+            material: 'BRICK_MASONRY',
+            objectId: 'wide_3m_brick_cover',
+            thicknessM: 0.24,
+            penetrationResistanceJ: 1600,
+          },
+        );
+
+        const ai = new TacticalCombatAiSystem({
+          rapierWorld: peekWorld,
+          onEnemyFireTracer: (ev) => peekShots.push(ev),
+        });
+
+        const peeker = createTargetHealthState(
+          'wide_wall_peeker',
+          'Militia Peeker',
+          { x: 0, y: 0, z: -9.2 },
+          0,
+          'MILITIA_GUNNER',
+        );
+        ai.registerWaveTargets([peeker], false);
+        ai.notifyGunshotOrExplosion({ x: 0, y: 1.62, z: 0 }, 30.0);
+
+        let maxLateralReachM = 0;
+        for (let i = 0; i < 90; i++) {
+          ai.update(0.05, [peeker], { x: 0, y: 1.62, z: 0 });
+          maxLateralReachM = Math.max(maxLateralReachM, Math.abs(peeker.worldPosition.x));
+        }
+
+        // Must have stepped clear past the 1.5m half-width wall edge and fired around the corner!
+        expect(maxLateralReachM).toBeGreaterThan(1.52);
+        expect(peekShots.length).toBeGreaterThan(0);
+        // Every shot that wasn't blocked by grazing the corner was fired only after clearing the wall!
+        expect(peekShots.some((s) => !s.blockedByCover)).toBe(true);
+
+        ai.destroy();
+      } finally {
+        peekWorld.destroy();
+      }
+    });
   });
 });

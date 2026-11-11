@@ -1670,15 +1670,20 @@ export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS
       lz = 0.04;
     }
 
-    // Classic Soldier of Fortune THROAT_CLUTCH agony pose: hand reaches up to bleeding neck!
+    // Classic Soldier of Fortune THROAT_CLUTCH agony pose: support hand reaches up to bleeding neck!
+    const clutchHandZone: GhoulZoneId = target.isLeftHanded ? 'HAND_LEFT' : 'HAND_RIGHT';
+    const clutchForearmZone: GhoulZoneId = target.isLeftHanded ? 'FOREARM_LEFT' : 'FOREARM_RIGHT';
+    const clutchArmFunctional = target.isLeftHanded ? target.leftArmFunctional : target.rightArmFunctional;
+    const clutchSign = target.isLeftHanded ? -1 : 1;
+
     if (target.posture === 'THROAT_CLUTCH' || rx.type === 'THROAT_CLUTCH') {
-      if (zone === 'HAND_LEFT' && target.leftArmFunctional) {
-        lx = -0.04;
+      if (zone === clutchHandZone && clutchArmFunctional) {
+        lx = clutchSign * 0.04;
         ly = 1.50 - kneeBuckleDrop;
         lz = 0.10;
       }
-      if (zone === 'FOREARM_LEFT' && target.leftArmFunctional) {
-        lx = -0.22;
+      if (zone === clutchForearmZone && clutchArmFunctional) {
+        lx = clutchSign * 0.22;
         ly = 1.28 - kneeBuckleDrop;
         lz = 0.14;
       }
@@ -1686,8 +1691,8 @@ export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS
 
     // Classic GUT_HURT clutch pose
     if (target.posture === 'GUT_HURT' || rx.type === 'GUT_FOLD') {
-      if (zone === 'HAND_LEFT' && target.leftArmFunctional) {
-        lx = -0.04;
+      if (zone === clutchHandZone && clutchArmFunctional) {
+        lx = clutchSign * 0.04;
         ly = 1.08 - kneeBuckleDrop;
         lz = 0.16;
       }
@@ -1731,6 +1736,9 @@ export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS
   recomputeRagdollBasisVectors(target);
 }
 
+/** Realistic ~12.5% human left-handedness (southpaw) incidence within 10–15% range */
+export const LEFT_HANDED_PROBABILITY = 0.125;
+
 /**
  * Creates an initialized TargetHealthState with full integrity, PBD ragdoll particles, and archetype gear.
  */
@@ -1739,7 +1747,8 @@ export function createTargetHealthState(
   name: string,
   worldPosition: Vec3Like,
   yawRad = 0,
-  archetype: EnemyArchetypeId = 'MILITIA_GUNNER'
+  archetype: EnemyArchetypeId = 'MILITIA_GUNNER',
+  isLeftHanded = false
 ): TargetHealthState {
   const zoneIntegrity: Record<GhoulZoneId, number> = {} as Record<GhoulZoneId, number>;
   const zoneCumulativeDamageJ: Record<GhoulZoneId, number> = {} as Record<GhoulZoneId, number>;
@@ -1833,6 +1842,7 @@ export function createTargetHealthState(
     consciousness: 1.0,
     painShock: 0.0,
     posture: 'COMBAT_READY',
+    isLeftHanded,
     leftLegFunctional: true,
     rightLegFunctional: true,
     leftArmFunctional: true,

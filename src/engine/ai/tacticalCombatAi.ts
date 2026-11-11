@@ -63,33 +63,38 @@ export interface TacticalCoverStation {
 export const TACTICAL_COVER_STATIONS: readonly TacticalCoverStation[] = [
   {
     stationId: DESTRUCTION_ZONE_LAYOUT.woodShootHouseWall.id,
-    coverAnchorWorld: { x: -1.65, y: 0, z: -8.35 },
+    coverAnchorWorld: { x: -2.3, y: 0, z: -8.35 },
     peekSign: 1,
-    peekStrideM: 0.95,
+    peekStrideM: 1.72,
     guardYawDeg: 6,
   },
   {
     stationId: DESTRUCTION_ZONE_LAYOUT.instancedBrickWall.id,
-    coverAnchorWorld: { x: -2.95, y: 0, z: -13.75 },
+    coverAnchorWorld: { x: -3.8, y: 0, z: -13.75 },
     peekSign: 1,
-    peekStrideM: 1.05,
+    peekStrideM: 1.72,
     guardYawDeg: 10,
   },
   {
     stationId: DESTRUCTION_ZONE_LAYOUT.voronoiConcreteWall.id,
-    coverAnchorWorld: { x: 1.45, y: 0, z: -14.85 },
+    coverAnchorWorld: { x: 2.3, y: 0, z: -14.85 },
     peekSign: -1,
-    peekStrideM: 1.1,
+    peekStrideM: 1.82,
     guardYawDeg: -8,
   },
   {
     stationId: DESTRUCTION_ZONE_LAYOUT.glassVoronoiWindow.id,
-    coverAnchorWorld: { x: 4.85, y: 0, z: -8.1 },
+    coverAnchorWorld: { x: 5.5, y: 0, z: -8.1 },
     peekSign: -1,
-    peekStrideM: 0.85,
+    peekStrideM: 0.75,
     guardYawDeg: -14,
   },
 ];
+
+export interface EnemyCoverShotInterceptResult {
+  readonly blocked: boolean;
+  readonly impactPointWorld?: Vec3Like;
+}
 
 export interface EnemyTracerFireEvent {
   readonly targetId: string;
@@ -170,6 +175,14 @@ export interface TacticalCombatAiOptions {
   initialPlayerArmor?: number;
   /** Sight detection range in meters when player is in front hemisphere (default 30m) */
   sightDetectionRangeM?: number;
+  /** Optional breach-aware visual sight occlusion query (e.g. DestructionManager.isLineOfSightBlocked) */
+  isLineOfSightBlocked?: (fromWorld: Vec3Like, toWorld: Vec3Like) => boolean;
+  /** Optional physical cover shot interceptor from enemy core to player target */
+  interceptEnemyShotCover?: (
+    originWorld: Vec3Like,
+    directionWorld: Vec3Like,
+    maxDistanceM: number,
+  ) => EnemyCoverShotInterceptResult;
   onEnemyFireTracer?: (event: EnemyTracerFireEvent) => void;
   onPlayerDamaged?: (vitals: Readonly<PlayerCombatVitals>, event: EnemyTracerFireEvent) => void;
   onEnemyStateChanged?: (
@@ -264,6 +277,12 @@ function approachAngleRad(current: number, target: number, maxStep: number): num
 export class TacticalCombatAiSystem {
   public readonly playerVitals: PlayerCombatVitals;
 
+  public isLineOfSightBlockedCallback?: (fromWorld: Vec3Like, toWorld: Vec3Like) => boolean;
+  public interceptEnemyShotCover?: (
+    originWorld: Vec3Like,
+    directionWorld: Vec3Like,
+    maxDistanceM: number,
+  ) => EnemyCoverShotInterceptResult;
   public onEnemyFireTracer?: (event: EnemyTracerFireEvent) => void;
   public onPlayerDamaged?: (
     vitals: Readonly<PlayerCombatVitals>,
@@ -288,6 +307,8 @@ export class TacticalCombatAiSystem {
     this.app = options.app ?? null;
     this.rapierWorld = options.rapierWorld ?? null;
     this.sightDetectionRangeM = Math.max(5, options.sightDetectionRangeM ?? 30.0);
+    this.isLineOfSightBlockedCallback = options.isLineOfSightBlocked;
+    this.interceptEnemyShotCover = options.interceptEnemyShotCover;
     this.onEnemyFireTracer = options.onEnemyFireTracer;
     this.onPlayerDamaged = options.onPlayerDamaged;
     this.onEnemyStateChanged = options.onEnemyStateChanged;
@@ -346,21 +367,35 @@ export class TacticalCombatAiSystem {
 
     for (let i = 0; i < targets.length; i++) {
       const hs = targets[i];
-      const coverSpec = TACTICAL_COVER_STATIONS[i % TACTICAL_COVER_STATIONS.length];
+      let coverSpec: TacticalCoverStation | undefined;
 
-      if (deployToCoverStations && coverSpec) {
-        hs.worldPosition = copyVec3(coverSpec.coverAnchorWorld);
-        hs.yawRad = (coverSpec.guardYawDeg * Math.PI) / 180;
-        updateStandingCombatPose(hs, this.elapsedClockS);
+      if (deployToCoverStations) {
+        coverSpec = TACTICAL_COVER_STATIONS[i % TACTICAL_COVER_STATIONS.length];
+        if (coverSpec) {
+          hs.worldPosition = copyVec3(coverSpec.coverAnchorWorld);
+          hs.yawRad = (coverSpec.guardYawDeg * Math.PI) / 180;
+          updateStandingCombatPose(hs, this.elapsedClockS);
+        }
+      } else {
+        let bestDist = 2.2;
+        for (const st of TACTICAL_COVER_STATIONS) {
+          const d = Math.hypot(
+            hs.worldPosition.x - st.coverAnchorWorld.x,
+            hs.worldPosition.z - st.coverAnchorWorld.z,
+          );
+          if (d <= bestDist) {
+            bestDist = d;
+            coverSpec = st;
+          }
+        }
       }
 
       const anchor = copyVec3(hs.worldPosition);
-      const peekSign: -1 | 1 =
-        coverSpec && deployToCoverStations
-          ? coverSpec.peekSign
-          : hs.worldPosition.x < 0
-            ? 1
-            : -1;
+      const peekSign: -1 | 1 = coverSpec
+        ? coverSpec.peekSign
+        : hs.worldPosition.x < 0
+          ? 1
+          : -1;
 
       const agent: EnemyAiAgentRuntime = {
         targetId: hs.targetId,
@@ -798,23 +833,23 @@ export class TacticalCombatAiSystem {
           1.4 * dt,
         );
 
-        // Sight cone & close proximity detection
+        // Sight cone & close proximity detection (both strictly gated by solid cover LOS!)
         const guardFwd = { x: Math.sin(hs.yawRad), y: 0, z: Math.cos(hs.yawRad) };
         const dirToPlayer =
           horizDist > 1e-3
             ? normalize({ x: toPlayer.x, y: 0, z: toPlayer.z })
             : guardFwd;
         const cosAngle = dot(guardFwd, dirToPlayer);
+        const enemyEyePos = add(hs.worldPosition, vec3(0, 1.55, 0));
 
-        const spottedInCone =
-          horizDist <= this.sightDetectionRangeM &&
-          cosAngle >= 0.38 &&
-          !this.isSightBlockedBySolidCover(
-            add(hs.worldPosition, vec3(0, 1.55, 0)),
-            playerEyeWorldPos,
-          );
+        const inDetectionEnvelope =
+          (horizDist <= this.sightDetectionRangeM && cosAngle >= 0.38) ||
+          horizDist <= 6.5;
 
-        if (spottedInCone || horizDist <= 6.5) {
+        if (
+          inDetectionEnvelope &&
+          !this.isSightBlockedBySolidCover(enemyEyePos, playerEyeWorldPos)
+        ) {
           agent.adrenaline = Math.max(agent.adrenaline, 0.88);
           this.transitionState(agent, 'ALERTED_ENGAGING');
         }
@@ -859,6 +894,7 @@ export class TacticalCombatAiSystem {
         // If disarmed or mortally wounded: retreat behind cover clutching wounds instead of peeking!
         if (aimProfile.clutchingWound) {
           agent.isPeekingOut = false;
+          agent.burstShotsRemaining = 0;
           const retreatX = agent.coverAnchorWorld.x - agent.peekSign * 0.25;
           const retreatZ = agent.coverAnchorWorld.z - 0.35;
           this.moveHorizontalClamped(hs, retreatX, retreatZ, 0.95 * dt);
@@ -869,24 +905,23 @@ export class TacticalCombatAiSystem {
         // Tactical cover peek & lateral strafe rhythm
         const cyclePeriodS = 3.1;
         const phase = (agent.peekCycleTimerS % cyclePeriodS) / cyclePeriodS;
-        agent.isPeekingOut = phase >= 0.26 && phase <= 0.86;
+        agent.isPeekingOut = phase >= 0.22 && phase <= 0.86;
 
-        const targetOffset = agent.isPeekingOut
-          ? agent.peekSign *
-            (agent.peekStrideM + Math.sin(agent.peekCycleTimerS * 2.4) * 0.28)
-          : -agent.peekSign * 0.18;
-
-        const deltaOffset = targetOffset - agent.currentLateralOffsetM;
-        const maxStrideStep = tuning.strafeSpeedMs * dt;
+        const peekPlan = this.computeAlertedPeekTarget(hs, agent, playerEyeWorldPos);
+        const deltaOffset = peekPlan.targetOffset - agent.currentLateralOffsetM;
+        const effectiveStrafeSpeed =
+          Math.abs(deltaOffset) > 1.0
+            ? Math.max(tuning.strafeSpeedMs, 2.35)
+            : tuning.strafeSpeedMs;
+        const maxStrideStep = effectiveStrafeSpeed * dt;
         agent.currentLateralOffsetM +=
           Math.abs(deltaOffset) <= maxStrideStep
             ? deltaOffset
             : Math.sign(deltaOffset) * maxStrideStep;
 
         const goalX = agent.coverAnchorWorld.x + agent.currentLateralOffsetM;
-        const goalZ =
-          agent.coverAnchorWorld.z + (agent.isPeekingOut ? 0.18 : -0.12);
-        this.moveHorizontalClamped(hs, goalX, goalZ, tuning.strafeSpeedMs * dt);
+        const goalZ = peekPlan.goalZ;
+        this.moveHorizontalClamped(hs, goalX, goalZ, effectiveStrafeSpeed * dt);
 
         // Smoothly turn yaw toward player
         hs.yawRad = approachAngleRad(hs.yawRad, desiredYawRad, 5.2 * dt);
@@ -894,7 +929,9 @@ export class TacticalCombatAiSystem {
           hs.posture = 'COMBAT_READY' as CombatantPostureState;
         }
 
-        if (aimProfile.canReturnFire && agent.isPeekingOut) {
+        if (!agent.isPeekingOut && peekPlan.anchorBlockedByCover) {
+          agent.burstShotsRemaining = 0;
+        } else if (aimProfile.canReturnFire && agent.isPeekingOut) {
           this.stepWeaponBurstFire(dt, hs, agent, aimProfile, playerEyeWorldPos);
         }
         break;
@@ -914,7 +951,7 @@ export class TacticalCombatAiSystem {
 
         hs.yawRad = approachAngleRad(hs.yawRad, desiredYawRad, 2.6 * dt);
 
-        // Leg-crippled fighters still bravely fire one-handed with 4.5x spread cone unless disarmed/mortally wounded!
+        // Leg-crippled fighters still bravely fire one-handed with 4.5x spread cone when they have clear LOS!
         if (aimProfile.canReturnFire) {
           this.stepWeaponBurstFire(dt, hs, agent, aimProfile, playerEyeWorldPos);
         }
@@ -930,6 +967,215 @@ export class TacticalCombatAiSystem {
     }
   }
 
+  private computeAlertedPeekTarget(
+    hs: TargetHealthState,
+    agent: EnemyAiAgentRuntime,
+    playerEyeWorldPos: Vec3Like,
+  ): { targetOffset: number; goalZ: number; anchorBlockedByCover: boolean } {
+    const hasCoverQueries =
+      this.rapierWorld !== null || this.isLineOfSightBlockedCallback !== undefined;
+
+    if (!hasCoverQueries) {
+      return {
+        targetOffset: agent.isPeekingOut
+          ? agent.peekSign *
+            (agent.peekStrideM + Math.sin(agent.peekCycleTimerS * 2.4) * 0.28)
+          : -agent.peekSign * 0.18,
+        goalZ: agent.coverAnchorWorld.z + (agent.isPeekingOut ? 0.18 : -0.12),
+        anchorBlockedByCover: false,
+      };
+    }
+
+    const playerChest: Vec3Like = {
+      x: playerEyeWorldPos.x,
+      y: playerEyeWorldPos.y - 0.18,
+      z: playerEyeWorldPos.z,
+    };
+    const anchorCore: Vec3Like = {
+      x: agent.coverAnchorWorld.x,
+      y: hs.worldPosition.y + 1.32,
+      z: agent.coverAnchorWorld.z,
+    };
+    const anchorEye: Vec3Like = {
+      x: agent.coverAnchorWorld.x,
+      y: hs.worldPosition.y + 1.55,
+      z: agent.coverAnchorWorld.z,
+    };
+
+    const anchorClear =
+      !this.isSightBlockedBySolidCover(anchorCore, playerChest) ||
+      !this.isSightBlockedBySolidCover(anchorEye, playerEyeWorldPos);
+
+    if (anchorClear) {
+      // Anchor itself is clear (open CQB lane, behind glass window, or looking through a blown-open breach!)
+      const sideProbeOffset = agent.peekSign * Math.min(0.85, agent.peekStrideM);
+      const sideCore: Vec3Like = {
+        x: agent.coverAnchorWorld.x + sideProbeOffset,
+        y: hs.worldPosition.y + 1.32,
+        z: agent.coverAnchorWorld.z + 0.12,
+      };
+      const sideClear = !this.isSightBlockedBySolidCover(sideCore, playerChest);
+
+      if (!agent.isPeekingOut) {
+        // If there is intact solid wall immediately beside an open breach hole, duck behind that intact wall!
+        for (const sign of [-agent.peekSign, agent.peekSign] as const) {
+          const shelterX = agent.coverAnchorWorld.x + sign * 0.72;
+          if (shelterX < -8.05 || shelterX > 8.05) continue;
+          const shelterCore: Vec3Like = {
+            x: shelterX,
+            y: hs.worldPosition.y + 1.32,
+            z: agent.coverAnchorWorld.z - 0.14,
+          };
+          const shelterEye: Vec3Like = {
+            x: shelterX,
+            y: hs.worldPosition.y + 1.55,
+            z: agent.coverAnchorWorld.z - 0.14,
+          };
+          if (
+            this.isSightBlockedBySolidCover(shelterCore, playerChest) &&
+            this.isSightBlockedBySolidCover(shelterEye, playerEyeWorldPos)
+          ) {
+            return {
+              targetOffset: sign * 0.72,
+              goalZ: agent.coverAnchorWorld.z - 0.14,
+              anchorBlockedByCover: false,
+            };
+          }
+        }
+
+        return {
+          targetOffset: -agent.peekSign * 0.18,
+          goalZ: agent.coverAnchorWorld.z - 0.12,
+          anchorBlockedByCover: false,
+        };
+      }
+
+      if (sideClear) {
+        return {
+          targetOffset:
+            sideProbeOffset +
+            agent.peekSign * Math.sin(agent.peekCycleTimerS * 2.4) * 0.22,
+          goalZ: agent.coverAnchorWorld.z + 0.18,
+          anchorBlockedByCover: false,
+        };
+      }
+
+      // Narrow blown-open breach directly in front of anchor -> hold alignment with the breach hole!
+      return {
+        targetOffset: Math.sin(agent.peekCycleTimerS * 2.4) * 0.08,
+        goalZ: agent.coverAnchorWorld.z + 0.12,
+        anchorBlockedByCover: false,
+      };
+    }
+
+    // Anchor is occluded behind solid opaque cover (wood, brick, concrete, or barrier)
+    if (!agent.isPeekingOut) {
+      return {
+        targetOffset: 0,
+        goalZ: agent.coverAnchorWorld.z - 0.14,
+        anchorBlockedByCover: true,
+      };
+    }
+
+    // Probe outward left/right to find the nearest cover edge or breach hole with clear LOS to the player
+    const peekZ = agent.coverAnchorWorld.z + 0.18;
+    const candidateDistances = [0.55, 0.95, 1.35, 1.68, 1.98, 2.32];
+    const signs: readonly (-1 | 1)[] = [
+      agent.peekSign,
+      (agent.peekSign === 1 ? -1 : 1) as -1 | 1,
+    ];
+
+    for (const d of candidateDistances) {
+      for (const s of signs) {
+        const rawX = agent.coverAnchorWorld.x + s * d;
+        if (rawX < -8.05 || rawX > 8.05) continue;
+
+        const candCore: Vec3Like = {
+          x: rawX,
+          y: hs.worldPosition.y + 1.32,
+          z: peekZ,
+        };
+        const candClear =
+          !this.isSightBlockedBySolidCover(candCore, playerChest) ||
+          !this.isSightBlockedBySolidCover(candCore, playerEyeWorldPos);
+
+        if (candClear) {
+          agent.peekSign = s;
+          let chosenDist = d;
+          const nudgedX = agent.coverAnchorWorld.x + s * (d + 0.16);
+          if (nudgedX >= -8.05 && nudgedX <= 8.05) {
+            const nudgedCore: Vec3Like = {
+              x: nudgedX,
+              y: hs.worldPosition.y + 1.32,
+              z: peekZ,
+            };
+            if (
+              !this.isSightBlockedBySolidCover(nudgedCore, playerChest) ||
+              !this.isSightBlockedBySolidCover(nudgedCore, playerEyeWorldPos)
+            ) {
+              chosenDist = d + 0.16;
+            }
+          }
+
+          return {
+            targetOffset:
+              s * chosenDist + Math.sin(agent.peekCycleTimerS * 2.4) * 0.08,
+            goalZ: peekZ,
+            anchorBlockedByCover: true,
+          };
+        }
+      }
+    }
+
+    return {
+      targetOffset: agent.peekSign * agent.peekStrideM,
+      goalZ: peekZ,
+      anchorBlockedByCover: true,
+    };
+  }
+
+  private resolveExposedPlayerAimPoint(
+    hs: TargetHealthState,
+    agent: EnemyAiAgentRuntime,
+    playerEyeWorldPos: Vec3Like,
+  ): Vec3Like | null {
+    const muzzleHeight = agent.state === 'DOWNED_CRAWLING' ? 0.62 : 1.32;
+    const eyeHeight = agent.state === 'DOWNED_CRAWLING' ? 0.78 : 1.55;
+
+    const enemyCorePos: Vec3Like = {
+      x: hs.worldPosition.x,
+      y: hs.worldPosition.y + muzzleHeight,
+      z: hs.worldPosition.z,
+    };
+    const enemyEyePos: Vec3Like = {
+      x: hs.worldPosition.x,
+      y: hs.worldPosition.y + eyeHeight,
+      z: hs.worldPosition.z,
+    };
+    const playerChestTarget: Vec3Like = {
+      x: playerEyeWorldPos.x,
+      y: playerEyeWorldPos.y - 0.18,
+      z: playerEyeWorldPos.z,
+    };
+
+    const chestLineClear = !this.isSightBlockedBySolidCover(enemyCorePos, playerChestTarget);
+    const eyeToEyeClear = !this.isSightBlockedBySolidCover(enemyEyePos, playerEyeWorldPos);
+
+    if (!chestLineClear && !eyeToEyeClear) {
+      return null;
+    }
+
+    if (chestLineClear) {
+      return playerChestTarget;
+    }
+
+    if (!this.isSightBlockedBySolidCover(enemyCorePos, playerEyeWorldPos)) {
+      return playerEyeWorldPos;
+    }
+
+    return null;
+  }
+
   private stepWeaponBurstFire(
     dt: number,
     hs: TargetHealthState,
@@ -940,7 +1186,24 @@ export class TacticalCombatAiSystem {
     const tuning = ARCHETYPE_TUNING[hs.archetype];
 
     if (agent.burstShotsRemaining <= 0) {
-      agent.fireCooldownTimerS -= dt;
+      agent.fireCooldownTimerS = Math.max(0, agent.fireCooldownTimerS - dt);
+    }
+
+    const exposedAimTarget = this.resolveExposedPlayerAimPoint(
+      hs,
+      agent,
+      playerEyeWorldPos,
+    );
+    if (!exposedAimTarget) {
+      // Never start or continue firing blindly into/through opaque solid cover!
+      if (agent.burstShotsRemaining > 0) {
+        agent.burstShotsRemaining = 0;
+        agent.fireCooldownTimerS = Math.max(agent.fireCooldownTimerS, 0.25);
+      }
+      return;
+    }
+
+    if (agent.burstShotsRemaining <= 0) {
       if (agent.fireCooldownTimerS <= 0) {
         agent.burstShotsRemaining = aimProfile.isOneHandedDownedFire
           ? Math.max(1, Math.ceil(tuning.burstCount * 0.5))
@@ -955,8 +1218,8 @@ export class TacticalCombatAiSystem {
       return;
     }
 
-    // Fire one round of the burst
-    this.emitEnemyTracerShot(hs, agent, aimProfile, playerEyeWorldPos);
+    // Fire one round of the burst toward the verified exposed target point
+    this.emitEnemyTracerShot(hs, agent, aimProfile, playerEyeWorldPos, exposedAimTarget);
 
     agent.burstShotsRemaining -= 1;
     if (agent.burstShotsRemaining > 0) {
@@ -973,6 +1236,7 @@ export class TacticalCombatAiSystem {
     agent: EnemyAiAgentRuntime,
     aimProfile: EnemyAimProfile,
     playerEyeWorldPos: Vec3Like,
+    aimTargetPos: Vec3Like,
   ): void {
     const tuning = ARCHETYPE_TUNING[hs.archetype];
 
@@ -980,7 +1244,15 @@ export class TacticalCombatAiSystem {
     const muzzleHeight = agent.state === 'DOWNED_CRAWLING' ? 0.62 : 1.32;
     const fwdFromYaw = { x: Math.sin(hs.yawRad), y: 0, z: Math.cos(hs.yawRad) };
 
-    const muzzleOrigin: Vec3Like = handPos
+    // Physical raycast always originates at the enemy's chest/shoulder core BEFORE pushing 0.38m forward
+    // so an enemy standing close behind cover can never poke a virtual muzzle through a wall!
+    const coreOrigin: Vec3Like = {
+      x: hs.worldPosition.x,
+      y: hs.worldPosition.y + muzzleHeight,
+      z: hs.worldPosition.z,
+    };
+
+    const rawMuzzleOrigin: Vec3Like = handPos
       ? add(handPos, scale(fwdFromYaw, 0.28))
       : {
           x: hs.worldPosition.x + fwdFromYaw.x * 0.38,
@@ -988,13 +1260,13 @@ export class TacticalCombatAiSystem {
           z: hs.worldPosition.z + fwdFromYaw.z * 0.38,
         };
 
-    // Aim toward player chest/eye height with trauma-scaled dispersion cone
     const playerChestTarget: Vec3Like = {
       x: playerEyeWorldPos.x,
       y: playerEyeWorldPos.y - 0.18,
       z: playerEyeWorldPos.z,
     };
-    const idealDir = normalize(sub(playerChestTarget, muzzleOrigin));
+
+    const idealDir = normalize(sub(aimTargetPos, coreOrigin));
     const seed = agent.tracerSeedCounter++;
     const shotDir = deterministicConeSpread(
       idealDir,
@@ -1004,67 +1276,108 @@ export class TacticalCombatAiSystem {
       seed * 31,
     );
 
-    const distToPlayer = Math.max(0.5, distance(muzzleOrigin, playerChestTarget));
+    // Evaluate closest approach of shotDir ray from coreOrigin to player torso/head cylinder (radius 0.36m)
+    const toChest = sub(playerChestTarget, coreOrigin);
+    const alongChest = dot(toChest, shotDir);
+    const closestChestPt =
+      alongChest > 0 ? add(coreOrigin, scale(shotDir, alongChest)) : coreOrigin;
+    const missDistChest =
+      alongChest > 0 ? distance(closestChestPt, playerChestTarget) : Infinity;
 
-    // Check if destructible cover intercepts the hostile round before reaching the player
+    const toAim = sub(aimTargetPos, coreOrigin);
+    const alongAim = dot(toAim, shotDir);
+    const closestAimPt =
+      alongAim > 0 ? add(coreOrigin, scale(shotDir, alongAim)) : coreOrigin;
+    const missDistAim =
+      alongAim > 0 ? distance(closestAimPt, aimTargetPos) : Infinity;
+
+    const wouldHitPlayer = missDistChest <= 0.36 || missDistAim <= 0.36;
+    const playerHitDist =
+      missDistChest <= 0.36
+        ? alongChest
+        : missDistAim <= 0.36
+          ? alongAim
+          : Math.max(0.5, distance(coreOrigin, aimTargetPos));
+    const playerHitPoint =
+      missDistChest <= 0.36 ? closestChestPt : closestAimPt;
+
+    // Check cover strictly across [0, playerHitDist] when aligned with the player (so cover behind the player
+    // never blocks front hits, while even <0.05m close cover in front of enemy or player ALWAYS intercepts!),
+    // or across [0, playerHitDist + 6.0] on missed spread shots so stray tracers hit backstop walls.
+    const coverCheckDist = wouldHitPlayer
+      ? Math.max(0.05, playerHitDist)
+      : playerHitDist + 6.0;
+
     let blockedByCover = false;
-    let impactPointWorld = add(muzzleOrigin, scale(shotDir, distToPlayer + 4.0));
+    let impactPointWorld = add(coreOrigin, scale(shotDir, playerHitDist + 4.0));
 
-    if (this.rapierWorld) {
-      const hits = this.rapierWorld.castPenetrationRay(
-        muzzleOrigin,
+    if (this.interceptEnemyShotCover) {
+      const intercept = this.interceptEnemyShotCover(
+        coreOrigin,
         shotDir,
-        distToPlayer,
+        coverCheckDist,
+      );
+      if (intercept.blocked) {
+        blockedByCover = true;
+        impactPointWorld =
+          intercept.impactPointWorld ?? add(coreOrigin, scale(shotDir, coverCheckDist));
+      }
+    } else if (this.rapierWorld) {
+      const hits = this.rapierWorld.castPenetrationRay(
+        coreOrigin,
+        shotDir,
+        coverCheckDist,
       );
       for (const h of hits) {
-        if (h.distanceM > 0.25 && h.surface.penetrationResistanceJ >= 350) {
-          blockedByCover = true;
-          impactPointWorld = h.pointWorld;
-          break;
+        if (h.distanceM > coverCheckDist) continue;
+        if (
+          h.surface.material === 'GLASS_MARCHING_256' ||
+          h.surface.material === 'GLASS_VORONOI'
+        ) {
+          continue;
         }
+        blockedByCover = true;
+        impactPointWorld = h.pointWorld;
+        break;
       }
     }
 
-    // Closest approach of shotDir ray to player torso cylinder (radius 0.36m)
+    const muzzleOrigin =
+      blockedByCover && distance(coreOrigin, impactPointWorld) < 0.48
+        ? coreOrigin
+        : rawMuzzleOrigin;
+
     let hitPlayer = false;
     let armorChipApplied = 0;
     let healthDamageApplied = 0;
 
-    if (!blockedByCover) {
-      const toPlayer = sub(playerChestTarget, muzzleOrigin);
-      const along = dot(toPlayer, shotDir);
-      if (along > 0) {
-        const closestPt = add(muzzleOrigin, scale(shotDir, along));
-        const missDistM = distance(closestPt, playerChestTarget);
-        if (missDistM <= 0.36) {
-          hitPlayer = true;
-          impactPointWorld = closestPt;
+    if (!blockedByCover && wouldHitPlayer) {
+      hitPlayer = true;
+      impactPointWorld = playerHitPoint;
 
-          if (
-            this.playerVitals.damageEnabled &&
-            this.playerVitals.invulnerabilityRemainingS <= 0
-          ) {
-            const rawChip = tuning.baseChipDamage;
-            if (this.playerVitals.armor > 0) {
-              armorChipApplied = Math.min(this.playerVitals.armor, rawChip * 0.7);
-              this.playerVitals.armor = Math.max(
-                0,
-                this.playerVitals.armor - armorChipApplied,
-              );
-              healthDamageApplied = rawChip * 0.35;
-            } else {
-              healthDamageApplied = rawChip;
-            }
-
-            // Never allow cheap arcade one-shots — keep player at >= 1 HP or fair chip floor
-            this.playerVitals.health = Math.max(
-              0,
-              this.playerVitals.health - healthDamageApplied,
-            );
-            this.playerVitals.timeSinceLastHitS = 0;
-            this.playerVitals.invulnerabilityRemainingS = 0.22;
-          }
+      if (
+        this.playerVitals.damageEnabled &&
+        this.playerVitals.invulnerabilityRemainingS <= 0
+      ) {
+        const rawChip = tuning.baseChipDamage;
+        if (this.playerVitals.armor > 0) {
+          armorChipApplied = Math.min(this.playerVitals.armor, rawChip * 0.7);
+          this.playerVitals.armor = Math.max(
+            0,
+            this.playerVitals.armor - armorChipApplied,
+          );
+          healthDamageApplied = rawChip * 0.35;
+        } else {
+          healthDamageApplied = rawChip;
         }
+
+        // Never allow cheap arcade one-shots — keep player at >= 1 HP or fair chip floor
+        this.playerVitals.health = Math.max(
+          0,
+          this.playerVitals.health - healthDamageApplied,
+        );
+        this.playerVitals.timeSinceLastHitS = 0;
+        this.playerVitals.invulnerabilityRemainingS = 0.22;
       }
     }
 
@@ -1114,14 +1427,20 @@ export class TacticalCombatAiSystem {
   }
 
   private isSightBlockedBySolidCover(eyeOrigin: Vec3Like, targetPoint: Vec3Like): boolean {
+    if (this.isLineOfSightBlockedCallback) {
+      return this.isLineOfSightBlockedCallback(eyeOrigin, targetPoint);
+    }
     if (!this.rapierWorld) return false;
+
     const delta = sub(targetPoint, eyeOrigin);
     const dist = length(delta);
-    if (dist <= 0.4) return false;
+    if (dist <= 0.05) return false;
 
     const dir = scale(delta, 1 / dist);
-    const hits = this.rapierWorld.castPenetrationRay(eyeOrigin, dir, dist - 0.25);
+    const maxDist = Math.max(0.01, dist - 0.02);
+    const hits = this.rapierWorld.castPenetrationRay(eyeOrigin, dir, maxDist);
     for (const h of hits) {
+      if (h.distanceM > maxDist) continue;
       // Transparent glass panes do NOT block visual sight!
       if (
         h.surface.material === 'GLASS_MARCHING_256' ||
@@ -1129,11 +1448,33 @@ export class TacticalCombatAiSystem {
       ) {
         continue;
       }
-      if (h.distanceM > 0.2) {
-        return true;
-      }
+      return true;
     }
     return false;
+  }
+
+  private isWaistStepBlocked(
+    originX: number,
+    originY: number,
+    originZ: number,
+    stepX: number,
+    stepZ: number,
+  ): boolean {
+    if (!this.rapierWorld) return false;
+    const stepDist = Math.hypot(stepX, stepZ);
+    if (stepDist < 1e-5) return false;
+
+    const waistOrigin = {
+      x: originX,
+      y: originY + 0.75,
+      z: originZ,
+    };
+    const clearanceHits = this.rapierWorld.castPenetrationRay(
+      waistOrigin,
+      { x: stepX / stepDist, y: 0, z: stepZ / stepDist },
+      stepDist + 0.42,
+    );
+    return clearanceHits.length > 0 && clearanceHits[0].distanceM <= stepDist + 0.42;
   }
 
   private moveHorizontalClamped(
@@ -1153,27 +1494,53 @@ export class TacticalCombatAiSystem {
     if (dist < 1e-5) return;
 
     const step = Math.min(dist, maxStepM);
-    const dirX = dx / dist;
-    const dirZ = dz / dist;
+    const stepX = (dx / dist) * step;
+    const stepZ = (dz / dist) * step;
 
-    if (this.rapierWorld) {
-      const waistOrigin = {
-        x: hs.worldPosition.x,
-        y: hs.worldPosition.y + 0.75,
-        z: hs.worldPosition.z,
-      };
-      const clearanceHits = this.rapierWorld.castPenetrationRay(
-        waistOrigin,
-        { x: dirX, y: 0, z: dirZ },
-        step + 0.42,
-      );
-      if (clearanceHits.length > 0 && clearanceHits[0].distanceM <= step + 0.42) {
-        return;
+    if (
+      !this.isWaistStepBlocked(
+        hs.worldPosition.x,
+        hs.worldPosition.y,
+        hs.worldPosition.z,
+        stepX,
+        stepZ,
+      )
+    ) {
+      hs.worldPosition.x += stepX;
+      hs.worldPosition.z += stepZ;
+      return;
+    }
+
+    // Axis-separated wall sliding so enemies close behind cover still strafe freely along X
+    if (Math.abs(dx) > 1e-5) {
+      const slideX = Math.sign(dx) * Math.min(Math.abs(dx), maxStepM);
+      if (
+        !this.isWaistStepBlocked(
+          hs.worldPosition.x,
+          hs.worldPosition.y,
+          hs.worldPosition.z,
+          slideX,
+          0,
+        )
+      ) {
+        hs.worldPosition.x += slideX;
       }
     }
 
-    hs.worldPosition.x += dirX * step;
-    hs.worldPosition.z += dirZ * step;
+    if (Math.abs(dz) > 1e-5) {
+      const slideZ = Math.sign(dz) * Math.min(Math.abs(dz), maxStepM);
+      if (
+        !this.isWaistStepBlocked(
+          hs.worldPosition.x,
+          hs.worldPosition.y,
+          hs.worldPosition.z,
+          0,
+          slideZ,
+        )
+      ) {
+        hs.worldPosition.z += slideZ;
+      }
+    }
   }
 
   private refreshAgentAimMetrics(

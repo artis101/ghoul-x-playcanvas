@@ -18,17 +18,24 @@ import { CombatDirector } from '../src/engine/combat/combatDirector.ts';
 import { DestructionManager } from '../src/engine/destruction/destructionManager.ts';
 import { MayhemDirector } from '../src/engine/fx/mayhemDirector.ts';
 import { GoreAndBallisticsFxManager } from '../src/engine/goreFx.ts';
-import { HudController } from '../src/engine/hudController.ts';
+import {
+  HudController,
+  type ProjectedTargetTriageEntry,
+} from '../src/engine/hudController.ts';
 import { getOrCreateMaterials } from '../src/engine/materials.ts';
 import {
   initRapierPhysics,
   RapierPhysicsWorld,
 } from '../src/engine/physics/rapierWorld.ts';
-import { DESTRUCTION_ZONE_LAYOUT } from '../src/engine/world/arenaBuilder.ts';
+import {
+  ArenaBuilder,
+  DESTRUCTION_ZONE_LAYOUT,
+} from '../src/engine/world/arenaBuilder.ts';
 
 interface UnifiedArenaHarness {
   app: pc.Application;
   rapierWorld: RapierPhysicsWorld;
+  arenaBuilder: ArenaBuilder;
   combatAudio: CombatAudioEngine;
   mayhemDirector: MayhemDirector;
   destructionManager: DestructionManager;
@@ -52,6 +59,9 @@ function createUnifiedArenaHarness(): UnifiedArenaHarness {
   const hudController = new HudController();
   const combatAudio = new CombatAudioEngine({ autoUnlockOnGesture: false });
   const fxManager = new GoreAndBallisticsFxManager(app, materials);
+
+  const arenaBuilder = new ArenaBuilder(app, materials, rapierWorld);
+  arenaBuilder.build();
 
   let combatDirectorRef: CombatDirector | null = null;
   let destructionManagerRef: DestructionManager | null = null;
@@ -89,6 +99,9 @@ function createUnifiedArenaHarness(): UnifiedArenaHarness {
   const tacticalAi = new TacticalCombatAiSystem({
     app,
     rapierWorld,
+    isLineOfSightBlocked: (from, to) => destructionManager.isLineOfSightBlocked(from, to),
+    interceptEnemyShotCover: (origin, dir, maxDistM) =>
+      destructionManager.interceptEnemyShot(origin, dir, maxDistM),
   });
   tacticalAiRef = tacticalAi;
 
@@ -102,6 +115,7 @@ function createUnifiedArenaHarness(): UnifiedArenaHarness {
       mayhemDirector,
       tacticalAi,
       combatAudio,
+      isLineOfSightBlocked: (from, to) => destructionManager.isLineOfSightBlocked(from, to),
     }
   );
   combatDirectorRef = combatDirector;
@@ -150,6 +164,7 @@ function createUnifiedArenaHarness(): UnifiedArenaHarness {
   return {
     app,
     rapierWorld,
+    arenaBuilder,
     combatAudio,
     mayhemDirector,
     destructionManager,
@@ -163,6 +178,7 @@ function createUnifiedArenaHarness(): UnifiedArenaHarness {
       tacticalAi.destroy();
       destructionManager.destroy();
       mayhemDirector.destroy();
+      arenaBuilder.destroy();
       combatAudio.destroy();
       rapierWorld.destroy();
       app.destroy();
@@ -390,6 +406,176 @@ describe('Phase 3 Grand Unified Max Mayhem Arena Integration', () => {
             t.healthState.bloodVolumeMl === 5000
         )
       ).toBe(true);
+    } finally {
+      arena.destroy();
+    }
+  });
+
+  it('registers Rapier colliders on ArenaBuilder perimeter concrete barriers & marker posts, blocking sight, shots, and walk-through', () => {
+    const arena = createUnifiedArenaHarness();
+    try {
+      // 10 concrete distance marker posts + 8 perimeter concrete barriers = 18 static colliders
+      expect(arena.arenaBuilder.registeredColliderCount).toBe(18);
+
+      // Barrier_-9.5_-8 sits at (-9.5, 0.675, -8.0) with scale 1.1 x 1.35 x 7.5 -> x in [-10.05, -8.95], y in [0, 1.35]
+      const enemyEye = vec3(-6.0, 1.15, -8.0);
+      const crouchedPlayerHuggingBarrier = vec3(-10.15, 1.05, -8.0); // only 0.10m from outer face -10.05!
+      expect(
+        arena.destructionManager.isLineOfSightBlocked(
+          enemyEye,
+          crouchedPlayerHuggingBarrier
+        )
+      ).toBe(true);
+
+      // Player bullet fired into Barrier_-9.5_-8 is stopped cold and stamps a POM concrete crater
+      const cratersBefore = arena.destructionManager.pomDecals.activeDecalCount;
+      const barrierShot = arena.destructionManager.interceptRaySegment(
+        vec3(-7.0, 0.85, -8.0),
+        vec3(-1, 0, 0),
+        5.0,
+        1750,
+        900,
+        0.0057,
+        false
+      );
+      expect(barrierShot.blocked).toBe(true);
+      expect(barrierShot.remainingEnergyJ).toBe(0);
+      expect(arena.destructionManager.pomDecals.activeDecalCount).toBeGreaterThan(
+        cratersBefore
+      );
+
+      // Concrete marker post at (-8.5, 0.55, -10.0) also stops enemy rounds
+      const markerPostEnemyShot = arena.destructionManager.interceptEnemyShot(
+        vec3(-7.0, 0.75, -10.0),
+        vec3(-1, 0, 0),
+        3.0
+      );
+      expect(markerPostEnemyShot.blocked).toBe(true);
+
+      // Horizontal player collision blocks walking straight through Barrier_-9.5_-8 while allowing smooth Z sliding
+      const slideRes = arena.destructionManager.resolvePlayerHorizontalCollision(
+        vec3(-8.55, 0, -8.0),
+        vec3(-9.2, 0, -7.6),
+        0.36
+      );
+      expect(slideRes.x).toBeCloseTo(-8.55, 4);
+      expect(slideRes.z).toBeCloseTo(-7.6, 4);
+
+      // Alert all arena hostiles while player crouches 0.10m behind Barrier_-9.5_-8 -> 0 player damage!
+      const hpBefore = arena.tacticalAi.playerVitals.health;
+      const armorBefore = arena.tacticalAi.playerVitals.armor;
+      arena.tacticalAi.notifyGunshotOrExplosion(vec3(-8.0, 1.2, -8.0), 40.0, 0.25);
+      for (let i = 0; i < 90; i++) {
+        arena.tacticalAi.update(
+          1 / 30,
+          arena.combatDirector.targets.map((t) => t.healthState),
+          crouchedPlayerHuggingBarrier
+        );
+      }
+      expect(arena.tacticalAi.playerVitals.health).toBe(hpBefore);
+      expect(arena.tacticalAi.playerVitals.armor).toBe(armorBefore);
+    } finally {
+      arena.destroy();
+    }
+  });
+
+  it('enforces breach-aware wood wall LOS/fire and occludes floating HUD enemy health bars behind solid cover until X-Ray or wallbang', () => {
+    const arena = createUnifiedArenaHarness();
+    try {
+      // 1. Intact wood_shoot_house_wall (z = -7.2) blocks sight & proximity detection for target_1 at (-2.3, 0, -8.35)
+      //    even when the player stands 0.10m in front of the wall (-7.04, horizDist = 1.31m <= 6.5m)!
+      const target1 = arena.combatDirector.targets[1];
+      const hugWoodPlayerPos = vec3(-2.3, 1.52, -7.04);
+      expect(
+        arena.destructionManager.isLineOfSightBlocked(
+          vec3(-2.3, 1.55, -8.35),
+          hugWoodPlayerPos
+        )
+      ).toBe(true);
+
+      for (let i = 0; i < 30; i++) {
+        arena.tacticalAi.update(1 / 30, [target1.healthState], hugWoodPlayerPos);
+      }
+      expect(arena.tacticalAi.getAgent('target_1')!.state).toBe('PATROL_GUARD');
+
+      // 2. Verify HUD floating health bar occlusion behind opaque walls when X-Ray mode is OFF
+      let capturedEntries: ProjectedTargetTriageEntry[] = [];
+      let capturedFocusId: string | null = null;
+      const origUpdateTriage = arena.hudController.updateTriageOverlays.bind(
+        arena.hudController
+      );
+      arena.hudController.updateTriageOverlays = (entries, focused, physio) => {
+        capturedEntries = entries;
+        capturedFocusId = focused?.targetId ?? null;
+        origUpdateTriage(entries, focused, physio);
+      };
+
+      const camEntity = new pc.Entity('TestHudCamera');
+      camEntity.addComponent('camera', { fov: 75 });
+      // Aim camera directly toward target_1 (-2.3, 1.5, -8.35) from (-2.3, 1.62, -2.5) through intact wood wall
+      camEntity.setPosition(-2.3, 1.62, -2.5);
+      camEntity.lookAt(-2.3, 1.5, -8.35);
+      arena.app.root.addChild(camEntity);
+      camEntity.syncHierarchy();
+
+      arena.combatDirector.update(1 / 60, 0.5, camEntity.camera, arena.hudController);
+
+      const entryById = (id: string) =>
+        capturedEntries.find((e) => e.state.targetId === id);
+
+      // X-Ray is OFF -> target_1 (behind wood), target_4 (behind brick), target_5 (behind concrete) are hidden!
+      expect(entryById('target_1')?.visible).toBe(false);
+      expect(entryById('target_4')?.visible).toBe(false);
+      expect(entryById('target_5')?.visible).toBe(false);
+      // Wall-occluded target_1 must NOT be selected as aimedTarget even when centered under crosshair!
+      expect(capturedFocusId).not.toBe('target_1');
+      // Meanwhile target_2 behind transparent West glass window IS visible if in frustum
+      expect(
+        arena.destructionManager.isLineOfSightBlocked(
+          vec3(-5.5, 1.62, -2.5),
+          vec3(-5.5, 1.55, -7.9)
+        )
+      ).toBe(false);
+
+      // 3. Toggle X-Ray [X] ON -> occluded target_1 immediately becomes visible through the wall!
+      arena.combatDirector.setXRayMode(true);
+      arena.combatDirector.update(1 / 60, 0.6, camEntity.camera, arena.hudController);
+      expect(entryById('target_1')?.visible).toBe(true);
+
+      // Toggle X-Ray back OFF -> hidden again before breaching
+      arena.combatDirector.setXRayMode(false);
+      arena.combatDirector.update(1 / 60, 0.7, camEntity.camera, arena.hudController);
+      expect(entryById('target_1')?.visible).toBe(false);
+
+      // 4. Carve a wide shotgun breach hole through wood_shoot_house_wall at (-2.3, 1.52, -7.2)
+      const breachOrigin = vec3(-2.3, 1.52, -5.6);
+      const breachDir = vec3(0, 0, -1);
+      arena.combatDirector.fireWeapon(
+        WEAPON_M590,
+        AMMO_12G_00_BUCK,
+        breachOrigin,
+        breachDir
+      );
+
+      // Sightline AND enemy shot line through the carved Clipper2 breach hole are now OPEN!
+      expect(
+        arena.destructionManager.isLineOfSightBlocked(
+          vec3(-2.3, 1.52, -5.6),
+          vec3(-2.3, 1.52, -8.35)
+        )
+      ).toBe(false);
+      const enemyThroughBreach = arena.destructionManager.interceptEnemyShot(
+        vec3(-2.3, 1.52, -8.35),
+        vec3(0, 0, 1),
+        3.0
+      );
+      expect(enemyThroughBreach.blocked).toBe(false);
+
+      // HUD plate for target_1 is now visible through the breach (and via wallbang confirmation window)!
+      arena.combatDirector.update(1 / 60, 0.75, camEntity.camera, arena.hudController);
+      expect(entryById('target_1')?.visible).toBe(true);
+
+      camEntity.destroy();
     } finally {
       arena.destroy();
     }

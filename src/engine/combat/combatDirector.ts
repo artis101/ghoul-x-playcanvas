@@ -32,6 +32,7 @@ import { DEFAULT_ENVIRONMENT } from '../../core/ballistics/weapons.ts';
 import {
   ALL_GHOUL_ZONES,
   GHOUL_ZONE_HIERARCHY,
+  LEFT_HANDED_PROBABILITY,
   createTargetHealthState,
   getSubtreeZones,
 } from '../../core/ghoul/anatomy.ts';
@@ -171,6 +172,7 @@ export interface CombatDirectorSubsystems {
   tacticalAi?: TacticalCombatAiSystem | null;
   combatAudio?: CombatAudioEngine | null;
   glbRegistry?: GlbModelRegistry | null;
+  isLineOfSightBlocked?: (fromWorld: Vec3Like, toWorld: Vec3Like) => boolean;
 }
 
 interface ActiveFragGrenade {
@@ -213,6 +215,11 @@ export class CombatDirector {
   public environmentRayInterceptor?: EnvironmentRayInterceptor;
 
   /**
+   * Optional breach-aware visual line-of-sight query used to occlude floating world-space HUD bars behind solid walls.
+   */
+  public isLineOfSightBlocked?: (fromWorld: Vec3Like, toWorld: Vec3Like) => boolean;
+
+  /**
    * Optional Wave 2 radial explosion blast callback for destructible cover subsystems.
    */
   public onExplosionBlast?: ExplosionBlastHandler;
@@ -234,6 +241,8 @@ export class CombatDirector {
 
   private readonly activeGrenades: ActiveFragGrenade[] = [];
   private readonly activeBlastFlashes: ActiveBlastFlashFx[] = [];
+  private readonly lastHitClockByTarget = new Map<string, number>();
+  private lastUpdateClockS = 0;
   private grenadeCooldownS = 0;
 
   private readonly blastFireballMat: pc.StandardMaterial;
@@ -291,6 +300,9 @@ export class CombatDirector {
         this.upgradeTargetsWithGlb(this.glbRegistry);
       }
     }
+    if (subsystems.isLineOfSightBlocked !== undefined) {
+      this.isLineOfSightBlocked = subsystems.isLineOfSightBlocked;
+    }
   }
 
   /**
@@ -308,6 +320,13 @@ export class CombatDirector {
     return upgraded;
   }
 
+  public notifyGlbPreloadFailed(): void {
+    this.glbRegistry = null;
+    for (const target of this.targets) {
+      target.allowProceduralFallback();
+    }
+  }
+
   public getTargetPhysiology(targetId: string): PhysiologicalEntityState | undefined {
     return this.physiologySystem.getEntity(targetId);
   }
@@ -317,6 +336,7 @@ export class CombatDirector {
     const nextTargets: GhoulMannequinEntity[] = [];
 
     this.clearLiveGrenadesAndFlashes();
+    this.lastHitClockByTarget.clear();
     this.fxManager.clearAll();
     this.vascularFx.clearAll();
     this.physiologySystem.reset();
@@ -324,12 +344,14 @@ export class CombatDirector {
 
     for (const cfg of TARGET_CONFIGS) {
       const yawRad = (cfg.yawDeg * Math.PI) / 180;
+      const isLeftHanded = Math.random() < LEFT_HANDED_PROBABILITY;
       const healthState = createTargetHealthState(
         cfg.id,
         cfg.name,
         vec3(cfg.position.x, cfg.position.y, cfg.position.z),
         yawRad,
-        cfg.archetype
+        cfg.archetype,
+        isLeftHanded
       );
 
       const enableHelmet =
@@ -337,6 +359,7 @@ export class CombatDirector {
       const physioState = this.physiologySystem.registerEntity({
         entityId: cfg.id,
         alertnessState: 'UNSUSPECTING',
+        dominantHand: isLeftHanded ? 'RIGHT' : 'LEFT',
         enableArmorPlates: healthState.hasChestArmor,
         enableHelmet,
       });
@@ -592,6 +615,7 @@ export class CombatDirector {
   ): void {
     this.lastEngagedTarget = target;
     const hs = target.healthState;
+    this.lastHitClockByTarget.set(hs.targetId, this.lastUpdateClockS);
     const wasAlive = hs.alive;
 
     applyShotReportToTarget(hs, report);
@@ -1561,6 +1585,7 @@ export class CombatDirector {
     camera: pc.CameraComponent | undefined | null,
     hudController: HudController
   ): void {
+    this.lastUpdateClockS = totalElapsedTimeS;
     if (this.grenadeCooldownS > 0) {
       this.grenadeCooldownS = Math.max(0, this.grenadeCooldownS - dt);
     }
@@ -1668,6 +1693,7 @@ export class CombatDirector {
       const vh = typeof window !== 'undefined' ? window.innerHeight : 720;
       const cx = vw * 0.5;
       const cy = vh * 0.5;
+      const viewerPos = this.getViewerPosVec3();
       const entries: ProjectedTargetTriageEntry[] = [];
       let aimedTarget: GhoulMannequinEntity | null = null;
       let bestCrosshairDist = 165;
@@ -1682,17 +1708,32 @@ export class CombatDirector {
         const anchorPos = headPopped
           ? neckNode?.position ?? hs.worldPosition
           : headNode?.position ?? hs.worldPosition;
+        const bodyPos = chestNode?.position ?? add(hs.worldPosition, vec3(0, 1.25, 0));
         const yLift = hs.isRagdollActive ? 0.30 : 0.28;
 
         this.scratchWorldPt.set(anchorPos.x, anchorPos.y + yLift, anchorPos.z);
         camera.worldToScreen(this.scratchWorldPt, this.scratchScreenPt);
 
-        const visible =
+        const onScreen =
           this.scratchScreenPt.z > 0 &&
           this.scratchScreenPt.x >= -90 &&
           this.scratchScreenPt.x <= vw + 90 &&
           this.scratchScreenPt.y >= -60 &&
           this.scratchScreenPt.y <= vh + 60;
+
+        const occludedByCover =
+          !this.enableXRayInspector &&
+          this.isLineOfSightBlocked !== undefined &&
+          this.isLineOfSightBlocked(viewerPos, anchorPos) &&
+          this.isLineOfSightBlocked(viewerPos, bodyPos);
+
+        const lastHitClock = this.lastHitClockByTarget.get(hs.targetId);
+        const recentlyWallbanged =
+          lastHitClock !== undefined &&
+          totalElapsedTimeS - lastHitClock >= -1e-4 &&
+          totalElapsedTimeS - lastHitClock <= 0.8;
+
+        const visible = onScreen && (!occludedByCover || recentlyWallbanged);
 
         entries.push({
           state: hs,
@@ -1701,10 +1742,9 @@ export class CombatDirector {
           visible,
         });
 
-        const bodyPos = chestNode?.position ?? anchorPos;
         this.scratchWorldPt.set(bodyPos.x, bodyPos.y, bodyPos.z);
         camera.worldToScreen(this.scratchWorldPt, this.scratchBodyScreenPt);
-        if (this.scratchBodyScreenPt.z > 0) {
+        if (!occludedByCover && this.scratchBodyScreenPt.z > 0) {
           const dx = this.scratchBodyScreenPt.x - cx;
           const dy = this.scratchBodyScreenPt.y - cy;
           const distPx = Math.hypot(dx, dy);
@@ -1730,6 +1770,7 @@ export class CombatDirector {
 
   public destroy(): void {
     this.clearLiveGrenadesAndFlashes();
+    this.lastHitClockByTarget.clear();
     for (const t of this.targets) {
       t.destroy();
     }

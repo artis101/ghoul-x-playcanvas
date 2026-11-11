@@ -1,6 +1,8 @@
 import * as pc from 'playcanvas';
 import { Vec3Like } from '../../contracts/ballistics.ts';
+import type { ColliderSurfaceTag } from '../../contracts/destruction.ts';
 import { EngineMaterialPalette } from '../materials.ts';
+import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
 
 export interface DestructionStationSpec {
   readonly id: string;
@@ -84,16 +86,30 @@ export const PERIMETER_BARRIER_Z_OFFSETS_M: readonly number[] = [-8, -20, -34, -
 export class ArenaBuilder {
   public readonly app: pc.AppBase;
   public readonly materials: EngineMaterialPalette;
+  public readonly rapierWorld: RapierPhysicsWorld | null;
   public readonly arenaRootEntity: pc.Entity;
 
-  constructor(app: pc.AppBase, materials: EngineMaterialPalette) {
+  private readonly colliderHandles: number[] = [];
+
+  constructor(
+    app: pc.AppBase,
+    materials: EngineMaterialPalette,
+    rapierWorld: RapierPhysicsWorld | null = null,
+  ) {
     this.app = app;
     this.materials = materials;
+    this.rapierWorld = rapierWorld;
     this.arenaRootEntity = new pc.Entity('ArenaRoot');
     this.app.root.addChild(this.arenaRootEntity);
   }
 
+  public get registeredColliderCount(): number {
+    return this.colliderHandles.length;
+  }
+
   public build(): void {
+    this.clearPhysicsColliders();
+
     const sunLight = new pc.Entity('SunLight');
     sunLight.addComponent('light', {
       type: 'directional',
@@ -137,7 +153,8 @@ export class ArenaBuilder {
       this.arenaRootEntity.addChild(lineMarker);
 
       for (const side of [-8.5, 8.5]) {
-        const post = new pc.Entity(`MarkerPost_${d}m_${side}`);
+        const objectId = `MarkerPost_${d}m_${side}`;
+        const post = new pc.Entity(objectId);
         post.addComponent('render', {
           type: 'box',
           material: this.materials.barrierConcreteMat,
@@ -145,12 +162,30 @@ export class ArenaBuilder {
         post.setLocalScale(0.32, 1.1, 0.32);
         post.setPosition(side, 0.55, -d);
         this.arenaRootEntity.addChild(post);
+
+        if (this.rapierWorld) {
+          const postTag: ColliderSurfaceTag = {
+            material: 'CONCRETE_INTACT',
+            objectId,
+            thicknessM: 0.32,
+            penetrationResistanceJ: 12000,
+          };
+          this.colliderHandles.push(
+            this.rapierWorld.createStaticBox(
+              { x: side, y: 0.55, z: -d },
+              { x: 0.16, y: 0.55, z: 0.16 },
+              undefined,
+              postTag,
+            ),
+          );
+        }
       }
     }
 
     for (const z of PERIMETER_BARRIER_Z_OFFSETS_M) {
       for (const side of [-9.5, 9.5]) {
-        const barrier = new pc.Entity(`Barrier_${side}_${z}`);
+        const objectId = `Barrier_${side}_${z}`;
+        const barrier = new pc.Entity(objectId);
         barrier.addComponent('render', {
           type: 'box',
           material: this.materials.barrierConcreteMat,
@@ -159,11 +194,38 @@ export class ArenaBuilder {
         barrier.setLocalScale(1.1, 1.35, 7.5);
         barrier.setPosition(side, 0.675, z);
         this.arenaRootEntity.addChild(barrier);
+
+        if (this.rapierWorld) {
+          const barrierTag: ColliderSurfaceTag = {
+            material: 'CONCRETE_INTACT',
+            objectId,
+            thicknessM: 1.1,
+            penetrationResistanceJ: 16000,
+          };
+          this.colliderHandles.push(
+            this.rapierWorld.createStaticBox(
+              { x: side, y: 0.675, z },
+              { x: 0.55, y: 0.675, z: 3.75 },
+              undefined,
+              barrierTag,
+            ),
+          );
+        }
       }
     }
   }
 
   public destroy(): void {
+    this.clearPhysicsColliders();
     this.arenaRootEntity.destroy();
+  }
+
+  private clearPhysicsColliders(): void {
+    if (this.rapierWorld) {
+      for (const handle of this.colliderHandles) {
+        this.rapierWorld.removeCollider(handle);
+      }
+    }
+    this.colliderHandles.length = 0;
   }
 }

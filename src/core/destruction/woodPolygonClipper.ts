@@ -19,10 +19,17 @@ const INV_WOOD_CLIPPER_AREA_SCALE = INV_WOOD_CLIPPER_SCALE * INV_WOOD_CLIPPER_SC
 const MIN_SHELL_AREA_M2 = 0.005 * 0.005;
 /** Minimum interior hole area (`9 mm^2`) retained for triangulation. */
 const MIN_HOLE_AREA_M2 = 0.003 * 0.003;
-/** Maximum unanchored floating wood island area (`0.0225 m^2` ~ `15cm x 15cm`) auto-dropped inside holes. */
-const MAX_FLOATING_ISLAND_DROP_AREA_M2 = 0.15 * 0.15;
+/** Maximum unanchored floating wood island area (`0.14 m^2` ~ `37cm x 37cm`) auto-dropped inside holes. */
+export const MAX_FLOATING_ISLAND_DROP_AREA_M2 = 0.14;
 /** Ramer-Douglas-Peucker simplification epsilon (`1.2 mm`) to clean grazing multi-shot slivers. */
 const SIMPLIFY_EPSILON_M = 0.0012;
+
+/** Cross-grain vertical bridge-snap gap (`2.4 cm`) between nearby bullet holes. */
+const BRIDGE_SNAP_VERTICAL_GAP_M = 0.024;
+/** Extra along-grain horizontal bridge-snap reach (`+1.6 cm` -> `4.0 cm` total along plank grain). */
+const BRIDGE_SNAP_HORIZONTAL_EXTRA_M = 0.016;
+/** Thin outer-edge board sliver threshold (`2.2 cm`) that snaps cleanly to the panel edge. */
+const EDGE_SLIVER_SNAP_GAP_M = 0.022;
 
 export interface Point2D {
   u: number;
@@ -52,8 +59,10 @@ export interface JaggedHoleStampOptions {
   isArmorPiercing?: boolean;
   /** Optional deterministic variation seed (e.g. shot index) */
   seed?: number;
-  /** Optional explicit base hole radius override in meters (e.g. explosive blast breach) */
+  /** Optional explicit base hole radius override in meters (e.g. explosive blast / shotgun cluster breach) */
   overrideRadiusM?: number;
+  /** Optional explicit horizontal wood-grain stretch factor (`>= 1.0`) */
+  grainStretchOverride?: number;
 }
 
 export interface SplinterSpawnDescriptor {
@@ -75,6 +84,17 @@ export interface WoodShellContour {
   holes: Path64[];
 }
 
+export interface WoodStudAnchorSpan {
+  /** Horizontal center `u` of the interior vertical stud in `[0, widthM]` */
+  u: number;
+  /** Half-width of the stud in meters (e.g. `0.0225`) */
+  halfWidthM: number;
+  /** Bottom `v` of intact vertical stud span in `[0, heightM]` */
+  vMin: number;
+  /** Top `v` of intact vertical stud span in `[0, heightM]` */
+  vMax: number;
+}
+
 export interface WoodPanelClipperState {
   readonly widthM: number;
   readonly heightM: number;
@@ -82,6 +102,8 @@ export interface WoodPanelClipperState {
   paths: Paths64;
   shells: WoodShellContour[];
   shotCount: number;
+  /** Optional live intact interior stud spans used to determine whether split wood islands remain anchored */
+  studAnchors?: WoodStudAnchorSpan[];
 }
 
 export interface WoodMeshScratchBuffers {
@@ -106,6 +128,8 @@ export interface WoodMeshBuildStats {
 export interface WoodStampSubtractionResult {
   cutAnyWood: boolean;
   removedAreaM2: number;
+  droppedIslandAreaM2: number;
+  snappedBridgeCount: number;
   splinters: SplinterSpawnDescriptor[];
   meshStats: WoodMeshBuildStats;
 }
@@ -162,7 +186,7 @@ export function inferWoodStampProfile(
   if (kineticEnergyJ >= 4800 || caliberRadiusM >= 0.025) {
     return 'BLAST_BREACH';
   }
-  // .50 AE (~6.35mm radius) or 12G Sabot Slug (~8.25mm radius) -> fist-sized ragged blowout
+  // .50 AE (~6.35mm radius) or 12G Sabot Slug (~8.25mm radius) -> fist+ ragged plank blowout
   if (caliberRadiusM >= 0.0058) {
     return 'HEAVY_50AE_SLUG';
   }
@@ -178,7 +202,7 @@ export function inferWoodStampProfile(
 
 /**
  * Generates a deterministic 10–14 vertex jagged CCW ballistic polygon stamp in 2D wall coordinates `(u, v)`.
- * Models fibrous wood-grain splinter teeth and ammo-specific exit cone blowouts.
+ * Models fibrous horizontal wood-plank splinter teeth (`grainStretchU`) and ammo-specific exit blowouts.
  */
 export function createJaggedHoleStamp(options: JaggedHoleStampOptions): Point2D[] {
   const profile =
@@ -190,61 +214,77 @@ export function createJaggedHoleStamp(options: JaggedHoleStampOptions): Point2D[
     );
 
   let vertexCount = 12;
-  let baseRadiusM = 0.042;
-  let grainStretchU = 1.14;
-  let toothJaggedness = 0.28;
+  let baseRadiusM = 0.05;
+  let grainStretchU = 1.32;
+  let toothJaggedness = 0.30;
 
   const clampedCaliberR = Math.max(0.002, Math.min(0.12, options.caliberRadiusM));
-  const energyFactor = Math.min(1.65, Math.max(0.65, Math.sqrt(Math.max(50, options.kineticEnergyJ) / 1600)));
+  const energyFactor = Math.min(
+    1.65,
+    Math.max(0.65, Math.sqrt(Math.max(50, options.kineticEnergyJ) / 1600)),
+  );
 
   switch (profile) {
     case 'BUCKSHOT_PELLET': {
       vertexCount = 10;
-      baseRadiusM = Math.max(0.026, clampedCaliberR * 6.4) * Math.min(1.15, energyFactor + 0.35);
-      grainStretchU = 1.12;
-      toothJaggedness = 0.24;
+      baseRadiusM =
+        Math.max(0.036, clampedCaliberR * 8.6) *
+        Math.min(1.22, energyFactor + 0.38);
+      grainStretchU = 1.28;
+      toothJaggedness = 0.28;
       break;
     }
     case 'RIFLE_FMJ_AP': {
-      vertexCount = 11;
-      baseRadiusM = Math.max(0.033, clampedCaliberR * 9.5) * (0.82 + 0.22 * energyFactor);
-      grainStretchU = 1.18;
-      toothJaggedness = 0.26;
+      vertexCount = 12;
+      baseRadiusM =
+        Math.max(0.046, clampedCaliberR * 12.0) * (0.86 + 0.24 * energyFactor);
+      grainStretchU = 1.34;
+      toothJaggedness = 0.30;
       break;
     }
     case 'RIFLE_JHP': {
       vertexCount = 12;
-      baseRadiusM = Math.max(0.046, clampedCaliberR * 13.5) * (0.88 + 0.25 * energyFactor);
-      grainStretchU = 1.16;
-      toothJaggedness = 0.32;
-      break;
-    }
-    case 'HEAVY_50AE_SLUG': {
-      // Fist-sized ragged blowout (~14-18cm across)
-      vertexCount = 13;
-      baseRadiusM = Math.max(0.072, clampedCaliberR * 10.5) * (0.85 + 0.24 * energyFactor);
-      grainStretchU = 1.15;
+      baseRadiusM =
+        Math.max(0.058, clampedCaliberR * 15.0) * (0.88 + 0.26 * energyFactor);
+      grainStretchU = 1.36;
       toothJaggedness = 0.34;
       break;
     }
+    case 'HEAVY_50AE_SLUG': {
+      // Big ragged fist+ plank blowout (~20-28cm across horizontal grain)
+      vertexCount = 13;
+      baseRadiusM =
+        Math.max(0.092, clampedCaliberR * 12.8) * (0.88 + 0.25 * energyFactor);
+      grainStretchU = 1.38;
+      toothJaggedness = 0.36;
+      break;
+    }
     case 'BUCKSHOT_CLUSTER': {
+      // Point-blank / close-range horizontal board-plank chunk tear-out
       vertexCount = 14;
-      baseRadiusM = Math.max(0.115, clampedCaliberR * 18.0) * (0.85 + 0.22 * energyFactor);
-      grainStretchU = 1.14;
-      toothJaggedness = 0.35;
+      baseRadiusM =
+        Math.max(0.185, clampedCaliberR * 28.0) * (0.90 + 0.22 * energyFactor);
+      grainStretchU = 1.42;
+      toothJaggedness = 0.36;
       break;
     }
     case 'BLAST_BREACH': {
       vertexCount = 14;
-      baseRadiusM = Math.max(0.28, 0.22 * energyFactor);
-      grainStretchU = 1.10;
-      toothJaggedness = 0.30;
+      baseRadiusM = Math.max(0.30, 0.24 * energyFactor);
+      grainStretchU = 1.18;
+      toothJaggedness = 0.32;
       break;
     }
   }
 
   if (options.overrideRadiusM !== undefined && options.overrideRadiusM > 0.005) {
     baseRadiusM = options.overrideRadiusM;
+  }
+  if (
+    options.grainStretchOverride !== undefined &&
+    options.grainStretchOverride >= 1.0
+  ) {
+    grainStretchU = options.grainStretchOverride;
   }
 
   const rng = createSeededRng(
@@ -269,7 +309,8 @@ export function createJaggedHoleStamp(options: JaggedHoleStampOptions): Point2D[
 
     // Alternating outward splinter spike vs inward fracture notch
     const alternatingSign = (i & 1) === 0 ? 1 : -1;
-    const radialJitter = 1 + alternatingSign * toothJaggedness * (0.55 + 0.45 * rng());
+    const radialJitter =
+      1 + alternatingSign * toothJaggedness * (0.55 + 0.45 * rng());
     const cosT = Math.cos(theta);
     const sinT = Math.sin(theta);
 
@@ -376,9 +417,385 @@ function isRingInsideContainer(ring: Path64, container: Path64): boolean {
   return false;
 }
 
-function rebuildCleanShellsAndPaths(paths: Paths64): {
+/**
+ * Counts how many distinct structural anchors hold `shellPath` onto the wall frame:
+ * - Each touched outer frame edge (left, right, bottom sole plate, top header plate) counts as 1 anchor.
+ * - Each intact interior vertical stud span that physically overlaps `shellPath` counts as 1 anchor.
+ */
+function countShellStructuralAnchors(
+  shellPath: Path64,
+  state: WoodPanelClipperState,
+): { frameEdgeCount: number; studAnchorCount: number; totalAnchors: number } {
+  const n = shellPath.length;
+  if (n < 3) {
+    return { frameEdgeCount: 0, studAnchorCount: 0, totalAnchors: 0 };
+  }
+
+  const wScaled = Math.round(state.widthM * WOOD_CLIPPER_SCALE);
+  const hScaled = Math.round(state.heightM * WOOD_CLIPPER_SCALE);
+  const edgeTol = Math.round(0.006 * WOOD_CLIPPER_SCALE); // 6mm tolerance
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+
+  for (let i = 0; i < n; i++) {
+    const pt = shellPath[i];
+    if (pt.x < minX) minX = pt.x;
+    if (pt.x > maxX) maxX = pt.x;
+    if (pt.y < minY) minY = pt.y;
+    if (pt.y > maxY) maxY = pt.y;
+  }
+
+  let frameEdgeCount = 0;
+  if (minX <= edgeTol) frameEdgeCount++;
+  if (maxX >= wScaled - edgeTol) frameEdgeCount++;
+  if (minY <= edgeTol) frameEdgeCount++;
+  if (maxY >= hScaled - edgeTol) frameEdgeCount++;
+
+  let studAnchorCount = 0;
+  const studAnchors = state.studAnchors;
+  if (studAnchors && studAnchors.length > 0 && frameEdgeCount < 2) {
+    // Group stud spans by stud horizontal position so 1 continuous stud counts as 1 structural member
+    const anchoredStudU = new Set<number>();
+    for (let s = 0; s < studAnchors.length; s++) {
+      const span = studAnchors[s];
+      const uKey = Math.round(span.u * 10_000);
+      if (anchoredStudU.has(uKey)) {
+        continue;
+      }
+
+      const sxMin = Math.round((span.u - span.halfWidthM) * WOOD_CLIPPER_SCALE);
+      const sxMax = Math.round((span.u + span.halfWidthM) * WOOD_CLIPPER_SCALE);
+      const syMin = Math.round(span.vMin * WOOD_CLIPPER_SCALE);
+      const syMax = Math.round(span.vMax * WOOD_CLIPPER_SCALE);
+
+      if (maxX < sxMin || minX > sxMax || maxY < syMin || minY > syMax) {
+        continue;
+      }
+
+      // Probe sample points along the overlapping vertical span of this stud
+      const overlapYMin = Math.max(minY, syMin);
+      const overlapYMax = Math.min(maxY, syMax);
+      if (overlapYMax - overlapYMin < Math.round(0.025 * WOOD_CLIPPER_SCALE)) {
+        continue;
+      }
+
+      const probeX = Math.round(span.u * WOOD_CLIPPER_SCALE);
+      let hitsStud = false;
+      for (let p = 0; p <= 4; p++) {
+        const probeY = Math.round(
+          overlapYMin + ((overlapYMax - overlapYMin) * p) / 4,
+        );
+        if (classifyPointInPath64(probeX, probeY, shellPath) !== 'OUTSIDE') {
+          hitsStud = true;
+          break;
+        }
+      }
+
+      if (hitsStud) {
+        anchoredStudU.add(uKey);
+        studAnchorCount++;
+      }
+    }
+  }
+
+  return {
+    frameEdgeCount,
+    studAnchorCount,
+    totalAnchors: frameEdgeCount + studAnchorCount,
+  };
+}
+
+function closestPointOnSegment2D(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): { x: number; y: number; distSq: number } {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const lenSq = abx * abx + aby * aby;
+  let t = 0;
+  if (lenSq > 1e-12) {
+    t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / lenSq));
+  }
+  const cx = ax + abx * t;
+  const cy = ay + aby * t;
+  const dx = px - cx;
+  const dy = py - cy;
+  return { x: cx, y: cy, distSq: dx * dx + dy * dy };
+}
+
+function makeJaggedBridgeTearPath64(
+  u0: number,
+  v0: number,
+  u1: number,
+  v1: number,
+  halfWidthM: number,
+  seed: number,
+): Path64 {
+  const du = u1 - u0;
+  const dv = v1 - v0;
+  const len = Math.hypot(du, dv);
+  if (len < 1e-5) {
+    return new Path64();
+  }
+
+  const bu = du / len;
+  const bv = dv / len;
+  const pu = -bv;
+  const pv = bu;
+
+  // Overlap ~14mm into both source and target holes so Clipper2 cleanly merges them
+  const ext = 0.014;
+  const su = u0 - bu * ext;
+  const sv = v0 - bv * ext;
+  const eu = u1 + bu * ext;
+  const ev = v1 + bv * ext;
+  const midU = (su + eu) * 0.5;
+  const midV = (sv + ev) * 0.5;
+
+  const rng = createSeededRng((seed * 1597334677 + 3812015801) >>> 0);
+  const hw0 = halfWidthM * (0.85 + 0.3 * rng());
+  const hwMidPos = halfWidthM * (1.12 + 0.38 * rng());
+  const hwMidNeg = halfWidthM * (1.12 + 0.38 * rng());
+  const hw1 = halfWidthM * (0.85 + 0.3 * rng());
+
+  const pts: Point2D[] = [
+    { u: su + pu * hw0, v: sv + pv * hw0 },
+    { u: su - pu * hw0, v: sv - pv * hw0 },
+    {
+      u: midU - pu * hwMidNeg + bu * (rng() - 0.5) * 0.008,
+      v: midV - pv * hwMidNeg + bv * (rng() - 0.5) * 0.008,
+    },
+    { u: eu - pu * hw1, v: ev - pv * hw1 },
+    { u: eu + pu * hw1, v: ev + pv * hw1 },
+    {
+      u: midU + pu * hwMidPos + bu * (rng() - 0.5) * 0.008,
+      v: midV + pv * hwMidPos + bv * (rng() - 0.5) * 0.008,
+    },
+  ];
+
+  return points2DToPath64(pts);
+}
+
+/**
+ * Finds thin weakened wood bridges between the incoming `stamp` and nearby existing holes
+ * (or outer panel edges) and appends jagged splinter-tear polygons into `clipPaths` so tight
+ * multi-shot groups snap slivers along the horizontal plank grain and knock out real chunks.
+ */
+function appendWeakenedBridgeTears(
+  state: WoodPanelClipperState,
+  stamp: readonly Point2D[],
+  clipPaths: Paths64,
+  shotSeed: number,
+): number {
+  if (stamp.length < 3 || state.shells.length === 0) {
+    return 0;
+  }
+
+  let sMinU = Infinity;
+  let sMaxU = -Infinity;
+  let sMinV = Infinity;
+  let sMaxV = -Infinity;
+  for (let i = 0; i < stamp.length; i++) {
+    const p = stamp[i];
+    if (p.u < sMinU) sMinU = p.u;
+    if (p.u > sMaxU) sMaxU = p.u;
+    if (p.v < sMinV) sMinV = p.v;
+    if (p.v > sMaxV) sMaxV = p.v;
+  }
+
+  const maxSnapReachM = BRIDGE_SNAP_VERTICAL_GAP_M + BRIDGE_SNAP_HORIZONTAL_EXTRA_M;
+  let snappedCount = 0;
+
+  for (let sIdx = 0; sIdx < state.shells.length; sIdx++) {
+    const shell = state.shells[sIdx];
+    for (let hIdx = 0; hIdx < shell.holes.length; hIdx++) {
+      const hole = shell.holes[hIdx];
+      const hn = hole.length;
+      if (hn < 3) continue;
+
+      let hMinU = Infinity;
+      let hMaxU = -Infinity;
+      let hMinV = Infinity;
+      let hMaxV = -Infinity;
+      for (let i = 0; i < hn; i++) {
+        const hu = hole[i].x * INV_WOOD_CLIPPER_SCALE;
+        const hv = hole[i].y * INV_WOOD_CLIPPER_SCALE;
+        if (hu < hMinU) hMinU = hu;
+        if (hu > hMaxU) hMaxU = hu;
+        if (hv < hMinV) hMinV = hv;
+        if (hv > hMaxV) hMaxV = hv;
+      }
+
+      if (
+        hMinU > sMaxU + maxSnapReachM ||
+        hMaxU < sMinU - maxSnapReachM ||
+        hMinV > sMaxV + maxSnapReachM ||
+        hMaxV < sMinV - maxSnapReachM
+      ) {
+        continue;
+      }
+
+      // Find minimum distance between stamp boundary and existing hole boundary
+      let bestDistSq = Infinity;
+      let bestSU = 0;
+      let bestSV = 0;
+      let bestHU = 0;
+      let bestHV = 0;
+
+      for (let i = 0; i < stamp.length; i++) {
+        const ps = stamp[i];
+        for (let j = 0; j < hn; j++) {
+          const ha = hole[j];
+          const hb = hole[(j + 1) % hn];
+          const cand = closestPointOnSegment2D(
+            ps.u,
+            ps.v,
+            ha.x * INV_WOOD_CLIPPER_SCALE,
+            ha.y * INV_WOOD_CLIPPER_SCALE,
+            hb.x * INV_WOOD_CLIPPER_SCALE,
+            hb.y * INV_WOOD_CLIPPER_SCALE,
+          );
+          if (cand.distSq < bestDistSq) {
+            bestDistSq = cand.distSq;
+            bestSU = ps.u;
+            bestSV = ps.v;
+            bestHU = cand.x;
+            bestHV = cand.y;
+          }
+        }
+      }
+
+      for (let j = 0; j < hn; j++) {
+        const hu = hole[j].x * INV_WOOD_CLIPPER_SCALE;
+        const hv = hole[j].y * INV_WOOD_CLIPPER_SCALE;
+        for (let i = 0; i < stamp.length; i++) {
+          const sa = stamp[i];
+          const sb = stamp[(i + 1) % stamp.length];
+          const cand = closestPointOnSegment2D(hu, hv, sa.u, sa.v, sb.u, sb.v);
+          if (cand.distSq < bestDistSq) {
+            bestDistSq = cand.distSq;
+            bestSU = cand.x;
+            bestSV = cand.y;
+            bestHU = hu;
+            bestHV = hv;
+          }
+        }
+      }
+
+      const gapM = Math.sqrt(bestDistSq);
+      if (gapM <= 0.001) {
+        // Already directly overlapping -> Clipper2 Difference naturally merges them
+        continue;
+      }
+
+      const du = bestHU - bestSU;
+      const dv = bestHV - bestSV;
+      const grainAlignedFrac = Math.abs(du) / gapM;
+      const snapThresholdM =
+        BRIDGE_SNAP_VERTICAL_GAP_M +
+        BRIDGE_SNAP_HORIZONTAL_EXTRA_M * grainAlignedFrac;
+
+      if (gapM <= snapThresholdM) {
+        const bridgeHalfW = 0.020 + 0.012 * grainAlignedFrac;
+        const bridgePath = makeJaggedBridgeTearPath64(
+          bestSU,
+          bestSV,
+          bestHU,
+          bestHV,
+          bridgeHalfW,
+          shotSeed * 31 + hIdx * 17 + sIdx,
+        );
+        if (bridgePath.length >= 3) {
+          clipPaths.push(bridgePath);
+          snappedCount++;
+        }
+      }
+    }
+  }
+
+  // Also snap razor-thin (< 2.2cm) outer edge strips if the hole almost breaks through a border
+  const midSU = (sMinU + sMaxU) * 0.5;
+  const midSV = (sMinV + sMaxV) * 0.5;
+  if (sMinU > 0.001 && sMinU <= EDGE_SLIVER_SNAP_GAP_M) {
+    const p = makeJaggedBridgeTearPath64(
+      sMinU,
+      midSV,
+      -0.01,
+      midSV,
+      0.026,
+      shotSeed * 43 + 1,
+    );
+    if (p.length >= 3) {
+      clipPaths.push(p);
+      snappedCount++;
+    }
+  }
+  if (
+    sMaxU < state.widthM - 0.001 &&
+    state.widthM - sMaxU <= EDGE_SLIVER_SNAP_GAP_M
+  ) {
+    const p = makeJaggedBridgeTearPath64(
+      sMaxU,
+      midSV,
+      state.widthM + 0.01,
+      midSV,
+      0.026,
+      shotSeed * 43 + 2,
+    );
+    if (p.length >= 3) {
+      clipPaths.push(p);
+      snappedCount++;
+    }
+  }
+  if (sMinV > 0.001 && sMinV <= EDGE_SLIVER_SNAP_GAP_M) {
+    const p = makeJaggedBridgeTearPath64(
+      midSU,
+      sMinV,
+      midSU,
+      -0.01,
+      0.024,
+      shotSeed * 43 + 3,
+    );
+    if (p.length >= 3) {
+      clipPaths.push(p);
+      snappedCount++;
+    }
+  }
+  if (
+    sMaxV < state.heightM - 0.001 &&
+    state.heightM - sMaxV <= EDGE_SLIVER_SNAP_GAP_M
+  ) {
+    const p = makeJaggedBridgeTearPath64(
+      midSU,
+      sMaxV,
+      midSU,
+      state.heightM + 0.01,
+      0.024,
+      shotSeed * 43 + 4,
+    );
+    if (p.length >= 3) {
+      clipPaths.push(p);
+      snappedCount++;
+    }
+  }
+
+  return snappedCount;
+}
+
+function rebuildCleanShellsAndPaths(
+  paths: Paths64,
+  state: WoodPanelClipperState,
+): {
   cleanPaths: Paths64;
   shells: WoodShellContour[];
+  droppedIslands: Paths64;
 } {
   const minShellAreaScaled = MIN_SHELL_AREA_M2 * WOOD_CLIPPER_SCALE * WOOD_CLIPPER_SCALE;
   const minHoleAreaScaled = MIN_HOLE_AREA_M2 * WOOD_CLIPPER_SCALE * WOOD_CLIPPER_SCALE;
@@ -388,6 +805,7 @@ function rebuildCleanShellsAndPaths(paths: Paths64): {
 
   const rawOuters: Array<{ path: Path64; area: number }> = [];
   const rawHoles: Array<{ path: Path64; absArea: number }> = [];
+  const droppedIslands = new Paths64();
 
   for (let i = 0; i < paths.length; i++) {
     const raw = paths[i];
@@ -417,32 +835,41 @@ function rebuildCleanShellsAndPaths(paths: Paths64): {
   }
 
   if (rawOuters.length === 0) {
-    return { cleanPaths: new Paths64(), shells: [] };
+    return { cleanPaths: new Paths64(), shells: [], droppedIslands };
   }
 
   // Sort largest outer shells first so containment hierarchy is deterministic
   rawOuters.sort((a, b) => b.area - a.area);
   rawHoles.sort((a, b) => b.absArea - a.absArea);
 
-  // Prune small detached floating wood islands nested inside open holes
+  // Prune detached floating wood islands inside holes AND any unanchored shell island
+  // that fails to touch at least 2 outer frame edges / intact vertical studs!
   const survivingOuters: Array<{ path: Path64; area: number; holes: Path64[] }> = [];
   for (let i = 0; i < rawOuters.length; i++) {
     const candidate = rawOuters[i];
-    if (candidate.area <= maxFloatingIslandScaled) {
-      let enclosedByHole = false;
-      for (let h = 0; h < rawHoles.length; h++) {
-        if (rawHoles[h].absArea <= candidate.area) {
-          break;
-        }
-        if (isRingInsideContainer(candidate.path, rawHoles[h].path)) {
-          enclosedByHole = true;
-          break;
-        }
+
+    let enclosedByHole = false;
+    for (let h = 0; h < rawHoles.length; h++) {
+      if (rawHoles[h].absArea <= candidate.area) {
+        break;
       }
-      if (enclosedByHole) {
-        continue;
+      if (isRingInsideContainer(candidate.path, rawHoles[h].path)) {
+        enclosedByHole = true;
+        break;
       }
     }
+
+    if (enclosedByHole && candidate.area <= maxFloatingIslandScaled) {
+      droppedIslands.push(candidate.path);
+      continue;
+    }
+
+    const anchors = countShellStructuralAnchors(candidate.path, state);
+    if (anchors.totalAnchors < 2) {
+      droppedIslands.push(candidate.path);
+      continue;
+    }
+
     survivingOuters.push({ path: candidate.path, area: candidate.area, holes: [] });
   }
 
@@ -479,7 +906,7 @@ function rebuildCleanShellsAndPaths(paths: Paths64): {
     }
   }
 
-  return { cleanPaths, shells };
+  return { cleanPaths, shells, droppedIslands };
 }
 
 /**
@@ -964,7 +1391,7 @@ function buildPerimeterSplinterDescriptors(
     return [];
   }
 
-  const clampedCount = Math.max(4, Math.min(6, Math.round(desiredCount)));
+  const clampedCount = Math.max(2, Math.min(28, Math.round(desiredCount)));
   const rng = createSeededRng((shotSeed * 747796405 + 2891336453) >>> 0);
   const startArc = rng() * (totalLen / clampedCount);
   const stepArc = totalLen / clampedCount;
@@ -1015,7 +1442,7 @@ function buildPerimeterSplinterDescriptors(
     const signFlip = (k & 1) === 0 ? 1 : -1;
     const splinterLenM = Math.max(
       0.045,
-      Math.min(0.18, (totalLen / clampedCount) * (0.65 + 0.5 * rng())),
+      Math.min(0.22, (totalLen / clampedCount) * (0.65 + 0.55 * rng())),
     );
 
     descriptors.push({
@@ -1033,10 +1460,10 @@ function buildPerimeterSplinterDescriptors(
 }
 
 /**
- * Subtracts a 2D jagged polygon stamp from `state` via `Clipper2`, prunes micro-slivers,
- * triangulates surviving outer shells + interior holes via `earcut`, writes 3D sandwich geometry
- * (Front `+Z`, Back `-Z`, Extruded Inner Hole Rims) into `buffers`, and returns `4–6` perimeter
- * splinter spawn descriptors along the newly cut edge.
+ * Subtracts a 2D jagged polygon stamp from `state` via `Clipper2`, snaps thin weakened wood bridges
+ * to nearby holes, drops unanchored floating islands, triangulates surviving outer shells + interior
+ * holes via `earcut`, writes 3D sandwich geometry (Front `+Z`, Back `-Z`, Extruded Inner Hole Rims)
+ * into `buffers`, and returns perimeter splinter spawn descriptors along the newly cut edge.
  */
 export function stampHoleInWoodPanel(
   state: WoodPanelClipperState,
@@ -1048,6 +1475,8 @@ export function stampHoleInWoodPanel(
     return {
       cutAnyWood: false,
       removedAreaM2: 0,
+      droppedIslandAreaM2: 0,
+      snappedBridgeCount: 0,
       splinters: [],
       meshStats: triangulateWoodPanelToBuffers(state, buffers),
     };
@@ -1058,15 +1487,28 @@ export function stampHoleInWoodPanel(
     return {
       cutAnyWood: false,
       removedAreaM2: 0,
+      droppedIslandAreaM2: 0,
+      snappedBridgeCount: 0,
       splinters: [],
       meshStats: triangulateWoodPanelToBuffers(state, buffers),
     };
   }
 
-  const clipPaths = new Paths64();
+  let clipPaths = new Paths64();
   clipPaths.push(stampPath);
 
-  // Intersect stamp with remaining solid wood to measure exact excised wood & sample cut rim
+  const nextSeed = state.shotCount + 1;
+  const snappedBridgeCount = appendWeakenedBridgeTears(
+    state,
+    stamp,
+    clipPaths,
+    nextSeed,
+  );
+  if (clipPaths.length > 1) {
+    clipPaths = Clipper.Union(clipPaths, new Paths64(), FillRule.NonZero);
+  }
+
+  // Intersect stamp (+ any snapped bridges) with remaining solid wood to measure exact excised wood
   const cutWoodPaths = Clipper.Intersect(state.paths, clipPaths, FillRule.NonZero);
   const excisedAreaM2 = Math.max(
     0,
@@ -1077,6 +1519,8 @@ export function stampHoleInWoodPanel(
     return {
       cutAnyWood: false,
       removedAreaM2: 0,
+      droppedIslandAreaM2: 0,
+      snappedBridgeCount: 0,
       splinters: [],
       meshStats: triangulateWoodPanelToBuffers(state, buffers),
     };
@@ -1091,17 +1535,34 @@ export function stampHoleInWoodPanel(
   centerU /= stamp.length;
   centerV /= stamp.length;
 
-  state.shotCount++;
+  state.shotCount = nextSeed;
 
   const areaBefore = computePanelRemainingAreaM2(state);
   const rawDiff = Clipper.Difference(state.paths, clipPaths, FillRule.NonZero);
-  const { cleanPaths, shells } = rebuildCleanShellsAndPaths(rawDiff);
+  const { cleanPaths, shells, droppedIslands } = rebuildCleanShellsAndPaths(
+    rawDiff,
+    state,
+  );
 
   state.paths = cleanPaths;
   state.shells = shells;
 
+  const droppedIslandAreaM2 =
+    droppedIslands.length > 0
+      ? Math.max(
+          0,
+          Clipper.areaPaths(droppedIslands) * INV_WOOD_CLIPPER_AREA_SCALE,
+        )
+      : 0;
+  for (let d = 0; d < droppedIslands.length; d++) {
+    cutWoodPaths.push(droppedIslands[d]);
+  }
+
   const areaAfter = computePanelRemainingAreaM2(state);
-  const removedAreaM2 = Math.max(excisedAreaM2, Math.max(0, areaBefore - areaAfter));
+  const removedAreaM2 = Math.max(
+    excisedAreaM2,
+    Math.max(0, areaBefore - areaAfter),
+  );
 
   const splinters = buildPerimeterSplinterDescriptors(
     cutWoodPaths,
@@ -1116,6 +1577,8 @@ export function stampHoleInWoodPanel(
   return {
     cutAnyWood: true,
     removedAreaM2,
+    droppedIslandAreaM2,
+    snappedBridgeCount,
     splinters,
     meshStats,
   };

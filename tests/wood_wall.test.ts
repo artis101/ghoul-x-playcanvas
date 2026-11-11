@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import * as pc from 'playcanvas';
+import { deterministicConeSpread } from '../src/core/ballistics/vec3.ts';
+import { AMMO_12G_00_BUCK } from '../src/core/ballistics/weapons.ts';
 import {
   computePanelRemainingAreaM2,
   createJaggedHoleStamp,
   createWoodPanelState,
   isPointInOpenHole,
+  MAX_FLOATING_ISLAND_DROP_AREA_M2,
   stampHoleInWoodPanel,
   triangulateWoodPanelToBuffers,
   type WoodMeshScratchBuffers,
@@ -142,7 +145,7 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
       expect(geom.rimAreaM2).toBeCloseTo(2 * (widthM + heightM) * thicknessM, 4);
     });
 
-    it('generates deterministic 10-14 vertex jagged stamps scaled by ballistic profile', () => {
+    it('generates deterministic 10-14 vertex jagged stamps scaled by ballistic profile and horizontal grain tear', () => {
       const rifleStampA = createJaggedHoleStamp({
         u: 1.0,
         v: 1.2,
@@ -179,6 +182,14 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
         profile: 'HEAVY_50AE_SLUG',
         seed: 1,
       });
+      const clusterStamp = createJaggedHoleStamp({
+        u: 1.0,
+        v: 1.2,
+        caliberRadiusM: 0.0042,
+        kineticEnergyJ: 2200,
+        profile: 'BUCKSHOT_CLUSTER',
+        seed: 1,
+      });
       const blastStamp = createJaggedHoleStamp({
         u: 1.0,
         v: 1.2,
@@ -188,7 +199,7 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
         seed: 1,
       });
 
-      for (const s of [pelletStamp, slugStamp, blastStamp]) {
+      for (const s of [pelletStamp, slugStamp, clusterStamp, blastStamp]) {
         expect(s.length).toBeGreaterThanOrEqual(10);
         expect(s.length).toBeLessThanOrEqual(14);
       }
@@ -196,8 +207,10 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
       const avgRadius = (pts: ReadonlyArray<{ u: number; v: number }>): number =>
         pts.reduce((acc, p) => acc + Math.hypot(p.u - 1.0, p.v - 1.2), 0) / pts.length;
 
+      expect(avgRadius(rifleStampA)).toBeGreaterThan(avgRadius(pelletStamp));
       expect(avgRadius(slugStamp)).toBeGreaterThan(avgRadius(rifleStampA));
-      expect(avgRadius(blastStamp)).toBeGreaterThan(avgRadius(slugStamp));
+      expect(avgRadius(clusterStamp)).toBeGreaterThan(avgRadius(slugStamp));
+      expect(avgRadius(blastStamp)).toBeGreaterThan(avgRadius(clusterStamp));
     });
 
     it('subtracts single & overlapping multi-shot holes, validates extruded inner rims, and emits 4-6 tangent splinters', () => {
@@ -209,7 +222,7 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
       const state = createWoodPanelState(widthM, heightM, thicknessM);
       const buffers = allocateScratchBuffers();
 
-      // Shot 1: .50 AE / 12G slug fist-sized hole at (1.2, 1.2)
+      // Shot 1: .50 AE / 12G slug fist+ hole at (1.2, 1.2)
       const stamp1 = createJaggedHoleStamp({
         u: 1.2,
         v: 1.2,
@@ -221,7 +234,7 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
       const res1 = stampHoleInWoodPanel(state, stamp1, buffers, 6);
 
       expect(res1.cutAnyWood).toBe(true);
-      expect(res1.removedAreaM2).toBeGreaterThan(0.01);
+      expect(res1.removedAreaM2).toBeGreaterThan(0.025);
       expect(res1.meshStats.holeCount).toBe(1);
       expect(res1.meshStats.holeRimTriangleCount).toBeGreaterThanOrEqual(20);
       expect(isPointInOpenHole(state, 1.2, 1.2)).toBe(true);
@@ -244,7 +257,7 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
       const geom1 = measure3DSandwichGeometry(buffers, res1.meshStats.indexCount);
       expect(geom1.frontAreaM2).toBeCloseTo(res1.meshStats.remainingAreaM2, 3);
       expect(geom1.backAreaM2).toBeCloseTo(res1.meshStats.remainingAreaM2, 3);
-      expect(res1.meshStats.remainingAreaM2).toBeLessThan(intactArea - 0.01);
+      expect(res1.meshStats.remainingAreaM2).toBeLessThan(intactArea - 0.025);
       // Rim area now exceeds outer board rim because of the extruded inner hole rim!
       const outerOnlyRimArea = 2 * (widthM + heightM) * thicknessM;
       expect(geom1.rimAreaM2).toBeGreaterThan(outerOnlyRimArea + 0.02);
@@ -280,9 +293,107 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
       expect(geom2.frontAreaM2).toBeCloseTo(res2.meshStats.remainingAreaM2, 3);
       expect(geom2.backAreaM2).toBeCloseTo(res2.meshStats.remainingAreaM2, 3);
     });
+
+    it('snaps thin weakened wood bridges between nearby shots and drops floating wood islands up to 0.14 m^2', () => {
+      expect(MAX_FLOATING_ISLAND_DROP_AREA_M2).toBeGreaterThanOrEqual(0.12);
+
+      const state = createWoodPanelState(2.4, 2.4, 0.12);
+      const buffers = allocateScratchBuffers();
+
+      // 1) Two rifle shots spaced along horizontal plank grain leaving a ~2.5cm wood sliver between them:
+      //    Shot B should snap the weakened bridge and coalesce both holes into 1 connected plank gash!
+      const leftHole = createJaggedHoleStamp({
+        u: 1.0,
+        v: 1.2,
+        caliberRadiusM: 0.0039,
+        kineticEnergyJ: 2200,
+        profile: 'RIFLE_FMJ_AP',
+        overrideRadiusM: 0.048,
+        seed: 10,
+      });
+      const rightHole = createJaggedHoleStamp({
+        u: 1.145,
+        v: 1.2,
+        caliberRadiusM: 0.0039,
+        kineticEnergyJ: 2200,
+        profile: 'RIFLE_FMJ_AP',
+        overrideRadiusM: 0.048,
+        seed: 11,
+      });
+
+      stampHoleInWoodPanel(state, leftHole, buffers, 5);
+      expect(isPointInOpenHole(state, 1.072, 1.2)).toBe(false);
+
+      const bridgeRes = stampHoleInWoodPanel(state, rightHole, buffers, 5);
+      expect(bridgeRes.snappedBridgeCount).toBeGreaterThanOrEqual(1);
+      expect(bridgeRes.meshStats.holeCount).toBe(1);
+      expect(isPointInOpenHole(state, 1.072, 1.2)).toBe(true);
+
+      // 2) Carve a ring of overlapping/bridge-snapping rifle hits enclosing a ~24cm x 24cm (~0.055 m^2)
+      //    central wood island (> old 0.0225 m^2 limit) and verify the unanchored island drops cleanly!
+      const ringCenterU = 1.75;
+      const ringCenterV = 1.2;
+      const ringRadiusM = 0.165;
+      const ringShotCount = 10;
+      let droppedAreaAccum = 0;
+
+      for (let i = 0; i < ringShotCount; i++) {
+        const ang = (i / ringShotCount) * Math.PI * 2;
+        const s = createJaggedHoleStamp({
+          u: ringCenterU + Math.cos(ang) * ringRadiusM,
+          v: ringCenterV + Math.sin(ang) * ringRadiusM,
+          caliberRadiusM: 0.0045,
+          kineticEnergyJ: 2600,
+          profile: 'RIFLE_JHP',
+          overrideRadiusM: 0.062,
+          seed: 50 + i,
+        });
+        const r = stampHoleInWoodPanel(state, s, buffers, 5);
+        droppedAreaAccum += r.droppedIslandAreaM2;
+      }
+
+      // The enclosed central wood chunk was automatically dropped instead of floating in midair!
+      expect(droppedAreaAccum).toBeGreaterThan(0.015);
+      expect(isPointInOpenHole(state, ringCenterU, ringCenterV)).toBe(true);
+
+      // 3) Carve a 3-sided U-cut touching the top border so the isolated perimeter tab only touches
+      //    1 outer frame edge (< 2 structural anchors) -> unanchored tab drops automatically!
+      const tabState = createWoodPanelState(2.4, 2.4, 0.12);
+      const uCutPts = [
+        { u: 0.92, v: 2.34 },
+        { u: 0.92, v: 2.18 },
+        { u: 1.06, v: 2.12 },
+        { u: 1.22, v: 2.12 },
+        { u: 1.36, v: 2.18 },
+        { u: 1.36, v: 2.34 },
+      ];
+      let tabDroppedArea = 0;
+      for (let i = 0; i < uCutPts.length; i++) {
+        const cutStamp = createJaggedHoleStamp({
+          u: uCutPts[i].u,
+          v: uCutPts[i].v,
+          caliberRadiusM: 0.008,
+          kineticEnergyJ: 3000,
+          profile: 'HEAVY_50AE_SLUG',
+          overrideRadiusM: 0.095,
+          seed: 90 + i,
+        });
+        const cutRes = stampHoleInWoodPanel(tabState, cutStamp, buffers, 5);
+        tabDroppedArea += cutRes.droppedIslandAreaM2;
+      }
+      expect(tabDroppedArea).toBeGreaterThan(0.01);
+      expect(isPointInOpenHole(tabState, 1.14, 2.30)).toBe(true);
+
+      const geom = measure3DSandwichGeometry(
+        buffers,
+        triangulateWoodPanelToBuffers(state, buffers).indexCount,
+      );
+      expect(geom.frontAreaM2).toBeCloseTo(computePanelRemainingAreaM2(state), 3);
+      expect(geom.backAreaM2).toBeCloseTo(computePanelRemainingAreaM2(state), 3);
+    });
   });
 
-  describe('2. WoodWallSystem Ballistic Penetration, Studs vs Drywall, Zero Reallocations & Blasts', () => {
+  describe('2. WoodWallSystem Ballistic Penetration, Shotgun Chunk Blowout, Breakable Studs & Zero Reallocations', () => {
     function createTestContext(customSplinters = false): {
       app: pc.Application;
       world: RapierPhysicsWorld;
@@ -320,7 +431,7 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
       };
     }
 
-    it('attenuates ~140-240 J on intact drywall, spawns 4-6 instanced splinters (0 entities), and loses 0 J through open hole', () => {
+    it('attenuates ~115-165 J on intact wood boards, spawns 4-6 instanced splinters (0 entities), and loses 0 J through open hole', () => {
       const ctx = createTestContext();
       try {
         // 2.4m x 2.4m wall centered at (0, 1.2, -8.0) -> local u in [0, 2.4] maps to world x in [-1.2, +1.2]
@@ -339,7 +450,7 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
         ctx.world.step(1 / 60);
         const rootChildrenBefore = ctx.app.root.children.length;
 
-        // First shot at world (-0.30, 1.20) => local (u = 0.90, v = 1.20) intact drywall
+        // First shot at world (-0.30, 1.20) => local (u = 0.90, v = 1.20) intact wood board
         const shot1 = ctx.system.handleRaySegment({
           originWorld: { x: -0.3, y: 1.2, z: 0 },
           directionWorld: { x: 0, y: 0, z: -1 },
@@ -354,10 +465,10 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
         expect(shot1!.stopped).toBe(false);
         expect(shot1!.hitMaterial).toBe('WOOD_DRYWALL');
         const energyLost1 = 1800 - shot1!.remainingEnergyJ;
-        expect(energyLost1).toBeGreaterThanOrEqual(140);
-        expect(energyLost1).toBeLessThanOrEqual(240);
+        expect(energyLost1).toBeGreaterThanOrEqual(115);
+        expect(energyLost1).toBeLessThanOrEqual(170);
         expect(shot1!.remainingSpeedMs).toBeLessThan(850);
-        expect(shot1!.remainingSpeedMs).toBeGreaterThan(750);
+        expect(shot1!.remainingSpeedMs).toBeGreaterThan(780);
 
         // 4-6 hardware-instanced splinters spawned, ZERO new pc.Entity objects added!
         expect(ctx.system.activeSplinterCount).toBeGreaterThanOrEqual(4);
@@ -388,10 +499,130 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
       }
     });
 
-    it('stops low-energy buckshot & JHP on WOOD_STUD (~650 J resistance) while AP/rifle rounds punch through', () => {
+    it('rips a massive >0.08 m^2 plank chunk & penetrates 0.12m arena boards on point-blank 12G buckshot, while long-range buckshot punches separate pellet holes', () => {
+      const ctx = createTestContext();
+      try {
+        // Match arena woodShootHouseWall thicknessM = 0.12m!
+        const closeWall = ctx.system.createWall({
+          id: 'arena_wood_close_blast',
+          centerWorld: { x: 0, y: 1.2, z: -7.2 },
+          widthM: 3.0,
+          heightM: 2.4,
+          thicknessM: 0.12,
+          studSpacingM: 0.6,
+        });
+        const farWall = ctx.system.createWall({
+          id: 'arena_wood_long_range',
+          centerWorld: { x: 8.0, y: 1.2, z: -18.0 },
+          widthM: 3.0,
+          heightM: 2.4,
+          thicknessM: 0.12,
+          studSpacingM: 0.6,
+        });
+        ctx.world.step(1 / 60);
+
+        const pelletMuzzleEnergyJ =
+          0.5 *
+          AMMO_12G_00_BUCK.massKg *
+          AMMO_12G_00_BUCK.muzzleVelocityMs *
+          AMMO_12G_00_BUCK.muzzleVelocityMs; // ~287 J per pellet
+        const pelletRadiusM = AMMO_12G_00_BUCK.diameterM * 0.5; // 0.0042m
+        const pelletCount = AMMO_12G_00_BUCK.pelletCount; // 9
+
+        // 1) Point-blank 9-pellet 12G 00 Buckshot blast from 1.4m away aimed between studs (x = -0.60, y = 1.20 => u = 0.90)
+        const closeAreaBefore = ctx.system.getWallRemainingAreaM2(closeWall.id);
+        const closeOrigin = { x: -0.6, y: 1.2, z: -5.8 }; // 1.4m from z = -7.2
+        const aimDir = { x: 0, y: 0, z: -1 };
+
+        let penetratedPelletCount = 0;
+        for (let p = 0; p < pelletCount; p++) {
+          const dir = deterministicConeSpread(
+            aimDir,
+            AMMO_12G_00_BUCK.spreadRadians,
+            p,
+            pelletCount,
+          );
+          const res = ctx.system.handleRaySegment({
+            originWorld: closeOrigin,
+            directionWorld: dir,
+            maxDistanceM: 5.0,
+            kineticEnergyJ: pelletMuzzleEnergyJ,
+            speedMs: AMMO_12G_00_BUCK.muzzleVelocityMs,
+            caliberRadiusM: pelletRadiusM,
+            isArmorPiercing: false,
+          });
+          expect(res).not.toBeNull();
+          if (!res!.stopped && res!.remainingEnergyJ > 80 && res!.remainingSpeedMs > 200) {
+            penetratedPelletCount++;
+          }
+        }
+
+        // All 9 pellets punch through the 0.12m wood board with lethal residual energy!
+        expect(penetratedPelletCount).toBe(9);
+
+        const closeRemovedAreaM2 =
+          closeAreaBefore - ctx.system.getWallRemainingAreaM2(closeWall.id);
+        // Rips out a massive > 0.08 m^2 ragged plank chunk in a single blast + showers 14+ flying chunks/splinters!
+        expect(closeRemovedAreaM2).toBeGreaterThan(0.08);
+        expect(closeWall.lastMeshStats.holeCount).toBe(1);
+        expect(ctx.system.activeSplinterCount).toBeGreaterThanOrEqual(14);
+        expect(isPointInOpenHole(closeWall.panelState, 0.9, 1.2)).toBe(true);
+
+        // Follow-up shot right through the blown-out shotgun breach loses 0 J!
+        const followUp = ctx.system.handleRaySegment({
+          originWorld: closeOrigin,
+          directionWorld: aimDir,
+          maxDistanceM: 5.0,
+          kineticEnergyJ: 250,
+          speedMs: 375,
+          caliberRadiusM: pelletRadiusM,
+          isArmorPiercing: false,
+        });
+        expect(followUp).not.toBeNull();
+        expect(followUp!.stopped).toBe(false);
+        expect(followUp!.remainingEnergyJ).toBe(250);
+
+        // 2) Long-range 9-pellet 12G 00 Buckshot blast from 18.0m away (wide pellet dispersion)
+        const farAreaBefore = ctx.system.getWallRemainingAreaM2(farWall.id);
+        const farOrigin = { x: 8.0, y: 1.2, z: 0.0 }; // 18.0m from z = -18.0
+        let farHits = 0;
+        for (let p = 0; p < pelletCount; p++) {
+          const dir = deterministicConeSpread(
+            aimDir,
+            AMMO_12G_00_BUCK.spreadRadians,
+            p,
+            pelletCount,
+          );
+          const res = ctx.system.handleRaySegment({
+            originWorld: farOrigin,
+            directionWorld: dir,
+            maxDistanceM: 25.0,
+            kineticEnergyJ: 215, // aerodynamic drag attenuated at 18m
+            speedMs: 350,
+            caliberRadiusM: pelletRadiusM,
+            isArmorPiercing: false,
+          });
+          if (res) {
+            farHits++;
+          }
+        }
+
+        expect(farHits).toBe(9);
+        const farRemovedAreaM2 =
+          farAreaBefore - ctx.system.getWallRemainingAreaM2(farWall.id);
+
+        // Wide long-range pattern punches separate individual pellet holes instead of a giant crater!
+        expect(farWall.lastMeshStats.holeCount).toBeGreaterThanOrEqual(6);
+        expect(farRemovedAreaM2).toBeLessThan(closeRemovedAreaM2 * 0.45);
+      } finally {
+        ctx.cleanup();
+      }
+    });
+
+    it('stops single low-energy buckshot & JHP on intact WOOD_STUD (~650 J), severs interior studs under heavy/repeated fire, and restores studs on reset()', () => {
       const ctx = createTestContext(true);
       try {
-        ctx.system.createWall({
+        const wall = ctx.system.createWall({
           id: 'stud_test_wall',
           centerWorld: { x: 0, y: 1.2, z: -6.0 },
           widthM: 2.4,
@@ -401,8 +632,11 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
         });
         ctx.world.step(1 / 60);
 
+        const initialStudVB = wall.studFrameMesh.vertexBuffer;
+        expect(initialStudVB).toBeDefined();
+
         // Local u = 0.60 -> world x = -0.60 is directly on a 2x4 vertical WOOD_STUD!
-        // 1) 12G 00 Buckshot pellet (260 J) -> STOPPED by WOOD_STUD!
+        // 1) Single 12G 00 Buckshot pellet (260 J) -> STOPPED by intact WOOD_STUD!
         const buckshotRes = ctx.system.handleRaySegment({
           originWorld: { x: -0.6, y: 1.0, z: 0 },
           directionWorld: { x: 0, y: 0, z: -1 },
@@ -417,8 +651,9 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
         expect(buckshotRes!.stopped).toBe(true);
         expect(buckshotRes!.remainingEnergyJ).toBe(0);
         expect(buckshotRes!.remainingSpeedMs).toBe(0);
+        expect(ctx.system.getWallBrokenStudSectionCount(wall.id)).toBe(0);
 
-        // 2) Low-energy JHP round (560 J) hitting stud at u = 1.20 (world x = 0.0, y = 1.4) -> STOPPED!
+        // 2) Single low-energy JHP round (560 J) hitting stud at u = 1.20 (world x = 0.0, y = 1.4) -> STOPPED!
         const jhpStudRes = ctx.system.handleRaySegment({
           originWorld: { x: 0.0, y: 1.4, z: 0 },
           directionWorld: { x: 0, y: 0, z: -1 },
@@ -432,8 +667,9 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
         expect(jhpStudRes!.hitMaterial).toBe('WOOD_STUD');
         expect(jhpStudRes!.stopped).toBe(true);
         expect(jhpStudRes!.remainingEnergyJ).toBe(0);
+        expect(ctx.system.getWallBrokenStudSectionCount(wall.id)).toBe(0);
 
-        // 3) 7.62x51mm NATO Tungsten AP round (3,850 J) hitting stud at u = 1.80 (world x = +0.60) -> PUNCHES RIGHT THROUGH!
+        // 3) 7.62x51mm NATO Tungsten AP round (3,850 J) hitting stud at u = 1.80 (world x = +0.60, y = 1.3) -> PUNCHES THROUGH!
         const apStudRes = ctx.system.handleRaySegment({
           originWorld: { x: 0.6, y: 1.3, z: 0 },
           directionWorld: { x: 0, y: 0, z: -1 },
@@ -450,6 +686,106 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
         expect(apStudLoss).toBeGreaterThan(500);
         expect(apStudLoss).toBeLessThan(750);
         expect(apStudRes!.remainingEnergyJ).toBeGreaterThan(3100);
+        // 1st rifle hit notches/weakens the stud without severing it yet
+        expect(ctx.system.getWallBrokenStudSectionCount(wall.id)).toBe(0);
+
+        // 4) Follow-up 2nd rifle hit on that weakened stud section (x = +0.60, y = 1.3) SEVERS the stud section!
+        const apStudRes2 = ctx.system.handleRaySegment({
+          originWorld: { x: 0.6, y: 1.3, z: 0 },
+          directionWorld: { x: 0, y: 0, z: -1 },
+          maxDistanceM: 15,
+          kineticEnergyJ: 2400,
+          speedMs: 800,
+          caliberRadiusM: 0.00391,
+          isArmorPiercing: true,
+        });
+        expect(apStudRes2).not.toBeNull();
+        expect(ctx.system.getWallBrokenStudSectionCount(wall.id)).toBeGreaterThanOrEqual(1);
+        expect(wall.studFrameMesh.vertexBuffer).toBe(initialStudVB);
+
+        // Now a weak 260 J pellet fired right through the severed stud gap at (0.60, 1.3) flies cleanly through with 0 J loss!
+        const throughBrokenStudGap = ctx.system.handleRaySegment({
+          originWorld: { x: 0.6, y: 1.3, z: 0 },
+          directionWorld: { x: 0, y: 0, z: -1 },
+          maxDistanceM: 15,
+          kineticEnergyJ: 260,
+          speedMs: 385,
+          caliberRadiusM: 0.0042,
+          isArmorPiercing: false,
+        });
+        expect(throughBrokenStudGap).not.toBeNull();
+        expect(throughBrokenStudGap!.stopped).toBe(false);
+        expect(throughBrokenStudGap!.remainingEnergyJ).toBe(260);
+
+        // Meanwhile the upper intact stump of that same stud at y = 2.05m still stops a single 260 J pellet!
+        ctx.system.update(0.05);
+        const upperStumpRes = ctx.system.handleRaySegment({
+          originWorld: { x: 0.6, y: 2.05, z: 0 },
+          directionWorld: { x: 0, y: 0, z: -1 },
+          maxDistanceM: 15,
+          kineticEnergyJ: 260,
+          speedMs: 385,
+          caliberRadiusM: 0.0042,
+          isArmorPiercing: false,
+        });
+        expect(upperStumpRes).not.toBeNull();
+        expect(upperStumpRes!.hitMaterial).toBe('WOOD_STUD');
+        expect(upperStumpRes!.stopped).toBe(true);
+
+        // 5) Point-blank 9-pellet buckshot blast directly on the center stud (x = 0.0, y = 1.1) also shatters that stud section!
+        ctx.system.update(0.05);
+        const brokenBeforeShotgun = ctx.system.getWallBrokenStudSectionCount(wall.id);
+        for (let p = 0; p < 9; p++) {
+          const dir = deterministicConeSpread({ x: 0, y: 0, z: -1 }, 0.046, p, 9);
+          ctx.system.handleRaySegment({
+            originWorld: { x: 0.0, y: 1.1, z: -4.8 },
+            directionWorld: dir,
+            maxDistanceM: 5,
+            kineticEnergyJ: 287,
+            speedMs: 405,
+            caliberRadiusM: 0.0042,
+            isArmorPiercing: false,
+          });
+        }
+        expect(ctx.system.getWallBrokenStudSectionCount(wall.id)).toBeGreaterThan(
+          brokenBeforeShotgun,
+        );
+
+        // 5b) Heavy 12G Sabot Slug / .50 AE strike on left interior stud (x = -0.60, y = 1.65) severs that section in 1 heavy hit!
+        const brokenBeforeSlug = ctx.system.getWallBrokenStudSectionCount(wall.id);
+        const heavySlugRes = ctx.system.handleRaySegment({
+          originWorld: { x: -0.6, y: 1.65, z: 0 },
+          directionWorld: { x: 0, y: 0, z: -1 },
+          maxDistanceM: 15,
+          kineticEnergyJ: 3150,
+          speedMs: 475,
+          caliberRadiusM: 0.00825,
+          isArmorPiercing: true,
+        });
+        expect(heavySlugRes).not.toBeNull();
+        expect(heavySlugRes!.stopped).toBe(false);
+        expect(ctx.system.getWallBrokenStudSectionCount(wall.id)).toBeGreaterThan(
+          brokenBeforeSlug,
+        );
+
+        // 6) Reset restores all broken studs, Rapier stud colliders, and intact panel area cleanly!
+        ctx.system.reset();
+        expect(ctx.system.getWallBrokenStudSectionCount(wall.id)).toBe(0);
+        expect(ctx.system.getWallRemainingAreaM2(wall.id)).toBeCloseTo(2.4 * 2.4, 3);
+        expect(wall.studFrameMesh.vertexBuffer).toBe(initialStudVB);
+
+        const postResetStudCheck = ctx.system.handleRaySegment({
+          originWorld: { x: 0.6, y: 1.3, z: 0 },
+          directionWorld: { x: 0, y: 0, z: -1 },
+          maxDistanceM: 15,
+          kineticEnergyJ: 260,
+          speedMs: 385,
+          caliberRadiusM: 0.0042,
+          isArmorPiercing: false,
+        });
+        expect(postResetStudCheck).not.toBeNull();
+        expect(postResetStudCheck!.hitMaterial).toBe('WOOD_STUD');
+        expect(postResetStudCheck!.stopped).toBe(true);
       } finally {
         ctx.cleanup();
       }
@@ -469,8 +805,12 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
 
         const initialVB = wall.panelMesh.vertexBuffer;
         const initialIB = wall.panelMesh.indexBuffer[0];
+        const initialStudVB = wall.studFrameMesh.vertexBuffer;
+        const initialStudIB = wall.studFrameMesh.indexBuffer[0];
         expect(initialVB).toBeDefined();
         expect(initialIB).toBeDefined();
+        expect(initialStudVB).toBeDefined();
+        expect(initialStudIB).toBeDefined();
 
         const intactArea = ctx.system.getWallRemainingAreaM2(wall.id);
         expect(intactArea).toBeCloseTo(3.0 * 2.4, 3);
@@ -496,7 +836,9 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
         // Exact same GPU VertexBuffer and IndexBuffer instances -> ZERO reallocations!
         expect(wall.panelMesh.vertexBuffer).toBe(initialVB);
         expect(wall.panelMesh.indexBuffer[0]).toBe(initialIB);
-        expect(ctx.system.getWallRemainingAreaM2(wall.id)).toBeLessThan(intactArea - 0.25);
+        expect(wall.studFrameMesh.vertexBuffer).toBe(initialStudVB);
+        expect(wall.studFrameMesh.indexBuffer[0]).toBe(initialStudIB);
+        expect(ctx.system.getWallRemainingAreaM2(wall.id)).toBeLessThan(intactArea - 0.5);
 
         // Clear splinters and detonate an explosive blast next to the wall -> punches huge hole + 25+ splinters!
         for (const pool of ctx.system.splinterPools) {
@@ -522,12 +864,15 @@ describe('Pillar 3: R6 Siege Clipper2 + Earcut Wood Walls & Instanced Splinters'
         }
         expect(ctx.system.activeSplinterCount).toBeGreaterThan(0);
 
-        // Reset restores intact panel area and reuses the same GPU buffers!
+        // Reset restores intact panel area and studs while reusing the exact same GPU buffers!
         ctx.system.reset();
         expect(ctx.system.getWallRemainingAreaM2(wall.id)).toBeCloseTo(intactArea, 3);
+        expect(ctx.system.getWallBrokenStudSectionCount(wall.id)).toBe(0);
         expect(ctx.system.activeSplinterCount).toBe(0);
         expect(wall.panelMesh.vertexBuffer).toBe(initialVB);
         expect(wall.panelMesh.indexBuffer[0]).toBe(initialIB);
+        expect(wall.studFrameMesh.vertexBuffer).toBe(initialStudVB);
+        expect(wall.studFrameMesh.indexBuffer[0]).toBe(initialStudIB);
       } finally {
         ctx.cleanup();
       }

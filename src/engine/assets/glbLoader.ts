@@ -1,5 +1,5 @@
 import * as pc from 'playcanvas';
-import type { GhoulZoneId, Vec3Like } from '../../contracts/ballistics.ts';
+import type { EnemyArchetypeId, GhoulZoneId, Vec3Like } from '../../contracts/ballistics.ts';
 import type {
   ChunkConnectivityEdge,
   ChunkConnectivityGraphJson,
@@ -63,13 +63,37 @@ export interface ConcreteWallConnectivityGraphJson extends ChunkConnectivityGrap
   nodes: NamedChunkConnectivityNode[];
 }
 
+export interface BoneBindPose {
+  modelPos: pc.Vec3;
+  modelRot: pc.Quat;
+}
+
+export function getArchetypeWeaponAssetId(archetype: EnemyArchetypeId): WeaponAssetId {
+  switch (archetype) {
+    case 'SKINHEAD_PUNK':
+      return 'silver_talon_50ae';
+    case 'HEAVY_ENFORCER':
+      return 'm590_shotgun';
+    case 'SNIPER_OPERATIVE':
+      return 'msg90_sniper';
+    case 'MILITIA_GUNNER':
+    default:
+      return 'm4a1_carbine';
+  }
+}
+
 export interface CombatantGlbInstance {
   rootEntity: pc.Entity;
   animComponent: pc.AnimComponent | null;
   zoneEntities: Map<GhoulZoneId, pc.Entity>;
   boneNodes: Map<GhoulZoneId, pc.GraphNode>;
+  boneBindPoses: ReadonlyMap<GhoulZoneId, BoneBindPose>;
   esapiPlateCarrier: pc.Entity | null;
   pasgtHelmet: pc.Entity | null;
+  tacticalVisor: pc.Entity | null;
+  spetsnazBeret: pc.Entity | null;
+  punkMohawk: pc.Entity | null;
+  evisceratedGut: pc.Entity | null;
   internalAnatomyEntities: {
     organBrain: pc.Entity | null;
     organHeart: pc.Entity | null;
@@ -80,7 +104,12 @@ export interface CombatantGlbInstance {
     skeletPelvis: pc.Entity | null;
   };
   availableClips: ReadonlySet<string>;
-  playClip(clipName: CombatantAnimationClipName, transitionSeconds?: number, speed?: number): boolean;
+  playClip(
+    clipName: CombatantAnimationClipName,
+    transitionSeconds?: number,
+    speed?: number,
+    southpaw?: boolean
+  ): boolean;
   setXRayVisible(visible: boolean): void;
   setArmorVisible(chestPlateVisible: boolean, helmetVisible: boolean): void;
   setZoneVisible(zone: GhoulZoneId, visible: boolean): void;
@@ -283,6 +312,10 @@ export class GlbModelRegistry {
 
   private readonly containerAssets = new Map<GlbAssetKey, pc.Asset>();
   private readonly loadingPromises = new Map<GlbAssetKey, Promise<pc.ContainerResource>>();
+  private readonly detachedHeadgearCache = new Map<
+    string,
+    Array<{ mesh: pc.Mesh; material: pc.Material | null }>
+  >();
   private connectivityGraph: ConcreteWallConnectivityGraphJson | null = null;
   private connectivityPromise: Promise<ConcreteWallConnectivityGraphJson> | null = null;
 
@@ -310,6 +343,15 @@ export class GlbModelRegistry {
       return null;
     }
     return asset.resource as pc.ContainerResource;
+  }
+
+  /**
+   * Registers an already-parsed `pc.ContainerResource` under `key` (for synchronous preload / headless tests).
+   */
+  public registerContainerResource(key: GlbAssetKey, container: pc.ContainerResource): void {
+    const asset = new pc.Asset(`glb_${key}`, 'container');
+    asset.resource = container;
+    this.containerAssets.set(key, asset);
   }
 
   /**
@@ -388,6 +430,7 @@ export class GlbModelRegistry {
     castShadows?: boolean;
     receiveShadows?: boolean;
     initialClip?: CombatantAnimationClipName;
+    southpaw?: boolean;
   }): CombatantGlbInstance {
     const container = this.getContainer('ghoul_combatant');
     if (!container) {
@@ -399,9 +442,13 @@ export class GlbModelRegistry {
       receiveShadows: options?.receiveShadows ?? true,
     });
     rootEntity.name = 'GhoulCombatantRoot';
+    rootEntity.setPosition(0, 0, 0);
+    rootEntity.setEulerAngles(0, 0, 0);
+    rootEntity.syncHierarchy();
 
     const zoneEntities = new Map<GhoulZoneId, pc.Entity>();
     const boneNodes = new Map<GhoulZoneId, pc.GraphNode>();
+    const boneBindPoses = new Map<GhoulZoneId, BoneBindPose>();
 
     for (const zone of ALL_GHOUL_ZONES) {
       const zoneEnt = findEntityByName(rootEntity, `Zone_${zone}`);
@@ -411,11 +458,25 @@ export class GlbModelRegistry {
       const boneNode = rootEntity.findByName(`Bone_${zone}`);
       if (boneNode) {
         boneNodes.set(zone, boneNode);
+        boneBindPoses.set(zone, {
+          modelPos: boneNode.getPosition().clone(),
+          modelRot: boneNode.getRotation().clone(),
+        });
       }
     }
 
     const esapiPlateCarrier = findEntityByName(rootEntity, 'Gear_ESAPI_PlateCarrier');
     const pasgtHelmet = findEntityByName(rootEntity, 'Gear_PASGT_Helmet');
+    const tacticalVisor = findEntityByName(rootEntity, 'Gear_TacticalVisor');
+    const spetsnazBeret = findEntityByName(rootEntity, 'Gear_SpetsnazBeret');
+    const punkMohawk = findEntityByName(rootEntity, 'Gear_PunkMohawk');
+    const evisceratedGut = findEntityByName(rootEntity, 'Gear_EvisceratedGut');
+
+    // Optional archetype headgear & gore cavity start hidden until configured by GhoulMannequinEntity
+    if (tacticalVisor) tacticalVisor.enabled = false;
+    if (spetsnazBeret) spetsnazBeret.enabled = false;
+    if (punkMohawk) punkMohawk.enabled = false;
+    if (evisceratedGut) evisceratedGut.enabled = false;
 
     const internalAnatomyEntities = {
       organBrain: findEntityByName(rootEntity, 'Organ_Brain'),
@@ -434,6 +495,26 @@ export class GlbModelRegistry {
       }
     }
 
+    // Disable bind-pose frustum culling on all skinned submeshes so ragdolled corpses
+    // and flying dismembered limbs never clip out when bones move away from origin!
+    const allSkinnedEntities: Array<pc.Entity | null> = [
+      ...zoneEntities.values(),
+      esapiPlateCarrier,
+      pasgtHelmet,
+      tacticalVisor,
+      spetsnazBeret,
+      punkMohawk,
+      evisceratedGut,
+      ...Object.values(internalAnatomyEntities),
+    ];
+    for (const ent of allSkinnedEntities) {
+      if (ent?.render) {
+        for (const mi of ent.render.meshInstances) {
+          mi.cull = false;
+        }
+      }
+    }
+
     const availableClips = new Set<string>();
     let animComponent: pc.AnimComponent | null = null;
 
@@ -446,14 +527,19 @@ export class GlbModelRegistry {
         const track = animAsset.resource;
         if (!track) continue;
         const clipName = track.name || animAsset.name;
-        const isLooping = clipName === 'CombatReadyIdle' || clipName === 'UnsuspectingIdle';
+        const isLooping =
+          clipName.startsWith('CombatReadyIdle') || clipName.startsWith('UnsuspectingIdle');
         animComponent.assignAnimation(clipName, track, undefined, 1.0, isLooping);
         availableClips.add(clipName);
       }
 
-      const initialClip = options?.initialClip ?? 'CombatReadyIdle';
-      if (availableClips.has(initialClip) && animComponent.baseLayer) {
-        animComponent.baseLayer.transition(initialClip, 0);
+      const baseClip = options?.initialClip ?? 'CombatReadyIdle';
+      const resolvedInitial =
+        options?.southpaw && availableClips.has(`${baseClip}_Southpaw`)
+          ? `${baseClip}_Southpaw`
+          : baseClip;
+      if (availableClips.has(resolvedInitial) && animComponent.baseLayer) {
+        animComponent.baseLayer.transition(resolvedInitial, 0);
       }
     }
 
@@ -462,16 +548,33 @@ export class GlbModelRegistry {
       animComponent,
       zoneEntities,
       boneNodes,
+      boneBindPoses,
       esapiPlateCarrier,
       pasgtHelmet,
+      tacticalVisor,
+      spetsnazBeret,
+      punkMohawk,
+      evisceratedGut,
       internalAnatomyEntities,
       availableClips,
-      playClip(clipName: CombatantAnimationClipName, transitionSeconds = 0.12, speed = 1.0): boolean {
-        if (!animComponent || !animComponent.baseLayer || !availableClips.has(clipName)) {
+      playClip(
+        clipName: CombatantAnimationClipName,
+        transitionSeconds = 0.12,
+        speed = 1.0,
+        southpaw = false
+      ): boolean {
+        if (!animComponent || !animComponent.baseLayer) {
+          return false;
+        }
+        const resolved =
+          southpaw && availableClips.has(`${clipName}_Southpaw`)
+            ? `${clipName}_Southpaw`
+            : clipName;
+        if (!availableClips.has(resolved)) {
           return false;
         }
         animComponent.speed = speed;
-        animComponent.baseLayer.transition(clipName, transitionSeconds);
+        animComponent.baseLayer.transition(resolved, transitionSeconds);
         return true;
       },
       setXRayVisible(visible: boolean): void {
@@ -493,6 +596,121 @@ export class GlbModelRegistry {
         rootEntity.destroy();
       },
     };
+  }
+
+  /**
+   * Instantiates an unskinned standalone physics prop from the sculpted Blender headgear
+   * (`Gear_PASGT_Helmet`, `Gear_SpetsnazBeret`, `Gear_TacticalVisor`) centered around `(0,0,0)`
+   * so shot-off helmets, berets, and shades fly through the air using the new Blender models!
+   */
+  public instantiateDetachedHeadgearProp(archetype: EnemyArchetypeId): pc.Entity | null {
+    const container = this.getContainer('ghoul_combatant');
+    if (!container) return null;
+
+    const gearNames: string[] =
+      archetype === 'HEAVY_ENFORCER'
+        ? ['Gear_PASGT_Helmet', 'Gear_TacticalVisor']
+        : archetype === 'MILITIA_GUNNER'
+          ? ['Gear_PASGT_Helmet']
+          : archetype === 'SNIPER_OPERATIVE'
+            ? ['Gear_SpetsnazBeret']
+            : ['Gear_TacticalVisor'];
+
+    const cacheKey = gearNames.join('+');
+    let primitives = this.detachedHeadgearCache.get(cacheKey);
+
+    if (!primitives) {
+      const tempRoot = container.instantiateRenderEntity();
+      try {
+        const extracted: Array<{
+          positions: number[];
+          normals: number[];
+          uvs: number[];
+          indices: number[];
+          material: pc.Material | null;
+        }> = [];
+
+        let sumX = 0;
+        let sumY = 0;
+        let sumZ = 0;
+        let vertTotal = 0;
+
+        for (const gName of gearNames) {
+          const ent = findEntityByName(tempRoot, gName);
+          if (!ent?.render) continue;
+          for (const mi of ent.render.meshInstances) {
+            const srcMesh = mi.mesh;
+            if (!srcMesh) continue;
+            const positions: number[] = [];
+            const normals: number[] = [];
+            const uvs: number[] = [];
+            const indices: number[] = [];
+            srcMesh.getPositions(positions);
+            srcMesh.getNormals(normals);
+            srcMesh.getUvs(0, uvs);
+            srcMesh.getIndices(indices);
+            if (positions.length === 0) continue;
+
+            for (let i = 0; i < positions.length; i += 3) {
+              sumX += positions[i];
+              sumY += positions[i + 1];
+              sumZ += positions[i + 2];
+              vertTotal++;
+            }
+            extracted.push({
+              positions,
+              normals,
+              uvs,
+              indices,
+              material: mi.material ?? null,
+            });
+          }
+        }
+
+        if (vertTotal === 0) return null;
+        const cx = sumX / vertTotal;
+        const cy = sumY / vertTotal;
+        const cz = sumZ / vertTotal;
+
+        primitives = extracted.map((item) => {
+          const centered = new Array<number>(item.positions.length);
+          for (let i = 0; i < item.positions.length; i += 3) {
+            centered[i] = item.positions[i] - cx;
+            centered[i + 1] = item.positions[i + 1] - cy;
+            centered[i + 2] = item.positions[i + 2] - cz;
+          }
+          const mesh = new pc.Mesh(this.app.graphicsDevice);
+          mesh.setPositions(centered);
+          if (item.normals.length === centered.length) {
+            mesh.setNormals(item.normals);
+          }
+          if (item.uvs.length === (centered.length / 3) * 2) {
+            mesh.setUvs(0, item.uvs);
+          }
+          if (item.indices.length > 0) {
+            mesh.setIndices(item.indices);
+          }
+          mesh.update();
+          mesh.incRefCount();
+          return { mesh, material: item.material };
+        });
+
+        this.detachedHeadgearCache.set(cacheKey, primitives);
+      } finally {
+        tempRoot.destroy();
+      }
+    }
+
+    const propRoot = new pc.Entity(`DetachedHeadgear_${archetype}`);
+    const meshInstances = primitives.map(
+      (p) => new pc.MeshInstance(p.mesh, p.material ?? new pc.StandardMaterial())
+    );
+    propRoot.addComponent('render', {
+      meshInstances,
+      castShadows: true,
+      receiveShadows: true,
+    });
+    return propRoot;
   }
 
   /**
@@ -728,6 +946,7 @@ export class GlbModelRegistry {
     }
     this.containerAssets.clear();
     this.loadingPromises.clear();
+    this.detachedHeadgearCache.clear();
     this.connectivityGraph = null;
     this.connectivityPromise = null;
   }

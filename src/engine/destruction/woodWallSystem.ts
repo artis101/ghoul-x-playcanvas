@@ -23,6 +23,7 @@ import {
   type WoodMeshBuildStats,
   type WoodMeshScratchBuffers,
   type WoodPanelClipperState,
+  type WoodStudAnchorSpan,
 } from '../../core/destruction/woodPolygonClipper.ts';
 import { HardwareInstancedPool } from '../physics/instancedPool.ts';
 import { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
@@ -32,6 +33,20 @@ export const DEFAULT_WOOD_WALL_MAX_INDICES = 73_728;
 export const DEFAULT_WOOD_STUD_WIDTH_M = 0.045;
 export const DEFAULT_WOOD_STUD_DEPTH_M = 0.085;
 export const DEFAULT_WOOD_STUD_SPACING_M = 0.60;
+
+const MAX_STUD_FRAME_VERTICES = 4_096;
+const MAX_STUD_FRAME_INDICES = 6_144;
+const STUD_VERTICAL_SECTION_COUNT = 6;
+const STUD_SECTION_MAX_HP = 1_100;
+
+/** Max spatial radius (m) from cluster centroid for tight point-blank / close-range plank blowout (`>= 5` pellets). */
+const TIGHT_BUCKSHOT_CLUSTER_RADIUS_M = 0.22;
+/** Max spatial radius (m) from cluster centroid for close-medium range chunk tear-out (`>= 3` pellets). */
+const MEDIUM_BUCKSHOT_CLUSTER_RADIUS_M = 0.26;
+/** Max real-time / sim-time window for grouping synchronous or rapid multi-pellet shotgun impacts. */
+const BUCKSHOT_VOLLEY_WINDOW_S = 0.025;
+const BUCKSHOT_VOLLEY_WINDOW_MS = 25;
+const MAX_PELLETS_PER_VOLLEY = 9;
 
 export interface WoodWallConfig {
   id: string;
@@ -92,6 +107,46 @@ export interface WoodWallInstance {
   readonly panelState: WoodPanelClipperState;
   readonly scratchBuffers: WoodMeshScratchBuffers;
   lastMeshStats: WoodMeshBuildStats;
+}
+
+interface StudSectionState {
+  vMin: number;
+  vMax: number;
+  hp: number;
+  broken: boolean;
+}
+
+interface StudColumnState {
+  readonly u: number;
+  readonly isBorderPost: boolean;
+  readonly sections: StudSectionState[];
+}
+
+interface PelletVolleyImpact {
+  u: number;
+  v: number;
+  cutRadiusM: number;
+  energyJ: number;
+  dirWorld: Vec3Like;
+  exitSignZ: number;
+}
+
+interface PelletVolleyState {
+  simTimeS: number;
+  wallClockMs: number;
+  pelletRayCount: number;
+  clusterTierApplied: 0 | 1 | 2 | 3;
+  impacts: PelletVolleyImpact[];
+  clusterCuts: Array<{ u: number; v: number; cutRadiusM: number }>;
+}
+
+interface WallInternalState {
+  readonly studColumns: StudColumnState[];
+  readonly mutableStudColliderHandles: number[];
+  readonly studScratchBuffers: WoodMeshScratchBuffers;
+  readonly visualStudDepthM: number;
+  readonly plateHeightM: number;
+  activeVolley: PelletVolleyState | null;
 }
 
 function hash2d(x: number, y: number, seed: number): number {
@@ -332,23 +387,148 @@ export function computeWallStudPositionsU(
   return positions;
 }
 
+function createInitialStudColumns(
+  heightM: number,
+  plateHeightM: number,
+  studPositionsU: readonly number[],
+): StudColumnState[] {
+  const vBottom = plateHeightM;
+  const vTop = Math.max(vBottom + 0.02, heightM - plateHeightM);
+  const spanH = vTop - vBottom;
+  const secCount = STUD_VERTICAL_SECTION_COUNT;
+  const columns: StudColumnState[] = [];
+
+  for (let i = 0; i < studPositionsU.length; i++) {
+    const isBorderPost =
+      studPositionsU.length >= 3 &&
+      (i === 0 || i === studPositionsU.length - 1);
+    const sections: StudSectionState[] = [];
+    if (isBorderPost) {
+      sections.push({
+        vMin: vBottom,
+        vMax: vTop,
+        hp: Infinity,
+        broken: false,
+      });
+    } else {
+      for (let s = 0; s < secCount; s++) {
+        sections.push({
+          vMin: vBottom + (spanH * s) / secCount,
+          vMax: vBottom + (spanH * (s + 1)) / secCount,
+          hp: STUD_SECTION_MAX_HP,
+          broken: false,
+        });
+      }
+    }
+    columns.push({
+      u: studPositionsU[i],
+      isBorderPost,
+      sections,
+    });
+  }
+
+  return columns;
+}
+
+interface IntactStudSpan {
+  vMin: number;
+  vMax: number;
+  brokenBottom: boolean;
+  brokenTop: boolean;
+}
+
+function collectIntactStudSpans(col: StudColumnState): IntactStudSpan[] {
+  const spans: IntactStudSpan[] = [];
+  let s = 0;
+  const n = col.sections.length;
+  while (s < n) {
+    if (col.sections[s].broken) {
+      s++;
+      continue;
+    }
+    const startIdx = s;
+    while (s + 1 < n && !col.sections[s + 1].broken) {
+      s++;
+    }
+    const endIdx = s;
+    spans.push({
+      vMin: col.sections[startIdx].vMin,
+      vMax: col.sections[endIdx].vMax,
+      brokenBottom: startIdx > 0,
+      brokenTop: endIdx < n - 1,
+    });
+    s++;
+  }
+  return spans;
+}
+
 /**
- * Builds a single combined static `pc.Mesh` containing all vertical 2x4 studs and top/bottom
- * framing plates for one wall so the entire timber frame renders in 1 draw call and is exposed
- * cleanly inside blown-out holes.
+ * Writes all intact vertical 2x4 studs (with jagged splintered stub tips at any fractured gaps)
+ * and top/bottom framing plates into pre-allocated `buffers` so `studFrameMesh` updates in-place
+ * with zero GPU buffer reallocations.
  */
-function buildWallStudFrameMesh(
-  device: pc.GraphicsDevice,
+function writeWallStudFrameBuffers(
   widthM: number,
   heightM: number,
   visualDepthM: number,
-  studPositionsU: readonly number[],
+  plateHeightM: number,
+  studColumns: readonly StudColumnState[],
+  buffers: WoodMeshScratchBuffers,
   studWidthM = DEFAULT_WOOD_STUD_WIDTH_M,
-): pc.Mesh {
-  const positions: number[] = [];
-  const normals: number[] = [];
-  const uvs: number[] = [];
-  const indices: number[] = [];
+): { vertexCount: number; indexCount: number } {
+  const maxVerts = Math.floor(buffers.positions.length / 3);
+  const maxIndices = buffers.indices.length;
+  const posOut = buffers.positions;
+  const normOut = buffers.normals;
+  const uvOut = buffers.uvs;
+  const idxOut = buffers.indices;
+
+  let vertCursor = 0;
+  let idxCursor = 0;
+
+  const appendTri = (
+    a: [number, number, number],
+    b: [number, number, number],
+    c: [number, number, number],
+  ): void => {
+    if (vertCursor + 3 > maxVerts || idxCursor + 3 > maxIndices) {
+      return;
+    }
+    const ux = b[0] - a[0];
+    const uy = b[1] - a[1];
+    const uz = b[2] - a[2];
+    const vx = c[0] - a[0];
+    const vy = c[1] - a[1];
+    const vz = c[2] - a[2];
+    let nx = uy * vz - uz * vy;
+    let ny = uz * vx - ux * vz;
+    let nz = ux * vy - uy * vx;
+    const len = Math.hypot(nx, ny, nz);
+    if (len < 1e-8) return;
+    nx /= len;
+    ny /= len;
+    nz /= len;
+
+    const base = vertCursor;
+    const pts = [a, b, c];
+    for (let k = 0; k < 3; k++) {
+      const pOff = (base + k) * 3;
+      const uvOff = (base + k) * 2;
+      posOut[pOff] = pts[k][0];
+      posOut[pOff + 1] = pts[k][1];
+      posOut[pOff + 2] = pts[k][2];
+      normOut[pOff] = nx;
+      normOut[pOff + 1] = ny;
+      normOut[pOff + 2] = nz;
+      uvOut[uvOff] = (k & 1) * 0.5;
+      uvOut[uvOff + 1] = k === 2 ? 1 : 0;
+    }
+    idxOut[idxCursor] = base;
+    idxOut[idxCursor + 1] = base + 1;
+    idxOut[idxCursor + 2] = base + 2;
+    vertCursor += 3;
+    idxCursor += 3;
+  };
 
   const appendBox = (
     cx: number,
@@ -358,13 +538,21 @@ function buildWallStudFrameMesh(
     wy: number,
     wz: number,
   ): void => {
+    if (vertCursor + 24 > maxVerts || idxCursor + 36 > maxIndices) {
+      return;
+    }
     const hx = wx * 0.5;
     const hy = wy * 0.5;
     const hz = wz * 0.5;
 
     const faces: Array<{
       n: [number, number, number];
-      verts: [[number, number, number], [number, number, number], [number, number, number], [number, number, number]];
+      verts: [
+        [number, number, number],
+        [number, number, number],
+        [number, number, number],
+        [number, number, number],
+      ];
       uvSpanU: number;
       uvSpanV: number;
     }> = [
@@ -444,48 +632,234 @@ function buildWallStudFrameMesh(
 
     for (let f = 0; f < faces.length; f++) {
       const face = faces[f];
-      const base = positions.length / 3;
+      const base = vertCursor;
       for (let k = 0; k < 4; k++) {
-        positions.push(face.verts[k][0], face.verts[k][1], face.verts[k][2]);
-        normals.push(face.n[0], face.n[1], face.n[2]);
+        const pOff = (base + k) * 3;
+        posOut[pOff] = face.verts[k][0];
+        posOut[pOff + 1] = face.verts[k][1];
+        posOut[pOff + 2] = face.verts[k][2];
+        normOut[pOff] = face.n[0];
+        normOut[pOff + 1] = face.n[1];
+        normOut[pOff + 2] = face.n[2];
       }
-      uvs.push(
-        0,
-        0,
-        face.uvSpanU,
-        0,
-        face.uvSpanU,
-        face.uvSpanV,
-        0,
-        face.uvSpanV,
-      );
-      indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      let uvOff = base * 2;
+      uvOut[uvOff] = 0;
+      uvOut[uvOff + 1] = 0;
+      uvOff += 2;
+      uvOut[uvOff] = face.uvSpanU;
+      uvOut[uvOff + 1] = 0;
+      uvOff += 2;
+      uvOut[uvOff] = face.uvSpanU;
+      uvOut[uvOff + 1] = face.uvSpanV;
+      uvOff += 2;
+      uvOut[uvOff] = 0;
+      uvOut[uvOff + 1] = face.uvSpanV;
+
+      idxOut[idxCursor] = base;
+      idxOut[idxCursor + 1] = base + 1;
+      idxOut[idxCursor + 2] = base + 2;
+      idxOut[idxCursor + 3] = base;
+      idxOut[idxCursor + 4] = base + 2;
+      idxOut[idxCursor + 5] = base + 3;
+
+      vertCursor += 4;
+      idxCursor += 6;
     }
   };
 
-  const halfW = widthM * 0.5;
-  const halfH = heightM * 0.5;
-  const plateH = Math.min(studWidthM, heightM * 0.2);
+  const appendJaggedBrokenCap = (
+    cx: number,
+    baseY: number,
+    dirSignY: 1 | -1,
+    wx: number,
+    wz: number,
+    seed: number,
+  ): void => {
+    const hx = wx * 0.5;
+    const hz = wz * 0.5;
+    const spikeLenA = (0.036 + 0.022 * hash2d(seed, 1, 19)) * dirSignY;
+    const spikeLenB = (0.028 + 0.024 * hash2d(seed, 2, 37)) * dirSignY;
 
-  // Bottom sole plate & top header plate
-  appendBox(0, -halfH + plateH * 0.5, 0, widthM, plateH, visualDepthM);
-  appendBox(0, halfH - plateH * 0.5, 0, widthM, plateH, visualDepthM);
+    const tipA: [number, number, number] = [
+      cx - hx * 0.42,
+      baseY + spikeLenA,
+      hz * 0.25,
+    ];
+    const tipB: [number, number, number] = [
+      cx + hx * 0.48,
+      baseY + spikeLenB,
+      -hz * 0.28,
+    ];
 
-  // Vertical 2x4 studs between bottom & top plates
-  const verticalStudH = Math.max(0.02, heightM - plateH * 2);
-  for (let i = 0; i < studPositionsU.length; i++) {
-    const cx = studPositionsU[i] - halfW;
-    appendBox(cx, 0, 0, studWidthM, verticalStudH, visualDepthM);
+    const c00: [number, number, number] = [cx - hx, baseY, czOr(hz)];
+    const c10: [number, number, number] = [cx, baseY, hz];
+    const c11: [number, number, number] = [cx, baseY, -hz];
+    const c01: [number, number, number] = [cx - hx, baseY, -hz];
+
+    const d00: [number, number, number] = [cx, baseY, hz];
+    const d10: [number, number, number] = [cx + hx, baseY, hz];
+    const d11: [number, number, number] = [cx + hx, baseY, -hz];
+    const d01: [number, number, number] = [cx, baseY, -hz];
+
+    if (dirSignY > 0) {
+      appendTri(c00, c10, tipA);
+      appendTri(c10, c11, tipA);
+      appendTri(c11, c01, tipA);
+      appendTri(c01, c00, tipA);
+
+      appendTri(d00, d10, tipB);
+      appendTri(d10, d11, tipB);
+      appendTri(d11, d01, tipB);
+      appendTri(d01, d00, tipB);
+    } else {
+      appendTri(c10, c00, tipA);
+      appendTri(c11, c10, tipA);
+      appendTri(c01, c11, tipA);
+      appendTri(c00, c01, tipA);
+
+      appendTri(d10, d00, tipB);
+      appendTri(d11, d10, tipB);
+      appendTri(d01, d11, tipB);
+      appendTri(d00, d01, tipB);
+    }
+  };
+
+  function czOr(v: number): number {
+    return v;
   }
 
-  const mesh = new pc.Mesh(device);
-  mesh.setPositions(positions);
-  mesh.setNormals(normals);
-  mesh.setUvs(0, uvs);
-  mesh.setIndices(indices);
-  mesh.update(pc.PRIMITIVE_TRIANGLES, true);
-  mesh.incRefCount();
-  return mesh;
+  const halfW = widthM * 0.5;
+  const halfH = heightM * 0.5;
+
+  // Bottom sole plate & top header plate
+  appendBox(0, -halfH + plateHeightM * 0.5, 0, widthM, plateHeightM, visualDepthM);
+  appendBox(0, halfH - plateHeightM * 0.5, 0, widthM, plateHeightM, visualDepthM);
+
+  // Vertical 2x4 studs (with fractured gaps & jagged splinter tips where severed)
+  for (let i = 0; i < studColumns.length; i++) {
+    const col = studColumns[i];
+    const cx = col.u - halfW;
+    const spans = collectIntactStudSpans(col);
+    for (let s = 0; s < spans.length; s++) {
+      const span = spans[s];
+      const spanH = span.vMax - span.vMin;
+      if (spanH < 0.01) continue;
+      const cy = (span.vMin + span.vMax) * 0.5 - halfH;
+      appendBox(cx, cy, 0, studWidthM, spanH, visualDepthM);
+
+      if (span.brokenTop) {
+        appendJaggedBrokenCap(
+          cx,
+          span.vMax - halfH,
+          1,
+          studWidthM,
+          visualDepthM,
+          i * 13 + s * 7 + 1,
+        );
+      }
+      if (span.brokenBottom) {
+        appendJaggedBrokenCap(
+          cx,
+          span.vMin - halfH,
+          -1,
+          studWidthM,
+          visualDepthM,
+          i * 13 + s * 7 + 2,
+        );
+      }
+    }
+  }
+
+  return { vertexCount: vertCursor, indexCount: idxCursor };
+}
+
+/**
+ * Computes the largest subset of `impacts` lying within `radiusM` of their subset centroid.
+ */
+function findBestPelletCluster(
+  impacts: readonly PelletVolleyImpact[],
+  radiusM: number,
+): {
+  count: number;
+  centerU: number;
+  centerV: number;
+  maxSpreadM: number;
+} {
+  const n = impacts.length;
+  if (n === 0) {
+    return { count: 0, centerU: 0, centerV: 0, maxSpreadM: 0 };
+  }
+
+  const rSq = radiusM * radiusM;
+  let bestCount = 0;
+  let bestCenterU = impacts[0].u;
+  let bestCenterV = impacts[0].v;
+  let bestMaxSpread = 0;
+
+  // Test overall mean plus each impact as candidate seed
+  let meanU = 0;
+  let meanV = 0;
+  for (let i = 0; i < n; i++) {
+    meanU += impacts[i].u;
+    meanV += impacts[i].v;
+  }
+  meanU /= n;
+  meanV /= n;
+
+  for (let seedIdx = -1; seedIdx < n; seedIdx++) {
+    let cu = seedIdx < 0 ? meanU : impacts[seedIdx].u;
+    let cv = seedIdx < 0 ? meanV : impacts[seedIdx].v;
+
+    // 2-step mean-shift refinement onto members within radiusM
+    for (let iter = 0; iter < 2; iter++) {
+      let sumU = 0;
+      let sumV = 0;
+      let cnt = 0;
+      for (let j = 0; j < n; j++) {
+        const du = impacts[j].u - cu;
+        const dv = impacts[j].v - cv;
+        if (du * du + dv * dv <= rSq) {
+          sumU += impacts[j].u;
+          sumV += impacts[j].v;
+          cnt++;
+        }
+      }
+      if (cnt === 0) break;
+      cu = sumU / cnt;
+      cv = sumV / cnt;
+    }
+
+    let finalCnt = 0;
+    let maxDistSq = 0;
+    for (let j = 0; j < n; j++) {
+      const du = impacts[j].u - cu;
+      const dv = impacts[j].v - cv;
+      const dSq = du * du + dv * dv;
+      if (dSq <= rSq) {
+        finalCnt++;
+        if (dSq > maxDistSq) {
+          maxDistSq = dSq;
+        }
+      }
+    }
+
+    if (
+      finalCnt > bestCount ||
+      (finalCnt === bestCount && maxDistSq < bestMaxSpread * bestMaxSpread)
+    ) {
+      bestCount = finalCnt;
+      bestCenterU = cu;
+      bestCenterV = cv;
+      bestMaxSpread = Math.sqrt(maxDistSq);
+    }
+  }
+
+  return {
+    count: bestCount,
+    centerU: bestCenterU,
+    centerV: bestCenterV,
+    maxSpreadM: bestMaxSpread,
+  };
 }
 
 /**
@@ -532,9 +906,11 @@ function quatAlignUnitXToVector(
 /**
  * Rainbow Six Siege-style dynamic boolean wood stud wall subsystem:
  * - Double-sided `BUFFER_DYNAMIC` `pc.Mesh` wood panels clipped in real time via `clipper2-js` + `earcut`
+ * - Point-blank & close-range 12G buckshot cluster chunk tear-outs + multi-shot bridge snapping & island drops
  * - Zero GPU buffer reallocations across 100+ shots per wall
- * - Static Rapier `WOOD_STUD` framing (`0.045m x height x 0.085m` every `0.60m` + top/bottom plates)
- * - Hardware-instanced flying wood splinters via `HardwareInstancedPool` (zero per-splinter `pc.Entity` objects!)
+ * - Destructible interior vertical 2x4 `WOOD_STUD` sections (`~650 J` single-shot stop resistance, severable by
+ *   point-blank shotgun blasts, `.50 AE` / `12G Slug`, blasts, or repeated rifle hits)
+ * - Hardware-instanced flying wood splinters & plank chunks via `HardwareInstancedPool` (zero per-splinter entities!)
  */
 export class WoodWallSystem implements IDestructibleSubsystem {
   public readonly id: string;
@@ -555,6 +931,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
 
   private readonly walls: WoodWallInstance[] = [];
   private readonly wallsById = new Map<string, WoodWallInstance>();
+  private readonly internalByWallId = new Map<string, WallInternalState>();
 
   private readonly scratchQuat: QuatLike = { x: 0, y: 0, z: 0, w: 1 };
   private readonly scratchPos: Vec3Like = { x: 0, y: 0, z: 0 };
@@ -563,6 +940,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
   private readonly scratchScale: Vec3Like = { x: 0.1, y: 0.015, z: 0.015 };
 
   private splinterRngState = 0x51f2a7c3;
+  private elapsedSimTimeS = 0;
   private destroyed = false;
 
   public constructor(
@@ -679,8 +1057,25 @@ export class WoodWallSystem implements IDestructibleSubsystem {
   }
 
   /**
+   * Returns how many interior vertical 2x4 stud sections have been fractured/severed on `wallId`.
+   */
+  public getWallBrokenStudSectionCount(wallId: string): number {
+    const internal = this.internalByWallId.get(wallId);
+    if (!internal) return 0;
+    let broken = 0;
+    for (let i = 0; i < internal.studColumns.length; i++) {
+      const col = internal.studColumns[i];
+      if (col.isBorderPost) continue;
+      for (let s = 0; s < col.sections.length; s++) {
+        if (col.sections[s].broken) broken++;
+      }
+    }
+    return broken;
+  }
+
+  /**
    * Builds a destructible Rainbow Six Siege-style framed wood stud wall, registering static
-   * Rapier `WOOD_STUD` + `WOOD_DRYWALL` colliders and initializing a dynamic `BUFFER_DYNAMIC` `pc.Mesh`.
+   * Rapier `WOOD_STUD` + `WOOD_DRYWALL` colliders and initializing dynamic `BUFFER_DYNAMIC` `pc.Mesh`es.
    */
   public createWall(config: WoodWallConfig): WoodWallInstance {
     if (this.destroyed) {
@@ -721,82 +1116,25 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       DEFAULT_WOOD_STUD_WIDTH_M,
     );
 
-    // 1. Register static Rapier WOOD_STUD box colliders (vertical studs every 0.60m + top & bottom plates)
-    const studColliderHandles: number[] = [];
     const halfW = widthM * 0.5;
     const halfH = heightM * 0.5;
-    const studHalfW = DEFAULT_WOOD_STUD_WIDTH_M * 0.5;
-    const studHalfD = DEFAULT_WOOD_STUD_DEPTH_M * 0.5;
     const plateH = Math.min(DEFAULT_WOOD_STUD_WIDTH_M, heightM * 0.2);
-    const plateHalfH = plateH * 0.5;
-    const verticalStudH = Math.max(0.02, heightM - plateH * 2);
+    const visualStudDepthM = Math.max(0.014, thicknessM - 0.006);
 
-    const localToWorld = (lx: number, ly: number, lz: number): Vec3Like => ({
-      x: centerWorld.x + lx * cosYaw + lz * sinYaw,
-      y: centerWorld.y + ly,
-      z: centerWorld.z - lx * sinYaw + lz * cosYaw,
-    });
-
-    let studChunkIdx = 0;
-    for (let i = 0; i < studPositionsU.length; i++) {
-      const lx = studPositionsU[i] - halfW;
-      const studCenter = localToWorld(lx, 0, 0);
-      const studTag: ColliderSurfaceTag = {
-        material: 'WOOD_STUD',
-        objectId: config.id,
-        chunkIndex: studChunkIdx++,
-        thicknessM: DEFAULT_WOOD_STUD_DEPTH_M,
-        penetrationResistanceJ: 650,
-      };
-      const handle = this.physicsWorld.createStaticBox(
-        studCenter,
-        { x: studHalfW, y: verticalStudH * 0.5, z: studHalfD },
-        rotationQuat,
-        studTag,
-      );
-      studColliderHandles.push(handle);
-    }
-
-    // Bottom sole plate & top header plate WOOD_STUD colliders
-    const bottomPlateTag: ColliderSurfaceTag = {
-      material: 'WOOD_STUD',
-      objectId: config.id,
-      chunkIndex: studChunkIdx++,
-      thicknessM: DEFAULT_WOOD_STUD_DEPTH_M,
-      penetrationResistanceJ: 650,
-    };
-    studColliderHandles.push(
-      this.physicsWorld.createStaticBox(
-        localToWorld(0, -halfH + plateHalfH, 0),
-        { x: halfW, y: plateHalfH, z: studHalfD },
-        rotationQuat,
-        bottomPlateTag,
-      ),
+    const studColumns = createInitialStudColumns(
+      heightM,
+      plateH,
+      studPositionsU,
     );
+    const mutableStudColliderHandles: number[] = [];
 
-    const topPlateTag: ColliderSurfaceTag = {
-      material: 'WOOD_STUD',
-      objectId: config.id,
-      chunkIndex: studChunkIdx++,
-      thicknessM: DEFAULT_WOOD_STUD_DEPTH_M,
-      penetrationResistanceJ: 650,
-    };
-    studColliderHandles.push(
-      this.physicsWorld.createStaticBox(
-        localToWorld(0, halfH - plateHalfH, 0),
-        { x: halfW, y: plateHalfH, z: studHalfD },
-        rotationQuat,
-        topPlateTag,
-      ),
-    );
-
-    // 2. Thin WOOD_DRYWALL Rapier panel trigger/collider spanning the full panel [0, widthM] x [0, heightM]
+    // Thin WOOD_DRYWALL Rapier panel trigger/collider spanning the full panel [0, widthM] x [0, heightM]
     const drywallHalfZ = Math.max(0.012, thicknessM * 0.25);
     const drywallTag: ColliderSurfaceTag = {
       material: 'WOOD_DRYWALL',
       objectId: config.id,
       thicknessM,
-      penetrationResistanceJ: 185,
+      penetrationResistanceJ: 140,
     };
     const drywallColliderHandle = this.physicsWorld.createStaticBox(
       centerWorld,
@@ -805,7 +1143,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       drywallTag,
     );
 
-    // 3. Pre-allocate scratch typed arrays & initialize BUFFER_DYNAMIC pc.Mesh
+    // Pre-allocate scratch typed arrays & initialize BUFFER_DYNAMIC pc.Mesh for panel & stud frame
     const scratchBuffers: WoodMeshScratchBuffers = {
       positions: new Float32Array(this.maxPanelVertices * 3),
       normals: new Float32Array(this.maxPanelVertices * 3),
@@ -816,7 +1154,15 @@ export class WoodWallSystem implements IDestructibleSubsystem {
           : new Uint32Array(this.maxPanelIndices),
     };
 
+    const studScratchBuffers: WoodMeshScratchBuffers = {
+      positions: new Float32Array(MAX_STUD_FRAME_VERTICES * 3),
+      normals: new Float32Array(MAX_STUD_FRAME_VERTICES * 3),
+      uvs: new Float32Array(MAX_STUD_FRAME_VERTICES * 2),
+      indices: new Uint16Array(MAX_STUD_FRAME_INDICES),
+    };
+
     const panelState = createWoodPanelState(widthM, heightM, thicknessM);
+    panelState.studAnchors = this.buildStudAnchorsFromColumns(studColumns);
     const initialStats = triangulateWoodPanelToBuffers(panelState, scratchBuffers);
 
     const panelMesh = new pc.Mesh(this.app.graphicsDevice);
@@ -828,17 +1174,36 @@ export class WoodWallSystem implements IDestructibleSubsystem {
     panelMesh.update(pc.PRIMITIVE_TRIANGLES, true);
     panelMesh.incRefCount();
 
-    // Visibly rendered 2x4 pine studs recessed slightly inside [±thicknessM * 0.5] so intact panels
-    // never z-fight while blown-open breaches expose the solid 3D studs between front & back skins!
-    const visualStudDepthM = Math.max(0.014, thicknessM - 0.006);
-    const studFrameMesh = buildWallStudFrameMesh(
-      this.app.graphicsDevice,
+    const studCounts = writeWallStudFrameBuffers(
       widthM,
       heightM,
       visualStudDepthM,
-      studPositionsU,
+      plateH,
+      studColumns,
+      studScratchBuffers,
       DEFAULT_WOOD_STUD_WIDTH_M,
     );
+    const studFrameMesh = new pc.Mesh(this.app.graphicsDevice);
+    studFrameMesh.clear(
+      true,
+      true,
+      MAX_STUD_FRAME_VERTICES,
+      MAX_STUD_FRAME_INDICES,
+    );
+    studFrameMesh.setPositions(
+      studScratchBuffers.positions,
+      3,
+      studCounts.vertexCount,
+    );
+    studFrameMesh.setNormals(
+      studScratchBuffers.normals,
+      3,
+      studCounts.vertexCount,
+    );
+    studFrameMesh.setUvs(0, studScratchBuffers.uvs, 2, studCounts.vertexCount);
+    studFrameMesh.setIndices(studScratchBuffers.indices, studCounts.indexCount);
+    studFrameMesh.update(pc.PRIMITIVE_TRIANGLES, true);
+    studFrameMesh.incRefCount();
 
     const rootEntity = new pc.Entity(`WoodWall_${config.id}`);
     rootEntity.setPosition(centerWorld.x, centerWorld.y, centerWorld.z);
@@ -882,7 +1247,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       rotationQuat,
       studPositionsU,
       drywallColliderHandle,
-      studColliderHandles,
+      studColliderHandles: mutableStudColliderHandles,
       rootEntity,
       panelEntity,
       studFrameEntity,
@@ -893,8 +1258,20 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       lastMeshStats: initialStats,
     };
 
+    const internal: WallInternalState = {
+      studColumns,
+      mutableStudColliderHandles,
+      studScratchBuffers,
+      visualStudDepthM,
+      plateHeightM: plateH,
+      activeVolley: null,
+    };
+
+    this.rebuildWallStudColliders(instance, internal);
+
     this.walls.push(instance);
     this.wallsById.set(config.id, instance);
+    this.internalByWallId.set(config.id, internal);
     return instance;
   }
 
@@ -902,17 +1279,21 @@ export class WoodWallSystem implements IDestructibleSubsystem {
     if (this.destroyed) {
       return;
     }
+    if (Number.isFinite(dt) && dt > 0) {
+      this.elapsedSimTimeS += dt;
+    }
     for (let i = 0; i < this.splinterPools.length; i++) {
       this.splinterPools[i].syncFromPhysics(this.physicsWorld, dt);
     }
   }
 
   /**
-   * Stepped ballistic penetration & dynamic Clipper2 hole stamping across wood stud walls.
+   * Stepped ballistic penetration, shotgun cluster plank blowout, & dynamic Clipper2 hole stamping.
    * - Returns `null` if the ray segment does not intersect any wood wall in this subsystem.
    * - Passes bullets through ALREADY blown-open holes with `0 J` energy loss (`stopped: false`)!
-   * - Stamps jagged holes + spawns 4–6 tangent instanced splinters on solid wood hits,
-   *   subtracting `~140–240 J` on `WOOD_DRYWALL` or `~650 J` when clipping a `WOOD_STUD`.
+   * - Coalesces close-range 12G buckshot pellet patterns into massive ragged plank chunk tear-outs!
+   * - Subtracts `~115–165 J` on `WOOD_DRYWALL` (so buckshot & bullets punch through `0.08m–0.12m` boards)
+   *   or `~650 J` when clipping an intact `WOOD_STUD` (which fractures under heavy/repeated hits).
    */
   public handleRaySegment(
     seg: BallisticSegmentImpact,
@@ -951,7 +1332,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       {
         wall: WoodWallInstance;
         primaryHit: PenetrationRayHit;
-        hitStud: boolean;
+        hitStudCollider: boolean;
       }
     >();
 
@@ -967,12 +1348,12 @@ export class WoodWallSystem implements IDestructibleSubsystem {
         group = {
           wall,
           primaryHit: hit,
-          hitStud: hit.surface.material === 'WOOD_STUD',
+          hitStudCollider: hit.surface.material === 'WOOD_STUD',
         };
         wallHitGroups.set(wall.id, group);
         orderedWallIds.push(wall.id);
       } else if (hit.surface.material === 'WOOD_STUD') {
-        group.hitStud = true;
+        group.hitStudCollider = true;
       }
     }
 
@@ -994,6 +1375,11 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       }
 
       const { wall, primaryHit } = group;
+      const internal = this.internalByWallId.get(wall.id);
+      if (!internal) {
+        continue;
+      }
+
       if (!firstImpactPoint) {
         firstImpactPoint = primaryHit.pointWorld;
         firstImpactNormal = primaryHit.normalWorld;
@@ -1037,62 +1423,140 @@ export class WoodWallSystem implements IDestructibleSubsystem {
 
       const u = hitLocalX + wall.widthM * 0.5;
       const v = hitLocalY + wall.heightM * 0.5;
+      const inPanelBounds =
+        u >= 0 && u <= wall.widthM && v >= 0 && v <= wall.heightM;
+      const exitSignZ = localDz >= 0 ? 1 : -1;
 
-      // Also verify geometric stud proximity at mid-plane in case ray only nicked drywall trigger
-      const hitStud = group.hitStud || this.isPointOverStud(wall, u, v);
-      const alreadyOpenHole = isPointInOpenHole(wall.panelState, u, v);
+      const profile = inferWoodStampProfile(
+        seg.caliberRadiusM,
+        currentEnergyJ,
+        seg.isArmorPiercing,
+      );
 
-      // Clean shot straight through an ALREADY cut hole without touching any stud -> ZERO energy loss!
-      if (alreadyOpenHole && !hitStud) {
-        effectiveMaterial = 'WOOD_DRYWALL';
-        continue;
+      let hitStud =
+        group.hitStudCollider || this.isPointOverIntactStud(wall, internal, u, v);
+      const rawAlreadyOpen = isPointInOpenHole(wall.panelState, u, v);
+      let alreadyOpenBeforeThisShot = rawAlreadyOpen;
+
+      if (profile === 'BUCKSHOT_PELLET') {
+        const volley = this.acquirePelletVolley(internal);
+        const openedByVolley =
+          rawAlreadyOpen && this.wasPointCutByCurrentVolley(volley, u, v);
+        alreadyOpenBeforeThisShot = rawAlreadyOpen && !openedByVolley;
+
+        if (alreadyOpenBeforeThisShot && !hitStud) {
+          effectiveMaterial = 'WOOD_DRYWALL';
+          continue;
+        }
+
+        if (inPanelBounds && !alreadyOpenBeforeThisShot) {
+          if (!rawAlreadyOpen) {
+            const pelletStamp = createJaggedHoleStamp({
+              u,
+              v,
+              caliberRadiusM: seg.caliberRadiusM,
+              kineticEnergyJ: currentEnergyJ,
+              profile: 'BUCKSHOT_PELLET',
+              isArmorPiercing: false,
+              seed: wall.panelState.shotCount + 1,
+            });
+            const subRes = stampHoleInWoodPanel(
+              wall.panelState,
+              pelletStamp,
+              wall.scratchBuffers,
+              3,
+            );
+            if (subRes.cutAnyWood) {
+              this.uploadWallPanelMesh(wall, subRes.meshStats);
+              this.spawnPerimeterSplinters(
+                wall,
+                subRes.splinters,
+                unitDir,
+                exitSignZ,
+                currentEnergyJ,
+              );
+            }
+          }
+
+          volley.impacts.push({
+            u,
+            v,
+            cutRadiusM: 0.052,
+            energyJ: currentEnergyJ,
+            dirWorld: unitDir,
+            exitSignZ,
+          });
+
+          // Evaluate multi-pellet shotgun cluster blowout when >= 3 pellets land close together!
+          this.tryApplyBuckshotClusterBlowout(
+            wall,
+            internal,
+            volley,
+            seg.caliberRadiusM,
+          );
+
+          // If the point-blank shotgun cluster blowout just shattered the interior stud at (u, v),
+          // subsequent pellets in the blast punch cleanly through the broken stud gap!
+          if (hitStud && !this.isPointOverIntactStud(wall, internal, u, v)) {
+            hitStud = false;
+          }
+        }
+      } else {
+        // Non-buckshot projectile flushes any prior pellet volley
+        internal.activeVolley = null;
+
+        if (alreadyOpenBeforeThisShot && !hitStud) {
+          effectiveMaterial = 'WOOD_DRYWALL';
+          continue;
+        }
+
+        if (!alreadyOpenBeforeThisShot && inPanelBounds) {
+          const stamp = createJaggedHoleStamp({
+            u,
+            v,
+            caliberRadiusM: seg.caliberRadiusM,
+            kineticEnergyJ: currentEnergyJ,
+            profile,
+            isArmorPiercing: seg.isArmorPiercing,
+            seed: wall.panelState.shotCount + 1,
+          });
+
+          const splinterHint =
+            profile === 'HEAVY_50AE_SLUG' || profile === 'BLAST_BREACH' ? 6 : 5;
+
+          const subResult = stampHoleInWoodPanel(
+            wall.panelState,
+            stamp,
+            wall.scratchBuffers,
+            splinterHint,
+          );
+
+          if (subResult.cutAnyWood) {
+            this.uploadWallPanelMesh(wall, subResult.meshStats);
+            this.spawnPerimeterSplinters(
+              wall,
+              subResult.splinters,
+              unitDir,
+              exitSignZ,
+              currentEnergyJ,
+            );
+            if (subResult.droppedIslandAreaM2 > 0.004) {
+              this.spawnPlankChunkBurst(
+                wall,
+                u,
+                v,
+                0.09,
+                unitDir,
+                exitSignZ,
+                currentEnergyJ,
+                4,
+              );
+            }
+          }
+        }
       }
 
-      const cosIncidence = Math.abs(localDz);
-      const obliquity = Math.min(2.1, 1 / Math.max(0.48, cosIncidence));
-      const thicknessRatio = wall.thicknessM / 0.08;
-
-      if (!alreadyOpenHole && u >= 0 && u <= wall.widthM && v >= 0 && v <= wall.heightM) {
-        const profile = inferWoodStampProfile(
-          seg.caliberRadiusM,
-          currentEnergyJ,
-          seg.isArmorPiercing,
-        );
-        const stamp = createJaggedHoleStamp({
-          u,
-          v,
-          caliberRadiusM: seg.caliberRadiusM,
-          kineticEnergyJ: currentEnergyJ,
-          profile,
-          isArmorPiercing: seg.isArmorPiercing,
-          seed: wall.panelState.shotCount + 1,
-        });
-
-        const splinterHint =
-          profile === 'BUCKSHOT_PELLET'
-            ? 4
-            : profile === 'HEAVY_50AE_SLUG' || profile === 'BLAST_BREACH'
-              ? 6
-              : 5;
-
-        const subResult = stampHoleInWoodPanel(
-          wall.panelState,
-          stamp,
-          wall.scratchBuffers,
-          splinterHint,
-        );
-
-        if (subResult.cutAnyWood) {
-          this.uploadWallPanelMesh(wall, subResult.meshStats);
-          this.spawnPerimeterSplinters(
-            wall,
-            subResult.splinters,
-            unitDir,
-            localDz >= 0 ? 1 : -1,
-            currentEnergyJ,
-          );
-        }
-      } else if (hitStud) {
+      if (alreadyOpenBeforeThisShot && hitStud) {
         // Bullet struck an already-exposed 2x4 stud inside an open breach -> kick off small pine chips
         const studSplinters: SplinterSpawnDescriptor[] = [];
         const clampedU = Math.max(0, Math.min(wall.widthM, u));
@@ -1113,17 +1577,25 @@ export class WoodWallSystem implements IDestructibleSubsystem {
           wall,
           studSplinters,
           unitDir,
-          localDz >= 0 ? 1 : -1,
+          exitSignZ,
           currentEnergyJ,
         );
       }
 
+      const cosIncidence = Math.abs(localDz);
+      const obliquity = Math.min(2.1, 1 / Math.max(0.48, cosIncidence));
+      // Softened thickness scaling so 0.12m shoot-house boards scale by ~1.14x instead of 1.5x
+      const effectiveThicknessScale = Math.min(
+        1.25,
+        Math.max(0.75, 0.72 + 0.28 * (wall.thicknessM / 0.08)),
+      );
+
       let energyLossJ: number;
       if (hitStud) {
         effectiveMaterial = 'WOOD_STUD';
-        // ~650 J resistance when clipping a WOOD_STUD (stops buckshot & low-energy/JHP rounds,
-        // while high-velocity rifle & AP rounds punch cleanly through!).
-        const baseStudJ = alreadyOpenHole
+        // ~650 J single-shot resistance when hitting an intact WOOD_STUD (stops single buckshot &
+        // low-energy JHP rounds, while high-velocity rifle & AP rounds punch through).
+        const baseStudJ = alreadyOpenBeforeThisShot
           ? seg.isArmorPiercing
             ? 525
             : 615
@@ -1131,11 +1603,40 @@ export class WoodWallSystem implements IDestructibleSubsystem {
             ? 595
             : 685;
         energyLossJ = baseStudJ * obliquity;
+
+        // Accumulate structural damage on interior vertical stud sections under heavy/repeated hits!
+        const studDamageHp =
+          profile === 'BUCKSHOT_PELLET'
+            ? 320
+            : profile === 'HEAVY_50AE_SLUG' || profile === 'BLAST_BREACH'
+              ? 1_200
+              : currentEnergyJ >= 900
+                ? 620
+                : 480;
+        const hitRadiusM =
+          profile === 'HEAVY_50AE_SLUG' ? 0.035 : DEFAULT_WOOD_STUD_WIDTH_M * 0.55;
+        this.damageInteriorStudSections(
+          wall,
+          internal,
+          u,
+          v,
+          hitRadiusM,
+          hitRadiusM,
+          studDamageHp,
+          unitDir,
+          exitSignZ,
+          currentEnergyJ,
+        );
       } else {
         effectiveMaterial = 'WOOD_DRYWALL';
-        // ~140-240 J loss through drywall/plywood sheathing
-        const basePanelJ = seg.isArmorPiercing ? 155 : 195;
-        energyLossJ = basePanelJ * thicknessRatio * obliquity;
+        // ~115-165 J loss across 0.08m-0.12m wood boards so 12G 00 buckshot (~200-287 J) and
+        // rifle/pistol rounds reliably punch through with lethal residual velocity!
+        const basePanelJ = seg.isArmorPiercing
+          ? 115
+          : profile === 'BUCKSHOT_PELLET'
+            ? 124
+            : 144;
+        energyLossJ = basePanelJ * effectiveThicknessScale * obliquity;
       }
 
       if (currentEnergyJ <= energyLossJ || currentEnergyJ <= 1e-4) {
@@ -1164,8 +1665,8 @@ export class WoodWallSystem implements IDestructibleSubsystem {
   }
 
   /**
-   * Punches large ragged shockwave breach holes in nearby wood panels within `blast.radiusM`
-   * and blasts out 25+ hardware-instanced wood splinters radially away from the detonation!
+   * Punches large ragged shockwave breach holes in nearby wood panels within `blast.radiusM`,
+   * fractures interior wood studs caught in the blast core, and showers 25+ wood splinters!
    */
   public applyBlast(blast: BlastEvent): void {
     if (
@@ -1179,6 +1680,10 @@ export class WoodWallSystem implements IDestructibleSubsystem {
 
     for (let i = 0; i < this.walls.length; i++) {
       const wall = this.walls[i];
+      const internal = this.internalByWallId.get(wall.id);
+      if (internal) {
+        internal.activeVolley = null;
+      }
 
       const rx = blast.centerWorld.x - wall.centerWorld.x;
       const ry = blast.centerWorld.y - wall.centerWorld.y;
@@ -1218,6 +1723,27 @@ export class WoodWallSystem implements IDestructibleSubsystem {
 
       const hitU = clampedX + halfW;
       const hitV = clampedY + halfH;
+      const awaySignZ = localZ >= 0 ? -1 : 1;
+
+      if (internal && blast.peakEnergyJ * proximity >= 1_800) {
+        const awayDir: Vec3Like = {
+          x: awaySignZ * wall.sinYaw,
+          y: 0.2,
+          z: awaySignZ * wall.cosYaw,
+        };
+        this.damageInteriorStudSections(
+          wall,
+          internal,
+          hitU,
+          hitV,
+          breachRadiusM * 0.85,
+          breachRadiusM * 0.85,
+          1_600,
+          awayDir,
+          awaySignZ,
+          blast.peakEnergyJ,
+        );
+      }
 
       const stamp = createJaggedHoleStamp({
         u: hitU,
@@ -1241,8 +1767,6 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       }
 
       // Always blast out 28-34 instanced wood splinters when a wall is caught in the blast wave
-      // (even if partially pre-damaged, as remaining framing & rim splinters shatter outward)
-      const awaySignZ = localZ >= 0 ? -1 : 1;
       const blastSplinterCount = 30;
       this.spawnBlastSplinterShower(
         wall,
@@ -1263,6 +1787,35 @@ export class WoodWallSystem implements IDestructibleSubsystem {
     }
     for (let i = 0; i < this.walls.length; i++) {
       const wall = this.walls[i];
+      const internal = this.internalByWallId.get(wall.id);
+      if (internal) {
+        internal.activeVolley = null;
+        let hadBrokenStud = false;
+        for (let c = 0; c < internal.studColumns.length; c++) {
+          const col = internal.studColumns[c];
+          if (col.isBorderPost) continue;
+          for (let s = 0; s < col.sections.length; s++) {
+            if (
+              col.sections[s].broken ||
+              col.sections[s].hp < STUD_SECTION_MAX_HP
+            ) {
+              if (col.sections[s].broken) {
+                hadBrokenStud = true;
+              }
+              col.sections[s].broken = false;
+              col.sections[s].hp = STUD_SECTION_MAX_HP;
+            }
+          }
+        }
+        wall.panelState.studAnchors = this.buildStudAnchorsFromColumns(
+          internal.studColumns,
+        );
+        if (hadBrokenStud) {
+          this.rebuildWallStudColliders(wall, internal);
+          this.uploadWallStudFrameMesh(wall, internal);
+        }
+      }
+
       resetWoodPanelState(wall.panelState);
       const stats = triangulateWoodPanelToBuffers(
         wall.panelState,
@@ -1293,6 +1846,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
     }
     this.walls.length = 0;
     this.wallsById.clear();
+    this.internalByWallId.clear();
 
     for (let i = 0; i < this.splinterPools.length; i++) {
       this.splinterPools[i].destroy();
@@ -1325,6 +1879,431 @@ export class WoodWallSystem implements IDestructibleSubsystem {
     return computePanelRemainingAreaM2(wall.panelState);
   }
 
+  private acquirePelletVolley(internal: WallInternalState): PelletVolleyState {
+    const nowMs =
+      typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const cur = internal.activeVolley;
+    if (
+      !cur ||
+      this.elapsedSimTimeS - cur.simTimeS > BUCKSHOT_VOLLEY_WINDOW_S ||
+      nowMs - cur.wallClockMs > BUCKSHOT_VOLLEY_WINDOW_MS ||
+      cur.pelletRayCount >= MAX_PELLETS_PER_VOLLEY
+    ) {
+      const fresh: PelletVolleyState = {
+        simTimeS: this.elapsedSimTimeS,
+        wallClockMs: nowMs,
+        pelletRayCount: 1,
+        clusterTierApplied: 0,
+        impacts: [],
+        clusterCuts: [],
+      };
+      internal.activeVolley = fresh;
+      return fresh;
+    }
+
+    cur.pelletRayCount++;
+    return cur;
+  }
+
+  private wasPointCutByCurrentVolley(
+    volley: PelletVolleyState,
+    u: number,
+    v: number,
+  ): boolean {
+    for (let i = 0; i < volley.impacts.length; i++) {
+      const imp = volley.impacts[i];
+      const du = u - imp.u;
+      const dv = v - imp.v;
+      if (du * du + dv * dv <= imp.cutRadiusM * imp.cutRadiusM) {
+        return true;
+      }
+    }
+    for (let i = 0; i < volley.clusterCuts.length; i++) {
+      const cc = volley.clusterCuts[i];
+      const du = u - cc.u;
+      const dv = v - cc.v;
+      if (du * du + dv * dv <= cc.cutRadiusM * cc.cutRadiusM) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private tryApplyBuckshotClusterBlowout(
+    wall: WoodWallInstance,
+    internal: WallInternalState,
+    volley: PelletVolleyState,
+    caliberRadiusM: number,
+  ): void {
+    if (volley.impacts.length < 3) {
+      return;
+    }
+
+    const lastImp = volley.impacts[volley.impacts.length - 1];
+
+    // 1. Check tight point-blank / close-range cluster (>= 5 pellets within <= 0.22m of centroid)
+    const tight = findBestPelletCluster(
+      volley.impacts,
+      TIGHT_BUCKSHOT_CLUSTER_RADIUS_M,
+    );
+    if (tight.count >= 5) {
+      const targetTier: 2 | 3 = tight.count >= 8 ? 3 : 2;
+      if (targetTier <= volley.clusterTierApplied) {
+        return;
+      }
+      volley.clusterTierApplied = targetTier;
+
+      const pelletFrac = Math.min(1, (tight.count - 3) / 6);
+      const tightnessBonus = Math.max(
+        0,
+        1 - tight.maxSpreadM / TIGHT_BUCKSHOT_CLUSTER_RADIUS_M,
+      );
+      const clusterRadiusM = Math.min(
+        0.27,
+        Math.max(
+          0.19 + 0.055 * pelletFrac + 0.02 * tightnessBonus,
+          tight.maxSpreadM * 1.15 + 0.045,
+        ),
+      );
+
+      // Point-blank shotgun blast shatters interior 2x4 stud sections caught in the blast core
+      this.damageInteriorStudSections(
+        wall,
+        internal,
+        tight.centerU,
+        tight.centerV,
+        clusterRadiusM * 0.78,
+        clusterRadiusM * 0.85,
+        1_250,
+        lastImp.dirWorld,
+        lastImp.exitSignZ,
+        lastImp.energyJ * tight.count,
+      );
+
+      const clusterStamp = createJaggedHoleStamp({
+        u: tight.centerU,
+        v: tight.centerV,
+        caliberRadiusM,
+        kineticEnergyJ: lastImp.energyJ * tight.count,
+        profile: 'BUCKSHOT_CLUSTER',
+        seed: wall.panelState.shotCount + 31,
+        overrideRadiusM: clusterRadiusM,
+        grainStretchOverride: 1.44,
+      });
+
+      const subRes = stampHoleInWoodPanel(
+        wall.panelState,
+        clusterStamp,
+        wall.scratchBuffers,
+        targetTier === 3 ? 8 : 11,
+      );
+
+      volley.clusterCuts.push({
+        u: tight.centerU,
+        v: tight.centerV,
+        cutRadiusM: clusterRadiusM * 1.48,
+      });
+
+      if (subRes.cutAnyWood) {
+        this.uploadWallPanelMesh(wall, subRes.meshStats);
+        this.spawnPerimeterSplinters(
+          wall,
+          subRes.splinters,
+          lastImp.dirWorld,
+          lastImp.exitSignZ,
+          lastImp.energyJ * 4.5,
+        );
+        this.spawnPlankChunkBurst(
+          wall,
+          tight.centerU,
+          tight.centerV,
+          clusterRadiusM,
+          lastImp.dirWorld,
+          lastImp.exitSignZ,
+          lastImp.energyJ * 5.0,
+          targetTier === 3 ? 5 : 9,
+        );
+      }
+      return;
+    }
+
+    // 2. Check close-medium range cluster (3-5 pellets within <= 0.26m of centroid)
+    if (volley.clusterTierApplied < 1) {
+      const med = findBestPelletCluster(
+        volley.impacts,
+        MEDIUM_BUCKSHOT_CLUSTER_RADIUS_M,
+      );
+      if (med.count >= 3) {
+        volley.clusterTierApplied = 1;
+        const clusterRadiusM = Math.min(
+          0.17,
+          Math.max(
+            0.12 + 0.012 * (med.count - 3),
+            med.maxSpreadM * 0.80 + 0.032,
+          ),
+        );
+
+        this.damageInteriorStudSections(
+          wall,
+          internal,
+          med.centerU,
+          med.centerV,
+          clusterRadiusM * 0.55,
+          clusterRadiusM * 0.65,
+          600,
+          lastImp.dirWorld,
+          lastImp.exitSignZ,
+          lastImp.energyJ * med.count,
+        );
+
+        const clusterStamp = createJaggedHoleStamp({
+          u: med.centerU,
+          v: med.centerV,
+          caliberRadiusM,
+          kineticEnergyJ: lastImp.energyJ * med.count,
+          profile: 'BUCKSHOT_CLUSTER',
+          seed: wall.panelState.shotCount + 17,
+          overrideRadiusM: clusterRadiusM,
+          grainStretchOverride: 1.38,
+        });
+
+        const subRes = stampHoleInWoodPanel(
+          wall.panelState,
+          clusterStamp,
+          wall.scratchBuffers,
+          7,
+        );
+
+        volley.clusterCuts.push({
+          u: med.centerU,
+          v: med.centerV,
+          cutRadiusM: clusterRadiusM * 1.42,
+        });
+
+        if (subRes.cutAnyWood) {
+          this.uploadWallPanelMesh(wall, subRes.meshStats);
+          this.spawnPerimeterSplinters(
+            wall,
+            subRes.splinters,
+            lastImp.dirWorld,
+            lastImp.exitSignZ,
+            lastImp.energyJ * 3.0,
+          );
+          this.spawnPlankChunkBurst(
+            wall,
+            med.centerU,
+            med.centerV,
+            clusterRadiusM,
+            lastImp.dirWorld,
+            lastImp.exitSignZ,
+            lastImp.energyJ * 3.2,
+            4,
+          );
+        }
+      }
+    }
+  }
+
+  private buildStudAnchorsFromColumns(
+    studColumns: readonly StudColumnState[],
+  ): WoodStudAnchorSpan[] {
+    const anchors: WoodStudAnchorSpan[] = [];
+    const halfStudW = DEFAULT_WOOD_STUD_WIDTH_M * 0.5;
+    for (let i = 0; i < studColumns.length; i++) {
+      const col = studColumns[i];
+      if (col.isBorderPost) continue;
+      const spans = collectIntactStudSpans(col);
+      for (let s = 0; s < spans.length; s++) {
+        anchors.push({
+          u: col.u,
+          halfWidthM: halfStudW,
+          vMin: spans[s].vMin,
+          vMax: spans[s].vMax,
+        });
+      }
+    }
+    return anchors;
+  }
+
+  private rebuildWallStudColliders(
+    wall: WoodWallInstance,
+    internal: WallInternalState,
+  ): void {
+    const handles = internal.mutableStudColliderHandles;
+    for (let i = 0; i < handles.length; i++) {
+      this.physicsWorld.removeCollider(handles[i]);
+    }
+    handles.length = 0;
+
+    const halfW = wall.widthM * 0.5;
+    const halfH = wall.heightM * 0.5;
+    const studHalfW = DEFAULT_WOOD_STUD_WIDTH_M * 0.5;
+    const studHalfD = DEFAULT_WOOD_STUD_DEPTH_M * 0.5;
+    const plateHalfH = internal.plateHeightM * 0.5;
+
+    const localToWorld = (lx: number, ly: number, lz: number): Vec3Like => ({
+      x: wall.centerWorld.x + lx * wall.cosYaw + lz * wall.sinYaw,
+      y: wall.centerWorld.y + ly,
+      z: wall.centerWorld.z - lx * wall.sinYaw + lz * wall.cosYaw,
+    });
+
+    let studChunkIdx = 0;
+    for (let i = 0; i < internal.studColumns.length; i++) {
+      const col = internal.studColumns[i];
+      const lx = col.u - halfW;
+      const spans = collectIntactStudSpans(col);
+      for (let s = 0; s < spans.length; s++) {
+        const span = spans[s];
+        const spanH = span.vMax - span.vMin;
+        if (spanH < 0.01) continue;
+        const ly = (span.vMin + span.vMax) * 0.5 - halfH;
+        const studTag: ColliderSurfaceTag = {
+          material: 'WOOD_STUD',
+          objectId: wall.id,
+          chunkIndex: studChunkIdx++,
+          thicknessM: DEFAULT_WOOD_STUD_DEPTH_M,
+          penetrationResistanceJ: 650,
+        };
+        handles.push(
+          this.physicsWorld.createStaticBox(
+            localToWorld(lx, ly, 0),
+            { x: studHalfW, y: spanH * 0.5, z: studHalfD },
+            wall.rotationQuat,
+            studTag,
+          ),
+        );
+      }
+    }
+
+    // Bottom sole plate & top header plate WOOD_STUD colliders
+    handles.push(
+      this.physicsWorld.createStaticBox(
+        localToWorld(0, -halfH + plateHalfH, 0),
+        { x: halfW, y: plateHalfH, z: studHalfD },
+        wall.rotationQuat,
+        {
+          material: 'WOOD_STUD',
+          objectId: wall.id,
+          chunkIndex: studChunkIdx++,
+          thicknessM: DEFAULT_WOOD_STUD_DEPTH_M,
+          penetrationResistanceJ: 650,
+        },
+      ),
+    );
+    handles.push(
+      this.physicsWorld.createStaticBox(
+        localToWorld(0, halfH - plateHalfH, 0),
+        { x: halfW, y: plateHalfH, z: studHalfD },
+        wall.rotationQuat,
+        {
+          material: 'WOOD_STUD',
+          objectId: wall.id,
+          chunkIndex: studChunkIdx++,
+          thicknessM: DEFAULT_WOOD_STUD_DEPTH_M,
+          penetrationResistanceJ: 650,
+        },
+      ),
+    );
+  }
+
+  private uploadWallStudFrameMesh(
+    wall: WoodWallInstance,
+    internal: WallInternalState,
+  ): void {
+    const counts = writeWallStudFrameBuffers(
+      wall.widthM,
+      wall.heightM,
+      internal.visualStudDepthM,
+      internal.plateHeightM,
+      internal.studColumns,
+      internal.studScratchBuffers,
+      DEFAULT_WOOD_STUD_WIDTH_M,
+    );
+    if (counts.vertexCount <= 0 || counts.indexCount <= 0) {
+      wall.studFrameEntity.enabled = false;
+      return;
+    }
+    wall.studFrameEntity.enabled = true;
+    const mesh = wall.studFrameMesh;
+    const buf = internal.studScratchBuffers;
+    mesh.setPositions(buf.positions, 3, counts.vertexCount);
+    mesh.setNormals(buf.normals, 3, counts.vertexCount);
+    mesh.setUvs(0, buf.uvs, 2, counts.vertexCount);
+    mesh.setIndices(buf.indices, counts.indexCount);
+    mesh.update(pc.PRIMITIVE_TRIANGLES, true);
+  }
+
+  private damageInteriorStudSections(
+    wall: WoodWallInstance,
+    internal: WallInternalState,
+    centerU: number,
+    centerV: number,
+    radiusU: number,
+    radiusV: number,
+    damageHp: number,
+    impulseDirWorld: Vec3Like,
+    exitSignZ: number,
+    energyJ: number,
+  ): boolean {
+    if (damageHp <= 0) return false;
+    const halfStudW = DEFAULT_WOOD_STUD_WIDTH_M * 0.5;
+    let brokeAnySection = false;
+
+    for (let i = 0; i < internal.studColumns.length; i++) {
+      const col = internal.studColumns[i];
+      if (col.isBorderPost) continue;
+      if (Math.abs(centerU - col.u) > halfStudW + radiusU) continue;
+
+      for (let s = 0; s < col.sections.length; s++) {
+        const sec = col.sections[s];
+        if (sec.broken) continue;
+        if (centerV + radiusV < sec.vMin || centerV - radiusV > sec.vMax) {
+          continue;
+        }
+
+        sec.hp -= damageHp;
+        if (sec.hp <= 0) {
+          sec.hp = 0;
+          sec.broken = true;
+          brokeAnySection = true;
+
+          // Burst vertical pine stud splinters out of the severed 2x4 section!
+          const midV = (sec.vMin + sec.vMax) * 0.5;
+          const burstDesc: SplinterSpawnDescriptor[] = [];
+          for (let k = 0; k < 8; k++) {
+            const ang = (k / 8) * Math.PI * 2;
+            burstDesc.push({
+              u: col.u + (this.nextRand() - 0.5) * DEFAULT_WOOD_STUD_WIDTH_M,
+              v: midV + (this.nextRand() - 0.5) * (sec.vMax - sec.vMin) * 0.7,
+              tangentU: (this.nextRand() - 0.5) * 0.35,
+              tangentV: k % 2 === 0 ? 1 : -1,
+              radialU: Math.cos(ang),
+              radialV: Math.sin(ang),
+              lengthM: 0.11 + this.nextRand() * 0.11,
+            });
+          }
+          this.spawnPerimeterSplinters(
+            wall,
+            burstDesc,
+            impulseDirWorld,
+            exitSignZ,
+            Math.max(900, energyJ),
+          );
+        }
+      }
+    }
+
+    if (brokeAnySection) {
+      wall.panelState.studAnchors = this.buildStudAnchorsFromColumns(
+        internal.studColumns,
+      );
+      this.rebuildWallStudColliders(wall, internal);
+      this.uploadWallStudFrameMesh(wall, internal);
+    }
+
+    return brokeAnySection;
+  }
+
   private uploadWallPanelMesh(
     wall: WoodWallInstance,
     stats: WoodMeshBuildStats,
@@ -1348,8 +2327,9 @@ export class WoodWallSystem implements IDestructibleSubsystem {
     mesh.update(pc.PRIMITIVE_TRIANGLES, true);
   }
 
-  private isPointOverStud(
+  private isPointOverIntactStud(
     wall: WoodWallInstance,
+    internal: WallInternalState,
     u: number,
     v: number,
   ): boolean {
@@ -1357,13 +2337,22 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       return false;
     }
     const halfStudW = DEFAULT_WOOD_STUD_WIDTH_M * 0.5;
-    const plateH = Math.min(DEFAULT_WOOD_STUD_WIDTH_M, wall.heightM * 0.2);
+    const plateH = internal.plateHeightM;
     if (v <= plateH || v >= wall.heightM - plateH) {
       return true;
     }
-    for (let i = 0; i < wall.studPositionsU.length; i++) {
-      if (Math.abs(u - wall.studPositionsU[i]) <= halfStudW) {
-        return true;
+    for (let i = 0; i < internal.studColumns.length; i++) {
+      const col = internal.studColumns[i];
+      if (Math.abs(u - col.u) <= halfStudW) {
+        if (col.isBorderPost) {
+          return true;
+        }
+        for (let s = 0; s < col.sections.length; s++) {
+          const sec = col.sections[s];
+          if (v >= sec.vMin && v <= sec.vMax) {
+            return !sec.broken;
+          }
+        }
       }
     }
     return false;
@@ -1443,8 +2432,8 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       this.scratchAngVel.y = (this.nextRand() - 0.5) * 26;
       this.scratchAngVel.z = (this.nextRand() - 0.5) * 26;
 
-      const lenScale = Math.max(0.055, Math.min(0.2, desc.lengthM));
-      const thickScale = 0.012 + this.nextRand() * 0.014;
+      const lenScale = Math.max(0.055, Math.min(0.24, desc.lengthM));
+      const thickScale = 0.012 + this.nextRand() * 0.015;
       this.scratchScale.x = lenScale;
       this.scratchScale.y = thickScale;
       this.scratchScale.z = thickScale * (0.75 + this.nextRand() * 0.5);
@@ -1458,6 +2447,103 @@ export class WoodWallSystem implements IDestructibleSubsystem {
         -9.81,
         0.28,
         2.2 + this.nextRand() * 1.1,
+        this.scratchQuat,
+      );
+    }
+  }
+
+  /**
+   * Spawns chunky horizontal wood-plank board fragments tumbling out of shotgun/island breaches.
+   */
+  private spawnPlankChunkBurst(
+    wall: WoodWallInstance,
+    centerU: number,
+    centerV: number,
+    radiusM: number,
+    bulletDirWorld: Vec3Like,
+    exitFaceSignZ: number,
+    kineticEnergyJ: number,
+    count: number,
+  ): void {
+    if (count <= 0 || this.splinterPools.length === 0) {
+      return;
+    }
+
+    const halfW = wall.widthM * 0.5;
+    const halfH = wall.heightM * 0.5;
+    const exitZ = exitFaceSignZ * (wall.thicknessM * 0.5 + 0.02);
+    const speedFactor = Math.min(
+      2.1,
+      Math.max(0.85, Math.sqrt(Math.max(200, kineticEnergyJ) / 1100)),
+    );
+
+    for (let i = 0; i < count; i++) {
+      const theta = (i / count) * Math.PI * 2 + (this.nextRand() - 0.5) * 0.4;
+      const r = radiusM * (0.2 + 0.7 * Math.sqrt(this.nextRand()));
+      const su = Math.max(
+        0.03,
+        Math.min(wall.widthM - 0.03, centerU + Math.cos(theta) * r * 1.25),
+      );
+      const sv = Math.max(
+        0.03,
+        Math.min(wall.heightM - 0.03, centerV + Math.sin(theta) * r),
+      );
+
+      const lx = su - halfW;
+      const ly = sv - halfH;
+
+      this.scratchPos.x =
+        wall.centerWorld.x + lx * wall.cosYaw + exitZ * wall.sinYaw;
+      this.scratchPos.y = wall.centerWorld.y + ly;
+      this.scratchPos.z =
+        wall.centerWorld.z - lx * wall.sinYaw + exitZ * wall.cosYaw;
+
+      // Orient broad plank chunks roughly along horizontal board grain
+      const grainSign = (i & 1) === 0 ? 1 : -1;
+      const tanU = grainSign;
+      const tanV = (this.nextRand() - 0.5) * 0.28;
+      quatAlignUnitXToVector(
+        tanU * wall.cosYaw,
+        tanV,
+        -tanU * wall.sinYaw,
+        this.scratchQuat,
+      );
+
+      const radWx = Math.cos(theta) * wall.cosYaw;
+      const radWy = Math.sin(theta);
+      const radWz = -Math.cos(theta) * wall.sinYaw;
+
+      const forwardSpeed = (5.2 + this.nextRand() * 5.4) * speedFactor;
+      const radialSpeed = (1.8 + this.nextRand() * 3.0) * speedFactor;
+
+      this.scratchVel.x =
+        bulletDirWorld.x * forwardSpeed + radWx * radialSpeed;
+      this.scratchVel.y =
+        bulletDirWorld.y * forwardSpeed +
+        radWy * radialSpeed +
+        1.1 +
+        this.nextRand() * 1.8;
+      this.scratchVel.z =
+        bulletDirWorld.z * forwardSpeed + radWz * radialSpeed;
+
+      this.scratchAngVel.x = (this.nextRand() - 0.5) * 20;
+      this.scratchAngVel.y = (this.nextRand() - 0.5) * 20;
+      this.scratchAngVel.z = (this.nextRand() - 0.5) * 20;
+
+      // Wide, flat board-chunk proportions
+      this.scratchScale.x = 0.13 + this.nextRand() * 0.14;
+      this.scratchScale.y = 0.042 + this.nextRand() * 0.048;
+      this.scratchScale.z = 0.015 + this.nextRand() * 0.016;
+
+      const pool = this.splinterPools[i % this.splinterPools.length];
+      pool.spawnKinematicParticle(
+        this.scratchPos,
+        this.scratchVel,
+        this.scratchAngVel,
+        this.scratchScale,
+        -9.81,
+        0.26,
+        2.6 + this.nextRand() * 1.2,
         this.scratchQuat,
       );
     }

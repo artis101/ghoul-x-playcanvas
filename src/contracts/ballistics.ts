@@ -411,6 +411,8 @@ export interface TargetHealthState {
   consciousness: number;
   painShock: number;
   posture: CombatantPostureState;
+  /** True (~12.5% southpaw chance) when combatant shoulders & triggers weapon on anatomical left (+X); false (~87.5%) for standard right-handed (-X) */
+  isLeftHanded: boolean;
   leftLegFunctional: boolean;
   rightLegFunctional: boolean;
   leftArmFunctional: boolean;
