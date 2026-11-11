@@ -344,7 +344,18 @@ export class HudController {
         dom.root.style.transform = `translate3d(${entry.screenX.toFixed(1)}px, ${entry.screenY.toFixed(1)}px, 0) translate(-50%, -100%)`;
 
         const status = computeCombatantTriageStatus(entry.state);
-        const label = formatTriageLabel(status);
+        const statusTag = entry.state.alive ? entry.state.combatantStatusTag : null;
+        const baseLabel = formatTriageLabel(status);
+        const label =
+          statusTag === 'SIDEARM_DRAWN'
+            ? `${baseLabel} • SIDEARM DRAWN`
+            : statusTag === 'SIDEARM_DRAWING'
+              ? `${baseLabel} • DRAWING M9`
+              : statusTag === 'DISARMED'
+                ? 'DISARMED'
+                : statusTag === 'LAST_STAND'
+                  ? `${baseLabel} • LAST STAND`
+                  : baseLabel;
         const colorCls = triageColorClass(status);
         const hpClamped = entry.state.alive ? Math.max(1, Math.round(entry.state.currentHp)) : 0;
         const hpPct = entry.state.alive
@@ -382,7 +393,18 @@ export class HudController {
     }
 
     const status = computeCombatantTriageStatus(focusedTarget);
-    const label = formatTriageLabel(status);
+    const focusedTag = focusedTarget.alive ? focusedTarget.combatantStatusTag : null;
+    const baseLabel = formatTriageLabel(status);
+    const label =
+      focusedTag === 'SIDEARM_DRAWN'
+        ? `${baseLabel} • SIDEARM DRAWN`
+        : focusedTag === 'SIDEARM_DRAWING'
+          ? `${baseLabel} • DRAWING M9`
+          : focusedTag === 'DISARMED'
+            ? 'DISARMED'
+            : focusedTag === 'LAST_STAND'
+              ? `${baseLabel} • LAST STAND`
+              : baseLabel;
     const colorCls = triageColorClass(status);
     const cardCls = triageCardClass(status);
     const hpRounded = focusedTarget.alive ? Math.max(1, Math.round(focusedTarget.currentHp)) : 0;

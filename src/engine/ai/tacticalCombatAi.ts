@@ -30,7 +30,7 @@ import { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
 import { basisColumnsToQuaternion } from '../fx/mayhemDirector.ts';
 
 // ============================================================================
-// Contracts & Tactical Cover Layout
+// Contracts, Combatant Resolve Profiles & Tactical Cover Layout
 // ============================================================================
 
 export type EnemyTacticalAiState =
@@ -39,6 +39,14 @@ export type EnemyTacticalAiState =
   | 'SUPPRESSED_STAGGERED'
   | 'DOWNED_CRAWLING'
   | 'DEAD';
+
+export type CombatantResolveProfile =
+  | 'HARDENED_VETERAN'
+  | 'FANATIC_BERSERKER'
+  | 'GRITTY_REGULAR'
+  | 'PANICKED_SCRAPPER';
+
+export type ActiveFiringHand = 'LEFT' | 'RIGHT';
 
 export type BrutalKillRewardKind =
   | 'CRANIAL_POP'
@@ -109,6 +117,9 @@ export interface EnemyTracerFireEvent {
   readonly blockedByCover: boolean;
   readonly armorChipApplied: number;
   readonly healthDamageApplied: number;
+  readonly activeFiringHand: ActiveFiringHand;
+  readonly usedBackupSidearm: boolean;
+  readonly weaponId: string;
 }
 
 export interface PlayerCombatVitals {
@@ -129,12 +140,28 @@ export interface EnemyAimProfile {
   readonly canReturnFire: boolean;
   readonly isOneHandedDownedFire: boolean;
   readonly clutchingWound: boolean;
+  readonly usingBackupSidearm: boolean;
+  readonly sidearmDrawing: boolean;
+  readonly activeFiringHand: ActiveFiringHand | null;
+}
+
+export interface EnemySidearmVisualState {
+  readonly visible: boolean;
+  readonly drawing: boolean;
+  readonly drawProgress: number;
+  readonly hand: ActiveFiringHand | null;
+  readonly dropped: boolean;
+  readonly aimTargetWorld: Vec3Like;
+  readonly weaponId: string;
 }
 
 export interface EnemyAiAgentRuntime {
   readonly targetId: string;
   state: EnemyTacticalAiState;
   triageStatus: CombatantTriageStatus;
+  resolveProfile: CombatantResolveProfile;
+  carriesBackupSidearm: boolean;
+
   coverAnchorWorld: Vec3Like;
   peekSign: -1 | 1;
   peekStrideM: number;
@@ -148,16 +175,25 @@ export interface EnemyAiAgentRuntime {
   peekCycleTimerS: number;
   isPeekingOut: boolean;
   currentLateralOffsetM: number;
+  berserkerAdvanceOffsetM: number;
+
+  activeFiringHand: ActiveFiringHand;
+  sidearmDrawTimerS: number;
+  sidearmDrawing: boolean;
+  sidearmActive: boolean;
+  sidearmDropped: boolean;
 
   burstShotsRemaining: number;
   burstInterShotTimerS: number;
   fireCooldownTimerS: number;
   tracerSeedCounter: number;
+  completedBurstCount: number;
 
   lastObservedHp: number;
   lastSpreadMultiplier: number;
   lastAimAccuracyMultiplier: number;
   clutchingWound: boolean;
+  lastAimTargetWorld: Vec3Like;
 }
 
 export interface EnemyHitNotification {
@@ -175,6 +211,10 @@ export interface TacticalCombatAiOptions {
   initialPlayerArmor?: number;
   /** Sight detection range in meters when player is in front hemisphere (default 30m) */
   sightDetectionRangeM?: number;
+  /** Optional deterministic per-target resolve profile overrides */
+  resolveProfileOverrides?: Readonly<Record<string, CombatantResolveProfile>>;
+  /** Optional deterministic per-target backup sidearm overrides */
+  hardenedSidearmOverrides?: Readonly<Record<string, boolean>>;
   /** Optional breach-aware visual sight occlusion query (e.g. DestructionManager.isLineOfSightBlocked) */
   isLineOfSightBlocked?: (fromWorld: Vec3Like, toWorld: Vec3Like) => boolean;
   /** Optional physical cover shot interceptor from enemy core to player target */
@@ -193,6 +233,7 @@ export interface TacticalCombatAiOptions {
 }
 
 interface ArchetypeCombatTuning {
+  readonly primaryWeaponId: string;
   readonly baseSpreadRad: number;
   readonly burstCount: number;
   readonly interShotDelayS: number;
@@ -204,6 +245,7 @@ interface ArchetypeCombatTuning {
 
 const ARCHETYPE_TUNING: Record<EnemyArchetypeId, ArchetypeCombatTuning> = {
   SKINHEAD_PUNK: {
+    primaryWeaponId: 'silver_talon_50ae',
     baseSpreadRad: 0.052,
     burstCount: 4,
     interShotDelayS: 0.11,
@@ -213,6 +255,7 @@ const ARCHETYPE_TUNING: Record<EnemyArchetypeId, ArchetypeCombatTuning> = {
     baseChipDamage: 4.0,
   },
   MILITIA_GUNNER: {
+    primaryWeaponId: 'm4a1_carbine',
     baseSpreadRad: 0.038,
     burstCount: 3,
     interShotDelayS: 0.14,
@@ -222,6 +265,7 @@ const ARCHETYPE_TUNING: Record<EnemyArchetypeId, ArchetypeCombatTuning> = {
     baseChipDamage: 5.0,
   },
   HEAVY_ENFORCER: {
+    primaryWeaponId: 'm590_shotgun',
     baseSpreadRad: 0.062,
     burstCount: 2,
     interShotDelayS: 0.34,
@@ -231,6 +275,7 @@ const ARCHETYPE_TUNING: Record<EnemyArchetypeId, ArchetypeCombatTuning> = {
     baseChipDamage: 6.5,
   },
   SNIPER_OPERATIVE: {
+    primaryWeaponId: 'msg90_sniper',
     baseSpreadRad: 0.018,
     burstCount: 1,
     interShotDelayS: 0.25,
@@ -241,13 +286,145 @@ const ARCHETYPE_TUNING: Record<EnemyArchetypeId, ArchetypeCombatTuning> = {
   },
 };
 
+const SIDEARM_M9_TUNING = {
+  weaponId: 'weapon_beretta_m9',
+  baseSpreadRad: 0.042,
+  interShotDelayS: 0.14,
+  burstCooldownS: 1.25,
+  tracerSpeedMs: 88,
+  baseChipDamage: 4.5,
+} as const;
+
 const TORSO_ZONES: ReadonlySet<GhoulZoneId> = new Set<GhoulZoneId>([
   'TORSO_UPPER_THORAX',
   'TORSO_LOWER_ABDOMEN',
   'PELVIS_GROIN',
 ]);
 
+export const BACKUP_SIDEARM_WEAPON_ID = SIDEARM_M9_TUNING.weaponId;
 export const DOWNED_ONE_HANDED_SPREAD_MULTIPLIER = 4.5;
+export const OFFHAND_SIDEARM_SPREAD_MULTIPLIER = 1.78;
+export const SIDEARM_DRAW_DURATION_S = 0.6;
+export const MIN_CONSCIOUSNESS_TO_FIGHT = 0.12;
+
+/**
+ * Deterministic 32-bit FNV-1a string hash for repeatable combatant personality assignment.
+ */
+export function hashCombatantTargetId(targetId: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < targetId.length; i++) {
+    h ^= targetId.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * Checks whether the specified arm chain (`SHOULDER_*` -> `UPPER_ARM_*` -> `FOREARM_*` -> `HAND_*`)
+ * is structurally unsevered and motor-functional.
+ */
+export function isArmChainIntactAndFunctional(
+  hs: TargetHealthState,
+  hand: ActiveFiringHand,
+): boolean {
+  if (hand === 'LEFT') {
+    return (
+      hs.leftArmFunctional &&
+      !hs.severedZones.has('HAND_LEFT') &&
+      !hs.severedZones.has('FOREARM_LEFT') &&
+      !hs.severedZones.has('UPPER_ARM_LEFT') &&
+      !hs.severedZones.has('SHOULDER_LEFT')
+    );
+  }
+  return (
+    hs.rightArmFunctional &&
+    !hs.severedZones.has('HAND_RIGHT') &&
+    !hs.severedZones.has('FOREARM_RIGHT') &&
+    !hs.severedZones.has('UPPER_ARM_RIGHT') &&
+    !hs.severedZones.has('SHOULDER_RIGHT')
+  );
+}
+
+/**
+ * Deterministically assigns a `CombatantResolveProfile` and backup handgun eligibility from
+ * `archetype` + `targetId` so all 7 arena hostiles exhibit distinct combat personalities while
+ * unit tests remain 100% deterministic.
+ */
+export function resolveDefaultCombatantProfile(
+  targetId: string,
+  archetype: EnemyArchetypeId,
+): { resolveProfile: CombatantResolveProfile; carriesBackupSidearm: boolean } {
+  if (archetype === 'HEAVY_ENFORCER' || archetype === 'SNIPER_OPERATIVE') {
+    return { resolveProfile: 'HARDENED_VETERAN', carriesBackupSidearm: true };
+  }
+
+  // Curated variety across the 7 Tactical Breaching Arena stations (`target_0` .. `target_6`)
+  switch (targetId) {
+    case 'target_0':
+      return { resolveProfile: 'FANATIC_BERSERKER', carriesBackupSidearm: false };
+    case 'target_1':
+      return { resolveProfile: 'FANATIC_BERSERKER', carriesBackupSidearm: true };
+    case 'target_2':
+      return { resolveProfile: 'PANICKED_SCRAPPER', carriesBackupSidearm: false };
+    case 'target_3':
+      return { resolveProfile: 'GRITTY_REGULAR', carriesBackupSidearm: false };
+    case 'target_4':
+      return { resolveProfile: 'HARDENED_VETERAN', carriesBackupSidearm: true };
+    case 'hostile_alpha':
+      return { resolveProfile: 'GRITTY_REGULAR', carriesBackupSidearm: false };
+    default:
+      break;
+  }
+
+  const h = hashCombatantTargetId(targetId);
+  if (archetype === 'SKINHEAD_PUNK') {
+    return {
+      resolveProfile: h % 2 === 0 ? 'FANATIC_BERSERKER' : 'PANICKED_SCRAPPER',
+      carriesBackupSidearm: false,
+    };
+  }
+
+  // MILITIA_GUNNER deterministic mix: veteran gunners, gritty regulars, fanatic breachers, panicked scrappers
+  const bucket = h % 4;
+  if (bucket === 1) {
+    return { resolveProfile: 'HARDENED_VETERAN', carriesBackupSidearm: true };
+  }
+  if (bucket === 2) {
+    return { resolveProfile: 'FANATIC_BERSERKER', carriesBackupSidearm: false };
+  }
+  if (bucket === 3) {
+    return { resolveProfile: 'PANICKED_SCRAPPER', carriesBackupSidearm: false };
+  }
+  return { resolveProfile: 'GRITTY_REGULAR', carriesBackupSidearm: false };
+}
+
+function getPreferredPrimaryHand(hs: TargetHealthState): ActiveFiringHand {
+  return hs.isLeftHanded ? 'RIGHT' : 'LEFT';
+}
+
+function selectIntactFiringHand(
+  hs: TargetHealthState,
+  preferred: ActiveFiringHand,
+): ActiveFiringHand | null {
+  const leftIntact = isArmChainIntactAndFunctional(hs, 'LEFT');
+  const rightIntact = isArmChainIntactAndFunctional(hs, 'RIGHT');
+  if (!leftIntact && !rightIntact) {
+    return null;
+  }
+  if (leftIntact && !rightIntact) {
+    return 'LEFT';
+  }
+  if (rightIntact && !leftIntact) {
+    return 'RIGHT';
+  }
+  // Both arm chains are structurally intact: if one hand took a disarming graze, prefer the healthier hand
+  const leftHandIntegrity = hs.zoneIntegrity.HAND_LEFT ?? 100;
+  const rightHandIntegrity = hs.zoneIntegrity.HAND_RIGHT ?? 100;
+  if (Math.abs(leftHandIntegrity - rightHandIntegrity) > 5) {
+    return rightHandIntegrity > leftHandIntegrity ? 'RIGHT' : 'LEFT';
+  }
+  return preferred;
+}
 
 function wrapAngleRad(angle: number): number {
   let a = angle;
@@ -269,10 +446,10 @@ function approachAngleRad(current: number, target: number, maxStep: number): num
 // ============================================================================
 
 /**
- * Turns static GHOUL mannequins into reactive FPS hostiles that guard, alert with adrenaline surge,
- * strafe/peek around destructible cover, fire glowing tracer bursts with fair arcade armor/HP chip,
- * and exhibit authentic physiological/limb trauma degradation (`PATROL_GUARD` neurogenic shock,
- * `DOWNED_CRAWLING` `4.5x` one-handed spread, and helpless wound-clutching when disarmed or mortally wounded).
+ * Turns GHOUL combatants into relentless tactical FPS hostiles with personality resolve traits
+ * (`HARDENED_VETERAN`, `FANATIC_BERSERKER`, `GRITTY_REGULAR`, `PANICKED_SCRAPPER`), wounded last-stand
+ * combat resolve (fighting through gut, chest, bleeding, and leg-buckled trauma until death),
+ * limb-dismemberment disarming for standard fighters, and off-hand Beretta M9 handgun draw for hardened veterans.
  */
 export class TacticalCombatAiSystem {
   public readonly playerVitals: PlayerCombatVitals;
@@ -299,6 +476,8 @@ export class TacticalCombatAiSystem {
   private readonly sightDetectionRangeM: number;
   private readonly tracerPool: HardwareInstancedPool | null;
 
+  private readonly resolveProfileOverrides = new Map<string, CombatantResolveProfile>();
+  private readonly hardenedSidearmOverrides = new Map<string, boolean>();
   private readonly agents = new Map<string, EnemyAiAgentRuntime>();
   private elapsedClockS = 0;
   private destroyed = false;
@@ -312,6 +491,17 @@ export class TacticalCombatAiSystem {
     this.onEnemyFireTracer = options.onEnemyFireTracer;
     this.onPlayerDamaged = options.onPlayerDamaged;
     this.onEnemyStateChanged = options.onEnemyStateChanged;
+
+    if (options.resolveProfileOverrides) {
+      for (const [id, prof] of Object.entries(options.resolveProfileOverrides)) {
+        this.resolveProfileOverrides.set(id, prof);
+      }
+    }
+    if (options.hardenedSidearmOverrides) {
+      for (const [id, flag] of Object.entries(options.hardenedSidearmOverrides)) {
+        this.hardenedSidearmOverrides.set(id, flag);
+      }
+    }
 
     const maxHealth = 100;
     const maxArmor = 100;
@@ -356,6 +546,61 @@ export class TacticalCombatAiSystem {
   }
 
   /**
+   * Explicitly overrides a combatant's resolve profile and optional backup sidearm carry flag.
+   */
+  public setCombatantResolveProfile(
+    targetId: string,
+    profile: CombatantResolveProfile,
+    carriesBackupSidearm?: boolean,
+  ): void {
+    this.resolveProfileOverrides.set(targetId, profile);
+    const sidearm = carriesBackupSidearm ?? profile === 'HARDENED_VETERAN';
+    this.hardenedSidearmOverrides.set(targetId, sidearm);
+
+    const existing = this.agents.get(targetId);
+    if (existing) {
+      existing.resolveProfile = profile;
+      existing.carriesBackupSidearm = sidearm;
+    }
+  }
+
+  /**
+   * Queries the live 3D visual state of a combatant's off-hand backup handgun for `CombatDirector`
+   * GLB/procedural M9 attachment and dynamic single-arm aiming toward the player.
+   */
+  public getSidearmVisualState(targetId: string): EnemySidearmVisualState {
+    const agent = this.agents.get(targetId);
+    if (!agent) {
+      return {
+        visible: false,
+        drawing: false,
+        drawProgress: 0,
+        hand: null,
+        dropped: false,
+        aimTargetWorld: vec3(0, 1.5, 0),
+        weaponId: BACKUP_SIDEARM_WEAPON_ID,
+      };
+    }
+
+    const visible = agent.sidearmActive || agent.sidearmDrawing;
+    const drawProgress = agent.sidearmActive
+      ? 1.0
+      : agent.sidearmDrawing
+        ? Math.max(0, Math.min(1, 1 - agent.sidearmDrawTimerS / SIDEARM_DRAW_DURATION_S))
+        : 0.0;
+
+    return {
+      visible,
+      drawing: agent.sidearmDrawing,
+      drawProgress,
+      hand: visible ? agent.activeFiringHand : null,
+      dropped: agent.sidearmDropped,
+      aimTargetWorld: copyVec3(agent.lastAimTargetWorld),
+      weaponId: BACKUP_SIDEARM_WEAPON_ID,
+    };
+  }
+
+  /**
    * Registers a wave of `TargetHealthState` combatants and optionally repositions them
    * behind tactical destructible cover stations.
    */
@@ -390,6 +635,20 @@ export class TacticalCombatAiSystem {
         }
       }
 
+      const defaults = resolveDefaultCombatantProfile(hs.targetId, hs.archetype);
+      const resolveProfile =
+        this.resolveProfileOverrides.get(hs.targetId) ??
+        hs.resolveProfile ??
+        defaults.resolveProfile;
+      const carriesBackupSidearm =
+        this.hardenedSidearmOverrides.get(hs.targetId) ??
+        (this.resolveProfileOverrides.has(hs.targetId) || hs.resolveProfile !== undefined
+          ? resolveProfile === 'HARDENED_VETERAN' || defaults.carriesBackupSidearm
+          : defaults.carriesBackupSidearm);
+
+      hs.resolveProfile = resolveProfile;
+      hs.combatantStatusTag = null;
+
       const anchor = copyVec3(hs.worldPosition);
       const peekSign: -1 | 1 = coverSpec
         ? coverSpec.peekSign
@@ -397,10 +656,15 @@ export class TacticalCombatAiSystem {
           ? 1
           : -1;
 
+      const primaryHand = getPreferredPrimaryHand(hs);
+
       const agent: EnemyAiAgentRuntime = {
         targetId: hs.targetId,
         state: hs.alive ? 'PATROL_GUARD' : 'DEAD',
         triageStatus: computeCombatantTriageStatus(hs),
+        resolveProfile,
+        carriesBackupSidearm,
+
         coverAnchorWorld: anchor,
         peekSign,
         peekStrideM: coverSpec?.peekStrideM ?? 0.95,
@@ -414,16 +678,25 @@ export class TacticalCombatAiSystem {
         peekCycleTimerS: (i * 0.73) % 2.4,
         isPeekingOut: false,
         currentLateralOffsetM: 0,
+        berserkerAdvanceOffsetM: 0,
+
+        activeFiringHand: primaryHand,
+        sidearmDrawTimerS: 0,
+        sidearmDrawing: false,
+        sidearmActive: false,
+        sidearmDropped: false,
 
         burstShotsRemaining: 0,
         burstInterShotTimerS: 0,
         fireCooldownTimerS: 0.65 + (i % 4) * 0.35,
         tracerSeedCounter: 100 + i * 37,
+        completedBurstCount: 0,
 
         lastObservedHp: hs.currentHp,
         lastSpreadMultiplier: 1.0,
         lastAimAccuracyMultiplier: 1.0,
         clutchingWound: false,
+        lastAimTargetWorld: vec3(0, 1.5, 0),
       };
 
       this.agents.set(hs.targetId, agent);
@@ -450,15 +723,34 @@ export class TacticalCombatAiSystem {
       if (distM > audibleRadiusM) continue;
 
       const proximity = Math.max(0, 1 - distM / audibleRadiusM);
-      agent.suppression = Math.min(1.0, agent.suppression + suppressionImpulse * proximity);
+      const suppressionScale =
+        agent.resolveProfile === 'FANATIC_BERSERKER'
+          ? 0.35
+          : agent.resolveProfile === 'HARDENED_VETERAN'
+            ? 0.6
+            : agent.resolveProfile === 'PANICKED_SCRAPPER'
+              ? 1.25
+              : 1.0;
+      agent.suppression = Math.min(
+        1.0,
+        agent.suppression + suppressionImpulse * proximity * suppressionScale,
+      );
 
       if (agent.state === 'PATROL_GUARD') {
-        agent.adrenaline = Math.max(agent.adrenaline, 0.88);
+        agent.adrenaline = Math.max(
+          agent.adrenaline,
+          agent.resolveProfile === 'FANATIC_BERSERKER' ? 0.96 : 0.88,
+        );
         this.transitionState(agent, 'ALERTED_ENGAGING');
       } else if (agent.state === 'ALERTED_ENGAGING') {
         agent.adrenaline = Math.min(1.0, agent.adrenaline + 0.14);
-        if (agent.suppression >= 0.88 && agent.adrenaline < 0.75) {
-          agent.staggerTimerS = Math.max(agent.staggerTimerS, 0.65);
+        if (
+          agent.resolveProfile !== 'FANATIC_BERSERKER' &&
+          agent.resolveProfile !== 'HARDENED_VETERAN' &&
+          agent.suppression >= 0.88 &&
+          agent.adrenaline < 0.75
+        ) {
+          agent.staggerTimerS = Math.max(agent.staggerTimerS, 0.5);
           this.transitionState(agent, 'SUPPRESSED_STAGGERED');
         }
       }
@@ -469,9 +761,8 @@ export class TacticalCombatAiSystem {
    * Processes direct ballistic/blast trauma on a specific combatant:
    * - Unsuspecting (`PATROL_GUARD`, low adrenaline) targets struck in the torso suffer immediate
    *   **neurogenic shock stagger** (`SUPPRESSED_STAGGERED`, high `painShock`, dropped `consciousness`).
-   * - Already alerted (`ALERTED_ENGAGING`) targets experience an **adrenaline surge** that resists
-   *   pure pain knockdown unless biomechanically crippled (`!leftLegFunctional || !rightLegFunctional`)
-   *   or mortally wounded!
+   * - Already alerted (`ALERTED_ENGAGING`) targets surge with combat adrenaline and fight through
+   *   gut, chest, and bleeding wounds with brief (`0.35s-0.55s`) impact stagger rather than going passive!
    */
   public notifyEnemyHit(
     target: TargetHealthState,
@@ -487,20 +778,27 @@ export class TacticalCombatAiSystem {
     agent.triageStatus = computeCombatantTriageStatus(target);
 
     if (!target.alive || target.currentHp <= 0) {
+      this.syncAgentArmamentAndSidearm(0, target, agent);
       this.transitionState(agent, 'DEAD');
       return agent.state;
     }
+
+    // Immediately evaluate hand/arm dismemberment & off-hand sidearm draw state on impact
+    this.syncAgentArmamentAndSidearm(0, target, agent);
 
     const hitTorso =
       hit.isTorsoHit === true ||
       (hit.hitZone !== undefined && TORSO_ZONES.has(hit.hitZone));
     const wasUnsuspecting = agent.state === 'PATROL_GUARD' && agent.adrenaline < 0.35;
 
-    // Leg destruction overrides standing posture immediately -> DOWNED_CRAWLING
+    // Leg destruction overrides standing posture immediately -> DOWNED_CRAWLING (still fighting!)
     if (!target.leftLegFunctional || !target.rightLegFunctional) {
-      agent.adrenaline = Math.max(agent.adrenaline, 0.75);
+      agent.adrenaline = Math.max(
+        agent.adrenaline,
+        agent.resolveProfile === 'FANATIC_BERSERKER' ? 1.0 : 0.82,
+      );
       if (!target.isRagdollActive) {
-        target.posture = 'LEG_BUCKLED';
+        target.posture = agent.clutchingWound ? 'DISARMED' : 'LEG_BUCKLED';
       }
       this.transitionState(agent, 'DOWNED_CRAWLING');
       this.refreshAgentAimMetrics(target, agent, hit.externalAccuracyMultiplier);
@@ -520,17 +818,30 @@ export class TacticalCombatAiSystem {
       }
       this.transitionState(agent, 'SUPPRESSED_STAGGERED');
     } else {
-      // Alerted target gains combat adrenaline surge!
-      agent.adrenaline = Math.min(1.0, Math.max(0.88, agent.adrenaline + 0.22));
+      // Alerted target surges with survival adrenaline!
+      if (agent.resolveProfile === 'FANATIC_BERSERKER') {
+        agent.adrenaline = 1.0;
+      } else {
+        agent.adrenaline = Math.min(1.0, Math.max(0.88, agent.adrenaline + 0.22));
+      }
       agent.suppression = Math.min(1.0, agent.suppression + 0.32);
 
       const heavyEnergy = (hit.energyDepositedJ ?? 0) >= 850;
+      const flinchDurationS =
+        agent.resolveProfile === 'FANATIC_BERSERKER'
+          ? 0.35
+          : agent.resolveProfile === 'HARDENED_VETERAN'
+            ? 0.38
+            : agent.resolveProfile === 'PANICKED_SCRAPPER'
+              ? 0.52
+              : 0.46;
+
       if (
         heavyEnergy ||
         target.painShock - agent.adrenaline * 0.65 > 0.32 ||
         agent.triageStatus === 'MORTALLY_WOUNDED'
       ) {
-        agent.staggerTimerS = Math.max(agent.staggerTimerS, 0.55);
+        agent.staggerTimerS = Math.max(agent.staggerTimerS, flinchDurationS);
         agent.burstShotsRemaining = 0;
         if (!target.isRagdollActive && target.posture === 'COMBAT_READY') {
           target.posture = 'STAGGERED';
@@ -557,7 +868,12 @@ export class TacticalCombatAiSystem {
   }
 
   /**
-   * Computes exact trauma-aware weapon accuracy & fire eligibility from `TargetHealthState`.
+   * Computes trauma-aware weapon accuracy & fire eligibility from `TargetHealthState`.
+   *
+   * Hardened/desperate combatants fight till the very end: gut-shot, chest-shot, bleeding,
+   * mortally-wounded, and leg-buckled fighters KEEP returning fire with realistic tremor/spread
+   * growth as long as they remain alive (`alive && currentHp > 0`), minimally conscious (`> 0.12`),
+   * not airborne-ragdolled, and possess a usable primary weapon or drawn backup handgun!
    */
   public computeEnemyAimProfile(
     target: TargetHealthState,
@@ -565,9 +881,13 @@ export class TacticalCombatAiSystem {
     externalAccuracyMultiplier?: number,
   ): EnemyAimProfile {
     const tuning = ARCHETYPE_TUNING[target.archetype];
-    const triage = computeCombatantTriageStatus(target);
 
-    if (!target.alive || target.currentHp <= 0) {
+    // 1. Dead or completely unconscious (<= 0.12)
+    if (
+      !target.alive ||
+      target.currentHp <= 0 ||
+      target.consciousness <= MIN_CONSCIOUSNESS_TO_FIGHT
+    ) {
       return {
         baseSpreadRad: tuning.baseSpreadRad,
         spreadMultiplier: 10.0,
@@ -576,18 +896,35 @@ export class TacticalCombatAiSystem {
         canReturnFire: false,
         isOneHandedDownedFire: false,
         clutchingWound: false,
+        usingBackupSidearm: false,
+        sidearmDrawing: false,
+        activeFiringHand: null,
       };
     }
 
-    const bothArmsBroken = !target.leftArmFunctional && !target.rightArmFunctional;
-    const isMortallyWounded = triage === 'MORTALLY_WOUNDED';
-    const severeHypoxiaOrHypotension =
-      target.systolicBpMmHg < 72 ||
-      target.oxygenSaturationPct < 74 ||
-      target.consciousness < 0.32;
+    // 2. Full airborne ragdoll launch incapacitation
+    if (target.isRagdollActive && target.posture === 'AIRBORNE_RAGDOLL') {
+      return {
+        baseSpreadRad: tuning.baseSpreadRad,
+        spreadMultiplier: 9.0,
+        effectiveSpreadRad: tuning.baseSpreadRad * 9.0,
+        aimAccuracyMultiplier: 0.08,
+        canReturnFire: false,
+        isOneHandedDownedFire: false,
+        clutchingWound: false,
+        usingBackupSidearm: false,
+        sidearmDrawing: false,
+        activeFiringHand: null,
+      };
+    }
 
-    // Disarmed or mortally wounded enemies clutch wounds / stagger helplessly instead of laser-aiming
-    if (target.weaponDropped || bothArmsBroken || isMortallyWounded || severeHypoxiaOrHypotension) {
+    const leftIntact = isArmChainIntactAndFunctional(target, 'LEFT');
+    const rightIntact = isArmChainIntactAndFunctional(target, 'RIGHT');
+    const bothArmsLost = !leftIntact && !rightIntact;
+    const anyArmLost = !leftIntact || !rightIntact;
+
+    // 3. Both arms/hands severed or crippled -> completely disarmed even for hardened veterans
+    if (bothArmsLost) {
       return {
         baseSpreadRad: tuning.baseSpreadRad,
         spreadMultiplier: 8.5,
@@ -596,6 +933,67 @@ export class TacticalCombatAiSystem {
         canReturnFire: false,
         isOneHandedDownedFire: false,
         clutchingWound: true,
+        usingBackupSidearm: false,
+        sidearmDrawing: false,
+        activeFiringHand: null,
+      };
+    }
+
+    const preferredHand = getPreferredPrimaryHand(target);
+    const intactHand = selectIntactFiringHand(target, agent?.activeFiringHand ?? preferredHand);
+
+    const sidearmActive =
+      agent !== undefined &&
+      agent.sidearmActive &&
+      intactHand !== null &&
+      isArmChainIntactAndFunctional(target, agent.activeFiringHand);
+    const sidearmDrawing =
+      agent !== undefined &&
+      agent.sidearmDrawing &&
+      !sidearmActive &&
+      intactHand !== null;
+
+    // Living grounded fighter after leg collapse whose arms were NOT disarmed keeps fighting from the floor
+    const groundedWithUnbrokenArms =
+      target.isRagdollActive &&
+      target.posture !== 'AIRBORNE_RAGDOLL' &&
+      !target.primaryArmDisarmed &&
+      intactHand !== null;
+
+    const primaryWeaponUsable =
+      !anyArmLost &&
+      !target.primaryArmDisarmed &&
+      (!target.weaponDropped || groundedWithUnbrokenArms);
+
+    if (!primaryWeaponUsable && !sidearmActive) {
+      if (sidearmDrawing) {
+        return {
+          baseSpreadRad: SIDEARM_M9_TUNING.baseSpreadRad,
+          spreadMultiplier: OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
+          effectiveSpreadRad:
+            SIDEARM_M9_TUNING.baseSpreadRad * OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
+          aimAccuracyMultiplier: 1.0 / OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
+          canReturnFire: false,
+          isOneHandedDownedFire: !target.leftLegFunctional || !target.rightLegFunctional,
+          clutchingWound: false,
+          usingBackupSidearm: false,
+          sidearmDrawing: true,
+          activeFiringHand: agent?.activeFiringHand ?? intactHand,
+        };
+      }
+
+      // Disarmed non-hardened combatant clutches wound / stump in shock and cannot attack
+      return {
+        baseSpreadRad: tuning.baseSpreadRad,
+        spreadMultiplier: 8.5,
+        effectiveSpreadRad: tuning.baseSpreadRad * 8.5,
+        aimAccuracyMultiplier: 0.08,
+        canReturnFire: false,
+        isOneHandedDownedFire: false,
+        clutchingWound: true,
+        usingBackupSidearm: false,
+        sidearmDrawing: false,
+        activeFiringHand: null,
       };
     }
 
@@ -603,33 +1001,72 @@ export class TacticalCombatAiSystem {
       agent !== undefined &&
       (agent.neurogenicShockTimerS > 0 || agent.state === 'SUPPRESSED_STAGGERED');
 
-    const legCrippled = !target.leftLegFunctional || !target.rightLegFunctional;
+    const resolveProfile =
+      agent?.resolveProfile ??
+      target.resolveProfile ??
+      resolveDefaultCombatantProfile(target.targetId, target.archetype).resolveProfile;
+    const triage = computeCombatantTriageStatus(target);
+
+    const legCrippled =
+      !target.leftLegFunctional ||
+      !target.rightLegFunctional ||
+      target.isRagdollActive ||
+      agent?.state === 'DOWNED_CRAWLING';
+
+    const baseSpreadRad = sidearmActive
+      ? SIDEARM_M9_TUNING.baseSpreadRad
+      : tuning.baseSpreadRad;
     let spreadMultiplier = 1.0;
 
-    // Leg-crippled downed enemies fire one-handed with heavy 4.5x spread cone!
-    if (legCrippled || agent?.state === 'DOWNED_CRAWLING') {
+    // Leg-crippled / grounded enemies fire one-handed with heavy >= 4.5x spread cone!
+    if (legCrippled) {
       spreadMultiplier *= DOWNED_ONE_HANDED_SPREAD_MULTIPLIER;
     }
 
-    // Single crippled arm degrades stability
-    if (!target.leftArmFunctional || !target.rightArmFunctional) {
-      spreadMultiplier *= 1.85;
+    // Off-hand backup handgun (or single crippled arm) applies realistic 1.65x-1.95x one-handed pistol spread
+    if (sidearmActive || anyArmLost) {
+      spreadMultiplier *= OFFHAND_SIDEARM_SPREAD_MULTIPLIER;
     }
 
-    // Pain shock (buffered partially by combat adrenaline on alerted fighters)
-    const adrenalineMitigation = agent ? agent.adrenaline * 0.35 : 0;
-    const effectiveShock = Math.max(0, target.painShock - adrenalineMitigation);
-    spreadMultiplier *= 1.0 + effectiveShock * 2.4;
+    // Pain shock tremor (hardened veterans & fanatic berserkers resist pain through combat composure/adrenaline)
+    const painMitigationFactor =
+      resolveProfile === 'HARDENED_VETERAN'
+        ? 0.62
+        : resolveProfile === 'FANATIC_BERSERKER'
+          ? 0.55
+          : 0.35;
+    const adrenalineVal = agent ? agent.adrenaline : resolveProfile === 'HARDENED_VETERAN' ? 0.85 : 0;
+    const effectiveShock = Math.max(0, target.painShock - adrenalineVal * painMitigationFactor);
+    spreadMultiplier *= 1.0 + effectiveShock * 2.2;
 
-    // Blood pressure & oxygenation degradation
+    // Internal organ rupture / critical bleedout tremor (degrades aim heavily without stopping return fire!)
+    if (target.rupturedOrgans.size > 0 || triage === 'MORTALLY_WOUNDED') {
+      const organPenalty =
+        resolveProfile === 'HARDENED_VETERAN'
+          ? 1.38 + Math.min(0.75, target.rupturedOrgans.size * 0.28)
+          : 1.55 + Math.min(0.95, target.rupturedOrgans.size * 0.35);
+      spreadMultiplier *= organPenalty;
+    }
+
+    // Blood pressure, hypoxia & fading consciousness degradation
     if (target.systolicBpMmHg < 105) {
-      spreadMultiplier *= 1.0 + ((105 - target.systolicBpMmHg) / 45) * 1.8;
+      spreadMultiplier *= 1.0 + ((105 - target.systolicBpMmHg) / 45) * 2.0;
     }
     if (target.oxygenSaturationPct < 94) {
-      spreadMultiplier *= 1.0 + ((94 - target.oxygenSaturationPct) / 25) * 2.0;
+      spreadMultiplier *= 1.0 + ((94 - target.oxygenSaturationPct) / 25) * 1.9;
     }
     if (target.consciousness < 0.9) {
-      spreadMultiplier *= 1.0 + (0.9 - target.consciousness) * 2.6;
+      spreadMultiplier *= 1.0 + (0.9 - target.consciousness) * 2.5;
+    }
+
+    // Panicked scrappers unleash wider erratic bursts when wounded or heavily suppressed
+    if (
+      resolveProfile === 'PANICKED_SCRAPPER' &&
+      (target.currentHp < target.maxHp * 0.8 ||
+        target.painShock > 0.22 ||
+        (agent?.suppression ?? 0) > 0.45)
+    ) {
+      spreadMultiplier *= 1.32;
     }
 
     if (externalAccuracyMultiplier !== undefined && externalAccuracyMultiplier > 0) {
@@ -637,15 +1074,21 @@ export class TacticalCombatAiSystem {
     }
 
     const aimAccuracyMultiplier = Math.max(0.08, Math.min(1.0, 1.0 / spreadMultiplier));
+    const activeHand: ActiveFiringHand = sidearmActive
+      ? agent!.activeFiringHand
+      : intactHand ?? preferredHand;
 
     return {
-      baseSpreadRad: tuning.baseSpreadRad,
+      baseSpreadRad,
       spreadMultiplier,
-      effectiveSpreadRad: tuning.baseSpreadRad * spreadMultiplier,
+      effectiveSpreadRad: baseSpreadRad * spreadMultiplier,
       aimAccuracyMultiplier,
       canReturnFire: !inNeurogenicOrStagger && agent?.state !== 'PATROL_GUARD',
       isOneHandedDownedFire: legCrippled,
       clutchingWound: false,
+      usingBackupSidearm: sidearmActive,
+      sidearmDrawing: false,
+      activeFiringHand: activeHand,
     };
   }
 
@@ -693,8 +1136,8 @@ export class TacticalCombatAiSystem {
   }
 
   /**
-   * Steps all hostile AI state machines, tactical cover peeking/strafing, yaw tracking,
-   * enemy burst tracer fire, and player combat vitals regeneration.
+   * Steps all hostile AI state machines, tactical cover peeking/strafing, off-hand handgun draws,
+   * yaw tracking, enemy burst tracer fire, and player combat vitals regeneration.
    */
   public update(
     dt: number,
@@ -755,6 +1198,119 @@ export class TacticalCombatAiSystem {
     }
   }
 
+  /**
+   * Evaluates limb dismemberment, primary weapon loss, and hardened off-hand Beretta M9 draw transitions.
+   */
+  private syncAgentArmamentAndSidearm(
+    dt: number,
+    hs: TargetHealthState,
+    agent: EnemyAiAgentRuntime,
+  ): void {
+    hs.resolveProfile = agent.resolveProfile;
+
+    if (!hs.alive || hs.currentHp <= 0) {
+      if (agent.sidearmActive || agent.sidearmDrawing) {
+        agent.sidearmDropped = true;
+      }
+      agent.sidearmActive = false;
+      agent.sidearmDrawing = false;
+      agent.sidearmDrawTimerS = 0;
+      hs.combatantStatusTag = null;
+      return;
+    }
+
+    const leftIntact = isArmChainIntactAndFunctional(hs, 'LEFT');
+    const rightIntact = isArmChainIntactAndFunctional(hs, 'RIGHT');
+    const bothArmsLost = !leftIntact && !rightIntact;
+    const anyArmLost = !leftIntact || !rightIntact;
+    const preferredHand = getPreferredPrimaryHand(hs);
+
+    // 1. Both arms/hands lost -> even a hardened combatant drops their backup handgun and is disabled!
+    if (bothArmsLost) {
+      hs.weaponDropped = true;
+      hs.primaryArmDisarmed = true;
+      if (agent.sidearmActive || agent.sidearmDrawing) {
+        agent.sidearmDropped = true;
+      }
+      agent.sidearmActive = false;
+      agent.sidearmDrawing = false;
+      agent.sidearmDrawTimerS = 0;
+      agent.burstShotsRemaining = 0;
+      if (!hs.isRagdollActive) {
+        hs.posture = 'DISARMED';
+      }
+      hs.combatantStatusTag = 'DISARMED';
+      return;
+    }
+
+    const intactHand = selectIntactFiringHand(hs, preferredHand)!;
+
+    // 2. Primary weapon lost due to single-arm/hand sever/cripple OR direct weapon disarm
+    const primaryDisarmed =
+      anyArmLost ||
+      hs.primaryArmDisarmed === true ||
+      (!hs.isRagdollActive && hs.weaponDropped);
+
+    if (primaryDisarmed) {
+      hs.weaponDropped = true;
+      hs.primaryArmDisarmed = true;
+
+      if (!agent.carriesBackupSidearm) {
+        agent.sidearmActive = false;
+        agent.sidearmDrawing = false;
+        agent.sidearmDrawTimerS = 0;
+        agent.burstShotsRemaining = 0;
+        if (!hs.isRagdollActive) {
+          hs.posture = 'DISARMED';
+        }
+        hs.combatantStatusTag = 'DISARMED';
+        return;
+      }
+
+      // Hardened combatant draws backup Beretta M9 with their remaining intact arm/hand!
+      agent.activeFiringHand = intactHand;
+      if (agent.state === 'PATROL_GUARD') {
+        agent.adrenaline = Math.max(agent.adrenaline, 0.92);
+        this.transitionState(agent, 'ALERTED_ENGAGING');
+      }
+
+      if (!agent.sidearmActive && !agent.sidearmDrawing && !agent.sidearmDropped) {
+        agent.sidearmDrawing = true;
+        agent.sidearmDrawTimerS = SIDEARM_DRAW_DURATION_S;
+        agent.burstShotsRemaining = 0;
+      }
+
+      if (agent.sidearmDrawing && dt > 0) {
+        agent.sidearmDrawTimerS = Math.max(0, agent.sidearmDrawTimerS - dt);
+        if (agent.sidearmDrawTimerS <= 0) {
+          agent.sidearmDrawing = false;
+          agent.sidearmActive = true;
+          agent.fireCooldownTimerS = Math.min(agent.fireCooldownTimerS, 0.08);
+        }
+      }
+
+      hs.combatantStatusTag = agent.sidearmActive ? 'SIDEARM_DRAWN' : 'SIDEARM_DRAWING';
+      return;
+    }
+
+    // 3. Living grounded combatant (propped up after leg shot) whose arms are unbroken:
+    //    `mannequin.ts` drops the 2-handed rifle on ragdoll activation, so equip one-handed sidearm!
+    if (hs.isRagdollActive && hs.posture !== 'AIRBORNE_RAGDOLL') {
+      agent.activeFiringHand = intactHand;
+      agent.sidearmDrawing = false;
+      agent.sidearmDrawTimerS = 0;
+      agent.sidearmActive = true;
+      hs.combatantStatusTag = 'LAST_STAND';
+      return;
+    }
+
+    // 4. Standard two-handed primary weapon active
+    agent.activeFiringHand = preferredHand;
+    const isLastStand =
+      agent.triageStatus === 'MORTALLY_WOUNDED' || hs.currentHp <= hs.maxHp * 0.32;
+    hs.combatantStatusTag = isLastStand ? 'LAST_STAND' : null;
+  }
+
   private stepSingleEnemyAgent(
     dt: number,
     hs: TargetHealthState,
@@ -762,10 +1318,16 @@ export class TacticalCombatAiSystem {
     playerEyeWorldPos: Vec3Like,
   ): void {
     agent.triageStatus = computeCombatantTriageStatus(hs);
+    agent.lastAimTargetWorld = {
+      x: playerEyeWorldPos.x,
+      y: playerEyeWorldPos.y - 0.16,
+      z: playerEyeWorldPos.z,
+    };
 
     // 1. Check death / exsanguination first
     if (!hs.alive || hs.currentHp <= 0) {
       agent.burstShotsRemaining = 0;
+      this.syncAgentArmamentAndSidearm(dt, hs, agent);
       this.transitionState(agent, 'DEAD');
       return;
     }
@@ -785,15 +1347,30 @@ export class TacticalCombatAiSystem {
     }
     agent.lastObservedHp = hs.currentHp;
 
-    // Decay suppression & adrenaline slowly over combat duration
-    agent.suppression = Math.max(0, agent.suppression - 0.24 * dt);
+    // Step dismemberment / backup handgun draw state machine
+    this.syncAgentArmamentAndSidearm(dt, hs, agent);
+
+    // Decay suppression & maintain resolve-specific adrenaline
+    agent.suppression = Math.max(0, agent.suppression - 0.28 * dt);
     if (agent.state !== 'PATROL_GUARD') {
-      agent.adrenaline = Math.max(0.35, agent.adrenaline - 0.015 * dt);
+      if (
+        agent.resolveProfile === 'FANATIC_BERSERKER' &&
+        (hs.currentHp < hs.maxHp * 0.95 || hs.painShock > 0.15)
+      ) {
+        agent.adrenaline = 1.0;
+      } else {
+        const floorAdrenaline =
+          agent.resolveProfile === 'HARDENED_VETERAN' ? 0.65 : 0.42;
+        agent.adrenaline = Math.max(floorAdrenaline, agent.adrenaline - 0.015 * dt);
+      }
     }
 
     // 2. Enforce leg-crippled collapse -> DOWNED_CRAWLING
     const legCrippled = !hs.leftLegFunctional || !hs.rightLegFunctional;
     if (legCrippled && agent.state !== 'DOWNED_CRAWLING') {
+      if (agent.state === 'PATROL_GUARD') {
+        agent.adrenaline = Math.max(agent.adrenaline, 0.85);
+      }
       if (!hs.isRagdollActive) {
         hs.posture = 'LEG_BUCKLED';
       }
@@ -803,17 +1380,9 @@ export class TacticalCombatAiSystem {
     // 3. Evaluate aim & trauma state
     const aimProfile = this.refreshAgentAimMetrics(hs, agent);
 
-    // Apply helpless wound-clutching posture if disarmed or mortally wounded
+    // Apply disarmed posture ONLY when genuinely disarmed (`clutchingWound === true`)
     if (aimProfile.clutchingWound && !hs.isRagdollActive) {
-      if (hs.weaponDropped) {
-        hs.posture = 'DISARMED';
-      } else if (hs.rupturedOrgans.size > 0 || hs.zoneIntegrity.TORSO_LOWER_ABDOMEN < 65) {
-        hs.posture = 'GUT_HURT';
-      } else if (hs.zoneIntegrity.NECK_CERVICAL < 80) {
-        hs.posture = 'THROAT_CLUTCH';
-      } else {
-        hs.posture = legCrippled ? 'LEG_BUCKLED' : 'STAGGERED';
-      }
+      hs.posture = 'DISARMED';
     }
 
     const toPlayer = sub(playerEyeWorldPos, hs.worldPosition);
@@ -824,7 +1393,6 @@ export class TacticalCombatAiSystem {
     // 4. State-specific movement, posture & combat logic
     switch (agent.state) {
       case 'PATROL_GUARD': {
-        // Subtle sentry scan around guardBaseYawRad
         agent.peekCycleTimerS += dt;
         const scanOffset = Math.sin(agent.peekCycleTimerS * 0.9) * 0.22;
         hs.yawRad = approachAngleRad(
@@ -833,7 +1401,6 @@ export class TacticalCombatAiSystem {
           1.4 * dt,
         );
 
-        // Sight cone & close proximity detection (both strictly gated by solid cover LOS!)
         const guardFwd = { x: Math.sin(hs.yawRad), y: 0, z: Math.cos(hs.yawRad) };
         const dirToPlayer =
           horizDist > 1e-3
@@ -850,7 +1417,10 @@ export class TacticalCombatAiSystem {
           inDetectionEnvelope &&
           !this.isSightBlockedBySolidCover(enemyEyePos, playerEyeWorldPos)
         ) {
-          agent.adrenaline = Math.max(agent.adrenaline, 0.88);
+          agent.adrenaline = Math.max(
+            agent.adrenaline,
+            agent.resolveProfile === 'FANATIC_BERSERKER' ? 0.98 : 0.88,
+          );
           this.transitionState(agent, 'ALERTED_ENGAGING');
         }
         break;
@@ -859,20 +1429,34 @@ export class TacticalCombatAiSystem {
       case 'SUPPRESSED_STAGGERED': {
         if (agent.neurogenicShockTimerS > 0) {
           agent.neurogenicShockTimerS = Math.max(0, agent.neurogenicShockTimerS - dt);
-          // Gradually recover consciousness as vagal shock subsides if not bleeding out
-          if (agent.neurogenicShockTimerS <= 0 && agent.triageStatus !== 'MORTALLY_WOUNDED') {
-            hs.consciousness = Math.max(hs.consciousness, 0.78);
-            hs.painShock = Math.min(hs.painShock, 0.45);
-            agent.adrenaline = Math.max(agent.adrenaline, 0.82);
+          // Shake off initial neurogenic vagal shock if still viable so wounded fighters keep battling!
+          if (
+            agent.neurogenicShockTimerS <= 0 &&
+            hs.bloodVolumeMl > 2600 &&
+            hs.oxygenSaturationPct >= 55
+          ) {
+            hs.consciousness = Math.max(
+              hs.consciousness,
+              agent.triageStatus === 'MORTALLY_WOUNDED' ? 0.48 : 0.78,
+            );
+            hs.painShock = Math.min(hs.painShock, 0.52);
+            agent.adrenaline = Math.max(agent.adrenaline, 0.88);
           }
         }
         if (agent.staggerTimerS > 0) {
           agent.staggerTimerS = Math.max(0, agent.staggerTimerS - dt);
         }
 
-        // Stagger step slightly back toward cover anchor
-        this.moveHorizontalClamped(hs, agent.coverAnchorWorld.x, agent.coverAnchorWorld.z, 0.85 * dt);
-        hs.yawRad = approachAngleRad(hs.yawRad, desiredYawRad, 2.2 * dt);
+        // Brief stagger step (berserkers hold ground instead of backing up)
+        if (agent.resolveProfile !== 'FANATIC_BERSERKER') {
+          this.moveHorizontalClamped(
+            hs,
+            agent.coverAnchorWorld.x,
+            agent.coverAnchorWorld.z,
+            0.75 * dt,
+          );
+        }
+        hs.yawRad = approachAngleRad(hs.yawRad, desiredYawRad, 2.8 * dt);
 
         if (agent.staggerTimerS <= 0 && agent.neurogenicShockTimerS <= 0) {
           if (legCrippled) {
@@ -889,9 +1473,17 @@ export class TacticalCombatAiSystem {
 
       case 'ALERTED_ENGAGING': {
         const tuning = ARCHETYPE_TUNING[hs.archetype];
-        agent.peekCycleTimerS += dt;
+        const isWounded =
+          hs.currentHp < hs.maxHp * 0.92 ||
+          hs.painShock > 0.15 ||
+          hs.rupturedOrgans.size > 0;
 
-        // If disarmed or mortally wounded: retreat behind cover clutching wounds instead of peeking!
+        const cycleRate =
+          agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded ? 1.55 : 1.0;
+        agent.peekCycleTimerS += dt * cycleRate;
+
+        // ONLY genuinely disarmed combatants (`clutchingWound === true`) retreat behind cover;
+        // wounded & mortally-wounded armed combatants KEEP peeking, advancing, and returning fire!
         if (aimProfile.clutchingWound) {
           agent.isPeekingOut = false;
           agent.burstShotsRemaining = 0;
@@ -902,17 +1494,45 @@ export class TacticalCombatAiSystem {
           break;
         }
 
-        // Tactical cover peek & lateral strafe rhythm
-        const cyclePeriodS = 3.1;
+        const cyclePeriodS =
+          agent.resolveProfile === 'HARDENED_VETERAN'
+            ? 2.85
+            : agent.resolveProfile === 'PANICKED_SCRAPPER'
+              ? 2.35
+              : 3.1;
         const phase = (agent.peekCycleTimerS % cyclePeriodS) / cyclePeriodS;
-        agent.isPeekingOut = phase >= 0.22 && phase <= 0.86;
+
+        // Fanatic berserkers refuse to cower when wounded — they stay exposed & press the attack!
+        if (agent.resolveProfile === 'FANATIC_BERSERKER' && isWounded) {
+          agent.isPeekingOut = true;
+          agent.berserkerAdvanceOffsetM = Math.min(
+            2.6,
+            agent.berserkerAdvanceOffsetM + 1.25 * dt,
+          );
+        } else if (agent.resolveProfile === 'GRITTY_REGULAR' && agent.suppression > 0.62) {
+          // Gritty regulars smartly shift cover side when heavily suppressed
+          if (phase < 0.08) {
+            agent.peekSign = (agent.peekSign === 1 ? -1 : 1) as -1 | 1;
+          }
+          agent.isPeekingOut = phase >= 0.2 && phase <= 0.88;
+        } else {
+          agent.isPeekingOut = phase >= 0.2 && phase <= 0.88;
+        }
 
         const peekPlan = this.computeAlertedPeekTarget(hs, agent, playerEyeWorldPos);
         const deltaOffset = peekPlan.targetOffset - agent.currentLateralOffsetM;
+
+        const profileSpeedMul =
+          agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded
+            ? 1.38
+            : agent.resolveProfile === 'FANATIC_BERSERKER' && isWounded
+              ? 1.25
+              : 1.0;
+        const baseStrafeSpeed = tuning.strafeSpeedMs * profileSpeedMul;
         const effectiveStrafeSpeed =
           Math.abs(deltaOffset) > 1.0
-            ? Math.max(tuning.strafeSpeedMs, 2.35)
-            : tuning.strafeSpeedMs;
+            ? Math.max(baseStrafeSpeed, 2.35)
+            : baseStrafeSpeed;
         const maxStrideStep = effectiveStrafeSpeed * dt;
         agent.currentLateralOffsetM +=
           Math.abs(deltaOffset) <= maxStrideStep
@@ -920,13 +1540,20 @@ export class TacticalCombatAiSystem {
             : Math.sign(deltaOffset) * maxStrideStep;
 
         const goalX = agent.coverAnchorWorld.x + agent.currentLateralOffsetM;
-        const goalZ = peekPlan.goalZ;
+        const goalZ =
+          agent.resolveProfile === 'FANATIC_BERSERKER' && isWounded
+            ? Math.min(playerEyeWorldPos.z - 2.4, peekPlan.goalZ + agent.berserkerAdvanceOffsetM)
+            : peekPlan.goalZ;
         this.moveHorizontalClamped(hs, goalX, goalZ, effectiveStrafeSpeed * dt);
 
         // Smoothly turn yaw toward player
-        hs.yawRad = approachAngleRad(hs.yawRad, desiredYawRad, 5.2 * dt);
+        hs.yawRad = approachAngleRad(hs.yawRad, desiredYawRad, 5.4 * dt);
         if (!hs.isRagdollActive) {
-          hs.posture = 'COMBAT_READY' as CombatantPostureState;
+          if (hs.rupturedOrgans.size > 0 && hs.zoneIntegrity.TORSO_LOWER_ABDOMEN < 65) {
+            hs.posture = 'GUT_HURT';
+          } else {
+            hs.posture = 'COMBAT_READY' as CombatantPostureState;
+          }
         }
 
         if (!agent.isPeekingOut && peekPlan.anchorBlockedByCover) {
@@ -938,20 +1565,23 @@ export class TacticalCombatAiSystem {
       }
 
       case 'DOWNED_CRAWLING': {
-        if (!hs.isRagdollActive && !aimProfile.clutchingWound) {
-          hs.posture = 'LEG_BUCKLED';
+        if (!hs.isRagdollActive) {
+          hs.posture = aimProfile.clutchingWound ? 'DISARMED' : 'LEG_BUCKLED';
         }
 
-        // Crawl slowly using functional upper body while turning toward player
-        if (hs.leftArmFunctional || hs.rightArmFunctional) {
-          const crawlTargetX = agent.coverAnchorWorld.x;
-          const crawlTargetZ = agent.coverAnchorWorld.z - 0.3;
-          this.moveHorizontalClamped(hs, crawlTargetX, crawlTargetZ, 0.32 * dt);
+        // Crawl using remaining functional upper body (berserkers crawl toward the player; others toward cover!)
+        if (!hs.isRagdollActive && (hs.leftArmFunctional || hs.rightArmFunctional)) {
+          const crawlTargetX = agent.coverAnchorWorld.x + agent.peekSign * 0.35;
+          const crawlTargetZ =
+            agent.resolveProfile === 'FANATIC_BERSERKER'
+              ? Math.min(playerEyeWorldPos.z - 2.6, hs.worldPosition.z + 0.8)
+              : agent.coverAnchorWorld.z - 0.25;
+          this.moveHorizontalClamped(hs, crawlTargetX, crawlTargetZ, 0.35 * dt);
         }
 
-        hs.yawRad = approachAngleRad(hs.yawRad, desiredYawRad, 2.6 * dt);
+        hs.yawRad = approachAngleRad(hs.yawRad, desiredYawRad, 2.8 * dt);
 
-        // Leg-crippled fighters still bravely fire one-handed with 4.5x spread cone when they have clear LOS!
+        // Leg-crippled & grounded fighters fiercely return fire one-handed until killed!
         if (aimProfile.canReturnFire) {
           this.stepWeaponBurstFire(dt, hs, agent, aimProfile, playerEyeWorldPos);
         }
@@ -975,11 +1605,18 @@ export class TacticalCombatAiSystem {
     const hasCoverQueries =
       this.rapierWorld !== null || this.isLineOfSightBlockedCallback !== undefined;
 
+    const jitterScale =
+      agent.resolveProfile === 'PANICKED_SCRAPPER'
+        ? 0.46
+        : agent.resolveProfile === 'HARDENED_VETERAN'
+          ? 0.2
+          : 0.28;
+
     if (!hasCoverQueries) {
       return {
         targetOffset: agent.isPeekingOut
           ? agent.peekSign *
-            (agent.peekStrideM + Math.sin(agent.peekCycleTimerS * 2.4) * 0.28)
+            (agent.peekStrideM + Math.sin(agent.peekCycleTimerS * 2.4) * jitterScale)
           : -agent.peekSign * 0.18,
         goalZ: agent.coverAnchorWorld.z + (agent.isPeekingOut ? 0.18 : -0.12),
         anchorBlockedByCover: false,
@@ -1007,7 +1644,6 @@ export class TacticalCombatAiSystem {
       !this.isSightBlockedBySolidCover(anchorEye, playerEyeWorldPos);
 
     if (anchorClear) {
-      // Anchor itself is clear (open CQB lane, behind glass window, or looking through a blown-open breach!)
       const sideProbeOffset = agent.peekSign * Math.min(0.85, agent.peekStrideM);
       const sideCore: Vec3Like = {
         x: agent.coverAnchorWorld.x + sideProbeOffset,
@@ -1017,7 +1653,6 @@ export class TacticalCombatAiSystem {
       const sideClear = !this.isSightBlockedBySolidCover(sideCore, playerChest);
 
       if (!agent.isPeekingOut) {
-        // If there is intact solid wall immediately beside an open breach hole, duck behind that intact wall!
         for (const sign of [-agent.peekSign, agent.peekSign] as const) {
           const shelterX = agent.coverAnchorWorld.x + sign * 0.72;
           if (shelterX < -8.05 || shelterX > 8.05) continue;
@@ -1054,13 +1689,12 @@ export class TacticalCombatAiSystem {
         return {
           targetOffset:
             sideProbeOffset +
-            agent.peekSign * Math.sin(agent.peekCycleTimerS * 2.4) * 0.22,
+            agent.peekSign * Math.sin(agent.peekCycleTimerS * 2.4) * jitterScale,
           goalZ: agent.coverAnchorWorld.z + 0.18,
           anchorBlockedByCover: false,
         };
       }
 
-      // Narrow blown-open breach directly in front of anchor -> hold alignment with the breach hole!
       return {
         targetOffset: Math.sin(agent.peekCycleTimerS * 2.4) * 0.08,
         goalZ: agent.coverAnchorWorld.z + 0.12,
@@ -1068,7 +1702,6 @@ export class TacticalCombatAiSystem {
       };
     }
 
-    // Anchor is occluded behind solid opaque cover (wood, brick, concrete, or barrier)
     if (!agent.isPeekingOut) {
       return {
         targetOffset: 0,
@@ -1077,7 +1710,6 @@ export class TacticalCombatAiSystem {
       };
     }
 
-    // Probe outward left/right to find the nearest cover edge or breach hole with clear LOS to the player
     const peekZ = agent.coverAnchorWorld.z + 0.18;
     const candidateDistances = [0.55, 0.95, 1.35, 1.68, 1.98, 2.32];
     const signs: readonly (-1 | 1)[] = [
@@ -1139,18 +1771,30 @@ export class TacticalCombatAiSystem {
     agent: EnemyAiAgentRuntime,
     playerEyeWorldPos: Vec3Like,
   ): Vec3Like | null {
-    const muzzleHeight = agent.state === 'DOWNED_CRAWLING' ? 0.62 : 1.32;
-    const eyeHeight = agent.state === 'DOWNED_CRAWLING' ? 0.78 : 1.55;
+    const isGroundedOrDowned = agent.state === 'DOWNED_CRAWLING' || hs.isRagdollActive;
+    const basePos = hs.isRagdollActive
+      ? hs.ragdollBones.TORSO_UPPER_THORAX?.position ?? hs.worldPosition
+      : hs.worldPosition;
+    const muzzleHeight = hs.isRagdollActive
+      ? Math.max(0.42, basePos.y)
+      : isGroundedOrDowned
+        ? hs.worldPosition.y + 0.62
+        : hs.worldPosition.y + 1.32;
+    const eyeHeight = hs.isRagdollActive
+      ? Math.max(0.55, (hs.ragdollBones.HEAD_CRANIUM?.position.y ?? basePos.y + 0.16))
+      : isGroundedOrDowned
+        ? hs.worldPosition.y + 0.78
+        : hs.worldPosition.y + 1.55;
 
     const enemyCorePos: Vec3Like = {
-      x: hs.worldPosition.x,
-      y: hs.worldPosition.y + muzzleHeight,
-      z: hs.worldPosition.z,
+      x: basePos.x,
+      y: muzzleHeight,
+      z: basePos.z,
     };
     const enemyEyePos: Vec3Like = {
-      x: hs.worldPosition.x,
-      y: hs.worldPosition.y + eyeHeight,
-      z: hs.worldPosition.z,
+      x: basePos.x,
+      y: eyeHeight,
+      z: basePos.z,
     };
     const playerChestTarget: Vec3Like = {
       x: playerEyeWorldPos.x,
@@ -1184,6 +1828,10 @@ export class TacticalCombatAiSystem {
     playerEyeWorldPos: Vec3Like,
   ): void {
     const tuning = ARCHETYPE_TUNING[hs.archetype];
+    const isWounded =
+      hs.currentHp < hs.maxHp * 0.88 ||
+      hs.painShock > 0.18 ||
+      hs.rupturedOrgans.size > 0;
 
     if (agent.burstShotsRemaining <= 0) {
       agent.fireCooldownTimerS = Math.max(0, agent.fireCooldownTimerS - dt);
@@ -1195,7 +1843,6 @@ export class TacticalCombatAiSystem {
       playerEyeWorldPos,
     );
     if (!exposedAimTarget) {
-      // Never start or continue firing blindly into/through opaque solid cover!
       if (agent.burstShotsRemaining > 0) {
         agent.burstShotsRemaining = 0;
         agent.fireCooldownTimerS = Math.max(agent.fireCooldownTimerS, 0.25);
@@ -1203,11 +1850,24 @@ export class TacticalCombatAiSystem {
       return;
     }
 
+    agent.lastAimTargetWorld = copyVec3(exposedAimTarget);
+
     if (agent.burstShotsRemaining <= 0) {
       if (agent.fireCooldownTimerS <= 0) {
-        agent.burstShotsRemaining = aimProfile.isOneHandedDownedFire
-          ? Math.max(1, Math.ceil(tuning.burstCount * 0.5))
-          : tuning.burstCount;
+        if (aimProfile.usingBackupSidearm) {
+          // 9mm Beretta M9 double/triple-tap bursts
+          agent.burstShotsRemaining = agent.completedBurstCount % 2 === 0 ? 2 : 3;
+        } else {
+          let desiredBurst = tuning.burstCount;
+          if (agent.resolveProfile === 'FANATIC_BERSERKER' && isWounded) {
+            desiredBurst += 2;
+          } else if (agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded) {
+            desiredBurst += 3;
+          }
+          agent.burstShotsRemaining = aimProfile.isOneHandedDownedFire
+            ? Math.max(2, Math.ceil(desiredBurst * 0.65))
+            : desiredBurst;
+        }
         agent.burstInterShotTimerS = 0;
       }
       return;
@@ -1221,13 +1881,44 @@ export class TacticalCombatAiSystem {
     // Fire one round of the burst toward the verified exposed target point
     this.emitEnemyTracerShot(hs, agent, aimProfile, playerEyeWorldPos, exposedAimTarget);
 
+    const cadenceScale =
+      agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded
+        ? 0.65
+        : agent.resolveProfile === 'FANATIC_BERSERKER' && isWounded
+          ? 0.75
+          : agent.resolveProfile === 'HARDENED_VETERAN'
+            ? 0.92
+            : 1.0;
+
+    // Ragged physiological cadence jitter when critically bleeding/hypoxic (without stopping fire!)
+    const raggedWoundDelay =
+      agent.triageStatus === 'MORTALLY_WOUNDED' && agent.resolveProfile !== 'FANATIC_BERSERKER'
+        ? 1.18
+        : 1.0;
+
     agent.burstShotsRemaining -= 1;
     if (agent.burstShotsRemaining > 0) {
+      const baseInterShot = aimProfile.usingBackupSidearm
+        ? SIDEARM_M9_TUNING.interShotDelayS
+        : tuning.interShotDelayS;
       agent.burstInterShotTimerS =
-        tuning.interShotDelayS * (aimProfile.isOneHandedDownedFire ? 1.45 : 1.0);
+        baseInterShot *
+        cadenceScale *
+        raggedWoundDelay *
+        (aimProfile.isOneHandedDownedFire && !aimProfile.usingBackupSidearm ? 1.3 : 1.0);
     } else {
+      agent.completedBurstCount += 1;
+      // Hardened veterans deliberately alternate peek angles periodically between bursts
+      if (agent.resolveProfile === 'HARDENED_VETERAN' && agent.completedBurstCount % 2 === 0) {
+        agent.peekSign = (agent.peekSign === 1 ? -1 : 1) as -1 | 1;
+      }
+      const baseCooldown = aimProfile.usingBackupSidearm
+        ? SIDEARM_M9_TUNING.burstCooldownS
+        : tuning.burstCooldownS;
       agent.fireCooldownTimerS =
-        tuning.burstCooldownS * (aimProfile.isOneHandedDownedFire ? 1.35 : 1.0);
+        baseCooldown *
+        cadenceScale *
+        (aimProfile.isOneHandedDownedFire && !aimProfile.usingBackupSidearm ? 1.25 : 1.0);
     }
   }
 
@@ -1239,25 +1930,42 @@ export class TacticalCombatAiSystem {
     aimTargetPos: Vec3Like,
   ): void {
     const tuning = ARCHETYPE_TUNING[hs.archetype];
+    const usingSidearm = aimProfile.usingBackupSidearm;
+    const firingHand: ActiveFiringHand =
+      aimProfile.activeFiringHand ?? agent.activeFiringHand;
+    const firingHandZone: GhoulZoneId =
+      firingHand === 'LEFT' ? 'HAND_LEFT' : 'HAND_RIGHT';
 
-    const handPos = hs.ragdollBones.HAND_RIGHT?.position;
-    const muzzleHeight = agent.state === 'DOWNED_CRAWLING' ? 0.62 : 1.32;
-    const fwdFromYaw = { x: Math.sin(hs.yawRad), y: 0, z: Math.cos(hs.yawRad) };
+    const handBone = hs.ragdollBones[firingHandZone];
+    const handPos = handBone && !handBone.severed ? handBone.position : undefined;
 
-    // Physical raycast always originates at the enemy's chest/shoulder core BEFORE pushing 0.38m forward
-    // so an enemy standing close behind cover can never poke a virtual muzzle through a wall!
+    const isGroundedOrDowned = agent.state === 'DOWNED_CRAWLING' || hs.isRagdollActive;
+    const basePos = hs.isRagdollActive
+      ? hs.ragdollBones.TORSO_UPPER_THORAX?.position ?? hs.worldPosition
+      : hs.worldPosition;
+    const muzzleHeight = hs.isRagdollActive
+      ? Math.max(0.42, basePos.y)
+      : isGroundedOrDowned
+        ? hs.worldPosition.y + 0.62
+        : hs.worldPosition.y + 1.32;
+
     const coreOrigin: Vec3Like = {
-      x: hs.worldPosition.x,
-      y: hs.worldPosition.y + muzzleHeight,
-      z: hs.worldPosition.z,
+      x: basePos.x,
+      y: muzzleHeight,
+      z: basePos.z,
     };
 
+    const idealDir = normalize(sub(aimTargetPos, coreOrigin));
+    const fwdDir = usingSidearm
+      ? idealDir
+      : { x: Math.sin(hs.yawRad), y: 0, z: Math.cos(hs.yawRad) };
+
     const rawMuzzleOrigin: Vec3Like = handPos
-      ? add(handPos, scale(fwdFromYaw, 0.28))
+      ? add(handPos, scale(fwdDir, usingSidearm ? 0.19 : 0.28))
       : {
-          x: hs.worldPosition.x + fwdFromYaw.x * 0.38,
-          y: hs.worldPosition.y + muzzleHeight,
-          z: hs.worldPosition.z + fwdFromYaw.z * 0.38,
+          x: coreOrigin.x + fwdDir.x * 0.38,
+          y: muzzleHeight,
+          z: coreOrigin.z + fwdDir.z * 0.38,
         };
 
     const playerChestTarget: Vec3Like = {
@@ -1266,7 +1974,6 @@ export class TacticalCombatAiSystem {
       z: playerEyeWorldPos.z,
     };
 
-    const idealDir = normalize(sub(aimTargetPos, coreOrigin));
     const seed = agent.tracerSeedCounter++;
     const shotDir = deterministicConeSpread(
       idealDir,
@@ -1276,7 +1983,6 @@ export class TacticalCombatAiSystem {
       seed * 31,
     );
 
-    // Evaluate closest approach of shotDir ray from coreOrigin to player torso/head cylinder (radius 0.36m)
     const toChest = sub(playerChestTarget, coreOrigin);
     const alongChest = dot(toChest, shotDir);
     const closestChestPt =
@@ -1301,9 +2007,6 @@ export class TacticalCombatAiSystem {
     const playerHitPoint =
       missDistChest <= 0.36 ? closestChestPt : closestAimPt;
 
-    // Check cover strictly across [0, playerHitDist] when aligned with the player (so cover behind the player
-    // never blocks front hits, while even <0.05m close cover in front of enemy or player ALWAYS intercepts!),
-    // or across [0, playerHitDist + 6.0] on missed spread shots so stray tracers hit backstop walls.
     const coverCheckDist = wouldHitPlayer
       ? Math.max(0.05, playerHitDist)
       : playerHitDist + 6.0;
@@ -1347,6 +2050,13 @@ export class TacticalCombatAiSystem {
         ? coreOrigin
         : rawMuzzleOrigin;
 
+    const tracerSpeedMs = usingSidearm
+      ? SIDEARM_M9_TUNING.tracerSpeedMs
+      : tuning.tracerSpeedMs;
+    const rawChip = usingSidearm
+      ? SIDEARM_M9_TUNING.baseChipDamage
+      : tuning.baseChipDamage;
+
     let hitPlayer = false;
     let armorChipApplied = 0;
     let healthDamageApplied = 0;
@@ -1359,7 +2069,6 @@ export class TacticalCombatAiSystem {
         this.playerVitals.damageEnabled &&
         this.playerVitals.invulnerabilityRemainingS <= 0
       ) {
-        const rawChip = tuning.baseChipDamage;
         if (this.playerVitals.armor > 0) {
           armorChipApplied = Math.min(this.playerVitals.armor, rawChip * 0.7);
           this.playerVitals.armor = Math.max(
@@ -1371,7 +2080,6 @@ export class TacticalCombatAiSystem {
           healthDamageApplied = rawChip;
         }
 
-        // Never allow cheap arcade one-shots — keep player at >= 1 HP or fair chip floor
         this.playerVitals.health = Math.max(
           0,
           this.playerVitals.health - healthDamageApplied,
@@ -1384,10 +2092,10 @@ export class TacticalCombatAiSystem {
     if (this.tracerPool) {
       const quat = this.computeTracerOrientationQuat(shotDir);
       const flightDist = distance(muzzleOrigin, impactPointWorld);
-      const ttl = Math.max(0.05, Math.min(0.28, flightDist / tuning.tracerSpeedMs));
+      const ttl = Math.max(0.05, Math.min(0.28, flightDist / tracerSpeedMs));
       this.tracerPool.spawnKinematicParticle(
         muzzleOrigin,
-        scale(shotDir, tuning.tracerSpeedMs),
+        scale(shotDir, tracerSpeedMs),
         vec3(0, 0, 0),
         { x: 0.024, y: 0.024, z: 0.95 },
         0,
@@ -1403,13 +2111,16 @@ export class TacticalCombatAiSystem {
       muzzleOriginWorld: muzzleOrigin,
       shotDirectionWorld: shotDir,
       impactPointWorld,
-      tracerSpeedMs: tuning.tracerSpeedMs,
+      tracerSpeedMs,
       spreadConeRad: aimProfile.effectiveSpreadRad,
       spreadMultiplier: aimProfile.spreadMultiplier,
       hitPlayer,
       blockedByCover,
       armorChipApplied,
       healthDamageApplied,
+      activeFiringHand: firingHand,
+      usedBackupSidearm: usingSidearm,
+      weaponId: usingSidearm ? SIDEARM_M9_TUNING.weaponId : tuning.primaryWeaponId,
     };
 
     this.onEnemyFireTracer?.(event);
@@ -1441,7 +2152,6 @@ export class TacticalCombatAiSystem {
     const hits = this.rapierWorld.castPenetrationRay(eyeOrigin, dir, maxDist);
     for (const h of hits) {
       if (h.distanceM > maxDist) continue;
-      // Transparent glass panes do NOT block visual sight!
       if (
         h.surface.material === 'GLASS_MARCHING_256' ||
         h.surface.material === 'GLASS_VORONOI'
@@ -1511,7 +2221,6 @@ export class TacticalCombatAiSystem {
       return;
     }
 
-    // Axis-separated wall sliding so enemies close behind cover still strafe freely along X
     if (Math.abs(dx) > 1e-5) {
       const slideX = Math.sign(dx) * Math.min(Math.abs(dx), maxStepM);
       if (

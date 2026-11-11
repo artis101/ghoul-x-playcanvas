@@ -419,6 +419,21 @@ export interface TargetHealthState {
   rightArmFunctional: boolean;
   headgearIntact: boolean;
   weaponDropped: boolean;
+  /** True when the primary weapon was dropped due to direct arm/hand trauma or disarm rather than leg knockdown */
+  primaryArmDisarmed?: boolean;
+  /** Optional live tactical resolve archetype for AI & HUD telemetry */
+  resolveProfile?:
+    | 'HARDENED_VETERAN'
+    | 'FANATIC_BERSERKER'
+    | 'GRITTY_REGULAR'
+    | 'PANICKED_SCRAPPER';
+  /** Optional combatant tactical status badge surfaced in HUD triage overlays */
+  combatantStatusTag?:
+    | 'SIDEARM_DRAWN'
+    | 'SIDEARM_DRAWING'
+    | 'LAST_STAND'
+    | 'DISARMED'
+    | null;
   hasChestArmor: boolean;
   chestArmorIntegrity: number;
   hasHelmetArmor: boolean;

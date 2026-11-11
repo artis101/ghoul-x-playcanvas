@@ -1308,11 +1308,9 @@ export function simulateShot(
           combatantEffectsSet.add(`GHOUL Clean Sever — ${GHOUL_ZONE_HIERARCHY[zone].label} Amputated`);
         }
 
-        const severDisarmsTrigger = target.isLeftHanded
-          ? zone === 'HAND_RIGHT'
-          : zone === 'HAND_LEFT';
         if (
-          severDisarmsTrigger ||
+          zone === 'HAND_LEFT' ||
+          zone === 'HAND_RIGHT' ||
           zone === 'UPPER_ARM_LEFT' ||
           zone === 'FOREARM_LEFT' ||
           zone === 'UPPER_ARM_RIGHT' ||
@@ -1584,7 +1582,10 @@ export function applyShotReportToTarget(
   if (report.headgearKnockedOff) {
     target.headgearIntact = false;
   }
-  if (report.weaponDisarmed || !target.alive) {
+  if (report.weaponDisarmed) {
+    target.weaponDropped = true;
+    target.primaryArmDisarmed = true;
+  } else if (!target.alive) {
     target.weaponDropped = true;
   }
 
@@ -1681,10 +1682,12 @@ export function applyShotReportToTarget(
       if (w.ghoulZone === 'UPPER_ARM_LEFT' || w.ghoulZone === 'FOREARM_LEFT') {
         target.leftArmFunctional = false;
         target.weaponDropped = true;
+        target.primaryArmDisarmed = true;
       }
       if (w.ghoulZone === 'UPPER_ARM_RIGHT' || w.ghoulZone === 'FOREARM_RIGHT') {
         target.rightArmFunctional = false;
         target.weaponDropped = true;
+        target.primaryArmDisarmed = true;
       }
     }
 
@@ -1825,15 +1828,13 @@ export function applyShotReportToTarget(
     }
     if (dism.zone === 'UPPER_ARM_LEFT' || dism.zone === 'FOREARM_LEFT' || dism.zone === 'HAND_LEFT') {
       target.leftArmFunctional = false;
-      if (!target.isLeftHanded || dism.zone !== 'HAND_LEFT') {
-        target.weaponDropped = true;
-      }
+      target.weaponDropped = true;
+      target.primaryArmDisarmed = true;
     }
     if (dism.zone === 'UPPER_ARM_RIGHT' || dism.zone === 'FOREARM_RIGHT' || dism.zone === 'HAND_RIGHT') {
       target.rightArmFunctional = false;
-      if (target.isLeftHanded || dism.zone !== 'HAND_RIGHT') {
-        target.weaponDropped = true;
-      }
+      target.weaponDropped = true;
+      target.primaryArmDisarmed = true;
     }
   }
 
@@ -1869,15 +1870,13 @@ export function applyShotReportToTarget(
     let rxDurationS = 0.65;
 
     if (!target.leftLegFunctional || !target.rightLegFunctional) {
-      // Any disabled/shot/severed leg triggers a brief stumble (~0.46s-0.68s) before going down ALIVE!
+      // Any disabled/shot/severed leg triggers a brief stumble (~0.46s-0.68s) before going down ALIVE — while retaining weapon!
       rxType = !target.leftLegFunctional ? 'LEG_BUCKLE_LEFT' : 'LEG_BUCKLE_RIGHT';
       rxDurationS = newlySeveredLeftLeg || newlySeveredRightLeg ? 0.68 : 0.46;
       target.posture = 'LEG_BUCKLED';
-      target.weaponDropped = true;
     } else if (hitZone === 'NECK_CERVICAL') {
       rxType = 'THROAT_CLUTCH';
       target.posture = 'THROAT_CLUTCH';
-      target.weaponDropped = true;
     } else if (hitZone === 'TORSO_LOWER_ABDOMEN') {
       rxType = 'GUT_FOLD';
       target.posture = 'GUT_HURT';
