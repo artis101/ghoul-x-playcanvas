@@ -12,6 +12,7 @@ import type {
   BallisticSegmentImpact,
   BlastEvent,
   ColliderSurfaceTag,
+  DestructibleMaterialKind,
   IDestructibleSubsystem,
   QuatLike,
 } from '../../contracts/destruction.ts';
@@ -401,7 +402,7 @@ export class BulletTimeController {
 }
 
 // ============================================================================
-// 2. Procedural Meshes, Materials & Quaternion Surface Alignment Helpers
+// 2. Procedural Meshes, PBR Materials & Quaternion Surface Alignment Helpers
 // ============================================================================
 
 function clampByte(v: number): number {
@@ -415,6 +416,26 @@ function hash2d(x: number, y: number, seed: number): number {
   );
   n = (n ^ (n >>> 13)) >>> 0;
   return (n & 0xffff) / 0xffff;
+}
+
+function valueNoise2d(u: number, v: number, freq: number, seed: number): number {
+  const x = u * freq;
+  const y = v * freq;
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = x - x0;
+  const fy = y - y0;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+
+  const n00 = hash2d(x0, y0, seed);
+  const n10 = hash2d(x0 + 1, y0, seed);
+  const n01 = hash2d(x0, y0 + 1, seed);
+  const n11 = hash2d(x0 + 1, y0 + 1, seed);
+
+  const nx0 = n00 + (n10 - n00) * sx;
+  const nx1 = n01 + (n11 - n01) * sx;
+  return nx0 + (nx1 - nx0) * sy;
 }
 
 /**
@@ -480,6 +501,20 @@ export function basisColumnsToQuaternion(
   }
   const inv = 1 / len;
   return { x: qx * inv, y: qy * inv, z: qz * inv, w: qw * inv };
+}
+
+/**
+ * Computes a quaternion orienting a local `+Z` streak axis along `directionWorld`.
+ */
+function directionToStreakQuaternion(directionWorld: Vec3Like): QuatLike {
+  const n = normalize(directionWorld);
+  if (length(n) < 1e-6) {
+    return { x: 0, y: 0, z: 0, w: 1 };
+  }
+  const upRef = Math.abs(n.y) < 0.96 ? vec3(0, 1, 0) : vec3(1, 0, 0);
+  const t = normalize(cross(upRef, n));
+  const b = normalize(cross(n, t));
+  return basisColumnsToQuaternion(t.x, t.y, t.z, b.x, b.y, b.z, n.x, n.y, n.z);
 }
 
 /**
@@ -651,6 +686,45 @@ function buildLoftedDrumMesh(
   return mesh;
 }
 
+/**
+ * Builds a crossed 2-plane streak mesh aligned along local `+Z` (`z in [-0.5, 0.5]`)
+ * so bullet tracers and ricochet sparks are bright from every camera angle with minimal triangles.
+ */
+function buildCrossedStreakZMesh(device: pc.GraphicsDevice): pc.Mesh {
+  const positions = [
+    // Horizontal fin (XZ plane, Y = 0)
+    -0.5, 0, -0.5,
+    0.5, 0, -0.5,
+    0.5, 0, 0.5,
+    -0.5, 0, 0.5,
+    // Vertical fin (YZ plane, X = 0)
+    0, -0.5, -0.5,
+    0, 0.5, -0.5,
+    0, 0.5, 0.5,
+    0, -0.5, 0.5,
+  ];
+  const normals = [
+    0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0,
+    1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0,
+  ];
+  const uvs = [
+    0, 0, 1, 0, 1, 1, 0, 1,
+    0, 0, 1, 0, 1, 1, 0, 1,
+  ];
+  const indices = [
+    0, 1, 2, 0, 2, 3,
+    4, 5, 6, 4, 6, 7,
+  ];
+
+  const mesh = new pc.Mesh(device);
+  mesh.setPositions(positions);
+  mesh.setNormals(normals);
+  mesh.setUvs(0, uvs);
+  mesh.setIndices(indices);
+  mesh.update(pc.PRIMITIVE_TRIANGLES);
+  return mesh;
+}
+
 function buildUnitQuadZMesh(device: pc.GraphicsDevice): pc.Mesh {
   const mesh = new pc.Mesh(device);
   mesh.setPositions([
@@ -677,57 +751,78 @@ function buildUnitQuadZMesh(device: pc.GraphicsDevice): pc.Mesh {
 }
 
 function createHazardBarrelMaterial(device: pc.GraphicsDevice): pc.StandardMaterial {
-  const width = 64;
-  const height = 128;
+  const width = 128;
+  const height = 256;
+  const maxAniso = Math.min(device.maxAnisotropy || 4, 8);
   const tex = new pc.Texture(device, {
     name: 'hazardDrumTex',
     width,
     height,
     format: pc.PIXELFORMAT_RGBA8,
-    mipmaps: false,
-    minFilter: pc.FILTER_NEAREST,
-    magFilter: pc.FILTER_NEAREST,
+    mipmaps: true,
+    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
     addressU: pc.ADDRESS_REPEAT,
     addressV: pc.ADDRESS_CLAMP_TO_EDGE,
   });
+  tex.anisotropy = maxAniso;
+
+  const normalTex = new pc.Texture(device, {
+    name: 'hazardDrumNormalTex',
+    width,
+    height,
+    format: pc.PIXELFORMAT_RGBA8,
+    mipmaps: true,
+    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
+    addressU: pc.ADDRESS_REPEAT,
+    addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+  });
+  normalTex.anisotropy = maxAniso;
 
   const pixels = tex.lock() as Uint8Array;
+  const nPixels = normalTex.lock() as Uint8Array;
+  const hField = new Float32Array(width * height);
+
   for (let y = 0; y < height; y++) {
     const v = y / height;
     for (let x = 0; x < width; x++) {
       const u = x / width;
-      const grit = (hash2d(x, y, 71) - 0.5) * 20;
+      const grit = (hash2d(x, y, 71) - 0.5) * 16;
+      const scratch = valueNoise2d(u, v, 24, 173);
 
-      // Industrial red drum body with bright yellow/black hazard center band & metallic chimes
-      let r = 188 + grit;
-      let g = 24 + grit * 0.3;
-      let b = 22 + grit * 0.3;
+      let r = 192 + grit;
+      let g = 22 + grit * 0.3;
+      let b = 20 + grit * 0.3;
 
       const isRimRing =
         v < 0.045 ||
         v > 0.955 ||
-        Math.abs(v - 0.33) < 0.026 ||
-        Math.abs(v - 0.67) < 0.026;
+        Math.abs(v - 0.33) < 0.024 ||
+        Math.abs(v - 0.67) < 0.024;
 
+      let heightVal = scratch * 0.25;
       if (isRimRing) {
-        r = 74 + grit;
-        g = 76 + grit;
-        b = 80 + grit;
+        r = 88 + grit + (scratch > 0.72 ? 36 : 0);
+        g = 90 + grit + (scratch > 0.72 ? 36 : 0);
+        b = 96 + grit + (scratch > 0.72 ? 38 : 0);
+        heightVal = 0.85 + scratch * 0.15;
       } else if (v > 0.37 && v < 0.63) {
-        // Yellow hazard band with diagonal black/amber warning stripes near borders
-        const inChevronBand = v < 0.42 || v > 0.58;
-        const stripe = ((Math.floor(u * 16 + v * 28) % 2) + 2) % 2 === 0;
+        const inChevronBand = v < 0.425 || v > 0.575;
+        const stripe = ((Math.floor(u * 18 + v * 30) % 2) + 2) % 2 === 0;
         if (inChevronBand && stripe) {
-          r = 28 + grit * 0.4;
-          g = 26 + grit * 0.4;
-          b = 24 + grit * 0.4;
+          r = 24 + grit * 0.35;
+          g = 23 + grit * 0.35;
+          b = 22 + grit * 0.35;
         } else {
-          r = 236 + grit * 0.6;
-          g = 192 + grit * 0.6;
-          b = 24 + grit * 0.3;
+          r = 238 + grit * 0.5;
+          g = 194 + grit * 0.5;
+          b = 22 + grit * 0.3;
         }
+        heightVal = 0.35 + scratch * 0.15;
       }
 
+      hField[y * width + x] = heightVal;
       const idx = (y * width + x) * 4;
       pixels[idx] = clampByte(r);
       pixels[idx + 1] = clampByte(g);
@@ -735,13 +830,39 @@ function createHazardBarrelMaterial(device: pc.GraphicsDevice): pc.StandardMater
       pixels[idx + 3] = 255;
     }
   }
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const xm = (x - 1 + width) % width;
+      const xp = (x + 1) % width;
+      const ym = Math.max(0, y - 1);
+      const yp = Math.min(height - 1, y + 1);
+      const nx = (hField[y * width + xm] - hField[y * width + xp]) * 2.2;
+      const ny = (hField[ym * width + x] - hField[yp * width + x]) * 2.2;
+      const nz = 1.0;
+      const inv = 1 / Math.hypot(nx, ny, nz);
+      const idx = (y * width + x) * 4;
+      nPixels[idx] = clampByte((nx * inv * 0.5 + 0.5) * 255);
+      nPixels[idx + 1] = clampByte((ny * inv * 0.5 + 0.5) * 255);
+      nPixels[idx + 2] = clampByte((nz * inv * 0.5 + 0.5) * 255);
+      nPixels[idx + 3] = 255;
+    }
+  }
+
   tex.unlock();
+  normalTex.unlock();
 
   const mat = new pc.StandardMaterial();
   mat.name = 'hazardBarrelRedMat';
   mat.diffuseMap = tex;
-  mat.specular = new pc.Color(0.38, 0.34, 0.3);
-  mat.shininess = 52;
+  mat.normalMap = normalTex;
+  mat.bumpiness = 0.72;
+  mat.useMetalness = true;
+  mat.metalness = 0.42;
+  mat.gloss = 0.68;
+  mat.clearCoat = 0.25;
+  mat.clearCoatGloss = 0.78;
+  mat.fresnelModel = pc.FRESNEL_SCHLICK;
   mat.update();
   return mat;
 }
@@ -749,68 +870,25 @@ function createHazardBarrelMaterial(device: pc.GraphicsDevice): pc.StandardMater
 function createCharredBarrelMaterial(): pc.StandardMaterial {
   const mat = new pc.StandardMaterial();
   mat.name = 'charredBarrelRemnantMat';
-  mat.diffuse = new pc.Color(0.09, 0.08, 0.08);
-  mat.emissive = new pc.Color(0.08, 0.02, 0.005);
-  mat.specular = new pc.Color(0.14, 0.12, 0.11);
-  mat.shininess = 22;
+  mat.diffuse = new pc.Color(0.08, 0.075, 0.075);
+  mat.emissive = new pc.Color(0.09, 0.022, 0.005);
+  mat.useMetalness = true;
+  mat.metalness = 0.35;
+  mat.gloss = 0.26;
+  mat.fresnelModel = pc.FRESNEL_SCHLICK;
   mat.update();
   return mat;
 }
 
 function createScorchDecalMaterial(device: pc.GraphicsDevice): pc.StandardMaterial {
-  const size = 64;
+  const size = 128;
   const tex = new pc.Texture(device, {
     name: 'barrelScorchTex',
     width: size,
     height: size,
     format: pc.PIXELFORMAT_RGBA8,
-    mipmaps: false,
-    minFilter: pc.FILTER_LINEAR,
-    magFilter: pc.FILTER_LINEAR,
-    addressU: pc.ADDRESS_CLAMP_TO_EDGE,
-    addressV: pc.ADDRESS_CLAMP_TO_EDGE,
-  });
-
-  const pixels = tex.lock() as Uint8Array;
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const dx = (x + 0.5) / size - 0.5;
-      const dy = (y + 0.5) / size - 0.5;
-      const angleSector = Math.floor((Math.atan2(dy, dx) + Math.PI) * 5.1);
-      const rayNoise = hash2d(angleSector, 3, 409) * 0.14;
-      const fineNoise = hash2d(x, y, 419) * 0.08;
-      const dist = Math.hypot(dx, dy) - rayNoise - fineNoise;
-
-      const alpha = Math.max(0, Math.min(1, (0.44 - dist) / 0.24));
-      const idx = (y * size + x) * 4;
-      pixels[idx] = 16;
-      pixels[idx + 1] = 13;
-      pixels[idx + 2] = 12;
-      pixels[idx + 3] = clampByte(alpha * 232);
-    }
-  }
-  tex.unlock();
-
-  const mat = new pc.StandardMaterial();
-  mat.name = 'barrelFloorScorchMat';
-  mat.diffuse = new pc.Color(0.06, 0.05, 0.05);
-  mat.opacityMap = tex;
-  mat.opacityMapChannel = 'a';
-  mat.blendType = pc.BLEND_NORMAL;
-  mat.depthWrite = false;
-  mat.update();
-  return mat;
-}
-
-function createBloodSplatterMaterial(device: pc.GraphicsDevice): pc.StandardMaterial {
-  const size = 64;
-  const tex = new pc.Texture(device, {
-    name: 'goreWallSplatterTex',
-    width: size,
-    height: size,
-    format: pc.PIXELFORMAT_RGBA8,
-    mipmaps: false,
-    minFilter: pc.FILTER_LINEAR,
+    mipmaps: true,
+    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
     magFilter: pc.FILTER_LINEAR,
     addressU: pc.ADDRESS_CLAMP_TO_EDGE,
     addressV: pc.ADDRESS_CLAMP_TO_EDGE,
@@ -822,40 +900,143 @@ function createBloodSplatterMaterial(device: pc.GraphicsDevice): pc.StandardMate
       const u = (x + 0.5) / size;
       const v = (y + 0.5) / size;
       const dx = u - 0.5;
-      const dy = v - 0.54;
+      const dy = v - 0.5;
+      const angle = Math.atan2(dy, dx);
+      const sootRay = Math.sin(angle * 11.0) * 0.04 + Math.cos(angle * 19.0) * 0.03;
+      const rayNoise = valueNoise2d(u, v, 9, 409) * 0.12;
+      const fineNoise = hash2d(x, y, 419) * 0.05;
+      const dist = Math.hypot(dx, dy) - sootRay - rayNoise - fineNoise;
 
-      const radialSector = Math.floor((Math.atan2(dy, dx) + Math.PI) * 7.5);
-      const streak = hash2d(radialSector, 11, 911) * 0.17;
-      const drip = u > 0.34 && u < 0.66 && v < 0.45 ? hash2d(x >> 1, 7, 977) * 0.16 : 0;
-      const speckle = hash2d(x, y, 953);
-
-      const dist = Math.hypot(dx, dy * 0.92) - streak - drip;
-      let alpha = 0;
-      if (dist < 0.24) {
-        alpha = 0.95;
-      } else if (dist < 0.34) {
-        alpha = ((0.34 - dist) / 0.1) * 0.88;
-      } else if (dist < 0.45 && speckle > 0.84) {
-        alpha = 0.85;
-      }
-
-      const coreDark = dist < 0.13 ? 0.68 : 1.0;
+      const alpha = Math.max(0, Math.min(1, (0.42 - dist) / 0.24));
+      const ashTint = dist > 0.22 ? 26 : 12;
       const idx = (y * size + x) * 4;
-      pixels[idx] = clampByte(148 * coreDark);
-      pixels[idx + 1] = clampByte(8 * coreDark);
-      pixels[idx + 2] = clampByte(12 * coreDark);
-      pixels[idx + 3] = clampByte(alpha * 255);
+      pixels[idx] = ashTint;
+      pixels[idx + 1] = ashTint - 2;
+      pixels[idx + 2] = ashTint - 2;
+      pixels[idx + 3] = clampByte(alpha * 238);
     }
   }
   tex.unlock();
+
+  const mat = new pc.StandardMaterial();
+  mat.name = 'barrelFloorScorchMat';
+  mat.diffuse = new pc.Color(0.05, 0.045, 0.045);
+  mat.opacityMap = tex;
+  mat.opacityMapChannel = 'a';
+  mat.blendType = pc.BLEND_NORMAL;
+  mat.depthWrite = false;
+  mat.update();
+  return mat;
+}
+
+function createBloodSplatterMaterial(device: pc.GraphicsDevice): pc.StandardMaterial {
+  const size = 128;
+  const maxAniso = Math.min(device.maxAnisotropy || 4, 8);
+  const tex = new pc.Texture(device, {
+    name: 'goreWallSplatterTex',
+    width: size,
+    height: size,
+    format: pc.PIXELFORMAT_RGBA8,
+    mipmaps: true,
+    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
+    addressU: pc.ADDRESS_CLAMP_TO_EDGE,
+    addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+  });
+  tex.anisotropy = maxAniso;
+
+  const normalTex = new pc.Texture(device, {
+    name: 'goreWallSplatterNormalTex',
+    width: size,
+    height: size,
+    format: pc.PIXELFORMAT_RGBA8,
+    mipmaps: true,
+    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
+    addressU: pc.ADDRESS_CLAMP_TO_EDGE,
+    addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+  });
+  normalTex.anisotropy = maxAniso;
+
+  const pixels = tex.lock() as Uint8Array;
+  const nPixels = normalTex.lock() as Uint8Array;
+  const heightField = new Float32Array(size * size);
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = (x + 0.5) / size;
+      const v = (y + 0.5) / size;
+      const dx = u - 0.5;
+      const dy = v - 0.54;
+      const angle = Math.atan2(dy, dx);
+
+      const radialFinger =
+        Math.pow(Math.max(0, Math.sin(angle * 7.0 + 0.4)), 2.0) * 0.085 +
+        Math.pow(Math.max(0, Math.cos(angle * 13.0 - 1.1)), 3.0) * 0.065;
+      const organicWarp = (valueNoise2d(u, v, 8, 911) - 0.5) * 0.11;
+      const drip =
+        u > 0.32 && u < 0.68 && v < 0.46
+          ? Math.pow(valueNoise2d(u * 2.2, v * 0.45, 7, 977), 2.2) * 0.19
+          : 0;
+      const speckle = valueNoise2d(u, v, 24, 953);
+
+      const dist = Math.hypot(dx, dy * 0.92) - radialFinger - organicWarp - drip;
+      let alpha = 0;
+      if (dist < 0.22) {
+        alpha = 0.97;
+      } else if (dist < 0.31) {
+        const t = (0.31 - dist) / 0.09;
+        alpha = t * t * (3 - 2 * t) * 0.94;
+      } else if (dist < 0.45 && speckle > 0.79) {
+        alpha = ((speckle - 0.79) / 0.21) * 0.9;
+      }
+
+      heightField[y * size + x] = alpha > 0.05 ? Math.min(1.0, alpha * 0.8 + (dist < 0.24 ? 0.2 : 0)) : 0;
+
+      // Deep oxygenated wet crimson -> dark venous maroon center (never flat neon red!)
+      const coreDark = dist < 0.13 ? 0.56 : dist < 0.22 ? 0.78 : 1.0;
+      const idx = (y * size + x) * 4;
+      pixels[idx] = clampByte(112 * coreDark);
+      pixels[idx + 1] = clampByte(6 * coreDark);
+      pixels[idx + 2] = clampByte(10 * coreDark);
+      pixels[idx + 3] = clampByte(alpha * 255);
+    }
+  }
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const xm = Math.max(0, x - 1);
+      const xp = Math.min(size - 1, x + 1);
+      const ym = Math.max(0, y - 1);
+      const yp = Math.min(size - 1, y + 1);
+      const nx = (heightField[y * size + xm] - heightField[y * size + xp]) * 2.6;
+      const ny = (heightField[ym * size + x] - heightField[yp * size + x]) * 2.6;
+      const nz = 1.0;
+      const inv = 1 / Math.hypot(nx, ny, nz);
+      const idx = (y * size + x) * 4;
+      nPixels[idx] = clampByte((nx * inv * 0.5 + 0.5) * 255);
+      nPixels[idx + 1] = clampByte((ny * inv * 0.5 + 0.5) * 255);
+      nPixels[idx + 2] = clampByte((nz * inv * 0.5 + 0.5) * 255);
+      nPixels[idx + 3] = 255;
+    }
+  }
+
+  tex.unlock();
+  normalTex.unlock();
 
   const mat = new pc.StandardMaterial();
   mat.name = 'wetWallBloodSplatterMat';
   mat.diffuseMap = tex;
   mat.opacityMap = tex;
   mat.opacityMapChannel = 'a';
-  mat.specular = new pc.Color(0.62, 0.12, 0.12);
-  mat.shininess = 88;
+  mat.normalMap = normalTex;
+  mat.bumpiness = 0.78;
+  mat.useMetalness = true;
+  mat.metalness = 0.1;
+  mat.gloss = 0.9;
+  mat.clearCoat = 0.88;
+  mat.clearCoatGloss = 0.95;
+  mat.fresnelModel = pc.FRESNEL_SCHLICK;
   mat.blendType = pc.BLEND_NORMAL;
   mat.depthWrite = false;
   mat.cull = pc.CULLFACE_NONE;
@@ -863,50 +1044,252 @@ function createBloodSplatterMaterial(device: pc.GraphicsDevice): pc.StandardMate
   return mat;
 }
 
-function createShotgunHullMaterial(device: pc.GraphicsDevice): pc.StandardMaterial {
-  const width = 16;
-  const height = 64;
+function createGleamingBrassCasingMaterial(device: pc.GraphicsDevice): pc.StandardMaterial {
+  const size = 64;
+  const maxAniso = Math.min(device.maxAnisotropy || 4, 8);
   const tex = new pc.Texture(device, {
-    name: 'shotgun12gHullTex',
-    width,
-    height,
+    name: 'brassCasingLatheTex',
+    width: size,
+    height: size,
     format: pc.PIXELFORMAT_RGBA8,
-    mipmaps: false,
-    minFilter: pc.FILTER_NEAREST,
-    magFilter: pc.FILTER_NEAREST,
+    mipmaps: true,
+    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
     addressU: pc.ADDRESS_REPEAT,
     addressV: pc.ADDRESS_CLAMP_TO_EDGE,
   });
+  tex.anisotropy = maxAniso;
 
-  const pixels = tex.lock() as Uint8Array;
-  for (let y = 0; y < height; y++) {
-    const v = y / height;
-    for (let x = 0; x < width; x++) {
-      // Bottom 28% = high-brass 12G head; upper 72% = ribbed crimson polymer hull
-      const isBrassBase = v < 0.28;
-      const rib = x % 2 === 0 ? 1.0 : 0.9;
-      const idx = (y * width + x) * 4;
-      if (isBrassBase) {
-        pixels[idx] = 224;
-        pixels[idx + 1] = 178;
-        pixels[idx + 2] = 72;
-      } else {
-        pixels[idx] = clampByte(205 * rib);
-        pixels[idx + 1] = clampByte(24 * rib);
-        pixels[idx + 2] = clampByte(28 * rib);
-      }
-      pixels[idx + 3] = 255;
+  const px = tex.lock() as Uint8Array;
+  for (let y = 0; y < size; y++) {
+    const v = y / size;
+    // Annealed neck darkening near case mouth (v > 0.78) + extractor rim groove (v < 0.08)
+    const annealTint = v > 0.76 ? (v - 0.76) / 0.24 : 0;
+    const grooveShade = v > 0.05 && v < 0.11 ? 0.72 : 1.0;
+    const latheRing = 0.96 + Math.sin(v * Math.PI * 28) * 0.04;
+    for (let x = 0; x < size; x++) {
+      const idx = (y * size + x) * 4;
+      const r = (242 - annealTint * 34) * grooveShade * latheRing;
+      const g = (196 - annealTint * 48) * grooveShade * latheRing;
+      const b = (86 + annealTint * 22) * grooveShade * latheRing;
+      px[idx] = clampByte(r);
+      px[idx + 1] = clampByte(g);
+      px[idx + 2] = clampByte(b);
+      px[idx + 3] = 255;
     }
   }
   tex.unlock();
 
   const mat = new pc.StandardMaterial();
-  mat.name = 'shotgun12gHullMat';
+  mat.name = 'mayhemGlintingBrassMat';
   mat.diffuseMap = tex;
-  mat.specular = new pc.Color(0.55, 0.45, 0.28);
-  mat.shininess = 68;
+  mat.emissive = new pc.Color(0.11, 0.075, 0.018);
+  mat.useMetalness = true;
+  mat.metalness = 0.9;
+  mat.gloss = 0.88;
+  mat.clearCoat = 0.35;
+  mat.clearCoatGloss = 0.92;
+  mat.fresnelModel = pc.FRESNEL_SCHLICK;
   mat.update();
   return mat;
+}
+
+function createShotgunHullMaterial(device: pc.GraphicsDevice): pc.StandardMaterial {
+  const width = 64;
+  const height = 128;
+  const maxAniso = Math.min(device.maxAnisotropy || 4, 8);
+  const tex = new pc.Texture(device, {
+    name: 'shotgun12gHullTex',
+    width,
+    height,
+    format: pc.PIXELFORMAT_RGBA8,
+    mipmaps: true,
+    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
+    addressU: pc.ADDRESS_REPEAT,
+    addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+  });
+  tex.anisotropy = maxAniso;
+
+  const normalTex = new pc.Texture(device, {
+    name: 'shotgun12gHullNormalTex',
+    width,
+    height,
+    format: pc.PIXELFORMAT_RGBA8,
+    mipmaps: true,
+    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
+    addressU: pc.ADDRESS_REPEAT,
+    addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+  });
+  normalTex.anisotropy = maxAniso;
+
+  const pixels = tex.lock() as Uint8Array;
+  const nPixels = normalTex.lock() as Uint8Array;
+  const hField = new Float32Array(width * height);
+
+  for (let y = 0; y < height; y++) {
+    const v = y / height;
+    for (let x = 0; x < width; x++) {
+      const u = x / width;
+      // Bottom 30% = high-brass 12G stamped head; upper 70% = extruded ribbed crimson polymer hull
+      const isBrassBase = v < 0.3;
+      const ribWave = Math.sin(u * Math.PI * 36) * 0.5 + 0.5;
+      const crimpLip = v > 0.93 ? 0.78 : 1.0;
+
+      const idx = (y * width + x) * 4;
+      if (isBrassBase) {
+        const rimRing = v < 0.06 ? 1.06 : 0.98;
+        pixels[idx] = clampByte(236 * rimRing);
+        pixels[idx + 1] = clampByte(192 * rimRing);
+        pixels[idx + 2] = clampByte(82 * rimRing);
+        hField[y * width + x] = v < 0.06 ? 0.95 : 0.65;
+      } else {
+        const ribShade = (0.88 + ribWave * 0.16) * crimpLip;
+        pixels[idx] = clampByte(196 * ribShade);
+        pixels[idx + 1] = clampByte(18 * ribShade);
+        pixels[idx + 2] = clampByte(24 * ribShade);
+        hField[y * width + x] = 0.35 + ribWave * 0.35;
+      }
+      pixels[idx + 3] = 255;
+    }
+  }
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const xm = (x - 1 + width) % width;
+      const xp = (x + 1) % width;
+      const ym = Math.max(0, y - 1);
+      const yp = Math.min(height - 1, y + 1);
+      const nx = (hField[y * width + xm] - hField[y * width + xp]) * 2.0;
+      const ny = (hField[ym * width + x] - hField[yp * width + x]) * 2.0;
+      const nz = 1.0;
+      const inv = 1 / Math.hypot(nx, ny, nz);
+      const idx = (y * width + x) * 4;
+      nPixels[idx] = clampByte((nx * inv * 0.5 + 0.5) * 255);
+      nPixels[idx + 1] = clampByte((ny * inv * 0.5 + 0.5) * 255);
+      nPixels[idx + 2] = clampByte((nz * inv * 0.5 + 0.5) * 255);
+      nPixels[idx + 3] = 255;
+    }
+  }
+
+  tex.unlock();
+  normalTex.unlock();
+
+  const mat = new pc.StandardMaterial();
+  mat.name = 'shotgun12gHullMat';
+  mat.diffuseMap = tex;
+  mat.normalMap = normalTex;
+  mat.bumpiness = 0.62;
+  mat.useMetalness = true;
+  mat.metalness = 0.28;
+  mat.gloss = 0.82;
+  mat.clearCoat = 0.42;
+  mat.clearCoatGloss = 0.86;
+  mat.fresnelModel = pc.FRESNEL_SCHLICK;
+  mat.update();
+  return mat;
+}
+
+function createSoftCloudTexture(device: pc.GraphicsDevice, name: string, seed: number): pc.Texture {
+  const size = 64;
+  const tex = new pc.Texture(device, {
+    name,
+    width: size,
+    height: size,
+    format: pc.PIXELFORMAT_RGBA8,
+    mipmaps: true,
+    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
+    addressU: pc.ADDRESS_CLAMP_TO_EDGE,
+    addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+  });
+  const px = tex.lock() as Uint8Array;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = (x + 0.5) / size;
+      const v = (y + 0.5) / size;
+      const d = Math.hypot(u - 0.5, v - 0.5) * 2.0;
+      const n = valueNoise2d(u, v, 5, seed) * 0.62 + valueNoise2d(u, v, 11, seed + 97) * 0.38;
+      const radial = Math.max(0, 1 - d * d);
+      const alpha = radial * radial * (0.42 + n * 0.58);
+      const lum = clampByte(205 + n * 50);
+      const idx = (y * size + x) * 4;
+      px[idx] = lum;
+      px[idx + 1] = lum;
+      px[idx + 2] = lum;
+      px[idx + 3] = clampByte(alpha * 255);
+    }
+  }
+  tex.unlock();
+  return tex;
+}
+
+function createShockwaveRingTexture(device: pc.GraphicsDevice): pc.Texture {
+  const size = 64;
+  const tex = new pc.Texture(device, {
+    name: 'mayhemBlastShockwaveRingTex',
+    width: size,
+    height: size,
+    format: pc.PIXELFORMAT_RGBA8,
+    mipmaps: true,
+    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
+    addressU: pc.ADDRESS_CLAMP_TO_EDGE,
+    addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+  });
+  const px = tex.lock() as Uint8Array;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = (x + 0.5) / size;
+      const v = (y + 0.5) / size;
+      const r = Math.hypot(u - 0.5, v - 0.5) * 2.0;
+      const ringBand = Math.exp(-Math.pow((r - 0.78) / 0.11, 2));
+      const wisp = 0.72 + valueNoise2d(u, v, 9, 2207) * 0.28;
+      const alpha = r <= 1.0 ? ringBand * wisp : 0;
+      const idx = (y * size + x) * 4;
+      px[idx] = 255;
+      px[idx + 1] = 216;
+      px[idx + 2] = 158;
+      px[idx + 3] = clampByte(alpha * 255);
+    }
+  }
+  tex.unlock();
+  return tex;
+}
+
+function createStreakGlowTexture(device: pc.GraphicsDevice): pc.Texture {
+  const w = 16;
+  const h = 64;
+  const tex = new pc.Texture(device, {
+    name: 'mayhemTracerStreakTex',
+    width: w,
+    height: h,
+    format: pc.PIXELFORMAT_RGBA8,
+    mipmaps: true,
+    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
+    addressU: pc.ADDRESS_CLAMP_TO_EDGE,
+    addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+  });
+  const px = tex.lock() as Uint8Array;
+  for (let y = 0; y < h; y++) {
+    // v = 0 is tail, v = 1 is hot nose
+    const v = (y + 0.5) / h;
+    const longFade = v < 0.78 ? Math.pow(v / 0.78, 1.5) : Math.sin(((1 - v) / 0.22) * (Math.PI * 0.5));
+    for (let x = 0; x < w; x++) {
+      const u = (x + 0.5) / w;
+      const crossFade = Math.max(0, 1 - Math.abs(u - 0.5) * 2.0);
+      const alpha = longFade * crossFade * crossFade;
+      const idx = (y * w + x) * 4;
+      px[idx] = 255;
+      px[idx + 1] = clampByte(215 + v * 40);
+      px[idx + 2] = clampByte(145 + v * 95);
+      px[idx + 3] = clampByte(alpha * 255);
+    }
+  }
+  tex.unlock();
+  return tex;
 }
 
 // ============================================================================
@@ -991,11 +1374,6 @@ const CRUMPLED_BASE_RINGS: ReadonlyArray<{ y: number; r: number; v: number }> = 
 /**
  * Spawns shootable ribbed red/yellow industrial hazard barrels registered in `RapierPhysicsWorld`
  * as `STEEL` colliders (`hazard_barrel_<i>`).
- *
- * - `1` rifle / 12G slug / `.50 AE` hit OR `2` buckshot hits ignites a `0.18s` hissing flame jet
- *   followed by catastrophic detonation (`radiusM: 6.5`, `peakImpulseNs: 1850`, `peakEnergyJ: 14000`).
- * - Supports chain-reaction detonations across neighboring barrels while strictly preventing infinite recursion.
- * - Leaves a charred crumpled barrel base + scorch decal on the floor and respawns cleanly via `resetBarrels()`.
  */
 export class ExplosiveBarrelManager implements IDestructibleSubsystem {
   public readonly id = 'explosive_hazard_barrels';
@@ -1035,8 +1413,8 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
       this.rootContainer = new pc.Entity('HazardBarrelsRoot');
       this.app.root.addChild(this.rootContainer);
 
-      this.intactMesh = buildLoftedDrumMesh(dev, INTACT_DRUM_RINGS, 16, 0);
-      this.crumpledMesh = buildLoftedDrumMesh(dev, CRUMPLED_BASE_RINGS, 14, 73);
+      this.intactMesh = buildLoftedDrumMesh(dev, INTACT_DRUM_RINGS, 20, 0);
+      this.crumpledMesh = buildLoftedDrumMesh(dev, CRUMPLED_BASE_RINGS, 16, 73);
       this.scorchQuadMesh = buildUnitQuadZMesh(dev);
 
       this.intactMat = createHazardBarrelMaterial(dev);
@@ -1045,10 +1423,11 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
 
       this.flameJetMat = new pc.StandardMaterial();
       this.flameJetMat.name = 'barrelHissingFlameJetMat';
-      this.flameJetMat.diffuse = new pc.Color(1.0, 0.65, 0.14);
-      this.flameJetMat.emissive = new pc.Color(1.0, 0.52, 0.08);
-      this.flameJetMat.opacity = 0.88;
-      this.flameJetMat.blendType = pc.BLEND_NORMAL;
+      this.flameJetMat.diffuse = new pc.Color(1.0, 0.72, 0.18);
+      this.flameJetMat.emissive = new pc.Color(1.0, 0.58, 0.12);
+      this.flameJetMat.emissiveIntensity = 3.2;
+      this.flameJetMat.opacity = 0.9;
+      this.flameJetMat.blendType = pc.BLEND_ADDITIVEALPHA;
       this.flameJetMat.depthWrite = false;
       this.flameJetMat.cull = pc.CULLFACE_NONE;
       this.flameJetMat.update();
@@ -1067,11 +1446,6 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
     return this.barrels.find((b) => b.objectId === objectId);
   }
 
-  /**
-   * Applies a weapon/projectile hit to a specific barrel.
-   * - `1` rifle / slug / `.50 AE` hit (`damage >= 1.0`) ignites immediately.
-   * - `1` buckshot hit adds `0.5` ignition damage; `2` buckshot hits reach `1.0` and ignite!
-   */
   public registerBarrelHit(
     barrelOrId: HazardBarrelInstance | string | number,
     hit: ExplosiveBarrelHitInput = {},
@@ -1166,11 +1540,6 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
     return null;
   }
 
-  /**
-   * Triggers sympathetic chain-reaction ignition/detonation on any intact barrel inside `blast.radiusM`.
-   * Infinite recursion is impossible because each detonating barrel transitions out of `'INTACT'`
-   * BEFORE emitting its own `BlastEvent`.
-   */
   public applyBlast(blast: BlastEvent): void {
     if (this.destroyed || blast.radiusM <= 0 || blast.peakEnergyJ <= 0) {
       return;
@@ -1223,10 +1592,9 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
         continue;
       }
 
-      // Animate flickering blowtorch flame jet & hot sparks during 0.18s fuse
       if (barrel.flameJetEntity) {
         const pulse = 1.0 + Math.sin(this.flickerClockS * 95 + barrel.index) * 0.28;
-        barrel.flameJetEntity.setLocalScale(0.11 * pulse, 0.42 * pulse, 0.11 * pulse);
+        barrel.flameJetEntity.setLocalScale(0.12 * pulse, 0.46 * pulse, 0.12 * pulse);
       }
 
       if (emitEmbers && this.shrapnelPool) {
@@ -1253,9 +1621,6 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
     }
   }
 
-  /**
-   * Respawns all hazard barrels cleanly on a fresh wave, restoring `STEEL` colliders and hiding scorch remnants.
-   */
   public resetBarrels(): void {
     if (this.destroyed) return;
 
@@ -1387,13 +1752,8 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
       }
     }
 
-    // Wake and hurl any nearby Rapier dynamic debris bodies
     this.rapierWorld.applyRadialBlastImpulse(blast);
-
-    // Broadcast BlastEvent first so chronological event order is source -> sympathetic neighbors
     this.onBarrelDetonated?.(barrel, blast);
-
-    // Sympathetically ignite/detonate any neighboring intact hazard barrels in blast radius
     this.applyBlast(blast);
   }
 
@@ -1479,7 +1839,7 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
       });
       scorchDecalEntity.setLocalPosition(0, 0.006, 0);
       scorchDecalEntity.setLocalEulerAngles(-90, index * 37, 0);
-      scorchDecalEntity.setLocalScale(2.75, 2.75, 1);
+      scorchDecalEntity.setLocalScale(2.9, 2.9, 1);
       scorchDecalEntity.enabled = false;
       rootEntity.addChild(scorchDecalEntity);
     }
@@ -1505,8 +1865,8 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
 }
 
 // ============================================================================
-// 4. MayhemDirector — Brass/12G Casings, Dynamic Point Lights, Gore Splatter,
-//    Explosive Barrels & Bullet-Time Facade
+// 4. MayhemDirector — Hot-Core Tracers, Gleaming Brass/12G Casings, Impact Sparks
+//    & Dust Plumes, Multi-Stage AAA Detonations, Gore Splatter & Bullet-Time
 // ============================================================================
 
 export interface CasingBounceEvent {
@@ -1546,6 +1906,33 @@ interface PooledDynamicOmniLight {
   elapsedS: number;
   durationS: number;
   peakIntensity: number;
+  isExplosion: boolean;
+}
+
+interface TransientFireballLobe {
+  entity: pc.Entity;
+  material: pc.StandardMaterial;
+  position: pc.Vec3;
+  velocity: pc.Vec3;
+  angularVelocity: pc.Vec3;
+  elapsedS: number;
+  durationS: number;
+  startScale: number;
+  endScale: number;
+}
+
+interface TransientBillowPlume {
+  entity: pc.Entity;
+  material: pc.StandardMaterial;
+  position: pc.Vec3;
+  velocity: pc.Vec3;
+  elapsedS: number;
+  durationS: number;
+  startScale: number;
+  endScale: number;
+  baseOpacity: number;
+  spinDegPerS: number;
+  isGroundRing: boolean;
 }
 
 const CASING_BOUNCE_FLOOR_Y = 0.012;
@@ -1565,11 +1952,22 @@ export class MayhemDirector {
   public readonly shotgunHullPool: HardwareInstancedPool;
   public readonly shrapnelPool: HardwareInstancedPool;
   public readonly bloodSplatterPool: HardwareInstancedPool;
+  public readonly tracerCorePool: HardwareInstancedPool;
+  public readonly tracerHaloPool: HardwareInstancedPool;
+  public readonly impactSparkPool: HardwareInstancedPool;
 
   public onCasingBounce?: (event: CasingBounceEvent) => void;
   public onExplosionBlast?: (blast: BlastEvent) => void;
 
   private readonly lightPool: PooledDynamicOmniLight[] = [];
+  private readonly fireballLobes: TransientFireballLobe[] = [];
+  private readonly billowPlumes: TransientBillowPlume[] = [];
+
+  private readonly dustPlumeTemplateMat: pc.StandardMaterial;
+  private readonly darkSmokeTemplateMat: pc.StandardMaterial;
+  private readonly shockwaveRingTemplateMat: pc.StandardMaterial;
+  private readonly flashCoreTemplateMat: pc.StandardMaterial;
+  private readonly unitQuadMesh: pc.Mesh;
 
   // Pre-allocated typed-array tracker for casing floor-bounce audio callbacks (zero GC!)
   private readonly trackActive = new Uint8Array(TRACKED_CASING_CAPACITY);
@@ -1587,6 +1985,7 @@ export class MayhemDirector {
   private splatterRecycleCursor = 0;
   private splatterSeedCounter = 1;
   private casingSeedCounter = 1;
+  private fxSeedCounter = 1;
   private destroyed = false;
 
   public constructor(options: MayhemDirectorOptions) {
@@ -1599,37 +1998,36 @@ export class MayhemDirector {
     this.app.root.addChild(this.rootEntity);
 
     const dev = this.app.graphicsDevice;
+    this.unitQuadMesh = buildUnitQuadZMesh(dev);
 
-    // 1. Hardware-instanced Brass Casings & Red 12G Shotgun Hulls
+    // 1. Hardware-instanced Gleaming Bottlenecked Brass Casings & Ribbed 12G Shotgun Hulls
     const casingCylinderMesh = buildLoftedDrumMesh(
       dev,
       [
-        { y: -0.5, r: 0.52, v: 0.0 },
-        { y: 0.22, r: 0.5, v: 0.72 },
-        { y: 0.5, r: 0.41, v: 1.0 },
+        { y: -0.5, r: 0.54, v: 0.0 },   // Extractor rim flange
+        { y: -0.44, r: 0.46, v: 0.06 }, // Extractor groove
+        { y: -0.39, r: 0.51, v: 0.11 }, // Case head web
+        { y: 0.18, r: 0.49, v: 0.68 },  // Tapered body
+        { y: 0.34, r: 0.38, v: 0.84 },  // Bottleneck shoulder
+        { y: 0.5, r: 0.37, v: 1.0 },    // Annealed case mouth
       ],
-      8,
+      14,
       0,
     );
     const hullCylinderMesh = buildLoftedDrumMesh(
       dev,
       [
-        { y: -0.5, r: 0.53, v: 0.0 },
-        { y: -0.22, r: 0.51, v: 0.28 },
-        { y: 0.5, r: 0.5, v: 1.0 },
+        { y: -0.5, r: 0.56, v: 0.0 },   // Brass rim flange
+        { y: -0.44, r: 0.52, v: 0.06 }, // High-brass head base
+        { y: -0.2, r: 0.51, v: 0.3 },   // Brass-to-hull step
+        { y: 0.44, r: 0.5, v: 0.94 },   // Ribbed crimson hull
+        { y: 0.5, r: 0.46, v: 1.0 },    // Unfurled star-crimp mouth
       ],
-      10,
+      14,
       0,
     );
 
-    const brassMat = new pc.StandardMaterial();
-    brassMat.name = 'mayhemGlintingBrassMat';
-    brassMat.diffuse = new pc.Color(0.92, 0.72, 0.26);
-    brassMat.emissive = new pc.Color(0.14, 0.09, 0.02);
-    brassMat.specular = new pc.Color(0.98, 0.86, 0.48);
-    brassMat.shininess = 90;
-    brassMat.update();
-
+    const brassMat = createGleamingBrassCasingMaterial(dev);
     const hullMat = createShotgunHullMaterial(dev);
 
     this.brassCasingPool = new HardwareInstancedPool(
@@ -1653,10 +2051,13 @@ export class MayhemDirector {
     const shrapnelBoxMesh = pc.Mesh.fromGeometry(dev, new pc.BoxGeometry());
     const shrapnelMat = new pc.StandardMaterial();
     shrapnelMat.name = 'mayhemHotShrapnelMat';
-    shrapnelMat.diffuse = new pc.Color(0.26, 0.22, 0.2);
-    shrapnelMat.emissive = new pc.Color(0.85, 0.28, 0.05);
-    shrapnelMat.specular = new pc.Color(0.55, 0.45, 0.35);
-    shrapnelMat.shininess = 64;
+    shrapnelMat.diffuse = new pc.Color(0.24, 0.2, 0.18);
+    shrapnelMat.emissive = new pc.Color(1.0, 0.38, 0.08);
+    shrapnelMat.emissiveIntensity = 2.2;
+    shrapnelMat.useMetalness = true;
+    shrapnelMat.metalness = 0.82;
+    shrapnelMat.gloss = 0.65;
+    shrapnelMat.fresnelModel = pc.FRESNEL_SCHLICK;
     shrapnelMat.update();
 
     this.shrapnelPool = new HardwareInstancedPool(
@@ -1668,19 +2069,139 @@ export class MayhemDirector {
       false,
     );
 
-    // 3. Hardware-instanced Persistent Wall & Floor Gore Splatter Decals
-    const splatterQuadMesh = buildUnitQuadZMesh(dev);
+    // 3. Hardware-instanced Persistent Wall & Floor Wet Gore Splatter Decals
     const splatterMat = createBloodSplatterMaterial(dev);
     this.bloodSplatterPool = new HardwareInstancedPool(
       this.app,
-      splatterQuadMesh,
+      this.unitQuadMesh,
       splatterMat,
       options.maxBloodSplatters ?? 384,
       'MayhemBloodSplatterPool',
       false,
     );
 
-    // 4. Pooled Dynamic Muzzle Flash & Explosion Omni Point Lights (castShadows: false)
+    // 4. Hardware-instanced Incandescent Hot-Core Bullet Tracers & Ricochet Impact Sparks
+    const streakMesh = buildCrossedStreakZMesh(dev);
+    const streakGlowTex = createStreakGlowTexture(dev);
+
+    const tracerCoreMat = new pc.StandardMaterial();
+    tracerCoreMat.name = 'mayhemTracerHotCoreMat';
+    tracerCoreMat.diffuse = new pc.Color(1.0, 0.98, 0.88);
+    tracerCoreMat.emissive = new pc.Color(1.0, 0.93, 0.72);
+    tracerCoreMat.emissiveMap = streakGlowTex;
+    tracerCoreMat.emissiveIntensity = 4.2;
+    tracerCoreMat.opacityMap = streakGlowTex;
+    tracerCoreMat.opacityMapChannel = 'a';
+    tracerCoreMat.blendType = pc.BLEND_ADDITIVEALPHA;
+    tracerCoreMat.depthWrite = false;
+    tracerCoreMat.cull = pc.CULLFACE_NONE;
+    tracerCoreMat.update();
+
+    const tracerHaloMat = new pc.StandardMaterial();
+    tracerHaloMat.name = 'mayhemTracerPlasmaHaloMat';
+    tracerHaloMat.diffuse = new pc.Color(1.0, 0.66, 0.22);
+    tracerHaloMat.emissive = new pc.Color(1.0, 0.52, 0.12);
+    tracerHaloMat.emissiveMap = streakGlowTex;
+    tracerHaloMat.emissiveIntensity = 2.4;
+    tracerHaloMat.opacity = 0.72;
+    tracerHaloMat.opacityMap = streakGlowTex;
+    tracerHaloMat.opacityMapChannel = 'a';
+    tracerHaloMat.blendType = pc.BLEND_ADDITIVEALPHA;
+    tracerHaloMat.depthWrite = false;
+    tracerHaloMat.cull = pc.CULLFACE_NONE;
+    tracerHaloMat.update();
+
+    const impactSparkMat = new pc.StandardMaterial();
+    impactSparkMat.name = 'mayhemRicochetSparkMat';
+    impactSparkMat.diffuse = new pc.Color(1.0, 0.88, 0.48);
+    impactSparkMat.emissive = new pc.Color(1.0, 0.72, 0.22);
+    impactSparkMat.emissiveMap = streakGlowTex;
+    impactSparkMat.emissiveIntensity = 3.8;
+    impactSparkMat.opacityMap = streakGlowTex;
+    impactSparkMat.opacityMapChannel = 'a';
+    impactSparkMat.blendType = pc.BLEND_ADDITIVEALPHA;
+    impactSparkMat.depthWrite = false;
+    impactSparkMat.cull = pc.CULLFACE_NONE;
+    impactSparkMat.update();
+
+    this.tracerCorePool = new HardwareInstancedPool(
+      this.app,
+      streakMesh,
+      tracerCoreMat,
+      128,
+      'MayhemTracerCorePool',
+      false,
+    );
+    this.tracerHaloPool = new HardwareInstancedPool(
+      this.app,
+      streakMesh,
+      tracerHaloMat,
+      128,
+      'MayhemTracerHaloPool',
+      false,
+    );
+    this.impactSparkPool = new HardwareInstancedPool(
+      this.app,
+      streakMesh,
+      impactSparkMat,
+      320,
+      'MayhemImpactSparkPool',
+      false,
+    );
+
+    // 5. Soft Cloud, Shockwave Ring & Blinding Flash Template Materials
+    const dustCloudTex = createSoftCloudTexture(dev, 'mayhemDustPlumeTex', 3109);
+    const smokeCloudTex = createSoftCloudTexture(dev, 'mayhemDarkSmokeTex', 4211);
+    const shockRingTex = createShockwaveRingTexture(dev);
+
+    this.dustPlumeTemplateMat = new pc.StandardMaterial();
+    this.dustPlumeTemplateMat.name = 'mayhemConcreteDustPlumeMat';
+    this.dustPlumeTemplateMat.diffuse = new pc.Color(0.66, 0.64, 0.6);
+    this.dustPlumeTemplateMat.emissive = new pc.Color(0.08, 0.075, 0.07);
+    this.dustPlumeTemplateMat.opacity = 0.52;
+    this.dustPlumeTemplateMat.opacityMap = dustCloudTex;
+    this.dustPlumeTemplateMat.opacityMapChannel = 'a';
+    this.dustPlumeTemplateMat.blendType = pc.BLEND_NORMAL;
+    this.dustPlumeTemplateMat.depthWrite = false;
+    this.dustPlumeTemplateMat.cull = pc.CULLFACE_NONE;
+    this.dustPlumeTemplateMat.update();
+
+    this.darkSmokeTemplateMat = new pc.StandardMaterial();
+    this.darkSmokeTemplateMat.name = 'mayhemDetonationSmokeMat';
+    this.darkSmokeTemplateMat.diffuse = new pc.Color(0.11, 0.1, 0.1);
+    this.darkSmokeTemplateMat.emissive = new pc.Color(0.03, 0.015, 0.008);
+    this.darkSmokeTemplateMat.opacity = 0.72;
+    this.darkSmokeTemplateMat.opacityMap = smokeCloudTex;
+    this.darkSmokeTemplateMat.opacityMapChannel = 'a';
+    this.darkSmokeTemplateMat.blendType = pc.BLEND_NORMAL;
+    this.darkSmokeTemplateMat.depthWrite = false;
+    this.darkSmokeTemplateMat.cull = pc.CULLFACE_NONE;
+    this.darkSmokeTemplateMat.update();
+
+    this.shockwaveRingTemplateMat = new pc.StandardMaterial();
+    this.shockwaveRingTemplateMat.name = 'mayhemGroundShockwaveRingMat';
+    this.shockwaveRingTemplateMat.diffuse = new pc.Color(1.0, 0.85, 0.58);
+    this.shockwaveRingTemplateMat.emissive = new pc.Color(1.0, 0.68, 0.28);
+    this.shockwaveRingTemplateMat.emissiveIntensity = 2.4;
+    this.shockwaveRingTemplateMat.opacity = 0.86;
+    this.shockwaveRingTemplateMat.opacityMap = shockRingTex;
+    this.shockwaveRingTemplateMat.opacityMapChannel = 'a';
+    this.shockwaveRingTemplateMat.blendType = pc.BLEND_ADDITIVEALPHA;
+    this.shockwaveRingTemplateMat.depthWrite = false;
+    this.shockwaveRingTemplateMat.cull = pc.CULLFACE_NONE;
+    this.shockwaveRingTemplateMat.update();
+
+    this.flashCoreTemplateMat = new pc.StandardMaterial();
+    this.flashCoreTemplateMat.name = 'mayhemBlindingFlashCoreMat';
+    this.flashCoreTemplateMat.diffuse = new pc.Color(1.0, 0.96, 0.82);
+    this.flashCoreTemplateMat.emissive = new pc.Color(1.0, 0.9, 0.62);
+    this.flashCoreTemplateMat.emissiveIntensity = 5.5;
+    this.flashCoreTemplateMat.opacity = 0.96;
+    this.flashCoreTemplateMat.blendType = pc.BLEND_ADDITIVEALPHA;
+    this.flashCoreTemplateMat.depthWrite = false;
+    this.flashCoreTemplateMat.update();
+
+    // 6. Pooled Dynamic Muzzle Flash & Explosion Omni Point Lights (castShadows: false)
     const lightPoolCount = Math.max(4, options.dynamicLightPoolSize ?? 8);
     for (let i = 0; i < lightPoolCount; i++) {
       const lightEnt = new pc.Entity(`MayhemDynamicOmniLight_${i}`);
@@ -1697,12 +2218,13 @@ export class MayhemDirector {
         entity: lightEnt,
         active: false,
         elapsedS: 0,
-        durationS: 0.045,
-        peakIntensity: 3.5,
+        durationS: 0.052,
+        peakIntensity: 3.8,
+        isExplosion: false,
       });
     }
 
-    // 5. F.E.A.R. Bullet-Time Controller & Shootable Explosive Hazard Barrels
+    // 7. F.E.A.R. Bullet-Time Controller & Shootable Explosive Hazard Barrels
     this.bulletTime = new BulletTimeController(options.bulletTimeOptions);
     this.barrels = new ExplosiveBarrelManager({
       app: this.app,
@@ -1712,7 +2234,8 @@ export class MayhemDirector {
       sympatheticChainFuseS: options.sympatheticChainFuseS,
       onBarrelIgnited: options.onBarrelIgnited,
       onBarrelDetonated: (_barrel, blast) => {
-        this.triggerExplosionLight(blast.centerWorld, 18.0);
+        this.triggerExplosionLight(blast.centerWorld, 20.0);
+        this.spawnMultiStageExplosionFx(blast);
         this.onExplosionBlast?.(blast);
       },
     });
@@ -1724,6 +2247,346 @@ export class MayhemDirector {
       if (l.active) n++;
     }
     return n;
+  }
+
+  /**
+   * Spawns a high-contrast incandescent hot-core + amber plasma-halo bullet tracer streak.
+   */
+  public spawnBulletTracer(
+    originWorld: Vec3Like,
+    directionWorld: Vec3Like,
+    maxDistanceM = 48.0,
+    streakLengthM = 1.65,
+  ): void {
+    if (this.destroyed) return;
+    const dir = normalize(directionWorld);
+    if (length(dir) < 1e-6) return;
+
+    const clampedDist = Math.max(1.2, Math.min(85.0, maxDistanceM));
+    const ttl = Math.max(0.055, Math.min(0.24, clampedDist / 185.0));
+    const speed = clampedDist / ttl;
+    const startPos = add(originWorld, scale(dir, Math.min(0.55, clampedDist * 0.25)));
+    const vel = scale(dir, speed);
+    const quat = directionToStreakQuaternion(dir);
+
+    this.tracerCorePool.spawnKinematicParticle(
+      startPos,
+      vel,
+      { x: 0, y: 0, z: 0 },
+      { x: 0.016, y: 0.016, z: streakLengthM },
+      0,
+      0,
+      ttl,
+      quat,
+    );
+    this.tracerHaloPool.spawnKinematicParticle(
+      startPos,
+      vel,
+      { x: 0, y: 0, z: 0 },
+      { x: 0.048, y: 0.048, z: streakLengthM * 1.18 },
+      0,
+      0,
+      ttl,
+      quat,
+    );
+  }
+
+  /**
+   * Spawns crisp ricochet spark streaks + billowing dust plumes at a concrete, brick, wood, or steel impact!
+   */
+  public spawnSurfaceImpactFx(
+    hitPointWorld: Vec3Like,
+    surfaceNormalWorld: Vec3Like,
+    surfaceMaterial: DestructibleMaterialKind = 'CONCRETE_INTACT',
+    kineticEnergyJ = 650,
+  ): void {
+    if (this.destroyed) return;
+
+    const n = length(surfaceNormalWorld) > 1e-4 ? normalize(surfaceNormalWorld) : vec3(0, 1, 0);
+    const upRef = Math.abs(n.y) < 0.95 ? vec3(0, 1, 0) : vec3(1, 0, 0);
+    const tangentA = normalize(cross(upRef, n));
+    const tangentB = normalize(cross(n, tangentA));
+
+    const isGlass = surfaceMaterial.startsWith('GLASS');
+    const isWood = surfaceMaterial.startsWith('WOOD');
+    const isMetallic = surfaceMaterial === 'STEEL' || isGlass;
+    const sparkCount = isMetallic
+      ? 14
+      : isWood
+        ? 4
+        : 9;
+
+    const energyScale = Math.min(1.65, 0.72 + kineticEnergyJ / 1800);
+    const origin = add(hitPointWorld, scale(n, 0.018));
+
+    // 1. High-contrast incandescent ricochet sparks
+    for (let i = 0; i < sparkCount; i++) {
+      const seed = this.fxSeedCounter++;
+      const angle = ((seed * 137.5) % 360) * (Math.PI / 180);
+      const spread = 0.25 + ((seed * 31) % 17) / 22;
+      const spd = (isMetallic ? 8.5 : 6.2) * energyScale * (0.65 + ((seed * 19) % 13) / 16);
+
+      const sparkDir = normalize({
+        x: n.x + (tangentA.x * Math.cos(angle) + tangentB.x * Math.sin(angle)) * spread,
+        y: n.y + (tangentA.y * Math.cos(angle) + tangentB.y * Math.sin(angle)) * spread + 0.18,
+        z: n.z + (tangentA.z * Math.cos(angle) + tangentB.z * Math.sin(angle)) * spread,
+      });
+
+      const quat = directionToStreakQuaternion(sparkDir);
+      this.impactSparkPool.spawnKinematicParticle(
+        origin,
+        scale(sparkDir, spd),
+        { x: 0, y: 0, z: 0 },
+        { x: 0.012, y: 0.012, z: isMetallic ? 0.24 : 0.16 },
+        -11.5,
+        0.48,
+        0.18 + ((seed % 5) * 0.045),
+        quat,
+      );
+    }
+
+    // 2. Pulverized concrete / masonry / wood dust plumes
+    if (this.billowPlumes.length < 48 && !isGlass) {
+      const puffCount = isMetallic ? 1 : 2;
+      for (let p = 0; p < puffCount; p++) {
+        const seed = this.fxSeedCounter++;
+        const mat = this.dustPlumeTemplateMat.clone();
+        if (surfaceMaterial === 'BRICK_MASONRY') {
+          mat.diffuse = new pc.Color(0.64, 0.44, 0.36);
+        } else if (isWood) {
+          mat.diffuse = new pc.Color(0.68, 0.56, 0.38);
+        } else if (isMetallic) {
+          mat.diffuse = new pc.Color(0.52, 0.54, 0.58);
+        }
+        const baseOpacity = isMetallic ? 0.32 : 0.52;
+        mat.opacity = baseOpacity;
+        mat.update();
+
+        const puffEnt = new pc.Entity('MayhemImpactDustPlume');
+        const mi = new pc.MeshInstance(this.unitQuadMesh, mat);
+        puffEnt.addComponent('render', {
+          meshInstances: [mi],
+          castShadows: false,
+          receiveShadows: false,
+        });
+
+        const startScale = (0.14 + p * 0.06) * energyScale;
+        const endScale = (0.62 + p * 0.28) * energyScale;
+        puffEnt.setPosition(origin.x, origin.y, origin.z);
+        puffEnt.setLocalScale(startScale, startScale, 1);
+        this.rootEntity.addChild(puffEnt);
+
+        const jitterA = ((seed * 47) % 19) / 19 - 0.5;
+        const jitterB = ((seed * 83) % 23) / 23 - 0.5;
+        const driftVel = new pc.Vec3(
+          n.x * (1.25 + p * 0.55) + tangentA.x * jitterA * 0.9,
+          Math.max(0.25, n.y * 1.1 + 0.55 + p * 0.25),
+          n.z * (1.25 + p * 0.55) + tangentB.z * jitterB * 0.9,
+        );
+
+        this.billowPlumes.push({
+          entity: puffEnt,
+          material: mat,
+          position: new pc.Vec3(origin.x, origin.y, origin.z),
+          velocity: driftVel,
+          elapsedS: 0,
+          durationS: 0.48 + p * 0.2,
+          startScale,
+          endScale,
+          baseOpacity,
+          spinDegPerS: jitterA * 85,
+          isGroundRing: false,
+        });
+      }
+    }
+  }
+
+  /**
+   * Spawns a multi-stage AAA detonation sequence:
+   * 1. Blinding white-gold initial flash core sphere
+   * 2. Churning multi-lobed emissive-to-soot fireball spheres
+   * 3. Rapidly expanding ground shockwave condensation ring
+   * 4. Flying incandescent ember streaks
+   * 5. Lingering rising dark charcoal smoke plumes
+   */
+  public spawnMultiStageExplosionFx(blast: BlastEvent): void {
+    if (this.destroyed) return;
+    const center = blast.centerWorld;
+    const radiusScale = Math.max(0.75, Math.min(1.6, blast.radiusM / 6.0));
+
+    // Stage 1: Blinding initial white-gold flash core
+    const flashMat = this.flashCoreTemplateMat.clone();
+    flashMat.update();
+    const flashEnt = new pc.Entity('ExplosionFlashCore');
+    flashEnt.addComponent('render', {
+      type: 'sphere',
+      material: flashMat,
+      castShadows: false,
+    });
+    flashEnt.setPosition(center.x, center.y + 0.15, center.z);
+    flashEnt.setLocalScale(0.55 * radiusScale, 0.55 * radiusScale, 0.55 * radiusScale);
+    this.rootEntity.addChild(flashEnt);
+
+    this.fireballLobes.push({
+      entity: flashEnt,
+      material: flashMat,
+      position: new pc.Vec3(center.x, center.y + 0.15, center.z),
+      velocity: new pc.Vec3(0, 0.4, 0),
+      angularVelocity: new pc.Vec3(0, 0, 0),
+      elapsedS: 0,
+      durationS: 0.085,
+      startScale: 0.55 * radiusScale,
+      endScale: 3.1 * radiusScale,
+    });
+
+    // Stage 2: Churning multi-lobed emissive-to-soot fireball spheres
+    const lobeCount = 5;
+    for (let i = 0; i < lobeCount; i++) {
+      const angle = (i / lobeCount) * Math.PI * 2 + 0.37;
+      const radialDist = i === 0 ? 0 : (0.28 + (i % 2) * 0.16) * radiusScale;
+      const lobeMat = new pc.StandardMaterial();
+      lobeMat.name = `mayhemFireballLobeMat_${i}`;
+      lobeMat.diffuse = new pc.Color(1.0, 0.86, 0.45);
+      lobeMat.emissive = new pc.Color(1.0, 0.72, 0.24);
+      lobeMat.emissiveIntensity = 4.2;
+      lobeMat.opacity = 0.94;
+      lobeMat.blendType = pc.BLEND_NORMAL;
+      lobeMat.depthWrite = false;
+      lobeMat.update();
+
+      const lobeEnt = new pc.Entity(`ExplosionFireballLobe_${i}`);
+      lobeEnt.addComponent('render', {
+        type: 'sphere',
+        material: lobeMat,
+        castShadows: false,
+      });
+
+      const lx = center.x + Math.cos(angle) * radialDist;
+      const ly = center.y + (i === 0 ? 0.28 : 0.12 + (i % 3) * 0.14);
+      const lz = center.z + Math.sin(angle) * radialDist;
+      const startScale = (i === 0 ? 0.85 : 0.62) * radiusScale;
+      const endScale = (i === 0 ? 2.55 : 1.95) * radiusScale;
+
+      lobeEnt.setPosition(lx, ly, lz);
+      lobeEnt.setLocalScale(startScale, startScale, startScale);
+      this.rootEntity.addChild(lobeEnt);
+
+      this.fireballLobes.push({
+        entity: lobeEnt,
+        material: lobeMat,
+        position: new pc.Vec3(lx, ly, lz),
+        velocity: new pc.Vec3(
+          Math.cos(angle) * (i === 0 ? 0 : 1.65 * radiusScale),
+          2.2 + (i % 3) * 0.65,
+          Math.sin(angle) * (i === 0 ? 0 : 1.65 * radiusScale),
+        ),
+        angularVelocity: new pc.Vec3(90 - i * 32, 65 + i * 24, -50 + i * 19),
+        elapsedS: 0,
+        durationS: 0.56 + (i % 3) * 0.08,
+        startScale,
+        endScale,
+      });
+    }
+
+    // Stage 3: Expanding ground shockwave ring
+    const ringMat = this.shockwaveRingTemplateMat.clone();
+    ringMat.update();
+    const ringEnt = new pc.Entity('ExplosionGroundShockwaveRing');
+    const ringMi = new pc.MeshInstance(this.unitQuadMesh, ringMat);
+    ringEnt.addComponent('render', {
+      meshInstances: [ringMi],
+      castShadows: false,
+      receiveShadows: false,
+    });
+    const groundY = Math.max(0.03, Math.min(0.25, center.y * 0.12));
+    ringEnt.setPosition(center.x, groundY, center.z);
+    ringEnt.setLocalEulerAngles(-90, 0, 0);
+    ringEnt.setLocalScale(0.6, 0.6, 1);
+    this.rootEntity.addChild(ringEnt);
+
+    this.billowPlumes.push({
+      entity: ringEnt,
+      material: ringMat,
+      position: new pc.Vec3(center.x, groundY, center.z),
+      velocity: new pc.Vec3(0, 0, 0),
+      elapsedS: 0,
+      durationS: 0.28,
+      startScale: 0.65,
+      endScale: blast.radiusM * 2.15,
+      baseOpacity: 0.88,
+      spinDegPerS: 45,
+      isGroundRing: true,
+    });
+
+    // Stage 4: Flying incandescent ember streaks
+    const emberCount = 28;
+    for (let e = 0; e < emberCount; e++) {
+      const seed = this.fxSeedCounter++;
+      const azim = (e / emberCount) * Math.PI * 2 + ((seed % 11) * 0.09);
+      const elev = 0.22 + ((seed * 7) % 13) / 16;
+      const spd = (9.5 + ((seed * 17) % 15) * 0.85) * radiusScale;
+      const dir = normalize({
+        x: Math.cos(azim),
+        y: elev,
+        z: Math.sin(azim),
+      });
+      const quat = directionToStreakQuaternion(dir);
+      this.impactSparkPool.spawnKinematicParticle(
+        add(center, scale(dir, 0.22)),
+        scale(dir, spd),
+        { x: 0, y: 0, z: 0 },
+        { x: 0.022, y: 0.022, z: 0.36 },
+        -9.81,
+        0.46,
+        0.65 + (e % 5) * 0.16,
+        quat,
+      );
+    }
+
+    // Stage 5: Lingering rising dark charcoal smoke plumes
+    const smokeCount = 6;
+    for (let s = 0; s < smokeCount; s++) {
+      if (this.billowPlumes.length >= 60) break;
+      const angle = (s / smokeCount) * Math.PI * 2 + 0.52;
+      const smokeMat = this.darkSmokeTemplateMat.clone();
+      smokeMat.update();
+
+      const smokeEnt = new pc.Entity(`ExplosionDarkSmokePlume_${s}`);
+      const smokeMi = new pc.MeshInstance(this.unitQuadMesh, smokeMat);
+      smokeEnt.addComponent('render', {
+        meshInstances: [smokeMi],
+        castShadows: false,
+        receiveShadows: false,
+      });
+
+      const sx = center.x + Math.cos(angle) * 0.35 * radiusScale;
+      const sy = center.y + 0.32 + (s % 3) * 0.22;
+      const sz = center.z + Math.sin(angle) * 0.35 * radiusScale;
+      const startScale = (0.95 + (s % 2) * 0.25) * radiusScale;
+      const endScale = (3.4 + (s % 3) * 0.55) * radiusScale;
+
+      smokeEnt.setPosition(sx, sy, sz);
+      smokeEnt.setLocalScale(startScale, startScale, 1);
+      this.rootEntity.addChild(smokeEnt);
+
+      this.billowPlumes.push({
+        entity: smokeEnt,
+        material: smokeMat,
+        position: new pc.Vec3(sx, sy, sz),
+        velocity: new pc.Vec3(
+          Math.cos(angle) * 0.85 * radiusScale,
+          1.55 + (s % 3) * 0.42,
+          Math.sin(angle) * 0.85 * radiusScale,
+        ),
+        elapsedS: 0,
+        durationS: 1.85 + (s % 3) * 0.35,
+        startScale,
+        endScale,
+        baseOpacity: 0.72,
+        spinDegPerS: (s % 2 === 0 ? 1 : -1) * 28,
+        isGroundRing: false,
+      });
+    }
   }
 
   /**
@@ -1767,20 +2630,20 @@ export class MayhemDirector {
     };
 
     const spin: Vec3Like = {
-      x: 18 + jitterA * 14,
-      y: -22 + jitterB * 16,
-      z: 26 + jitterA * 12,
+      x: 22 + jitterA * 16,
+      y: -26 + jitterB * 18,
+      z: 32 + jitterA * 14,
     };
 
     const casingScale: Vec3Like = isShotgunHull
       ? { x: 0.02, y: 0.062, z: 0.02 }
       : weapon.role === 'SNIPER'
-        ? { x: 0.012, y: 0.054, z: 0.012 }
+        ? { x: 0.0125, y: 0.055, z: 0.0125 }
         : weapon.role === 'HEAVY_PISTOL'
-          ? { x: 0.014, y: 0.036, z: 0.014 }
-          : { x: 0.01, y: 0.045, z: 0.01 };
+          ? { x: 0.0145, y: 0.036, z: 0.0145 }
+          : { x: 0.0105, y: 0.046, z: 0.0105 };
 
-    const restitution = isShotgunHull ? 0.34 : 0.46;
+    const restitution = isShotgunHull ? 0.34 : 0.48;
     const pool = isShotgunHull ? this.shotgunHullPool : this.brassCasingPool;
     const slotId = pool.spawnKinematicParticle(
       ejectOrigin,
@@ -1797,23 +2660,24 @@ export class MayhemDirector {
   }
 
   /**
-   * Warm amber dynamic omni point light (`intensity: 3.5`, `castShadows: false`) decaying over `45ms`.
+   * Warm orange-amber dynamic omni point light (`intensity: 4.2`, `castShadows: false`) decaying over `52ms`.
    */
   public triggerMuzzleFlashLight(muzzleWorldPos: Vec3Like): void {
     this.activateDynamicOmniLight(
       muzzleWorldPos,
       1.0,
-      0.74,
-      0.32,
-      3.5,
-      9.5,
-      0.045,
+      0.72,
+      0.28,
+      4.2,
+      10.5,
+      0.052,
+      false,
     );
   }
 
   /**
-   * Blazing orange dynamic omni point light (`intensity: 8.5`, `range: 18m`, `castShadows: false`)
-   * decaying over `320ms`.
+   * High-intensity multi-temperature detonation omni point light (`intensity: 11.5`, `range: 20m`, `castShadows: false`)
+   * flashing white-gold for the initial shock core before decaying through blazing orange over `340ms`.
    */
   public triggerExplosionLight(blastCenterWorld: Vec3Like, rangeM = 18.0): void {
     this.activateDynamicOmniLight(
@@ -1823,27 +2687,69 @@ export class MayhemDirector {
         z: blastCenterWorld.z,
       },
       1.0,
-      0.48,
-      0.12,
-      8.5,
+      0.92,
+      0.68,
+      11.5,
       rangeM,
-      0.32,
+      0.34,
+      true,
     );
   }
 
   /**
-   * Convenience one-call hook for player weapon discharge (muzzle flash omni light + brass/12G hull ejection).
+   * Convenience one-call hook for player weapon discharge:
+   * - Transient orange-amber muzzle flash dynamic omni light
+   * - Spinning brass casing or ribbed red 12G hull ejection
+   * - High-contrast incandescent hot-core bullet tracer(s)
+   * - Crisp concrete/metal impact spark bursts & dust plumes on cover/floor hits
    */
   public onPlayerWeaponFired(
     eyeWorldPos: Vec3Like,
     aimDirectionWorld: Vec3Like,
     weapon: WeaponSpec,
     ammo: AmmoSpec,
+    muzzleWorldPosOverride?: Vec3Like,
   ): void {
     const fwd = normalize(aimDirectionWorld);
-    const muzzlePos = add(eyeWorldPos, scale(fwd, 0.65));
+    const muzzlePos = muzzleWorldPosOverride ?? add(eyeWorldPos, scale(fwd, 0.65));
+
     this.triggerMuzzleFlashLight(muzzlePos);
     this.ejectWeaponCasing(eyeWorldPos, fwd, weapon, ammo);
+
+    // Cast ballistic visual ray to clip tracer cleanly & emit surface impact sparks + dust plumes
+    const envHit = this.castEnvironmentImpactRay(eyeWorldPos, fwd, 72.0);
+    const maxTracerDist = envHit ? Math.max(1.2, envHit.distanceM - 0.35) : 56.0;
+
+    if (ammo.pelletCount > 1) {
+      const visualPellets = Math.min(5, ammo.pelletCount);
+      const upRef = Math.abs(fwd.y) < 0.96 ? vec3(0, 1, 0) : vec3(1, 0, 0);
+      const right = normalize(cross(fwd, upRef));
+      const orthoUp = normalize(cross(right, fwd));
+      for (let p = 0; p < visualPellets; p++) {
+        const ang = (p / visualPellets) * Math.PI * 2 + 0.4;
+        const spread = 0.022 + (p % 2) * 0.014;
+        const pelletDir = normalize({
+          x: fwd.x + (right.x * Math.cos(ang) + orthoUp.x * Math.sin(ang)) * spread,
+          y: fwd.y + (right.y * Math.cos(ang) + orthoUp.y * Math.sin(ang)) * spread,
+          z: fwd.z + (right.z * Math.cos(ang) + orthoUp.z * Math.sin(ang)) * spread,
+        });
+        this.spawnBulletTracer(muzzlePos, pelletDir, maxTracerDist, 1.15);
+      }
+    } else {
+      const streakLen =
+        weapon.role === 'SNIPER' ? 2.35 : weapon.role === 'HEAVY_PISTOL' ? 1.55 : 1.85;
+      this.spawnBulletTracer(muzzlePos, fwd, maxTracerDist, streakLen);
+    }
+
+    if (envHit) {
+      const muzzleEnergyJ = 0.5 * ammo.massKg * ammo.muzzleVelocityMs * ammo.muzzleVelocityMs;
+      this.spawnSurfaceImpactFx(
+        envHit.pointWorld,
+        envHit.normalWorld,
+        envHit.material,
+        muzzleEnergyJ,
+      );
+    }
   }
 
   /**
@@ -1868,7 +2774,6 @@ export class MayhemDirector {
 
     const raysToCast: Vec3Like[] = [baseDir];
     if (isHighGoreSever) {
-      // Additional downward-angled arterial spray rays so CRANIAL_POP / CLEAN_SEVER paints wall & floor
       raysToCast.push(
         normalize({ x: baseDir.x + 0.14, y: baseDir.y - 0.32, z: baseDir.z }),
         normalize({ x: baseDir.x - 0.14, y: baseDir.y - 0.44, z: baseDir.z }),
@@ -1906,7 +2811,6 @@ export class MayhemDirector {
             : 0.52 * energyFactor);
       const stretchY = Math.abs(hit.normalWorld.y) < 0.5 ? 1.24 : 1.05;
 
-      // Offset by +0.004m (+ tiny per-slot sub-mm bias) along surface normal to eliminate Z-fighting
       const depthBias = BLOOD_WALL_NORMAL_OFFSET_M + (slotId % 8) * 0.00012;
       const decalPos: Vec3Like = {
         x: hit.pointWorld.x + hit.normalWorld.x * depthBias,
@@ -1976,12 +2880,13 @@ export class MayhemDirector {
   }
 
   /**
-   * Handles external explosions (e.g., M67 frag grenade): triggers blazing 320ms point light,
-   * sympathetic barrel chain reactions, and multi-kill Bullet-Time micro-dilation punch.
+   * Handles external explosions (e.g., M67 frag grenade): triggers multi-stage AAA fireball/shockwave/smoke,
+   * high-intensity point light pulse, sympathetic barrel chain reactions, and multi-kill Bullet-Time punch.
    */
   public notifyExternalExplosion(blast: BlastEvent, killedEnemyCount = 0): void {
     if (this.destroyed) return;
-    this.triggerExplosionLight(blast.centerWorld, Math.max(18.0, blast.radiusM * 2.4));
+    this.triggerExplosionLight(blast.centerWorld, Math.max(18.0, blast.radiusM * 2.5));
+    this.spawnMultiStageExplosionFx(blast);
     this.barrels.applyBlast(blast);
     if (killedEnemyCount >= 2) {
       this.bulletTime.triggerKillPunch('MULTI_KILL_BLAST', 0.35);
@@ -1990,8 +2895,8 @@ export class MayhemDirector {
 
   /**
    * Updates F.E.A.R. Bullet-Time dilation (`rawDt -> scaledDt`), steps explosive barrels,
-   * dynamic point lights, instanced brass/hull/shrapnel pools, and casing bounce audio hooks.
-   * Returns `scaledDt`.
+   * dynamic point lights, multi-stage explosion fireballs/smoke, instanced tracer/spark/casing pools,
+   * and casing bounce audio hooks. Returns `scaledDt`.
    */
   public update(rawDt: number): number {
     if (this.destroyed || !Number.isFinite(rawDt) || rawDt <= 0) {
@@ -2002,11 +2907,15 @@ export class MayhemDirector {
 
     this.barrels.update(scaledDt);
     this.stepDynamicLights(scaledDt);
+    this.stepTransientExplosionAndImpactFx(scaledDt);
     this.stepTrackedCasingBounces(scaledDt);
 
     this.brassCasingPool.syncFromPhysics(this.rapierWorld, scaledDt);
     this.shotgunHullPool.syncFromPhysics(this.rapierWorld, scaledDt);
     this.shrapnelPool.syncFromPhysics(this.rapierWorld, scaledDt);
+    this.tracerCorePool.syncFromPhysics(null, scaledDt);
+    this.tracerHaloPool.syncFromPhysics(null, scaledDt);
+    this.impactSparkPool.syncFromPhysics(null, scaledDt);
     this.bloodSplatterPool.upload();
 
     return scaledDt;
@@ -2020,6 +2929,7 @@ export class MayhemDirector {
       light.active = false;
       light.entity.enabled = false;
     }
+    this.clearTransientExplosionAndImpactFx();
     if (clearBloodDecals) {
       this.clearBloodDecals();
     }
@@ -2039,13 +2949,188 @@ export class MayhemDirector {
     if (this.destroyed) return;
     this.destroyed = true;
 
+    this.clearTransientExplosionAndImpactFx();
+    this.dustPlumeTemplateMat.destroy();
+    this.darkSmokeTemplateMat.destroy();
+    this.shockwaveRingTemplateMat.destroy();
+    this.flashCoreTemplateMat.destroy();
     this.bulletTime.destroy();
     this.barrels.destroy();
     this.brassCasingPool.destroy();
     this.shotgunHullPool.destroy();
     this.shrapnelPool.destroy();
+    this.tracerCorePool.destroy();
+    this.tracerHaloPool.destroy();
+    this.impactSparkPool.destroy();
     this.bloodSplatterPool.destroy();
     this.rootEntity.destroy();
+  }
+
+  private clearTransientExplosionAndImpactFx(): void {
+    for (const lobe of this.fireballLobes) {
+      lobe.material.destroy();
+      lobe.entity.destroy();
+    }
+    this.fireballLobes.length = 0;
+
+    for (const plume of this.billowPlumes) {
+      plume.material.destroy();
+      plume.entity.destroy();
+    }
+    this.billowPlumes.length = 0;
+  }
+
+  private stepTransientExplosionAndImpactFx(dt: number): void {
+    // 1. Step churning emissive-to-soot fireball spheres & blinding flash cores
+    for (let i = this.fireballLobes.length - 1; i >= 0; i--) {
+      const lobe = this.fireballLobes[i];
+      lobe.elapsedS += dt;
+      if (lobe.elapsedS >= lobe.durationS) {
+        lobe.material.destroy();
+        lobe.entity.destroy();
+        this.fireballLobes.splice(i, 1);
+        continue;
+      }
+
+      const t = lobe.elapsedS / lobe.durationS;
+      const drag = Math.exp(-3.4 * dt);
+      lobe.velocity.scale(drag);
+      lobe.position.x += lobe.velocity.x * dt;
+      lobe.position.y += lobe.velocity.y * dt;
+      lobe.position.z += lobe.velocity.z * dt;
+
+      lobe.entity.setPosition(lobe.position.x, lobe.position.y, lobe.position.z);
+      lobe.entity.rotate(
+        lobe.angularVelocity.x * dt,
+        lobe.angularVelocity.y * dt,
+        lobe.angularVelocity.z * dt,
+      );
+
+      const easeOut = 1 - Math.pow(1 - t, 2.4);
+      const s = lobe.startScale + (lobe.endScale - lobe.startScale) * easeOut;
+      lobe.entity.setLocalScale(s, s, s);
+
+      if (lobe.durationS <= 0.12) {
+        // Blinding flash core: rapid additive decay
+        lobe.material.opacity = Math.max(0, (1 - t) * (1 - t));
+      } else {
+        // Fireball cooling curve: incandescent white-yellow -> roaring orange-red -> dark soot
+        if (t < 0.32) {
+          const k = t / 0.32;
+          lobe.material.diffuse.set(1.0, 0.9 - k * 0.42, 0.55 - k * 0.45);
+          lobe.material.emissive.set(1.0, 0.78 - k * 0.44, 0.3 - k * 0.25);
+          lobe.material.emissiveIntensity = 4.2 * (1 - k * 0.35);
+          lobe.material.opacity = 0.95;
+        } else {
+          const k = (t - 0.32) / 0.68;
+          const sootLerp = Math.min(1, k * 1.35);
+          lobe.material.diffuse.set(
+            0.58 * (1 - sootLerp) + 0.09 * sootLerp,
+            0.22 * (1 - sootLerp) + 0.08 * sootLerp,
+            0.08 * (1 - sootLerp) + 0.08 * sootLerp,
+          );
+          lobe.material.emissive.set(
+            (1 - sootLerp) * 0.85,
+            (1 - sootLerp) * 0.24,
+            (1 - sootLerp) * 0.04,
+          );
+          lobe.material.emissiveIntensity = Math.max(0, (1 - sootLerp) * 2.4);
+          lobe.material.opacity = 0.92 * (1 - k * k);
+        }
+      }
+      lobe.material.update();
+    }
+
+    // 2. Step expanding shockwave rings, concrete impact dust plumes & lingering dark smoke plumes
+    const activeCam = this.app.root.findByName('PlayerCamera') as pc.Entity | null;
+    const camPos = activeCam ? activeCam.getPosition() : null;
+
+    for (let i = this.billowPlumes.length - 1; i >= 0; i--) {
+      const p = this.billowPlumes[i];
+      p.elapsedS += dt;
+      if (p.elapsedS >= p.durationS) {
+        p.material.destroy();
+        p.entity.destroy();
+        this.billowPlumes.splice(i, 1);
+        continue;
+      }
+
+      const t = p.elapsedS / p.durationS;
+      const easeOut = 1 - Math.pow(1 - t, p.isGroundRing ? 2.1 : 1.75);
+      const curScale = p.startScale + (p.endScale - p.startScale) * easeOut;
+
+      if (p.isGroundRing) {
+        p.entity.setLocalEulerAngles(-90, p.elapsedS * p.spinDegPerS, 0);
+        p.entity.setLocalScale(curScale, curScale, 1);
+        p.material.opacity = p.baseOpacity * (1 - t) * (1 - t);
+      } else {
+        const drag = Math.exp(-1.8 * dt);
+        p.velocity.x *= drag;
+        p.velocity.z *= drag;
+        p.velocity.y *= Math.exp(-0.65 * dt);
+        p.position.x += p.velocity.x * dt;
+        p.position.y = Math.max(0.08, p.position.y + p.velocity.y * dt);
+        p.position.z += p.velocity.z * dt;
+        p.entity.setPosition(p.position.x, p.position.y, p.position.z);
+
+        if (camPos) {
+          p.entity.lookAt(camPos);
+          p.entity.rotateLocal(0, 0, p.elapsedS * p.spinDegPerS);
+        }
+        p.entity.setLocalScale(curScale, curScale, 1);
+        const fadeIn = Math.min(1, t * 7.0);
+        p.material.opacity = p.baseOpacity * fadeIn * (1 - t) * (1 - t * 0.4);
+      }
+      p.material.update();
+    }
+  }
+
+  private castEnvironmentImpactRay(
+    origin: Vec3Like,
+    dirNormalized: Vec3Like,
+    maxDistM: number,
+  ): { pointWorld: Vec3Like; normalWorld: Vec3Like; distanceM: number; material: DestructibleMaterialKind } | null {
+    const wallHits = this.rapierWorld.castPenetrationRay(origin, dirNormalized, maxDistM);
+    let bestHit: {
+      pointWorld: Vec3Like;
+      normalWorld: Vec3Like;
+      distanceM: number;
+      material: DestructibleMaterialKind;
+    } | null = null;
+
+    for (const h of wallHits) {
+      if (h.distanceM > 0.15 && h.distanceM <= maxDistM) {
+        let n = h.normalWorld;
+        if (dot(n, dirNormalized) > 0) {
+          n = scale(n, -1);
+        }
+        bestHit = {
+          pointWorld: h.pointWorld,
+          normalWorld: normalize(n),
+          distanceM: h.distanceM,
+          material: h.surface.material,
+        };
+        break;
+      }
+    }
+
+    if (dirNormalized.y < -1e-4 && origin.y > 0.02) {
+      const tFloor = -origin.y / dirNormalized.y;
+      if (tFloor > 0.15 && tFloor <= maxDistM && (!bestHit || tFloor < bestHit.distanceM)) {
+        bestHit = {
+          pointWorld: {
+            x: origin.x + dirNormalized.x * tFloor,
+            y: 0,
+            z: origin.z + dirNormalized.z * tFloor,
+          },
+          normalWorld: { x: 0, y: 1, z: 0 },
+          distanceM: tFloor,
+          material: 'CONCRETE_INTACT',
+        };
+      }
+    }
+
+    return bestHit;
   }
 
   private castWallOrFloorBloodRay(
@@ -2083,7 +3168,6 @@ export class MayhemDirector {
       }
     }
 
-    // Check analytical arena floor plane y = 0 (since ground collider has no ColliderSurfaceTag)
     let floorHit: {
       pointWorld: Vec3Like;
       normalWorld: Vec3Like;
@@ -2119,12 +3203,12 @@ export class MayhemDirector {
     intensity: number,
     rangeM: number,
     durationS: number,
+    isExplosion: boolean,
   ): void {
     if (this.destroyed || this.lightPool.length === 0) return;
 
     let chosen = this.lightPool.find((slot) => !slot.active);
     if (!chosen) {
-      // Recycle slot closest to completion
       chosen = this.lightPool[0];
       let bestProgress = -1;
       for (const slot of this.lightPool) {
@@ -2140,6 +3224,7 @@ export class MayhemDirector {
     chosen.elapsedS = 0;
     chosen.durationS = Math.max(0.015, durationS);
     chosen.peakIntensity = intensity;
+    chosen.isExplosion = isExplosion;
 
     chosen.entity.setPosition(pos.x, pos.y, pos.z);
     if (chosen.entity.light) {
@@ -2163,9 +3248,19 @@ export class MayhemDirector {
         continue;
       }
 
-      const rem = 1 - slot.elapsedS / slot.durationS;
+      const t = slot.elapsedS / slot.durationS;
+      const rem = 1 - t;
       if (slot.entity.light) {
         slot.entity.light.intensity = slot.peakIntensity * rem * rem;
+        if (slot.isExplosion) {
+          // Shift color temperature from blinding white-gold flash to deep blazing orange afterglow
+          const cool = Math.min(1, t * 3.2);
+          slot.entity.light.color = new pc.Color(
+            1.0,
+            0.92 * (1 - cool) + 0.44 * cool,
+            0.68 * (1 - cool) + 0.1 * cool,
+          );
+        }
       }
     }
   }

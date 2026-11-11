@@ -44,49 +44,101 @@ function valueNoise2D(x: number, y: number): number {
   return nx0 + (nx1 - nx0) * uy;
 }
 
-function evaluateCraterHeight(u: number, v: number): number {
+function fbmNoise2D(x: number, y: number): number {
+  const o1 = valueNoise2D(x, y) * 0.55;
+  const o2 = valueNoise2D(x * 2.13 + 17.7, y * 2.13 - 9.3) * 0.3;
+  const o3 = valueNoise2D(x * 4.41 - 5.2, y * 4.41 + 23.1) * 0.15;
+  return o1 + o2 + o3;
+}
+
+interface CraterSurfaceSample {
+  readonly height: number;
+  readonly crackIntensity: number;
+  readonly spallRimMask: number;
+  readonly bulletSmearMask: number;
+  readonly aggregateContrast: number;
+  readonly outerEdgeNoise: number;
+}
+
+function sampleCraterMorphology(u: number, v: number): CraterSurfaceSample {
   const dx = (u - 0.5) * 2;
   const dy = (v - 0.5) * 2;
   const r = Math.hypot(dx, dy);
   const theta = Math.atan2(dy, dx);
 
-  // Multi-lobed radial fracture distortion so craters have realistic irregular spall rims
+  // Multi-lobed angular concrete shear profile (fractured spall facets instead of smooth circles)
   const angularLobes =
-    0.07 * Math.cos(theta * 5 + 0.6) +
-    0.045 * Math.sin(theta * 9 - 1.1) +
-    0.025 * Math.cos(theta * 15 + 2.3);
-  const grit = (valueNoise2D(u * 26, v * 26) - 0.5) * 0.08;
-  const microGrit = (valueNoise2D(u * 58 + 11.3, v * 58 - 7.1) - 0.5) * 0.04;
+    0.075 * Math.cos(theta * 5 + 0.62) +
+    0.052 * Math.sin(theta * 9 - 1.14) +
+    0.032 * Math.cos(theta * 14 + 2.35) +
+    0.018 * Math.sin(theta * 21 + 0.4);
+  const facetNoise = (fbmNoise2D(u * 18, v * 18) - 0.5) * 0.1;
+  const coarseAggregate = Math.abs(valueNoise2D(u * 38 + 4.2, v * 38 - 6.8) - 0.5) * 0.11;
+  const microGrit = (valueNoise2D(u * 84 + 11.3, v * 84 - 7.1) - 0.5) * 0.048;
 
-  const warpedR = Math.max(0, r + angularLobes * Math.min(1, r * 1.6));
+  const warpedR = Math.max(0, r + (angularLobes + facetNoise * 0.55) * Math.min(1, r * 1.65));
   const basePlane = 0.82;
 
-  if (warpedR >= 0.92) {
-    return basePlane;
+  // Primary & secondary branching radial micro-cracks radiating out from the impact bore
+  const jitteredTheta =
+    theta +
+    (valueNoise2D(u * 11.5 + 3.1, v * 11.5 - 2.7) - 0.5) * 0.42 +
+    (valueNoise2D(u * 27.0, v * 27.0) - 0.5) * 0.16;
+  const primaryWave = Math.abs(Math.sin(jitteredTheta * 5.5 + 0.35));
+  const secondaryWave = Math.abs(Math.sin(jitteredTheta * 11.0 - 1.2));
+
+  let crackIntensity = 0;
+  if (warpedR > 0.12 && warpedR < 0.89) {
+    const radialReach = Math.max(0, 1 - (warpedR - 0.12) / 0.77);
+    const c1 = primaryWave < 0.105 ? ((0.105 - primaryWave) / 0.105) * radialReach : 0;
+    const c2 =
+      secondaryWave < 0.075 && warpedR < 0.74
+        ? ((0.075 - secondaryWave) / 0.075) * radialReach * 0.72
+        : 0;
+    crackIntensity = Math.min(1, Math.max(c1, c2));
   }
 
-  // Deep parabolic inner bullet pit + raised crushed concrete lip around r ~ 0.54
   let height = basePlane;
-  if (warpedR < 0.54) {
-    const t = warpedR / 0.54;
-    const bowl = t * t * (3 - 2 * t);
-    height = 0.05 + (0.91 - 0.05) * bowl;
-  } else {
-    const rimT = Math.min(1, (warpedR - 0.54) / (0.92 - 0.54));
+  if (warpedR < 0.18) {
+    // Deep central bullet-punch bore with flattened jacket-smear core
+    const boreT = warpedR / 0.18;
+    height = 0.035 + 0.145 * (boreT * boreT);
+  } else if (warpedR < 0.53) {
+    // Stepped fractured concrete spall cone with exposed aggregate facets
+    const coneT = (warpedR - 0.18) / (0.53 - 0.18);
+    const steppedCone = coneT * coneT * (3 - 2 * coneT) * 0.82 + coneT * 0.18;
+    const shelfStep = Math.floor(coneT * 3.4) * 0.025;
+    height = 0.18 + (0.935 - 0.18) * steppedCone + shelfStep * 0.35;
+  } else if (warpedR < 0.93) {
+    // Raised pulverized spall lip settling cleanly back to surrounding concrete plane
+    const rimT = Math.min(1, (warpedR - 0.53) / (0.93 - 0.53));
     const smoothRim = rimT * rimT * (3 - 2 * rimT);
-    height = 0.91 + (basePlane - 0.91) * smoothRim;
+    height = 0.935 + (basePlane - 0.935) * smoothRim;
   }
-
-  // Radial spall hairline cracks radiating from impact core
-  const crackWave = Math.abs(Math.sin(theta * 7 + valueNoise2D(u * 10, v * 10) * 2.4));
-  const crackCarve =
-    crackWave < 0.14 && warpedR > 0.18 && warpedR < 0.84
-      ? (0.14 - crackWave) * 0.45 * (1 - warpedR / 0.88)
-      : 0;
 
   const edgeFade = Math.max(0, 1 - Math.max(0, (r - 0.72) / 0.24));
-  const combined = height + (grit + microGrit - crackCarve) * edgeFade;
-  return Math.max(0.02, Math.min(0.98, combined));
+  const crackCarve = crackIntensity * 0.34;
+  const aggregateRelief =
+    warpedR > 0.14 && warpedR < 0.62 ? (coarseAggregate - 0.025) * 0.85 : (facetNoise * 0.25);
+
+  const combined = height + (aggregateRelief + microGrit - crackCarve) * edgeFade;
+  const clampedHeight = Math.max(0.02, Math.min(0.98, combined));
+
+  const spallRimMask =
+    warpedR > 0.38 && warpedR < 0.78
+      ? Math.pow(Math.sin(((warpedR - 0.38) / 0.4) * Math.PI), 0.75)
+      : 0;
+  const bulletSmearMask =
+    warpedR < 0.165 ? Math.max(0, 1 - Math.pow(warpedR / 0.165, 1.8)) : 0;
+
+  return {
+    height: clampedHeight,
+    crackIntensity,
+    spallRimMask,
+    bulletSmearMask,
+    aggregateContrast: coarseAggregate * 9.0,
+    outerEdgeNoise: angularLobes * 0.65 + facetNoise * 0.85,
+  };
 }
 
 function createRgbaTexture(
@@ -95,6 +147,7 @@ function createRgbaTexture(
   resolution: number,
   pixels: Uint8Array,
 ): pc.Texture {
+  const maxAniso = Math.min(device.maxAnisotropy || 4, 8);
   const tex = new pc.Texture(device, {
     name,
     width: resolution,
@@ -103,6 +156,7 @@ function createRgbaTexture(
     mipmaps: false,
     minFilter: pc.FILTER_LINEAR,
     magFilter: pc.FILTER_LINEAR,
+    anisotropy: Math.max(1, maxAniso),
     addressU: pc.ADDRESS_CLAMP_TO_EDGE,
     addressV: pc.ADDRESS_CLAMP_TO_EDGE,
   });
@@ -113,28 +167,41 @@ function createRgbaTexture(
 }
 
 /**
- * Procedurally synthesizes matched concrete bullet-crater Height, Normal, and Scorch/Alpha
- * `pc.Texture` maps for Parallax Occlusion Mapping (POM).
+ * Procedurally synthesizes matched high-definition concrete bullet-crater Height, Normal, and
+ * Scorch/Spall/Smear Alpha `pc.Texture` maps for Parallax Occlusion Mapping (POM).
  */
 export function createProceduralCraterTextures(
   device: pc.GraphicsDevice,
-  resolution = 128,
+  resolution = 256,
 ): ProceduralCraterTextures {
   const size = Math.max(16, Math.floor(resolution));
-  const heightField = new Float32Array(size * size);
+  const totalTexels = size * size;
+  const heightField = new Float32Array(totalTexels);
+  const crackField = new Float32Array(totalTexels);
+  const spallField = new Float32Array(totalTexels);
+  const smearField = new Float32Array(totalTexels);
+  const aggField = new Float32Array(totalTexels);
+  const edgeNoiseField = new Float32Array(totalTexels);
 
   for (let y = 0; y < size; y++) {
     const v = (y + 0.5) / size;
     for (let x = 0; x < size; x++) {
       const u = (x + 0.5) / size;
-      heightField[y * size + x] = evaluateCraterHeight(u, v);
+      const idx = y * size + x;
+      const sample = sampleCraterMorphology(u, v);
+      heightField[idx] = sample.height;
+      crackField[idx] = sample.crackIntensity;
+      spallField[idx] = sample.spallRimMask;
+      smearField[idx] = sample.bulletSmearMask;
+      aggField[idx] = sample.aggregateContrast;
+      edgeNoiseField[idx] = sample.outerEdgeNoise;
     }
   }
 
-  const heightPixels = new Uint8Array(size * size * 4);
-  const normalPixels = new Uint8Array(size * size * 4);
-  const scorchPixels = new Uint8Array(size * size * 4);
-  const normalStrength = 3.2;
+  const heightPixels = new Uint8Array(totalTexels * 4);
+  const normalPixels = new Uint8Array(totalTexels * 4);
+  const scorchPixels = new Uint8Array(totalTexels * 4);
+  const normalStrength = 4.25;
 
   for (let y = 0; y < size; y++) {
     const ym = Math.max(0, y - 1);
@@ -155,9 +222,19 @@ export function createProceduralCraterTextures(
       heightPixels[p4 + 2] = hByte;
       heightPixels[p4 + 3] = 255;
 
-      // Central-difference tangent-space normal
-      const dhdx = (heightField[y * size + xp] - heightField[y * size + xm]) * 0.5 * size * 0.04;
-      const dhdy = (heightField[yp * size + x] - heightField[ym * size + x]) * 0.5 * size * 0.04;
+      // Crisp Sobel-weighted tangent-space normal for sharp aggregate & radial crack relief
+      const hTL = heightField[ym * size + xm];
+      const hT = heightField[ym * size + x];
+      const hTR = heightField[ym * size + xp];
+      const hL = heightField[y * size + xm];
+      const hR = heightField[y * size + xp];
+      const hBL = heightField[yp * size + xm];
+      const hB = heightField[yp * size + x];
+      const hBR = heightField[yp * size + xp];
+
+      const dhdx = ((hTR + 2 * hR + hBR) - (hTL + 2 * hL + hBL)) * 0.125 * size * 0.042;
+      const dhdy = ((hBL + 2 * hB + hBR) - (hTL + 2 * hT + hTR)) * 0.125 * size * 0.042;
+
       let nx = -dhdx * normalStrength;
       let ny = -dhdy * normalStrength;
       let nz = 1.0;
@@ -171,27 +248,56 @@ export function createProceduralCraterTextures(
       normalPixels[p4 + 2] = Math.max(0, Math.min(255, Math.round((nz * 0.5 + 0.5) * 255)));
       normalPixels[p4 + 3] = 255;
 
-      // Albedo + alpha feather: dark carbonized lead core + pale pulverized concrete spall halo
+      // Multi-zone AAA concrete impact albedo + AO:
+      // 1) Pulverized light-gray cement spall halo around fractured rim
+      // 2) Exposed aggregate grit & deep cavity self-shadowing
+      // 3) Dark radial hairline micro-cracks
+      // 4) Subtle metallic lead/copper bullet smear at impact bore center
       const r = Math.hypot((u - 0.5) * 2, (v - 0.5) * 2);
-      const depthFactor = Math.max(0, Math.min(1, (0.82 - h) / 0.77));
-      const spallHalo =
-        r > 0.24 && r < 0.76 ? Math.sin(((r - 0.24) / 0.52) * Math.PI) * 0.35 : 0;
-      const grain = (hash2D(x * 3 + 7, y * 5 + 13) - 0.5) * 18;
+      const depthFactor = Math.max(0, Math.min(1, (0.82 - h) / 0.78));
+      const crackAo = crackField[idx];
+      const spallRim = spallField[idx];
+      const smear = smearField[idx];
+      const aggSpeckle = (aggField[idx] - 0.45) * 34;
+      const fineGrain = (hash2D(x * 5 + 11, y * 7 + 19) - 0.5) * 18;
 
-      const baseShade = 136 - depthFactor * 98 + spallHalo * 54 + grain;
-      const clampedRgb = Math.max(22, Math.min(225, Math.round(baseShade)));
+      let lum =
+        134 -
+        depthFactor * 104 +
+        spallRim * 76 -
+        crackAo * 78 +
+        aggSpeckle * (0.35 + 0.65 * depthFactor) +
+        fineGrain;
 
+      let red = lum;
+      let green = lum - 2;
+      let blue = lum - 5;
+
+      // Metallic lead/copper-jacket smear glint right at the bullet bore center
+      if (smear > 0.02) {
+        const jacketGlint = hash2D(x * 3 + 29, y * 3 + 41) > 0.68 ? 1.0 : 0.0;
+        const leadR = 64 + jacketGlint * 38;
+        const leadG = 66 + jacketGlint * 24;
+        const leadB = 74 + jacketGlint * 10;
+        const blend = smear * 0.78;
+        red = red * (1 - blend) + leadR * blend;
+        green = green * (1 - blend) + leadG * blend;
+        blue = blue * (1 - blend) + leadB * blend;
+      }
+
+      // Irregular fractured spall alpha silhouette (zero circular sticker edge)
+      const irregularR = r + edgeNoiseField[idx] * 0.16 - crackAo * 0.08;
       let alpha = 1;
-      if (r >= 0.94) {
+      if (irregularR >= 0.94) {
         alpha = 0;
-      } else if (r > 0.62) {
-        const fadeT = (r - 0.62) / (0.94 - 0.62);
+      } else if (irregularR > 0.58) {
+        const fadeT = (irregularR - 0.58) / (0.94 - 0.58);
         alpha = 1 - fadeT * fadeT * (3 - 2 * fadeT);
       }
 
-      scorchPixels[p4] = clampedRgb;
-      scorchPixels[p4 + 1] = Math.max(20, clampedRgb - 3);
-      scorchPixels[p4 + 2] = Math.max(18, clampedRgb - 7);
+      scorchPixels[p4] = Math.max(14, Math.min(238, Math.round(red)));
+      scorchPixels[p4 + 1] = Math.max(14, Math.min(236, Math.round(green)));
+      scorchPixels[p4 + 2] = Math.max(14, Math.min(234, Math.round(blue)));
       scorchPixels[p4 + 3] = Math.max(0, Math.min(255, Math.round(alpha * 255)));
     }
   }
@@ -212,20 +318,23 @@ export function createProceduralCraterTextures(
 export function applyPomCraterShaderChunks(
   material: pc.StandardMaterial,
   textures: ProceduralCraterTextures,
-  pomDepthScale = 0.048,
-  scorchDarkening = 0.64,
+  pomDepthScale = 0.056,
+  scorchDarkening = 0.68,
 ): void {
-  material.diffuse = new pc.Color(0.86, 0.85, 0.82);
+  material.diffuse = new pc.Color(0.9, 0.89, 0.86);
   material.diffuseMap = textures.scorchDiffuseMap;
   material.opacityMap = textures.scorchDiffuseMap;
   material.opacityMapChannel = 'a';
   material.normalMap = textures.normalMap;
-  material.bumpiness = 1.35;
+  material.bumpiness = 1.65;
   material.heightMap = textures.heightMap;
   material.heightMapChannel = 'r';
   material.heightMapFactor = pomDepthScale;
   material.parallaxMode = pc.PARALLAX_OCCLUSION;
-  material.gloss = 0.22;
+  material.useMetalness = true;
+  material.metalness = 0.08;
+  material.gloss = 0.26;
+  material.fresnelModel = pc.FRESNEL_SCHLICK;
   material.blendType = pc.BLEND_NORMAL;
   material.depthWrite = false;
   material.depthBias = -1.5;
@@ -246,7 +355,7 @@ void getParallax() {
     float safeViewZ = max(viewDirT.z, 0.14);
     vec2 maxDeltaUv = -uPomCraterDepth * viewDirUv / safeViewZ;
 
-    const int POM_STEPS = 10;
+    const int POM_STEPS = 14;
     float stepLayer = 1.0 / float(POM_STEPS);
     float currLayerDepth = 0.0;
     vec2 baseUv = {STD_HEIGHT_TEXTURE_UV};
@@ -287,8 +396,9 @@ void getAlbedo() {
     #endif
     #ifdef STD_HEIGHT_MAP
         float hSample = texture2DBias({STD_HEIGHT_TEXTURE_NAME}, {STD_HEIGHT_TEXTURE_UV}, {STD_TEXTURE_BIAS}).r;
-        float cavityDepth = clamp((0.82 - hSample) * 1.35, 0.0, 1.0);
-        dAlbedo *= (1.0 - cavityDepth * uPomScorchDarkening);
+        float cavityDepth = clamp((0.82 - hSample) * 1.42, 0.0, 1.0);
+        float spallCrown = clamp((hSample - 0.84) * 3.2, 0.0, 0.16);
+        dAlbedo = dAlbedo * (1.0 - cavityDepth * uPomScorchDarkening) + vec3(spallCrown);
     #endif
 }
 `,
@@ -305,13 +415,13 @@ fn getParallax() {
     let safeViewZ: f32 = max(viewDirT.z, 0.14);
     let maxDeltaUv: vec2f = -uniform.uPomCraterDepth * viewDirUv / safeViewZ;
 
-    let stepLayer: f32 = 0.1;
+    let stepLayer: f32 = 1.0 / 14.0;
     var currLayerDepth: f32 = 0.0;
     let baseUv: vec2f = {STD_HEIGHT_TEXTURE_UV};
     var currUv: vec2f = baseUv;
     var currMapDepth: f32 = 1.0 - textureSampleLevel({STD_HEIGHT_TEXTURE_NAME}, {STD_HEIGHT_TEXTURE_NAME}Sampler, currUv, 0.0).r;
 
-    for (var i: i32 = 0; i < 10; i = i + 1) {
+    for (var i: i32 = 0; i < 14; i = i + 1) {
         if (currLayerDepth >= currMapDepth) {
             break;
         }
@@ -344,9 +454,10 @@ fn getAlbedo() {
         dAlbedo = dAlbedo * scorchSample;
     #endif
     #ifdef STD_HEIGHT_MAP
-        let hSample: f32 = textureSampleBias({STD_HEIGHT_TEXTURE_NAME}, {STD_HEIGHT_TEXTURE_NAME}Sampler, {STD_HEIGHT_TEXTURE_UV}, {STD_TEXTURE_BIAS}).r;
-        let cavityDepth: f32 = clamp((0.82 - hSample) * 1.35, 0.0, 1.0);
-        dAlbedo = dAlbedo * (1.0 - cavityDepth * uniform.uPomScorchDarkening);
+        let hSample: f32 = textureSampleBias({STD_HEIGHT_TEXTURE_NAME}, {STD_HEIGHT_TEXTURE_UV}, {STD_TEXTURE_BIAS}).r;
+        let cavityDepth: f32 = clamp((0.82 - hSample) * 1.42, 0.0, 1.0);
+        let spallCrown: f32 = clamp((hSample - 0.84) * 3.2, 0.0, 0.16);
+        dAlbedo = dAlbedo * (1.0 - cavityDepth * uniform.uPomScorchDarkening) + vec3f(spallCrown);
     #endif
 }
 `,
@@ -394,13 +505,14 @@ void getAlbedo() {
         vec4 c = uCraterSpheres[i];
         float rad = max(c.w, 0.001);
         // View-ray parallax shift into concrete depth along dViewDirW
-        vec3 parallaxPosW = vPositionW - dViewDirW * (rad * 0.22);
+        vec3 parallaxPosW = vPositionW - dViewDirW * (rad * 0.24);
         float dist = length(parallaxPosW - c.xyz);
         if (dist < rad) {
             float normR = dist / rad;
-            float pitDarken = (1.0 - smoothstep(0.0, 0.62, normR)) * 0.58;
-            float spallRing = smoothstep(0.45, 0.68, normR) * (1.0 - smoothstep(0.68, 1.0, normR)) * 0.16;
-            dAlbedo = dAlbedo * (1.0 - pitDarken) + vec3(spallRing);
+            float pitDarken = (1.0 - smoothstep(0.0, 0.58, normR)) * 0.64;
+            float spallRing = smoothstep(0.42, 0.66, normR) * (1.0 - smoothstep(0.66, 1.0, normR)) * 0.24;
+            float leadSmear = (1.0 - smoothstep(0.0, 0.18, normR)) * 0.09;
+            dAlbedo = dAlbedo * (1.0 - pitDarken) + vec3(spallRing) + vec3(leadSmear * 0.85, leadSmear * 0.9, leadSmear * 1.1);
         }
     }
 }
@@ -422,7 +534,7 @@ uniform material_diffuse: vec3f;
 fn getAlbedo() {
     dAlbedo = uniform.material_diffuse.rgb;
     #ifdef STD_DIFFUSE_TEXTURE
-        dAlbedo = dAlbedo * {STD_DIFFUSE_TEXTURE_DECODE}(textureSampleBias({STD_DIFFUSE_TEXTURE_NAME}, {STD_DIFFUSE_TEXTURE_NAME}Sampler, {STD_DIFFUSE_TEXTURE_UV}, {STD_TEXTURE_BIAS})).rgb;
+        dAlbedo = dAlbedo * {STD_DIFFUSE_TEXTURE_DECODE}(textureSampleBias({STD_DIFFUSE_TEXTURE_NAME}, {STD_DIFFUSE_TEXTURE_UV}, {STD_TEXTURE_BIAS})).rgb;
     #endif
     let activeCraters: i32 = i32(clamp(uniform.uCraterCount, 0.0, ${MAX_SHADER_WORLD_CRATERS}.0));
     for (var i: i32 = 0; i < ${MAX_SHADER_WORLD_CRATERS}; i = i + 1) {
@@ -431,13 +543,14 @@ fn getAlbedo() {
         }
         let c: vec4f = uniform.uCraterSpheres[i];
         let rad: f32 = max(c.w, 0.001);
-        let parallaxPosW: vec3f = vPositionW - dViewDirW * (rad * 0.22);
+        let parallaxPosW: vec3f = vPositionW - dViewDirW * (rad * 0.24);
         let dist: f32 = length(parallaxPosW - c.xyz);
         if (dist < rad) {
             let normR: f32 = dist / rad;
-            let pitDarken: f32 = (1.0 - smoothstep(0.0, 0.62, normR)) * 0.58;
-            let spallRing: f32 = smoothstep(0.45, 0.68, normR) * (1.0 - smoothstep(0.68, 1.0, normR)) * 0.16;
-            dAlbedo = dAlbedo * (1.0 - pitDarken) + vec3f(spallRing);
+            let pitDarken: f32 = (1.0 - smoothstep(0.0, 0.58, normR)) * 0.64;
+            let spallRing: f32 = smoothstep(0.42, 0.66, normR) * (1.0 - smoothstep(0.66, 1.0, normR)) * 0.24;
+            let leadSmear: f32 = (1.0 - smoothstep(0.0, 0.18, normR)) * 0.09;
+            dAlbedo = dAlbedo * (1.0 - pitDarken) + vec3f(spallRing) + vec3f(leadSmear * 0.85, leadSmear * 0.9, leadSmear * 1.1);
         }
     }
 }
@@ -486,24 +599,31 @@ function createTangentDecalQuadMesh(device: pc.GraphicsDevice): pc.Mesh {
 }
 
 function createConcreteChipMesh(device: pc.GraphicsDevice): pc.Mesh {
-  // Low-poly angular concrete spall tetrahedron/wedge (4 faces, 12 vertices) for crisp instanced chips
-  const p0 = [0, 0.5, 0];
-  const p1 = [-0.48, -0.35, 0.38];
-  const p2 = [0.52, -0.32, 0.28];
-  const p3 = [0.04, -0.38, -0.52];
+  // Angular 6-face fractured concrete spall prism/octahedron shard for crisp 3D tumbling debris
+  const pTop = [0.02, 0.52, -0.04];
+  const pBot = [-0.03, -0.46, 0.05];
+  const p0 = [-0.48, 0.04, 0.42];
+  const p1 = [0.52, -0.06, 0.34];
+  const p2 = [0.36, 0.08, -0.48];
+  const p3 = [-0.42, -0.05, -0.44];
 
   const faces = [
-    [p0, p1, p2],
-    [p0, p2, p3],
-    [p0, p3, p1],
-    [p1, p3, p2],
+    [pTop, p0, p1],
+    [pTop, p1, p2],
+    [pTop, p2, p3],
+    [pTop, p3, p0],
+    [pBot, p1, p0],
+    [pBot, p2, p1],
+    [pBot, p3, p2],
+    [pBot, p0, p3],
   ];
 
-  const positions = new Float32Array(36);
-  const normals = new Float32Array(36);
-  const indices = new Uint16Array(12);
+  const faceCount = faces.length;
+  const positions = new Float32Array(faceCount * 9);
+  const normals = new Float32Array(faceCount * 9);
+  const indices = new Uint16Array(faceCount * 3);
 
-  for (let f = 0; f < 4; f++) {
+  for (let f = 0; f < faceCount; f++) {
     const [a, b, c] = faces[f];
     const abx = b[0] - a[0];
     const aby = b[1] - a[1];
@@ -613,7 +733,7 @@ export class PomCraterDecalSystem {
     app: pc.Application,
     maxDecals = 128,
     maxChipParticles = 384,
-    textureResolution = 128,
+    textureResolution = 256,
   ) {
     this.app = app;
     this.maxDecals = Math.max(4, Math.floor(maxDecals));
@@ -628,8 +748,11 @@ export class PomCraterDecalSystem {
 
     this.chipMaterial = new pc.StandardMaterial();
     this.chipMaterial.name = 'ConcreteSpallChipMat';
-    this.chipMaterial.diffuse = new pc.Color(0.62, 0.6, 0.57);
-    this.chipMaterial.gloss = 0.18;
+    this.chipMaterial.diffuse = new pc.Color(0.68, 0.66, 0.63);
+    this.chipMaterial.useMetalness = true;
+    this.chipMaterial.metalness = 0.04;
+    this.chipMaterial.gloss = 0.24;
+    this.chipMaterial.fresnelModel = pc.FRESNEL_SCHLICK;
     this.chipMaterial.update();
 
     this.decalMesh = createTangentDecalQuadMesh(device);
@@ -696,11 +819,11 @@ export class PomCraterDecalSystem {
     const energyClamped = Math.max(80, Math.min(18000, kineticEnergyJ));
     const energyFactor = Math.cbrt(energyClamped / 1800);
     const craterDiameterM = Math.max(
-      0.085,
-      Math.min(0.36, (caliberRadiusM * 18 + 0.065) * energyFactor),
+      0.095,
+      Math.min(0.38, (caliberRadiusM * 19 + 0.072) * energyFactor),
     );
     const craterRadiusM = craterDiameterM * 0.5;
-    const craterDepthM = craterRadiusM * 0.34;
+    const craterDepthM = craterRadiusM * 0.36;
 
     if (!this.destroyed) {
       let slotId = this.ringSlots[this.ringCursor];
@@ -712,7 +835,7 @@ export class PomCraterDecalSystem {
 
       const rollRad = this.nextRandom() * Math.PI * 2;
       const quat = quatFromPlusZToNormalWithRoll(normalWorld, rollRad);
-      const surfaceLiftM = 0.0028;
+      const surfaceLiftM = 0.0028 + (slotId % 8) * 0.0001;
 
       if (slotId >= 0) {
         this.decalPool.setSlotTRS(
@@ -785,29 +908,29 @@ export class PomCraterDecalSystem {
     const reflZ = incidentDirWorld.z - 2 * dotIN * normalWorld.z;
 
     const count =
-      chipCountOverride ?? Math.max(5, Math.min(14, Math.round(7 * intensityScale)));
+      chipCountOverride ?? Math.max(6, Math.min(16, Math.round(9 * intensityScale)));
     let spawned = 0;
 
     for (let i = 0; i < count; i++) {
-      const speed = (2.4 + this.nextRandom() * 5.2) * Math.max(0.6, intensityScale);
-      const jitterX = (this.nextRandom() - 0.5) * 1.3;
-      const jitterY = this.nextRandom() * 0.9;
-      const jitterZ = (this.nextRandom() - 0.5) * 1.3;
+      const speed = (2.8 + this.nextRandom() * 5.8) * Math.max(0.65, intensityScale);
+      const jitterX = (this.nextRandom() - 0.5) * 1.25;
+      const jitterY = this.nextRandom() * 0.95;
+      const jitterZ = (this.nextRandom() - 0.5) * 1.25;
 
-      let dirX = normalWorld.x * 0.65 + reflX * 0.35 + jitterX;
-      let dirY = normalWorld.y * 0.65 + reflY * 0.35 + jitterY + 0.25;
-      let dirZ = normalWorld.z * 0.65 + reflZ * 0.35 + jitterZ;
+      let dirX = normalWorld.x * 0.62 + reflX * 0.38 + jitterX;
+      let dirY = normalWorld.y * 0.62 + reflY * 0.38 + jitterY + 0.26;
+      let dirZ = normalWorld.z * 0.62 + reflZ * 0.38 + jitterZ;
       const dLen = Math.hypot(dirX, dirY, dirZ) || 1;
       dirX /= dLen;
       dirY /= dLen;
       dirZ /= dLen;
 
-      const chipSize = (0.012 + this.nextRandom() * 0.022) * Math.min(1.6, intensityScale);
+      const chipSize = (0.011 + this.nextRandom() * 0.024) * Math.min(1.65, intensityScale);
       const slot = this.chipPool.spawnKinematicParticle(
         {
-          x: pointWorld.x + normalWorld.x * 0.015,
-          y: pointWorld.y + normalWorld.y * 0.015,
-          z: pointWorld.z + normalWorld.z * 0.015,
+          x: pointWorld.x + normalWorld.x * 0.016,
+          y: pointWorld.y + normalWorld.y * 0.016,
+          z: pointWorld.z + normalWorld.z * 0.016,
         },
         {
           x: dirX * speed,
@@ -815,18 +938,18 @@ export class PomCraterDecalSystem {
           z: dirZ * speed,
         },
         {
-          x: (this.nextRandom() - 0.5) * 22,
-          y: (this.nextRandom() - 0.5) * 22,
-          z: (this.nextRandom() - 0.5) * 22,
+          x: (this.nextRandom() - 0.5) * 26,
+          y: (this.nextRandom() - 0.5) * 26,
+          z: (this.nextRandom() - 0.5) * 26,
         },
         {
           x: chipSize,
-          y: chipSize * 0.72,
-          z: chipSize * 0.85,
+          y: chipSize * (0.62 + this.nextRandom() * 0.35),
+          z: chipSize * (0.72 + this.nextRandom() * 0.35),
         },
         -9.81,
-        0.34,
-        1.35 + this.nextRandom() * 0.85,
+        0.38,
+        1.45 + this.nextRandom() * 0.95,
       );
       if (slot >= 0) {
         spawned++;
