@@ -15,6 +15,7 @@ export interface WorldTriagePlateDom {
   hpFill: HTMLDivElement;
   armorTrack: HTMLDivElement;
   armorFill: HTMLDivElement;
+  barkPill?: HTMLDivElement;
 }
 
 export function formatTriageLabel(status: CombatantTriageStatus): string {

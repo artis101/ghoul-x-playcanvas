@@ -26,3 +26,4 @@ export * from './ragdoll/ragdollVerletStep.ts';
 export * from './triage/triageEvaluator.ts';
 export * from './triage/groundedPoseTargets.ts';
 export * from './aim/ballisticZeroing.ts';
+export * from './aim/bulletMagnetism.ts';

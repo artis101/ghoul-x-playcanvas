@@ -24,6 +24,20 @@ export class OffhandSidearmSync {
     fxManager: GoreAndBallisticsFxManager
   ): boolean {
     const hs = target.healthState;
+    if (!hs.alive || hs.currentHp <= 0) {
+      hs.weaponDropped = true;
+      if (rig.wasHeldLastFrame) {
+        rig.wasHeldLastFrame = false;
+        const dropZone: GhoulZoneId = rig.lastHand === 'LEFT' ? 'HAND_LEFT' : 'HAND_RIGHT';
+        const handBone = hs.ragdollBones[dropZone];
+        if (rig.glbInstance) {
+          fxManager.spawnDroppedWeaponProp('SKINHEAD_PUNK', rig.holderEntity.getPosition(), handBone.velocity);
+        }
+      }
+      rig.holderEntity.enabled = false;
+      return false;
+    }
+
     const sidearmState = tacticalAi?.getSidearmVisualState(hs.targetId);
     const hand: ActiveFiringHand | null = sidearmState?.hand ?? null;
     const armIntact = hand !== null && isArmChainIntactAndFunctional(hs, hand);

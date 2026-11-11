@@ -1,5 +1,7 @@
 import type { TargetHealthState } from '../../contracts/ballistics.ts';
 import type { PhysiologicalEntityState } from '../../contracts/physiology.ts';
+import { stabilizeRagdollPoseForTransition } from '../../core/ballistics/solver.ts';
+import { scale, vec3 } from '../../core/ballistics/vec3.ts';
 import type { TacticalCombatAiSystem } from '../ai/tacticalCombatAi.ts';
 
 export function syncPhysiologyToHealthState(
@@ -34,7 +36,22 @@ export function syncPhysiologyToHealthState(
     hs.consciousness = 0;
     hs.heartRateBpm = 0;
     hs.systolicBpMmHg = 0;
-    if (!hs.isRagdollActive) hs.isRagdollActive = true;
+    hs.weaponDropped = true;
+    hs.activeReaction.type = 'NONE';
+    hs.activeReaction.timerS = 0;
+    if (!hs.isRagdollActive) {
+      hs.isRagdollActive = true;
+      hs.posture = 'AIRBORNE_RAGDOLL';
+      stabilizeRagdollPoseForTransition(hs, 0.0);
+      const slump = vec3(
+        Math.sin(hs.yawRad) * 0.25,
+        -0.35,
+        Math.cos(hs.yawRad) * 0.35
+      );
+      hs.ragdollBones.TORSO_UPPER_THORAX.velocity = slump;
+      hs.ragdollBones.PELVIS_GROIN.velocity = scale(slump, 0.8);
+      hs.ragdollBones.HEAD_CRANIUM.velocity = scale(slump, 1.1);
+    }
   }
 
   if (physio.biologicalTicksExecuted > 0 || physio.vascularWounds.length > 0) {

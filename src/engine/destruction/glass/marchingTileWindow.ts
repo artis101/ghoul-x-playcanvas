@@ -108,6 +108,7 @@ export class MarchingTileGlassWindow {
 
     this.meshInstance = new pc.MeshInstance(this.mesh, material);
     this.meshInstance.castShadows = false;
+    this.meshInstance.cull = false;
 
     this.entity.addComponent('render', {
       meshInstances: [this.meshInstance],
@@ -115,10 +116,10 @@ export class MarchingTileGlassWindow {
       receiveShadows: false,
     });
     if (this.entity.render) {
-      const horizSpan = this.widthM * 0.5 + this.thicknessM + 0.15;
+      const horizSpan = this.widthM * 0.5 + this.thicknessM + 0.2;
       this.entity.render.customAabb = new pc.BoundingBox(
-        new pc.Vec3(this.centerWorld.x, this.centerWorld.y, this.centerWorld.z),
-        new pc.Vec3(horizSpan, this.heightM * 0.5 + 0.15, horizSpan),
+        new pc.Vec3(0, 0, 0),
+        new pc.Vec3(horizSpan, this.heightM * 0.5 + 0.2, horizSpan),
       );
     }
     app.root.addChild(this.entity);

@@ -20,6 +20,24 @@ export type VocalTraumaCueKind =
   | 'WET_HEMOTHORAX_COUGH'
   | 'PAIN_GRUNT';
 
+export type NearMissGrazeAudioKind = 'HELMET_POP' | 'ARTERIAL_GRAZE';
+
+export interface EnemyBallisticShotAudioParams {
+  readonly muzzleOrigin: Vec3Like;
+  readonly impactPoint: Vec3Like;
+  readonly listenerPos?: Vec3Like;
+  readonly weaponId?: string;
+  readonly projectileSpeedMs?: number;
+  readonly isSupersonic?: boolean;
+}
+
+export interface RadioBarkCueAudioParams {
+  readonly isRadio: boolean;
+  readonly vocalCue?: VocalTraumaCueKind | string;
+  readonly worldPos?: Vec3Like;
+  readonly listenerPos?: Vec3Like;
+}
+
 export interface SlowMoAudioFactors {
   readonly clampedTimeScale: number;
   /** Buffer source playback rate multiplier (0.08 .. 2.0) */

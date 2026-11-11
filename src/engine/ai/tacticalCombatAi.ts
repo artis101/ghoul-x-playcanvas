@@ -1,85 +1,59 @@
 import type { BurstContext } from './tacticalBurstAndTracers.ts';
 import * as pc from 'playcanvas';
+import type {
+  AiBarkCategory, AiBarkPayload, EnemyFireMode,
+  PlayerCombatVitals, PlayerNearMissGrazeKind, PlayerNearMissGrazePayload,
+} from '../../contracts/ai/aiContracts.ts';
 import type { TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
-import { HardwareInstancedPool } from '../physics/instancedPool.ts';
+import { AttackTokenPool } from '../../core/ai/attackTokenPool.ts';
+import { SquadBarkCoordinator } from '../../core/ai/squadBarkCoordinator.ts';
+import type { HardwareInstancedPool } from '../physics/instancedPool.ts';
 import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
 import type {
-  ActiveFiringHand,
-  BrutalKillRewardKind,
-  CombatantResolveProfile,
-  EnemyAiAgentRuntime,
-  EnemyAimProfile,
-  EnemyCoverShotInterceptResult,
-  EnemyHitNotification,
-  EnemySidearmVisualState,
-  EnemyTacticalAiState,
-  EnemyTracerFireEvent,
-  PlayerCombatVitals,
-  TacticalCombatAiOptions,
-  TacticalCoverStation,
+  ActiveFiringHand, BrutalKillRewardKind, CombatantResolveProfile,
+  EnemyAiAgentRuntime, EnemyAimProfile, EnemyCoverShotInterceptResult,
+  EnemyHitNotification, EnemySidearmVisualState, EnemyTacticalAiState,
+  EnemyTracerEvent, EnemyTracerFireEvent, TacticalCombatAiConfig,
+  TacticalCombatAiOptions, TacticalCoverStation,
 } from './tacticalAiTypes.ts';
 import {
-  BACKUP_SIDEARM_WEAPON_ID,
-  DOWNED_ONE_HANDED_SPREAD_MULTIPLIER,
-  MIN_CONSCIOUSNESS_TO_FIGHT,
-  OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
-  SIDEARM_DRAW_DURATION_S,
-  TACTICAL_COVER_STATIONS,
+  BACKUP_SIDEARM_WEAPON_ID, DOWNED_ONE_HANDED_SPREAD_MULTIPLIER,
+  MIN_CONSCIOUSNESS_TO_FIGHT, OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
+  SIDEARM_DRAW_DURATION_S, TACTICAL_COVER_STATIONS,
 } from './tacticalAiTypes.ts';
-import {
-  hashCombatantTargetId,
-  resolveDefaultCombatantProfile,
-} from './archetypeTuning.ts';
+import { hashCombatantTargetId, resolveDefaultCombatantProfile } from './archetypeTuning.ts';
 import { isArmChainIntactAndFunctional } from './combatantArmEvaluation.ts';
 import {
-  createDefaultPlayerVitals,
-  grantBrutalKillReward,
-  notifyWaveCleared,
-  stepPlayerVitalsRegen,
+  createDefaultPlayerVitals, grantBrutalKillReward,
+  notifyWaveCleared, stepPlayerVitalsRegen,
 } from './playerVitalsController.ts';
-import {
-  getSidearmVisualState,
-  syncAgentArmamentAndSidearm,
-} from './agentArmamentController.ts';
+import { getSidearmVisualState, syncAgentArmamentAndSidearm } from './agentArmamentController.ts';
 import { computeEnemyAimProfile } from './tacticalAimProfileCalculator.ts';
-import {
-  handleEnemyHit,
-  handleGunshotOrExplosion,
-} from './tacticalPerception.ts';
+import { handleEnemyHit, handleGunshotOrExplosion } from './tacticalPerception.ts';
 import { registerWaveTargetsInternal } from './tacticalAiRegistration.ts';
-import {
-  isSightBlockedBySolidCover,
-  resolveExposedPlayerAimPoint,
-} from './tacticalLineOfSight.ts';
+import { isSightBlockedBySolidCover, resolveExposedPlayerAimPoint } from './tacticalLineOfSight.ts';
 import type { PeekPlanCacheEntry } from './tacticalCoverFinder.ts';
 import { type TacticalFsmContext, stepSingleEnemyAgent } from './tacticalAgentFsm.ts';
+import {
+  buildAllSquadMateSummaries, buildSquadMateSummary, createEnemyTracerPool,
+  triggerHitTraumaBark, triggerStateTransitionBark, updateSquadTokensAndFrustum,
+} from './tacticalSquadOrchestrator.ts';
 
 export type {
-  ActiveFiringHand,
-  BrutalKillRewardKind,
-  CombatantResolveProfile,
-  EnemyAiAgentRuntime,
-  EnemyAimProfile,
-  EnemyCoverShotInterceptResult,
-  EnemyHitNotification,
-  EnemySidearmVisualState,
-  EnemyTacticalAiState,
-  EnemyTracerFireEvent,
-  PlayerCombatVitals,
-  TacticalCombatAiOptions,
+  ActiveFiringHand, AiBarkCategory, AiBarkPayload, BrutalKillRewardKind,
+  CombatantResolveProfile, EnemyAiAgentRuntime, EnemyAimProfile,
+  EnemyCoverShotInterceptResult, EnemyFireMode, EnemyHitNotification,
+  EnemySidearmVisualState, EnemyTacticalAiState, EnemyTracerEvent,
+  EnemyTracerFireEvent, PlayerCombatVitals, PlayerNearMissGrazeKind,
+  PlayerNearMissGrazePayload, TacticalCombatAiConfig, TacticalCombatAiOptions,
   TacticalCoverStation,
 };
 
 export {
-  BACKUP_SIDEARM_WEAPON_ID,
-  DOWNED_ONE_HANDED_SPREAD_MULTIPLIER,
-  MIN_CONSCIOUSNESS_TO_FIGHT,
-  OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
-  SIDEARM_DRAW_DURATION_S,
-  TACTICAL_COVER_STATIONS,
-  hashCombatantTargetId,
-  isArmChainIntactAndFunctional,
-  resolveDefaultCombatantProfile,
+  BACKUP_SIDEARM_WEAPON_ID, DOWNED_ONE_HANDED_SPREAD_MULTIPLIER,
+  MIN_CONSCIOUSNESS_TO_FIGHT, OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
+  SIDEARM_DRAW_DURATION_S, TACTICAL_COVER_STATIONS,
+  hashCombatantTargetId, isArmChainIntactAndFunctional, resolveDefaultCombatantProfile,
 };
 
 export class TacticalCombatAiSystem {
@@ -96,6 +70,8 @@ export class TacticalCombatAiSystem {
     vitals: Readonly<PlayerCombatVitals>,
     event: EnemyTracerFireEvent
   ) => void;
+  public onPlayerNearMissGraze?: (event: PlayerNearMissGrazePayload) => void;
+  public onAiBark?: (bark: AiBarkPayload) => void;
   public onEnemyStateChanged?: (
     targetId: string,
     prevState: EnemyTacticalAiState,
@@ -106,10 +82,13 @@ export class TacticalCombatAiSystem {
   private readonly rapierWorld: RapierPhysicsWorld | null;
   private readonly sightDetectionRangeM: number;
   private readonly tracerPool: HardwareInstancedPool | null;
+  private readonly tokenPool: AttackTokenPool;
+  private readonly barkCoordinator = new SquadBarkCoordinator();
 
   private readonly resolveProfileOverrides = new Map<string, CombatantResolveProfile>();
   private readonly hardenedSidearmOverrides = new Map<string, boolean>();
   private readonly agents = new Map<string, EnemyAiAgentRuntime>();
+  private readonly targetStateById = new Map<string, TargetHealthState>();
   private readonly peekPlanCache = new Map<string, PeekPlanCacheEntry>();
   private readonly aimExposureCache = new Map<string, any>();
   private elapsedClockS = 0;
@@ -119,10 +98,13 @@ export class TacticalCombatAiSystem {
     this.app = options.app ?? null;
     this.rapierWorld = options.rapierWorld ?? null;
     this.sightDetectionRangeM = Math.max(5, options.sightDetectionRangeM ?? 30.0);
+    this.tokenPool = new AttackTokenPool(options.maxAggressiveTokens ?? 3);
     this.isLineOfSightBlockedCallback = options.isLineOfSightBlocked;
     this.interceptEnemyShotCover = options.interceptEnemyShotCover;
     this.onEnemyFireTracer = options.onEnemyFireTracer;
     this.onPlayerDamaged = options.onPlayerDamaged;
+    this.onPlayerNearMissGraze = options.onPlayerNearMissGraze;
+    this.onAiBark = options.onAiBark;
     this.onEnemyStateChanged = options.onEnemyStateChanged;
 
     if (options.resolveProfileOverrides) {
@@ -137,31 +119,7 @@ export class TacticalCombatAiSystem {
     }
 
     this.playerVitals = createDefaultPlayerVitals(options);
-
-    if (this.app) {
-      const dev = this.app.graphicsDevice;
-      const boltMesh = pc.Mesh.fromGeometry(dev, new pc.BoxGeometry());
-      const tracerMat = new pc.StandardMaterial();
-      tracerMat.name = 'enemyGlowingTracerMat';
-      tracerMat.diffuse = new pc.Color(1.0, 0.36, 0.08);
-      tracerMat.emissive = new pc.Color(1.0, 0.42, 0.1);
-      tracerMat.blendType = pc.BLEND_ADDITIVEALPHA;
-      tracerMat.opacity = 0.92;
-      tracerMat.depthWrite = false;
-      tracerMat.cull = pc.CULLFACE_NONE;
-      tracerMat.update();
-
-      this.tracerPool = new HardwareInstancedPool(
-        this.app,
-        boltMesh,
-        tracerMat,
-        128,
-        'EnemyTracerBoltPool',
-        false
-      );
-    } else {
-      this.tracerPool = null;
-    }
+    this.tracerPool = createEnemyTracerPool(this.app);
   }
 
   public setPlayerDamageEnabled(enabled: boolean): void {
@@ -196,6 +154,12 @@ export class TacticalCombatAiSystem {
     targets: readonly TargetHealthState[],
     deployToCoverStations = false
   ): void {
+    this.tokenPool.reset();
+    this.barkCoordinator.reset();
+    this.targetStateById.clear();
+    for (const hs of targets) {
+      this.targetStateById.set(hs.targetId, hs);
+    }
     registerWaveTargetsInternal(
       targets,
       this.agents,
@@ -230,6 +194,7 @@ export class TacticalCombatAiSystem {
     target: TargetHealthState,
     hit: EnemyHitNotification = {}
   ): EnemyTacticalAiState {
+    this.targetStateById.set(target.targetId, target);
     let agent = this.agents.get(target.targetId);
     if (!agent) {
       this.registerWaveTargets([target], false);
@@ -243,6 +208,10 @@ export class TacticalCombatAiSystem {
       this.agents,
       () => syncAgentArmamentAndSidearm(0, target, agent!, () => {}),
       (ag, next) => this.transitionState(ag, next)
+    );
+
+    triggerHitTraumaBark(target, hit, agent, this.barkCoordinator, this.elapsedClockS, (b) =>
+      this.emitBark(b)
     );
 
     const profile = this.computeEnemyAimProfile(target, agent, hit.externalAccuracyMultiplier);
@@ -272,7 +241,8 @@ export class TacticalCombatAiSystem {
     dt: number,
     targets: readonly TargetHealthState[],
     playerEyeWorldPos: Vec3Like,
-    playFireVisual?: BurstContext['playFireVisual']
+    playFireVisual?: BurstContext['playFireVisual'],
+    playerForwardWorld?: Vec3Like
   ): void {
     if (this.destroyed || !Number.isFinite(dt) || dt <= 0) return;
 
@@ -280,11 +250,35 @@ export class TacticalCombatAiSystem {
     this.elapsedClockS += stepDt;
     stepPlayerVitalsRegen(this.playerVitals, stepDt);
 
+    for (const hs of targets) {
+      this.targetStateById.set(hs.targetId, hs);
+      if (!this.agents.has(hs.targetId)) {
+        this.registerWaveTargets([hs], false);
+      }
+    }
+
     const isSightBlocked = (from: Vec3Like, to: Vec3Like) =>
       isSightBlockedBySolidCover(from, to, this.rapierWorld, this.isLineOfSightBlockedCallback);
 
     const resolveAim = (hs: TargetHealthState, ag: EnemyAiAgentRuntime, eye: Vec3Like) =>
       resolveExposedPlayerAimPoint(hs, ag, eye, this.rapierWorld, this.isLineOfSightBlockedCallback);
+
+    updateSquadTokensAndFrustum(
+      targets,
+      this.agents,
+      this.tokenPool,
+      this.barkCoordinator,
+      playerEyeWorldPos,
+      playerForwardWorld,
+      (hs, ag) => this.computeEnemyAimProfile(hs, ag),
+      resolveAim
+    );
+
+    this.barkCoordinator.step(
+      this.elapsedClockS,
+      (id) => buildSquadMateSummary(id, this.targetStateById, this.agents),
+      (bark) => this.emitBark(bark)
+    );
 
     const fsmCtx: TacticalFsmContext = {
       elapsedClockS: this.elapsedClockS,
@@ -302,19 +296,39 @@ export class TacticalCombatAiSystem {
         onEnemyFireTracer: this.onEnemyFireTracer,
         playFireVisual,
         onPlayerDamaged: this.onPlayerDamaged,
+        onPlayerNearMissGraze: (ev) => {
+          this.onPlayerNearMissGraze?.(ev);
+          this.app?.fire('player:near_miss_graze', ev);
+        },
         resolveExposedPlayerAimPoint: resolveAim,
       },
       transitionState: (ag, next) => this.transitionState(ag, next),
       notifyEnemyHit: (hs, hit) => this.notifyEnemyHit(hs, hit),
       computeAimProfile: (hs, ag) => this.computeEnemyAimProfile(hs, ag),
+      onAgentFlankShift: (hs, ag) => {
+        this.barkCoordinator.notifyFlankOrPeekShift(
+          hs.targetId,
+          hs.archetype,
+          ag.peekSign,
+          hs.worldPosition,
+          buildAllSquadMateSummaries(this.targetStateById, this.agents),
+          this.elapsedClockS,
+          (bark) => this.emitBark(bark)
+        );
+      },
+      onAgentSidearmDrawStart: (hs) => {
+        this.barkCoordinator.notifySidearmTransition(
+          hs.targetId,
+          hs.archetype,
+          hs.worldPosition,
+          this.elapsedClockS,
+          (bark) => this.emitBark(bark)
+        );
+      },
     };
 
     for (const hs of targets) {
-      let agent = this.agents.get(hs.targetId);
-      if (!agent) {
-        this.registerWaveTargets([hs], false);
-        agent = this.agents.get(hs.targetId)!;
-      }
+      const agent = this.agents.get(hs.targetId)!;
       stepSingleEnemyAgent(stepDt, hs, agent, playerEyeWorldPos, fsmCtx);
     }
 
@@ -327,8 +341,11 @@ export class TacticalCombatAiSystem {
     if (this.destroyed) return;
     this.destroyed = true;
     this.agents.clear();
+    this.targetStateById.clear();
     this.peekPlanCache.clear();
     this.aimExposureCache.clear();
+    this.tokenPool.reset();
+    this.barkCoordinator.reset();
     if (this.tracerPool) {
       this.tracerPool.destroy();
     }
@@ -338,6 +355,26 @@ export class TacticalCombatAiSystem {
     if (agent.state === nextState) return;
     const prev = agent.state;
     agent.state = nextState;
+    if (nextState === 'DEAD') {
+      this.tokenPool.releaseToken(agent.targetId);
+    }
+
+    triggerStateTransitionBark(
+      agent,
+      prev,
+      nextState,
+      this.targetStateById,
+      this.agents,
+      this.barkCoordinator,
+      this.elapsedClockS,
+      (bark) => this.emitBark(bark)
+    );
+
     this.onEnemyStateChanged?.(agent.targetId, prev, nextState);
+  }
+
+  private emitBark(bark: AiBarkPayload): void {
+    this.onAiBark?.(bark);
+    this.app?.fire('ai:bark', bark);
   }
 }

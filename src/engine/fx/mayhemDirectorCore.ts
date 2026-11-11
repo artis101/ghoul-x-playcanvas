@@ -22,12 +22,19 @@ import {
   stepDynamicLights,
 } from './lighting/dynamicLightPool.ts';
 import { CasingBounceEvent, TrackedCasingBuffer } from './casings/casingTypes.ts';
-import { ejectWeaponCasing, stepTrackedCasingBounces } from './casings/casingEjectionSystem.ts';
+import {
+  ejectEnemyShellCasing as ejectEnemyCasing,
+  ejectWeaponCasing,
+  stepTrackedCasingBounces,
+} from './casings/casingEjectionSystem.ts';
+import { LingeringGunsmokePool } from './smoke/lingeringGunsmokePool.ts';
 import { spawnBulletTracer as spawnTracerStreak } from './tracers/tracerSparkSystem.ts';
 import {
   BloodSplatterProjectionParams,
+  type BloodSplatterSlotAnchor,
   processShotSimulationReport as processReportDecals,
   projectBloodSplatter as projectSplatterDecals,
+  pruneUnsupportedBloodSplatters,
 } from './decals/bloodSplatterSystem.ts';
 import {
   spawnSurfaceImpact,
@@ -50,6 +57,7 @@ export interface MayhemDirectorOptions {
   onExplosionBlast?: (blast: BlastEvent) => void;
   onBarrelIgnited?: (barrel: HazardBarrelInstance) => void;
   isSurfaceOpenAtHit?: SurfaceOpenPredicate;
+  getBreachVersion?: () => number;
 }
 
 export class MayhemDirector {
@@ -67,10 +75,12 @@ export class MayhemDirector {
   public readonly tracerCorePool: HardwareInstancedPool;
   public readonly tracerHaloPool: HardwareInstancedPool;
   public readonly impactSparkPool: HardwareInstancedPool;
+  public readonly lingeringSmokePool: LingeringGunsmokePool;
 
   public onCasingBounce?: (event: CasingBounceEvent) => void;
   public onExplosionBlast?: (blast: BlastEvent) => void;
   public isSurfaceOpenAtHit?: SurfaceOpenPredicate;
+  public getBreachVersion?: () => number;
 
   private readonly lightPool: PooledDynamicOmniLight[] = [];
   private readonly fireballLobes: TransientFireballLobe[] = [];
@@ -79,12 +89,14 @@ export class MayhemDirector {
   private readonly unitQuadMesh: pc.Mesh;
   private readonly trackedBuffer = new TrackedCasingBuffer();
   private readonly pools: MayhemPools;
+  private readonly bloodSplatterAnchors: BloodSplatterSlotAnchor[];
 
   private cachedCameraEntity: pc.Entity | null = null;
   private readonly splatterRecycleCursor = { value: 0 };
   private readonly splatterSeedCounter = { value: 1 };
   private casingSeedCounter = 1;
   private readonly fxSeedCounter = { value: 1 };
+  private lastSyncedBreachVersion = -1;
   private destroyed = false;
 
   public constructor(options: MayhemDirectorOptions) {
@@ -93,6 +105,7 @@ export class MayhemDirector {
     this.onCasingBounce = options.onCasingBounce;
     this.onExplosionBlast = options.onExplosionBlast;
     this.isSurfaceOpenAtHit = options.isSurfaceOpenAtHit;
+    this.getBreachVersion = options.getBreachVersion;
 
     this.rootEntity = new pc.Entity('MayhemDirectorRoot');
     this.app.root.addChild(this.rootEntity);
@@ -109,6 +122,13 @@ export class MayhemDirector {
     this.tracerCorePool = this.pools.tracerCorePool;
     this.tracerHaloPool = this.pools.tracerHaloPool;
     this.impactSparkPool = this.pools.impactSparkPool;
+    this.lingeringSmokePool = new LingeringGunsmokePool(this.app, this.unitQuadMesh);
+    this.bloodSplatterAnchors = Array.from({ length: this.bloodSplatterPool.maxInstances }, () => ({
+      active: false,
+      isFloor: false,
+      pointWorld: { x: 0, y: 0, z: 0 },
+      normalWorld: { x: 0, y: 1, z: 0 },
+    }));
 
     this.templates = createExplosionTemplateMaterials(dev);
     this.lightPool = createDynamicLightPool(this.app, this.rootEntity, options.dynamicLightPoolSize ?? 2);
@@ -124,7 +144,9 @@ export class MayhemDirector {
       onBarrelDetonated: (_b, blast) => {
         this.triggerExplosionLight(blast.centerWorld, 20.0);
         this.spawnMultiStageExplosionFx(blast);
+        this.lingeringSmokePool.applyBlastSwirl(blast.centerWorld, blast.radiusM, blast.peakImpulseNs);
         this.onExplosionBlast?.(blast);
+        this.syncSurfaceBreaches();
       },
     });
   }
@@ -166,6 +188,21 @@ export class MayhemDirector {
     return res.slotId;
   }
 
+  public ejectEnemyShellCasing(originWorld: Vec3Like, rightDirWorld: Vec3Like, isSidearm = false): number {
+    if (this.destroyed) return -1;
+    const res = ejectEnemyCasing(
+      { brassCasingPool: this.brassCasingPool, shotgunHullPool: this.shotgunHullPool, trackedBuffer: this.trackedBuffer, onCasingBounce: this.onCasingBounce },
+      originWorld, rightDirWorld, isSidearm, this.casingSeedCounter,
+    );
+    this.casingSeedCounter = res.nextSeed;
+    return res.slotId;
+  }
+
+  public injectGunsmoke(originWorld: Vec3Like, directionWorld: Vec3Like, intensity = 1.0): number {
+    if (this.destroyed) return -1;
+    return this.lingeringSmokePool.injectGunsmoke(originWorld, directionWorld, intensity);
+  }
+
   public triggerMuzzleFlashLight(muzzleWorldPos: Vec3Like): void {
     activateDynamicOmniLight(this.lightPool, muzzleWorldPos, 1.0, 0.72, 0.28, 4.2, 10.5, 0.052, false);
   }
@@ -180,6 +217,8 @@ export class MayhemDirector {
 
     this.triggerMuzzleFlashLight(muzzlePos);
     this.ejectWeaponCasing(eyeWorldPos, fwd, weapon, ammo);
+    const smokeIntensity = weapon.role === 'SHOTGUN' || weapon.role === 'SNIPER' ? 1.35 : 0.85;
+    this.injectGunsmoke(muzzlePos, fwd, smokeIntensity);
 
     const perProjectileEnergyJ = 0.5 * ammo.massKg * ammo.muzzleVelocityMs * ammo.muzzleVelocityMs;
     const { firstSurfaceHit, tracerStopDistanceM } = traceWeaponEnvironmentFire(
@@ -227,6 +266,7 @@ export class MayhemDirector {
         bloodSplatterPool: this.bloodSplatterPool,
         bulletTime: this.bulletTime,
         isSurfaceOpenAtHit: this.isSurfaceOpenAtHit,
+        slotAnchors: this.bloodSplatterAnchors,
       },
       params, this.splatterRecycleCursor, this.splatterSeedCounter,
     );
@@ -240,16 +280,39 @@ export class MayhemDirector {
         bloodSplatterPool: this.bloodSplatterPool,
         bulletTime: this.bulletTime,
         isSurfaceOpenAtHit: this.isSurfaceOpenAtHit,
+        slotAnchors: this.bloodSplatterAnchors,
       },
       report, this.splatterRecycleCursor, this.splatterSeedCounter,
     );
+  }
+
+  public pruneUnsupportedDecals(): number {
+    if (this.destroyed) return 0;
+    return pruneUnsupportedBloodSplatters({
+      rapierWorld: this.rapierWorld,
+      bloodSplatterPool: this.bloodSplatterPool,
+      bulletTime: this.bulletTime,
+      isSurfaceOpenAtHit: this.isSurfaceOpenAtHit,
+      slotAnchors: this.bloodSplatterAnchors,
+    });
+  }
+
+  public syncSurfaceBreaches(): void {
+    if (this.destroyed || !this.getBreachVersion) return;
+    const v = this.getBreachVersion();
+    if (v === this.lastSyncedBreachVersion) return;
+    this.lastSyncedBreachVersion = v;
+    this.pruneUnsupportedDecals();
+    this.rapierWorld.wakeAllSleepingDynamicBodies();
   }
 
   public notifyExternalExplosion(blast: BlastEvent, killedEnemyCount = 0): void {
     if (this.destroyed) return;
     this.triggerExplosionLight(blast.centerWorld, Math.max(18.0, blast.radiusM * 2.5));
     this.spawnMultiStageExplosionFx(blast);
+    this.lingeringSmokePool.applyBlastSwirl(blast.centerWorld, blast.radiusM, blast.peakImpulseNs);
     this.barrels.applyBlast(blast);
+    this.syncSurfaceBreaches();
     if (killedEnemyCount >= 2) this.bulletTime.triggerKillPunch(0.35, 0.16, 'MULTI_KILL_BLAST');
   }
 
@@ -258,13 +321,16 @@ export class MayhemDirector {
     const scaledDt = this.bulletTime.update(rawDt);
 
     this.barrels.update(scaledDt);
+    this.syncSurfaceBreaches();
     stepDynamicLights(this.lightPool, scaledDt);
 
     stepFireballLobes(this.fireballLobes, scaledDt);
     if (!this.cachedCameraEntity || !this.cachedCameraEntity.parent) {
       this.cachedCameraEntity = this.app.root.findByName('PlayerCamera') as pc.Entity | null;
     }
-    stepBillowPlumes(this.billowPlumes, scaledDt, this.cachedCameraEntity ? this.cachedCameraEntity.getPosition() : null);
+    const camPos = this.cachedCameraEntity ? this.cachedCameraEntity.getPosition() : null;
+    stepBillowPlumes(this.billowPlumes, scaledDt, camPos);
+    this.lingeringSmokePool.update(scaledDt, camPos);
 
     stepTrackedCasingBounces(this.trackedBuffer, scaledDt, this.onCasingBounce);
 
@@ -283,14 +349,17 @@ export class MayhemDirector {
     if (this.destroyed) return;
     this.barrels.resetBarrels();
     this.trackedBuffer.reset();
+    this.lingeringSmokePool.clear();
     resetDynamicLights(this.lightPool);
     this.clearTransientExplosionAndImpactFx();
+    this.lastSyncedBreachVersion = -1;
     if (clearBloodDecals) this.clearBloodDecals();
   }
 
   public clearBloodDecals(): void {
     for (let slot = 0; slot < this.bloodSplatterPool.maxInstances; slot++) {
       if (this.bloodSplatterPool.isSlotActive(slot)) this.bloodSplatterPool.freeSlot(slot);
+      this.bloodSplatterAnchors[slot].active = false;
     }
     this.splatterRecycleCursor.value = 0;
     this.bloodSplatterPool.upload();
@@ -303,6 +372,7 @@ export class MayhemDirector {
     destroyExplosionTemplateMaterials(this.templates);
     this.bulletTime.destroy();
     this.barrels.destroy();
+    this.lingeringSmokePool.destroy();
     destroyMayhemPools(this.pools);
     this.rootEntity.destroy();
     this.unitQuadMesh.destroy();

@@ -29,6 +29,7 @@ export function spawnCombatTargets(
       cfg.archetype,
       isSouthpaw
     );
+    hs.hitstopRemainingS = 0;
     const mannequin = new GhoulMannequinEntity(
       app,
       hs,

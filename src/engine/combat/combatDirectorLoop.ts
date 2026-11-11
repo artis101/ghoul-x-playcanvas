@@ -1,5 +1,6 @@
 import * as pc from 'playcanvas';
 import { stepRagdollPhysics } from '../../core/ballistics/solver.ts';
+import { vec3 } from '../../core/ballistics/vec3.ts';
 import type { Vec3Like } from '../../contracts/ballistics.ts';
 import type { PhysiologyEcsSystem } from '../../core/physiology/physiologySystem.ts';
 import type { VascularBloodFxEmitter } from '../gore/vascularBloodFx.ts';
@@ -69,24 +70,39 @@ export function stepCombatDirectorLoop(
   const viewerPos = ctx.getViewerPosVec3();
   if (ctx.tacticalAi) {
     const states = ctx.targets.map((t) => t.healthState);
-    ctx.tacticalAi.update(dt, states, viewerPos, (targetId, usingSidearm) => {
-      if (usingSidearm) {
-        const rig = ctx.offhandSidearmRigs.get(targetId);
-        if (!rig?.holderEntity.enabled) return undefined;
-        rig.glbInstance?.playFire?.();
-        return rig.glbInstance?.muzzleNode?.getPosition();
-      }
-      return ctx.targets.find((target) => target.healthState.targetId === targetId)?.playWeaponFire();
-    });
+    const playerFwd = camera?.entity
+      ? vec3(camera.entity.forward.x, camera.entity.forward.y, camera.entity.forward.z)
+      : undefined;
+    ctx.tacticalAi.update(
+      dt,
+      states,
+      viewerPos,
+      (targetId, usingSidearm) => {
+        if (usingSidearm) {
+          const rig = ctx.offhandSidearmRigs.get(targetId);
+          if (!rig?.holderEntity.enabled) return undefined;
+          rig.glbInstance?.playFire?.();
+          return rig.glbInstance?.muzzleNode?.getPosition();
+        }
+        return ctx.targets.find((target) => target.healthState.targetId === targetId)?.playWeaponFire();
+      },
+      playerFwd
+    );
   }
 
   for (const t of ctx.targets) {
-    stepRagdollPhysics(t.healthState, dt, 0.0);
-    t.syncFromHealthState(dt, totalElapsedTimeS, ctx.tacticalAi?.isGuarding(t.healthState.targetId));
-    let rig = ctx.offhandSidearmRigs.get(t.healthState.targetId);
+    const hs = t.healthState;
+    let effectiveDt = dt;
+    if ((hs.hitstopRemainingS ?? 0) > 0) {
+      hs.hitstopRemainingS = Math.max(0, (hs.hitstopRemainingS ?? 0) - dt);
+      effectiveDt = 0;
+    }
+    stepRagdollPhysics(hs, effectiveDt, 0.0);
+    t.syncFromHealthState(effectiveDt, totalElapsedTimeS, ctx.tacticalAi?.isGuarding(hs.targetId));
+    let rig = ctx.offhandSidearmRigs.get(hs.targetId);
     if (!rig) {
       rig = createOffhandSidearmRig(t, ctx.glbRegistry);
-      ctx.offhandSidearmRigs.set(t.healthState.targetId, rig);
+      ctx.offhandSidearmRigs.set(hs.targetId, rig);
     }
     if (ctx.offhandSync.sync(t, viewerPos, rig, ctx.tacticalAi, ctx.fxManager)) {
       t.syncPoseAttachments();

@@ -173,6 +173,8 @@ export interface TargetHealthState {
   hasHelmetArmor: boolean;
   helmetArmorIntegrity: number;
   activeReaction: ActivePainReaction;
+  /** Optional local micro-hitstop freeze timer in seconds (35-50ms on heavy/shattering hits) */
+  hitstopRemainingS?: number;
   alive: boolean;
   isRagdollActive: boolean;
   ragdollRootPosition: Vec3Like;

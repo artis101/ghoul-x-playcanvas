@@ -146,6 +146,7 @@ export function createProceduralBrickMaterial(device: pc.GraphicsDevice): {
   material.diffuse = new pc.Color(0.95, 0.92, 0.9);
   material.diffuseMap = tex;
   material.gloss = 0.24;
+  material.cull = pc.CULLFACE_NONE;
   material.update();
 
   return { material, diffuseTexture: tex };

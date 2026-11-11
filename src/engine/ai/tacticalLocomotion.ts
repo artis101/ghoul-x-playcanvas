@@ -29,7 +29,7 @@ export function moveHorizontalClamped(
   maxStepM: number,
   rapierWorld: RapierPhysicsWorld | null
 ): void {
-  if (hs.isRagdollActive || maxStepM <= 0) return;
+  if (!hs.alive || hs.currentHp <= 0 || hs.isRagdollActive || maxStepM <= 0) return;
 
   const clampedGoalX = Math.max(-8.1, Math.min(8.1, goalX));
   const clampedGoalZ = Math.max(-46.0, Math.min(-3.2, goalZ));

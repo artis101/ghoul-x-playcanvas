@@ -28,6 +28,7 @@ import {
   handleWoodWallRaySegment,
   uploadWallPanelMesh,
 } from './woodWallRayBlastSolver.ts';
+import { WoodSlabDynamicPool } from './woodSlabDynamicPool.ts';
 import {
   DEFAULT_WOOD_WALL_MAX_INDICES,
   DEFAULT_WOOD_WALL_MAX_VERTICES,
@@ -43,6 +44,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
   public readonly app: pc.Application;
   public readonly physicsWorld: RapierPhysicsWorld;
   public readonly splinterPools: readonly HardwareInstancedPool[];
+  public readonly slabPool: WoodSlabDynamicPool;
 
   private readonly maxPanelVertices: number;
   private readonly maxPanelIndices: number;
@@ -78,6 +80,8 @@ export class WoodWallSystem implements IDestructibleSubsystem {
 
     if (options.panelMaterial) {
       this.panelMaterial = options.panelMaterial;
+      this.panelMaterial.cull = pc.CULLFACE_NONE;
+      this.panelMaterial.update();
     } else {
       const panelTex = createProceduralWoodPanelTexture(device);
       this.ownedTextures.push(panelTex);
@@ -88,6 +92,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       mat.diffuseMap = panelTex;
       mat.specular = new pc.Color(0.08, 0.07, 0.05);
       mat.gloss = 0.22;
+      mat.cull = pc.CULLFACE_NONE;
       mat.update();
       this.panelMaterial = mat;
       this.ownedMaterials.push(mat);
@@ -95,6 +100,8 @@ export class WoodWallSystem implements IDestructibleSubsystem {
 
     if (options.studMaterial) {
       this.studMaterial = options.studMaterial;
+      this.studMaterial.cull = pc.CULLFACE_NONE;
+      this.studMaterial.update();
     } else {
       const studTex = createProceduralPineStudTexture(device);
       this.ownedTextures.push(studTex);
@@ -105,6 +112,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       mat.diffuseMap = studTex;
       mat.specular = new pc.Color(0.06, 0.05, 0.04);
       mat.gloss = 0.16;
+      mat.cull = pc.CULLFACE_NONE;
       mat.update();
       this.studMaterial = mat;
       this.ownedMaterials.push(mat);
@@ -118,6 +126,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       mat.diffuse = new pc.Color(0.84, 0.67, 0.43);
       mat.specular = new pc.Color(0.1, 0.08, 0.05);
       mat.gloss = 0.2;
+      mat.cull = pc.CULLFACE_NONE;
       mat.update();
       this.splinterMaterial = mat;
       this.ownedMaterials.push(mat);
@@ -132,7 +141,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       meshesToUse = procedural;
     }
 
-    const totalCap = Math.max(64, options.maxSplinterInstances ?? 768);
+    const totalCap = Math.max(64, options.maxSplinterInstances ?? 1024);
     const perPoolCap = Math.max(32, Math.ceil(totalCap / meshesToUse.length));
     const pools: HardwareInstancedPool[] = [];
     for (let i = 0; i < meshesToUse.length; i++) {
@@ -148,6 +157,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       );
     }
     this.splinterPools = pools;
+    this.slabPool = new WoodSlabDynamicPool(app, physicsWorld, this.panelMaterial);
   }
 
   public get wallCount(): number {
@@ -216,6 +226,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
     for (let i = 0; i < this.splinterPools.length; i++) {
       this.splinterPools[i].syncFromPhysics(this.physicsWorld, dt);
     }
+    this.slabPool.syncFromPhysics(false);
   }
 
   public handleRaySegment(seg: BallisticSegmentImpact): BallisticPenetrationResult | null {
@@ -229,6 +240,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       () => this.nextRand(),
       this.elapsedSimTimeS,
       seg,
+      this.slabPool,
     );
   }
 
@@ -241,6 +253,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       this.splinterPools,
       () => this.nextRand(),
       blast,
+      this.slabPool,
     );
   }
 
@@ -279,6 +292,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
     for (let i = 0; i < this.splinterPools.length; i++) {
       this.splinterPools[i].clear();
     }
+    this.slabPool.clear();
   }
 
   public destroy(): void {
@@ -302,6 +316,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
     for (let i = 0; i < this.splinterPools.length; i++) {
       this.splinterPools[i].destroy();
     }
+    this.slabPool.destroy();
 
     for (let i = 0; i < this.ownedSplinterMeshes.length; i++) {
       this.ownedSplinterMeshes[i].destroy();

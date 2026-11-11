@@ -5,11 +5,13 @@ import {
 } from '../../../contracts/ballistics/targetHealthContracts';
 import {
   Vec3Like,
+  add,
   vec3,
   sub,
   scale,
   normalize,
   cross,
+  dot,
   length,
   copyVec3,
   distance,
@@ -22,26 +24,29 @@ import {
 } from './ragdollBasisMath';
 
 /**
- * Recomputes orthonormal bases for upper/lower limbs and combat boots.
+ * Recomputes orthonormal bases for upper/lower limbs and combat boots,
+ * using joint hinge-plane hints so horizontal ragdoll limbs never candy-wrapper twist.
  */
 export function recomputeLimbAndFootBases(target: TargetHealthState): void {
   const limbPairs: Array<{
     zone: GhoulZoneId;
     distal: GhoulZoneId | AuxParticleId;
+    nextDistal?: GhoulZoneId | AuxParticleId;
     refZone: GhoulZoneId;
+    isArm: boolean;
   }> = [
-    { zone: 'UPPER_ARM_LEFT', distal: 'FOREARM_LEFT', refZone: 'TORSO_UPPER_THORAX' },
-    { zone: 'FOREARM_LEFT', distal: 'HAND_LEFT', refZone: 'UPPER_ARM_LEFT' },
-    { zone: 'HAND_LEFT', distal: 'HAND_TIP_LEFT', refZone: 'FOREARM_LEFT' },
-    { zone: 'UPPER_ARM_RIGHT', distal: 'FOREARM_RIGHT', refZone: 'TORSO_UPPER_THORAX' },
-    { zone: 'FOREARM_RIGHT', distal: 'HAND_RIGHT', refZone: 'UPPER_ARM_RIGHT' },
-    { zone: 'HAND_RIGHT', distal: 'HAND_TIP_RIGHT', refZone: 'FOREARM_RIGHT' },
-    { zone: 'THIGH_LEFT', distal: 'KNEE_LEFT', refZone: 'PELVIS_GROIN' },
-    { zone: 'KNEE_LEFT', distal: 'SHIN_LEFT', refZone: 'THIGH_LEFT' },
-    { zone: 'SHIN_LEFT', distal: 'FOOT_LEFT', refZone: 'KNEE_LEFT' },
-    { zone: 'THIGH_RIGHT', distal: 'KNEE_RIGHT', refZone: 'PELVIS_GROIN' },
-    { zone: 'KNEE_RIGHT', distal: 'SHIN_RIGHT', refZone: 'THIGH_RIGHT' },
-    { zone: 'SHIN_RIGHT', distal: 'FOOT_RIGHT', refZone: 'KNEE_RIGHT' },
+    { zone: 'UPPER_ARM_LEFT', distal: 'FOREARM_LEFT', nextDistal: 'HAND_LEFT', refZone: 'TORSO_UPPER_THORAX', isArm: true },
+    { zone: 'FOREARM_LEFT', distal: 'HAND_LEFT', nextDistal: 'HAND_TIP_LEFT', refZone: 'UPPER_ARM_LEFT', isArm: true },
+    { zone: 'HAND_LEFT', distal: 'HAND_TIP_LEFT', refZone: 'FOREARM_LEFT', isArm: true },
+    { zone: 'UPPER_ARM_RIGHT', distal: 'FOREARM_RIGHT', nextDistal: 'HAND_RIGHT', refZone: 'TORSO_UPPER_THORAX', isArm: true },
+    { zone: 'FOREARM_RIGHT', distal: 'HAND_RIGHT', nextDistal: 'HAND_TIP_RIGHT', refZone: 'UPPER_ARM_RIGHT', isArm: true },
+    { zone: 'HAND_RIGHT', distal: 'HAND_TIP_RIGHT', refZone: 'FOREARM_RIGHT', isArm: true },
+    { zone: 'THIGH_LEFT', distal: 'KNEE_LEFT', nextDistal: 'SHIN_LEFT', refZone: 'PELVIS_GROIN', isArm: false },
+    { zone: 'KNEE_LEFT', distal: 'SHIN_LEFT', nextDistal: 'FOOT_LEFT', refZone: 'THIGH_LEFT', isArm: false },
+    { zone: 'SHIN_LEFT', distal: 'FOOT_LEFT', refZone: 'KNEE_LEFT', isArm: false },
+    { zone: 'THIGH_RIGHT', distal: 'KNEE_RIGHT', nextDistal: 'SHIN_RIGHT', refZone: 'PELVIS_GROIN', isArm: false },
+    { zone: 'KNEE_RIGHT', distal: 'SHIN_RIGHT', nextDistal: 'FOOT_RIGHT', refZone: 'THIGH_RIGHT', isArm: false },
+    { zone: 'SHIN_RIGHT', distal: 'FOOT_RIGHT', refZone: 'KNEE_RIGHT', isArm: false },
   ];
 
   for (const item of limbPairs) {
@@ -63,7 +68,26 @@ export function recomputeLimbAndFootBases(target: TargetHealthState): void {
       bone.distalPosition = sub(bone.position, scale(normalize(segUp), defaultLen));
     }
 
-    const lBasis = safeOrthonormalBasis(segUp, refBone.basisForward, refBone.basisRight);
+    // Stabilize twist when a limb lies nearly parallel to parent basisForward by blending
+    // the parent forward/right with the anatomical hinge plane at the elbow/knee.
+    let fwdHint = refBone.basisForward;
+    let rightHint = refBone.basisRight;
+    const normUp = normalize(segUp);
+    if (Math.abs(dot(normUp, fwdHint)) > 0.82) {
+      fwdHint = normalize(add(scale(fwdHint, 0.45), scale(refBone.basisUp, item.isArm ? 0.55 : -0.55)));
+    }
+    if (item.nextDistal && getParticleComp(target, item.nextDistal) === bone.componentId) {
+      const nextPos = getParticlePos(target, item.nextDistal);
+      const childVec = normalize(sub(distalPos, nextPos));
+      const bendAxis = cross(normUp, childVec);
+      const bendLen = length(bendAxis);
+      if (bendLen > 0.18) {
+        const alignedRight = dot(bendAxis, rightHint) >= 0 ? scale(bendAxis, 1 / bendLen) : scale(bendAxis, -1 / bendLen);
+        rightHint = normalize(add(scale(rightHint, 0.65), scale(alignedRight, 0.35)));
+      }
+    }
+
+    const lBasis = safeOrthonormalBasis(segUp, fwdHint, rightHint);
     bone.basisRight = lBasis.right;
     bone.basisUp = lBasis.up;
     bone.basisForward = lBasis.forward;
@@ -82,9 +106,15 @@ export function recomputeLimbAndFootBases(target: TargetHealthState): void {
     if (length(fwd) < 1e-4) fwd = shin.basisForward;
     fwd = normalize(fwd);
 
-    const upHint = shin.componentId === foot.componentId ? shin.basisUp : vec3(0, 1, 0);
+    // Blend shin up and shin right to prevent 180-degree boot ankle flips when horizontal
+    const upHint =
+      shin.componentId === foot.componentId
+        ? normalize(add(scale(shin.basisUp, 0.75), scale(shin.basisForward, 0.25)))
+        : vec3(0, 1, 0);
     let right = cross(upHint, fwd);
-    if (length(right) < 1e-4) right = shin.basisRight;
+    if (length(right) < 0.15 || dot(right, shin.basisRight) < 0) {
+      right = shin.basisRight;
+    }
     right = normalize(right);
     const up = normalize(cross(fwd, right));
 

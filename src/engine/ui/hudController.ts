@@ -1,6 +1,10 @@
+import type {
+  AiBarkPayload,
+  PlayerCombatVitals,
+  PlayerNearMissGrazeKind,
+} from '../../contracts/ai/aiContracts.ts';
 import type { AmmoSpec, ShotSimulationReport, TargetHealthState, WeaponSpec } from '../../contracts/ballistics.ts';
 import type { PhysiologicalEntityState } from '../../contracts/physiology.ts';
-import type { PlayerCombatVitals } from '../ai/tacticalCombatAi.ts';
 import type { BulletTimeVignetteState } from '../fx/mayhemDirector.ts';
 import { HudReticleScope } from './hudReticleScope.ts';
 import { HudTriageFeed } from './hudTriageFeed.ts';
@@ -30,6 +34,10 @@ export class HudController {
 
   public triggerPlayerDamageFlash(): void {
     this.vitals.triggerPlayerDamageFlash();
+  }
+
+  public triggerNearMissGrazeFlash(kind: PlayerNearMissGrazeKind): void {
+    this.vitals.triggerNearMissGrazeFlash(kind);
   }
 
   public updateBulletTimeHud(state: BulletTimeVignetteState): void {
@@ -68,6 +76,10 @@ export class HudController {
 
   public pushSystemToast(tag: string, message: string): void {
     this.triage.pushSystemToast(tag, message);
+  }
+
+  public pushRadioBark(bark: AiBarkPayload): void {
+    this.triage.pushRadioBark(bark);
   }
 
   public updateContextPrompt(isPointerLocked: boolean, allHostilesDown: boolean): void {

@@ -27,6 +27,9 @@ export interface TacticalFsmContext {
   transitionState: (agent: EnemyAiAgentRuntime, next: EnemyTacticalAiState) => void;
   notifyEnemyHit: (hs: TargetHealthState, hit: EnemyHitNotification) => EnemyTacticalAiState;
   computeAimProfile: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => EnemyAimProfile;
+  onAgentFlankShift?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => void;
+  onAgentSidearmDrawStart?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => void;
+  onAgentCoverRetreat?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => void;
 }
 
 export function stepSingleEnemyAgent(
@@ -37,19 +40,23 @@ export function stepSingleEnemyAgent(
   ctx: TacticalFsmContext
 ): void {
   agent.triageStatus = computeCombatantTriageStatus(hs);
+
+  // 1. Check death / exsanguination first — guarantee 100% zero motion for dead enemies
+  if (!hs.alive || hs.currentHp <= 0 || agent.state === 'DEAD') {
+    agent.burstShotsRemaining = 0;
+    agent.fireMode = 'CINEMATIC_SUPPRESSION';
+    syncAgentArmamentAndSidearm(dt, hs, agent, () => {});
+    if (agent.state !== 'DEAD') {
+      ctx.transitionState(agent, 'DEAD');
+    }
+    return;
+  }
+
   agent.lastAimTargetWorld = {
     x: playerEyeWorldPos.x,
     y: playerEyeWorldPos.y - 0.16,
     z: playerEyeWorldPos.z,
   };
-
-  // 1. Check death / exsanguination first
-  if (!hs.alive || hs.currentHp <= 0) {
-    agent.burstShotsRemaining = 0;
-    syncAgentArmamentAndSidearm(dt, hs, agent, () => {});
-    ctx.transitionState(agent, 'DEAD');
-    return;
-  }
 
   // Auto-detect unnotified HP drops
   if (hs.currentHp < agent.lastObservedHp - 0.5) {
@@ -65,16 +72,23 @@ export function stepSingleEnemyAgent(
   agent.lastObservedHp = hs.currentHp;
 
   // Step dismemberment / sidearm draw state
+  const wasSidearmDrawing = agent.sidearmDrawing;
   syncAgentArmamentAndSidearm(dt, hs, agent, () => {
     if (agent.state === 'PATROL_GUARD') {
       agent.adrenaline = Math.max(agent.adrenaline, 0.92);
       ctx.transitionState(agent, 'ALERTED_ENGAGING');
     }
   });
+  if (!wasSidearmDrawing && agent.sidearmDrawing) {
+    ctx.onAgentSidearmDrawStart?.(hs, agent);
+  }
 
   // Decay suppression & maintain resolve-specific adrenaline
   agent.suppression = Math.max(0, agent.suppression - 0.28 * dt);
   if (agent.state !== 'PATROL_GUARD') {
+    if ((agent.alertReactionTimerS ?? 0) > 0) {
+      agent.alertReactionTimerS = Math.max(0, (agent.alertReactionTimerS ?? 0) - dt);
+    }
     if (
       agent.resolveProfile === 'FANATIC_BERSERKER' &&
       (hs.currentHp < hs.maxHp * 0.95 || hs.painShock > 0.15)
@@ -109,6 +123,7 @@ export function stepSingleEnemyAgent(
   }
 
   const turnTowardPlayer = (turnSpeed: number) => {
+    if (!hs.alive || hs.currentHp <= 0 || hs.isRagdollActive || agent.state === 'DEAD') return;
     const desiredYaw = yawToward(hs.worldPosition, playerEyeWorldPos, hs.yawRad);
     hs.yawRad = approachAngleRad(hs.yawRad, desiredYaw, turnSpeed * dt);
   };
@@ -222,6 +237,7 @@ export function stepSingleEnemyAgent(
             : 3.1;
       const phase = (agent.peekCycleTimerS % cyclePeriodS) / cyclePeriodS;
 
+      const prevPeekSign = agent.peekSign;
       if (agent.resolveProfile === 'FANATIC_BERSERKER' && isWounded) {
         agent.isPeekingOut = true;
         agent.berserkerAdvanceOffsetM = Math.min(
@@ -246,6 +262,9 @@ export function stepSingleEnemyAgent(
         ctx.isSightBlocked,
         ctx.hasCoverQueries
       );
+      if (agent.peekSign !== prevPeekSign) {
+        ctx.onAgentFlankShift?.(hs, agent);
+      }
       const deltaOffset = peekPlan.targetOffset - agent.currentLateralOffsetM;
 
       const profileSpeedMul =
@@ -310,12 +329,9 @@ export function stepSingleEnemyAgent(
       }
       break;
     }
-
-    case 'DEAD':
-      break;
   }
 
-  if (!hs.isRagdollActive && hs.alive) {
+  if (!hs.isRagdollActive && hs.alive && hs.currentHp > 0 && (agent.state as EnemyTacticalAiState) !== 'DEAD') {
     updateStandingCombatPose(hs, ctx.elapsedClockS);
   }
 }

@@ -67,6 +67,31 @@ export interface IntactStudSpan {
   brokenTop: boolean;
 }
 
+export function collapseFloatingStudSections(col: StudColumnState): number[] {
+  const collapsed: number[] = [];
+  if (col.isBorderPost) return collapsed;
+  const n = col.sections.length;
+  let s = 0;
+  while (s < n) {
+    if (col.sections[s].broken) {
+      s++;
+      continue;
+    }
+    const startIdx = s;
+    while (s + 1 < n && !col.sections[s + 1].broken) s++;
+    const endIdx = s;
+    if (startIdx > 0 && endIdx < n - 1) {
+      for (let k = startIdx; k <= endIdx; k++) {
+        col.sections[k].broken = true;
+        col.sections[k].hp = 0;
+        collapsed.push(k);
+      }
+    }
+    s++;
+  }
+  return collapsed;
+}
+
 export function collectIntactStudSpans(col: StudColumnState): IntactStudSpan[] {
   const spans: IntactStudSpan[] = [];
   let s = 0;
@@ -79,6 +104,11 @@ export function collectIntactStudSpans(col: StudColumnState): IntactStudSpan[] {
     const startIdx = s;
     while (s + 1 < n && !col.sections[s + 1].broken) s++;
     const endIdx = s;
+    // Never emit unanchored mid-air stud spans that touch neither bottom nor top plate
+    if (!col.isBorderPost && startIdx > 0 && endIdx < n - 1) {
+      s++;
+      continue;
+    }
     spans.push({
       vMin: col.sections[startIdx].vMin,
       vMax: col.sections[endIdx].vMax,

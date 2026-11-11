@@ -86,7 +86,7 @@ export function buildRagdollConstraints(): RagdollDistanceConstraint[] {
   addExactLink('NECK_CERVICAL', 'HEAD_FACE_JAW', 1.0);
   addExactLink('HEAD_TOP', 'HEAD_FACE_JAW', 1.0);
 
-  // 2. Rigid 3D Thoracic Ribcage + Shoulder Sockets
+  // 2. Rigid 3D Thoracic Ribcage + Natural Articulated Shoulder Sockets
   addExactLink('TORSO_UPPER_THORAX', 'SHOULDER_LEFT', 1.0);
   addExactLink('TORSO_UPPER_THORAX', 'SHOULDER_RIGHT', 1.0);
   addExactLink('NECK_CERVICAL', 'SHOULDER_LEFT', 1.0);
@@ -94,13 +94,13 @@ export function buildRagdollConstraints(): RagdollDistanceConstraint[] {
   addExactLink('SHOULDER_LEFT', 'SHOULDER_RIGHT', 1.0);
   addExactLink('SHOULDER_LEFT', 'UPPER_ARM_LEFT', 1.0);
   addExactLink('SHOULDER_RIGHT', 'UPPER_ARM_RIGHT', 1.0);
-  addRangeLimit('TORSO_LOWER_ABDOMEN', 'SHOULDER_LEFT', 0.94, 1.06, 0.9);
-  addRangeLimit('TORSO_LOWER_ABDOMEN', 'SHOULDER_RIGHT', 0.94, 1.06, 0.9);
-  addRangeLimit('TORSO_UPPER_THORAX', 'UPPER_ARM_LEFT', 0.93, 1.07, 0.92);
-  addRangeLimit('TORSO_UPPER_THORAX', 'UPPER_ARM_RIGHT', 0.93, 1.07, 0.92);
-  addRangeLimit('NECK_CERVICAL', 'UPPER_ARM_LEFT', 0.93, 1.07, 0.9);
-  addRangeLimit('NECK_CERVICAL', 'UPPER_ARM_RIGHT', 0.93, 1.07, 0.9);
-  addRangeLimit('UPPER_ARM_LEFT', 'UPPER_ARM_RIGHT', 0.92, 1.08, 0.88);
+  addRangeLimit('TORSO_LOWER_ABDOMEN', 'SHOULDER_LEFT', 0.92, 1.08, 0.85);
+  addRangeLimit('TORSO_LOWER_ABDOMEN', 'SHOULDER_RIGHT', 0.92, 1.08, 0.85);
+  addRangeLimit('TORSO_UPPER_THORAX', 'UPPER_ARM_LEFT', 0.68, 1.18, 0.45);
+  addRangeLimit('TORSO_UPPER_THORAX', 'UPPER_ARM_RIGHT', 0.68, 1.18, 0.45);
+  addRangeLimit('NECK_CERVICAL', 'UPPER_ARM_LEFT', 0.72, 1.22, 0.45);
+  addRangeLimit('NECK_CERVICAL', 'UPPER_ARM_RIGHT', 0.72, 1.22, 0.45);
+  addRangeLimit('UPPER_ARM_LEFT', 'UPPER_ARM_RIGHT', 0.62, 1.18, 0.42);
 
   // 3. Rigid 3D Pelvic Girdle + Hip Sockets
   addExactLink('PELVIS_GROIN', 'THIGH_LEFT', 1.0);
@@ -150,17 +150,17 @@ export function buildRagdollConstraints(): RagdollDistanceConstraint[] {
   addRangeLimit('SHOULDER_LEFT', 'HEAD_FACE_JAW', 0.84, 1.16, 0.78);
   addRangeLimit('SHOULDER_RIGHT', 'HEAD_FACE_JAW', 0.84, 1.16, 0.78);
 
-  addMeterBounds('THIGH_LEFT', 'FOOT_LEFT', 0.48, 0.796, 0.78);
-  addMeterBounds('THIGH_RIGHT', 'FOOT_RIGHT', 0.48, 0.796, 0.78);
-  addMeterBounds('TORSO_UPPER_THORAX', 'KNEE_LEFT', 0.58, 0.86, 0.70);
-  addMeterBounds('TORSO_UPPER_THORAX', 'KNEE_RIGHT', 0.58, 0.86, 0.70);
-  addMeterBounds('KNEE_LEFT', 'KNEE_RIGHT', 0.14, 0.48, 0.75);
-  addMeterBounds('FOOT_LEFT', 'FOOT_RIGHT', 0.13, 0.56, 0.65);
+  addMeterBounds('THIGH_LEFT', 'FOOT_LEFT', 0.32, 0.80, 0.48);
+  addMeterBounds('THIGH_RIGHT', 'FOOT_RIGHT', 0.32, 0.80, 0.48);
+  addMeterBounds('TORSO_UPPER_THORAX', 'KNEE_LEFT', 0.42, 0.88, 0.45);
+  addMeterBounds('TORSO_UPPER_THORAX', 'KNEE_RIGHT', 0.42, 0.88, 0.45);
+  addMeterBounds('KNEE_LEFT', 'KNEE_RIGHT', 0.11, 0.58, 0.55);
+  addMeterBounds('FOOT_LEFT', 'FOOT_RIGHT', 0.11, 0.64, 0.50);
 
-  addMeterBounds('UPPER_ARM_LEFT', 'HAND_LEFT', 0.28, 0.51, 0.72);
-  addMeterBounds('UPPER_ARM_RIGHT', 'HAND_RIGHT', 0.28, 0.51, 0.72);
-  addMeterBounds('PELVIS_GROIN', 'FOREARM_LEFT', 0.22, 0.62, 0.55);
-  addMeterBounds('PELVIS_GROIN', 'FOREARM_RIGHT', 0.22, 0.62, 0.55);
+  addMeterBounds('UPPER_ARM_LEFT', 'HAND_LEFT', 0.20, 0.52, 0.50);
+  addMeterBounds('UPPER_ARM_RIGHT', 'HAND_RIGHT', 0.20, 0.52, 0.50);
+  addMeterBounds('PELVIS_GROIN', 'FOREARM_LEFT', 0.16, 0.78, 0.35);
+  addMeterBounds('PELVIS_GROIN', 'FOREARM_RIGHT', 0.16, 0.78, 0.35);
 
   return constraints;
 }

@@ -15,6 +15,8 @@ import { CombatantDismemberment } from './combatantDismemberment.ts';
 import { CombatantVisualGoreSync } from './combatantVisualGoreSync.ts';
 import { CombatantWoundDecals } from './combatantWoundDecals.ts';
 import { CombatantWeaponMount } from './combatantWeaponMount.ts';
+import { CombatantDeadLimbOverlay } from './combatantDeadLimbOverlay.ts';
+import { isArmDeadButAttached } from '../../core/ghoul/anatomy/proceduralTraumaIk.ts';
 import { buildDistalParentSocketStumps, buildProximalLimbStump } from './combatantStumpBuilder.ts';
 
 export class GhoulMannequinEntity {
@@ -36,6 +38,7 @@ export class GhoulMannequinEntity {
   private readonly visualGoreSync = new CombatantVisualGoreSync();
   private readonly woundDecals = new CombatantWoundDecals();
   private readonly weaponMount = new CombatantWeaponMount();
+  private readonly deadLimbOverlay = new CombatantDeadLimbOverlay();
 
   private readonly glbZoneMaterialPairs = new Map<GhoulZoneId, GlbZoneMaterialPair[]>();
   private readonly glbGearOriginalMaterials = new Map<pc.MeshInstance, pc.Material>();
@@ -149,6 +152,7 @@ export class GhoulMannequinEntity {
           }
           glb.rootEntity.syncHierarchy();
         }
+        this.deadLimbOverlay.sync(glb, this.healthState, this.boneSync, dt);
       }
     }
 
@@ -174,8 +178,13 @@ export class GhoulMannequinEntity {
     const state = this.healthState;
     const glb = this.combatantGlb;
     const animated = glb && state.alive && !state.isRagdollActive;
+    const leftArmDead = animated ? isArmDeadButAttached(state, 'LEFT') : false;
+    const rightArmDead = animated ? isArmDeadButAttached(state, 'RIGHT') : false;
     for (const [zone, bundle] of this.zoneBundles) {
-      if (animated) this.boneSync.readAnimatedBone(glb, zone, state);
+      const skipRead =
+        (leftArmDead && (zone === 'UPPER_ARM_LEFT' || zone === 'FOREARM_LEFT' || zone === 'HAND_LEFT')) ||
+        (rightArmDead && (zone === 'UPPER_ARM_RIGHT' || zone === 'FOREARM_RIGHT' || zone === 'HAND_RIGHT'));
+      if (animated && !skipRead) this.boneSync.readAnimatedBone(glb, zone, state);
       const bone = state.ragdollBones[zone];
       bundle.zoneNode.setPosition(bone.position.x, bone.position.y, bone.position.z);
       this.boneSync.setEntityBasisRotation(bundle.zoneNode, bone.basisRight, bone.basisUp, bone.basisForward);

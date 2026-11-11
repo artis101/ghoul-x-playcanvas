@@ -1,4 +1,5 @@
 import type * as pc from 'playcanvas';
+import type { DestructibleMaterialKind } from '../../contracts/destruction.ts';
 import { scale, vec3 } from '../../core/ballistics/vec3.ts';
 import { getOrCreateMaterials, type EngineMaterialPalette } from '../materials.ts';
 import { applyRetroEnvironmentTextures } from '../retroTextures.ts';
@@ -93,6 +94,7 @@ export class GhoulXApplication implements IGhoulXApp {
       },
       onExplosionBlast: (blast) => {
         this.destructionManager.applyBlast(blast);
+        this.mayhemDirector.syncSurfaceBreaches();
         this.combatDirector.applyExternalExplosionTrauma(blast, 'HAZARD BARREL');
         this.tacticalAi.notifyGunshotOrExplosion(blast.centerWorld, 45.0, 0.78);
       },
@@ -111,6 +113,7 @@ export class GhoulXApplication implements IGhoulXApp {
     });
     this.mayhemDirector.isSurfaceOpenAtHit = (hit, origin, dir, maxDistM) =>
       this.destructionManager.isSurfaceOpenAtHit(hit, origin, dir, maxDistM);
+    this.mayhemDirector.getBreachVersion = () => this.destructionManager.breachVersion;
 
     this.tacticalAi = new TacticalCombatAiSystem({
       app: this.app,
@@ -119,14 +122,59 @@ export class GhoulXApplication implements IGhoulXApp {
       interceptEnemyShotCover: (origin, dir, maxDistM) =>
         this.destructionManager.interceptEnemyShot(origin, dir, maxDistM),
       onEnemyFireTracer: (ev) => {
-        if (ev.blockedByCover) {
+        const eye = this.fpsController?.getEyePosition();
+        const listenerPos = eye ? vec3(eye.x, eye.y, eye.z) : vec3(0, 1.62, 0);
+        this.combatAudio.playEnemyBallisticShot({
+          muzzleOrigin: ev.muzzleOriginWorld,
+          impactPoint: ev.impactPointWorld,
+          listenerPos,
+          weaponId: ev.weaponId,
+          isSupersonic: ev.isSupersonic,
+        });
+
+        const shotDir = ev.shotDirectionWorld;
+        const rightDir = vec3(-shotDir.z, 0, shotDir.x);
+        this.mayhemDirector.ejectEnemyShellCasing(
+          ev.muzzleOriginWorld,
+          rightDir,
+          ev.usedBackupSidearm
+        );
+        this.mayhemDirector.injectGunsmoke(
+          ev.muzzleOriginWorld,
+          shotDir,
+          ev.usedBackupSidearm ? 0.55 : 0.9
+        );
+
+        if ((ev.blockedByCover || ev.suppressionMode) && !ev.hitPlayer) {
           this.mayhemDirector.spawnSurfaceImpactFx(
             ev.impactPointWorld,
-            scale(ev.shotDirectionWorld, -1),
-            'CONCRETE_INTACT',
+            ev.impactNormalWorld ?? scale(ev.shotDirectionWorld, -1),
+            (ev.impactSurfaceTag as DestructibleMaterialKind) ?? 'CONCRETE_INTACT',
             420
           );
         }
+      },
+      onAiBark: (bark) => {
+        const eye = this.fpsController?.getEyePosition();
+        const listenerPos = eye ? vec3(eye.x, eye.y, eye.z) : vec3(0, 1.62, 0);
+        this.hudController.pushRadioBark(bark);
+        this.combatAudio.playRadioBarkCue({
+          isRadio: bark.isRadio,
+          vocalCue: bark.vocalCue,
+          worldPos: bark.worldPos,
+          listenerPos,
+        });
+      },
+      onPlayerNearMissGraze: (graze) => {
+        const eye = this.fpsController?.getEyePosition();
+        const listenerPos = eye ? vec3(eye.x, eye.y, eye.z) : vec3(0, 1.62, 0);
+        this.hudController.triggerNearMissGrazeFlash(graze.kind);
+        const audioKind = graze.kind === 'HELMET_DEFLECT' ? 'HELMET_POP' : 'ARTERIAL_GRAZE';
+        this.combatAudio.playNearMissGrazeTinnitus(audioKind, graze.hitPointWorld, listenerPos);
+        this.fpsController?.applyCameraShake(
+          graze.kind === 'HELMET_DEFLECT' ? 1.85 : 1.45,
+          0.26
+        );
       },
       onPlayerDamaged: () => {
         this.hudController.triggerPlayerDamageFlash();

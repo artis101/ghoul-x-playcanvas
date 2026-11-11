@@ -1,4 +1,6 @@
+import type { PlayerNearMissGrazePayload } from '../../contracts/ai/aiContracts.ts';
 import type { GhoulZoneId, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
+import { computeSuppressionTargetWorld } from '../../core/ai/attackTokenPool.ts';
 import {
   add,
   copyVec3,
@@ -6,7 +8,6 @@ import {
   deterministicConeSpread,
   distance,
   dot,
-  length,
   normalize,
   scale,
   sub,
@@ -25,6 +26,7 @@ import type {
 } from './tacticalAiTypes.ts';
 import { wrapAngleRad, yawToward } from './combatantArmEvaluation.ts';
 import { ARCHETYPE_TUNING, SIDEARM_M9_TUNING } from './archetypeTuning.ts';
+import { resolveIncomingPlayerShotDamage } from './playerVitalsController.ts';
 
 export interface BurstContext {
   elapsedClockS: number;
@@ -35,6 +37,7 @@ export interface BurstContext {
   playFireVisual?: (targetId: string, usingSidearm: boolean) => Vec3Like | undefined;
   onEnemyFireTracer?: (event: EnemyTracerFireEvent) => void;
   onPlayerDamaged?: (vitals: Readonly<PlayerCombatVitals>, event: EnemyTracerFireEvent) => void;
+  onPlayerNearMissGraze?: (event: PlayerNearMissGrazePayload) => void;
   resolveExposedPlayerAimPoint: (hs: TargetHealthState, agent: EnemyAiAgentRuntime, playerEye: Vec3Like) => Vec3Like | null;
 }
 
@@ -63,6 +66,10 @@ export function stepWeaponBurstFire(
 
   const exposedAimTarget = ctx.resolveExposedPlayerAimPoint(hs, agent, playerEyeWorldPos);
   if (!exposedAimTarget) {
+    agent.timeWithoutLosS = (agent.timeWithoutLosS ?? 0) + dt;
+    if (agent.timeWithoutLosS >= 4.0) {
+      agent.hasFiredWarningShot = false;
+    }
     if (agent.burstShotsRemaining > 0) {
       agent.burstShotsRemaining = 0;
       agent.fireCooldownTimerS = Math.max(agent.fireCooldownTimerS, 0.25);
@@ -70,7 +77,10 @@ export function stepWeaponBurstFire(
     return;
   }
 
+  agent.timeWithoutLosS = 0;
   agent.lastAimTargetWorld = copyVec3(exposedAimTarget);
+
+  if ((agent.alertReactionTimerS ?? 0) > 0) return;
 
   // Grounded ragdolls aim with the sidearm arm pose. Standing enemies turn their whole body.
   const aimYaw = yawToward(hs.worldPosition, exposedAimTarget, hs.yawRad);
@@ -84,7 +94,9 @@ export function stepWeaponBurstFire(
         let desiredBurst = tuning.burstCount;
         if (agent.resolveProfile === 'FANATIC_BERSERKER' && isWounded) desiredBurst += 2;
         else if (agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded) desiredBurst += 3;
-        agent.burstShotsRemaining = aimProfile.isOneHandedDownedFire ? Math.max(2, Math.ceil(desiredBurst * 0.65)) : desiredBurst;
+        agent.burstShotsRemaining = aimProfile.isOneHandedDownedFire
+          ? Math.max(2, Math.ceil(desiredBurst * 0.65))
+          : desiredBurst;
       }
       agent.burstInterShotTimerS = 0;
     }
@@ -112,15 +124,22 @@ export function stepWeaponBurstFire(
   if (agent.burstShotsRemaining > 0) {
     const baseInterShot = aimProfile.usingBackupSidearm ? SIDEARM_M9_TUNING.interShotDelayS : tuning.interShotDelayS;
     agent.burstInterShotTimerS =
-      baseInterShot * cadenceScale * raggedWoundDelay * (aimProfile.isOneHandedDownedFire && !aimProfile.usingBackupSidearm ? 1.3 : 1.0);
+      baseInterShot *
+      cadenceScale *
+      raggedWoundDelay *
+      (aimProfile.isOneHandedDownedFire && !aimProfile.usingBackupSidearm ? 1.3 : 1.0);
   } else {
     agent.completedBurstCount += 1;
     if (agent.resolveProfile === 'HARDENED_VETERAN' && agent.completedBurstCount % 2 === 0) {
       agent.peekSign = (agent.peekSign === 1 ? -1 : 1) as -1 | 1;
     }
     const baseCooldown = aimProfile.usingBackupSidearm ? SIDEARM_M9_TUNING.burstCooldownS : tuning.burstCooldownS;
+    const offScreenCooldownMul = agent.isOffScreen ? 2.0 : 1.0;
     agent.fireCooldownTimerS =
-      baseCooldown * cadenceScale * (aimProfile.isOneHandedDownedFire && !aimProfile.usingBackupSidearm ? 1.25 : 1.0);
+      baseCooldown *
+      cadenceScale *
+      offScreenCooldownMul *
+      (aimProfile.isOneHandedDownedFire && !aimProfile.usingBackupSidearm ? 1.25 : 1.0);
   }
 }
 
@@ -144,7 +163,20 @@ export function emitEnemyTracerShot(
   const muzzleHeight = hs.isRagdollActive ? Math.max(0.42, basePos.y) : isGroundedOrDowned ? hs.worldPosition.y + 0.62 : hs.worldPosition.y + 1.32;
 
   const coreOrigin: Vec3Like = { x: basePos.x, y: muzzleHeight, z: basePos.z };
-  const idealDir = normalize(sub(aimTargetPos, coreOrigin));
+  const seed = agent.tracerSeedCounter++;
+
+  const isSuppressionToken = agent.fireMode === 'CINEMATIC_SUPPRESSION';
+  const firstShotGrace =
+    !agent.hasFiredWarningShot &&
+    (agent.isOffScreen === true || tuning.burstCount > 1 || isSuppressionToken);
+  agent.hasFiredWarningShot = true;
+  const suppressionMode = isSuppressionToken || firstShotGrace;
+
+  const effectiveAimTargetPos = suppressionMode
+    ? computeSuppressionTargetWorld(seed, playerEyeWorldPos, coreOrigin, firstShotGrace)
+    : aimTargetPos;
+
+  const idealDir = normalize(sub(effectiveAimTargetPos, coreOrigin));
   const fwdDir = usingSidearm ? idealDir : { x: Math.sin(hs.yawRad), y: 0, z: Math.cos(hs.yawRad) };
 
   const rawMuzzleOrigin: Vec3Like = handPos
@@ -152,7 +184,6 @@ export function emitEnemyTracerShot(
     : { x: coreOrigin.x + fwdDir.x * 0.38, y: muzzleHeight, z: coreOrigin.z + fwdDir.z * 0.38 };
 
   const playerChestTarget: Vec3Like = { x: playerEyeWorldPos.x, y: playerEyeWorldPos.y - 0.18, z: playerEyeWorldPos.z };
-  const seed = agent.tracerSeedCounter++;
   const shotDir = deterministicConeSpread(idealDir, aimProfile.effectiveSpreadRad, (seed % 7) + 1, 8, seed * 31);
 
   const toChest = sub(playerChestTarget, coreOrigin);
@@ -165,27 +196,45 @@ export function emitEnemyTracerShot(
   const closestAimPt = alongAim > 0 ? add(coreOrigin, scale(shotDir, alongAim)) : coreOrigin;
   const missDistAim = alongAim > 0 ? distance(closestAimPt, aimTargetPos) : Infinity;
 
-  const wouldHitPlayer = missDistChest <= 0.36 || missDistAim <= 0.36;
-  const playerHitDist = missDistChest <= 0.36 ? alongChest : missDistAim <= 0.36 ? alongAim : Math.max(0.5, distance(coreOrigin, aimTargetPos));
+  const wouldHitPlayer = !suppressionMode && (missDistChest <= 0.36 || missDistAim <= 0.36);
+  const playerHitDist =
+    missDistChest <= 0.36
+      ? alongChest
+      : missDistAim <= 0.36
+        ? alongAim
+        : Math.max(0.5, distance(coreOrigin, effectiveAimTargetPos));
   const playerHitPoint = missDistChest <= 0.36 ? closestChestPt : closestAimPt;
   const coverCheckDist = wouldHitPlayer ? Math.max(0.05, playerHitDist) : playerHitDist + 6.0;
 
   let blockedByCover = false;
-  let impactPointWorld = add(coreOrigin, scale(shotDir, playerHitDist + 4.0));
+  let impactPointWorld = firstShotGrace
+    ? copyVec3(effectiveAimTargetPos)
+    : add(coreOrigin, scale(shotDir, playerHitDist + 4.0));
+  let impactNormalWorld: Vec3Like | undefined = firstShotGrace ? vec3(0, 1, 0) : undefined;
+  let impactSurfaceTag: string | undefined = firstShotGrace ? 'CONCRETE_WALL' : undefined;
 
   if (ctx.interceptEnemyShotCover) {
     const intercept = ctx.interceptEnemyShotCover(coreOrigin, shotDir, coverCheckDist);
     if (intercept.blocked) {
       blockedByCover = true;
-      impactPointWorld = intercept.impactPointWorld ?? add(coreOrigin, scale(shotDir, coverCheckDist));
+      impactPointWorld =
+        intercept.impactPointWorld ??
+        intercept.hitPointWorld ??
+        add(coreOrigin, scale(shotDir, coverCheckDist));
+      impactNormalWorld = intercept.impactNormalWorld ?? intercept.hitNormalWorld;
+      impactSurfaceTag = intercept.impactSurfaceTag ?? intercept.surfaceTag;
     }
   } else if (ctx.rapierWorld) {
     const hits = ctx.rapierWorld.castPenetrationRay(coreOrigin, shotDir, coverCheckDist);
     for (const h of hits) {
       if (h.distanceM > coverCheckDist) continue;
-      if (h.surface.material === 'GLASS_MARCHING_256' || h.surface.material === 'GLASS_VORONOI') continue;
+      const isGlass =
+        h.surface.material === 'GLASS_MARCHING_256' || h.surface.material === 'GLASS_VORONOI';
+      if (isGlass && !suppressionMode) continue;
       blockedByCover = true;
       impactPointWorld = h.pointWorld;
+      impactNormalWorld = h.normalWorld;
+      impactSurfaceTag = h.surface.material;
       break;
     }
   }
@@ -204,17 +253,17 @@ export function emitEnemyTracerShot(
   if (!blockedByCover && wouldHitPlayer) {
     hitPlayer = true;
     impactPointWorld = playerHitPoint;
-    if (ctx.playerVitals.damageEnabled && ctx.playerVitals.invulnerabilityRemainingS <= 0) {
-      if (ctx.playerVitals.armor > 0) {
-        armorChipApplied = Math.min(ctx.playerVitals.armor, rawChip * 0.7);
-        ctx.playerVitals.armor = Math.max(0, ctx.playerVitals.armor - armorChipApplied);
-        healthDamageApplied = rawChip * 0.35;
-      } else {
-        healthDamageApplied = rawChip;
-      }
-      ctx.playerVitals.health = Math.max(0, ctx.playerVitals.health - healthDamageApplied);
-      ctx.playerVitals.timeSinceLastHitS = 0;
-      ctx.playerVitals.invulnerabilityRemainingS = 0.22;
+    const dmgRes = resolveIncomingPlayerShotDamage(ctx.playerVitals, {
+      rawChipDamage: rawChip,
+      attackerId: hs.targetId,
+      archetype: hs.archetype,
+      hitPointWorld: playerHitPoint,
+      playerEyeWorldPos,
+    });
+    armorChipApplied = dmgRes.armorChipApplied;
+    healthDamageApplied = dmgRes.healthDamageApplied;
+    if (dmgRes.grazeEvent) {
+      ctx.onPlayerNearMissGraze?.(dmgRes.grazeEvent);
     }
   }
 
@@ -237,12 +286,15 @@ export function emitEnemyTracerShot(
     );
   }
 
+  const weaponId = usingSidearm ? SIDEARM_M9_TUNING.weaponId : tuning.primaryWeaponId;
   const event: EnemyTracerFireEvent = {
     targetId: hs.targetId,
     archetype: hs.archetype,
     muzzleOriginWorld: muzzleOrigin,
     shotDirectionWorld: shotDir,
     impactPointWorld,
+    impactNormalWorld,
+    impactSurfaceTag,
     tracerSpeedMs,
     spreadConeRad: aimProfile.effectiveSpreadRad,
     spreadMultiplier: aimProfile.spreadMultiplier,
@@ -252,7 +304,9 @@ export function emitEnemyTracerShot(
     healthDamageApplied,
     activeFiringHand: firingHand,
     usedBackupSidearm: usingSidearm,
-    weaponId: usingSidearm ? SIDEARM_M9_TUNING.weaponId : tuning.primaryWeaponId,
+    weaponId,
+    isSupersonic: !usingSidearm,
+    suppressionMode,
   };
 
   ctx.onEnemyFireTracer?.(event);

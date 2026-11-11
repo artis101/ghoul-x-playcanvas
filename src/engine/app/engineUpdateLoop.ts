@@ -39,6 +39,7 @@ export function onEngineUpdate(app: IGhoulXApp, dt: number): void {
 
   // 4. Step Rapier3D physics & upload all destructible debris / MultiDraw / instanced pools in lockstep
   app.destructionManager.update(scaledDt);
+  app.mayhemDirector.syncSurfaceBreaches();
 
   if (
     app.fpsController.isAimingDownSights &&

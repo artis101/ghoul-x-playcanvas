@@ -88,9 +88,10 @@ export class HardwareInstancedPool {
     slotId: number,
     bodyHandle: number,
     scale?: Vec3Like,
-    ttlSeconds = 0
+    ttlSeconds = 0,
+    localOffset?: Vec3Like
   ): boolean {
-    return this.packer.bindSlotToRapierBody(slotId, bodyHandle, scale, ttlSeconds);
+    return this.packer.bindSlotToRapierBody(slotId, bodyHandle, scale, ttlSeconds, localOffset);
   }
 
   public spawnKinematicParticle(

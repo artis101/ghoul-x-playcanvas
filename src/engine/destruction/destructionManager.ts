@@ -18,6 +18,7 @@ import {
   resolvePlayerHorizontalCollision,
 } from './manager/destructionCollision.ts';
 import {
+  type EnemyShotInterceptResult,
   interceptEnemyShot,
   isLineOfSightBlocked,
   isSurfaceHitInOpenBreach,
@@ -66,6 +67,7 @@ export class DestructionManager {
   private readonly sillConcreteMat: pc.StandardMaterial;
   private readonly ownsSillMaterial: boolean;
   private blastRecursionDepth = 0;
+  private lastPrunedBreachVersion = 0;
   private destroyed = false;
 
   public constructor(
@@ -201,7 +203,7 @@ export class DestructionManager {
     dir: Vec3Like,
     maxDistM: number,
     kineticEnergyJ = 460
-  ): { blocked: boolean; impactPointWorld?: Vec3Like } {
+  ): EnemyShotInterceptResult {
     if (this.destroyed) return { blocked: false };
     return interceptEnemyShot(this.getRaycastContext(), origin, dir, maxDistM, kineticEnergyJ);
   }
@@ -222,6 +224,12 @@ export class DestructionManager {
       return this.rapierWorld.applyRadialBlastImpulse(blast);
     } finally {
       this.blastRecursionDepth -= 1;
+      if (this.blastRecursionDepth === 0 && this.breachVersion !== this.lastPrunedBreachVersion) {
+        this.lastPrunedBreachVersion = this.breachVersion;
+        this.pomDecals.pruneUnsupportedCraters(this.rapierWorld, (hit, o, d, m) =>
+          this.isSurfaceOpenAtHit(hit, o, d, m)
+        );
+      }
     }
   }
 
@@ -250,6 +258,12 @@ export class DestructionManager {
     this.glassSystem.update(dt);
     this.brickWalls.update(dt);
     this.concreteWalls.update(dt);
+    if (this.breachVersion !== this.lastPrunedBreachVersion) {
+      this.lastPrunedBreachVersion = this.breachVersion;
+      this.pomDecals.pruneUnsupportedCraters(this.rapierWorld, (hit, o, d, m) =>
+        this.isSurfaceOpenAtHit(hit, o, d, m)
+      );
+    }
   }
 
   public resetAll(): void {

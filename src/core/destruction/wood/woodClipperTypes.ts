@@ -1,4 +1,5 @@
 import type { Path64, Paths64 } from 'clipper2-js';
+import type { ExtrudedWoodSlabMesh } from './woodSlabExtruder.ts';
 
 /**
  * Fixed-point integer scale for Clipper2 (`100,000` units = `1.0` meter -> `0.01 mm` precision).
@@ -124,5 +125,6 @@ export interface WoodStampSubtractionResult {
   droppedIslandAreaM2: number;
   snappedBridgeCount: number;
   splinters: SplinterSpawnDescriptor[];
+  droppedSlabs?: ExtrudedWoodSlabMesh[];
   meshStats: WoodMeshBuildStats;
 }

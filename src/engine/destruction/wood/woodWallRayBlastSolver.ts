@@ -28,6 +28,7 @@ import {
   applyWoodWallRadialBlast,
   uploadWallPanelMesh,
 } from './woodWallBlastSolver.ts';
+import type { WoodSlabDynamicPool } from './woodSlabDynamicPool.ts';
 import {
   DEFAULT_WOOD_STUD_WIDTH_M,
   type WallInternalState,
@@ -56,6 +57,7 @@ export function handleWoodWallRaySegment(
   nextRand: () => number,
   elapsedSimTimeS: number,
   seg: BallisticSegmentImpact,
+  slabPool?: WoodSlabDynamicPool,
 ): BallisticPenetrationResult | null {
   if (walls.length === 0 || seg.maxDistanceM <= 0) return null;
 
@@ -192,11 +194,12 @@ export function handleWoodWallRaySegment(
           if (subRes.cutAnyWood) {
             uploadWallPanelMesh(wall, subRes.meshStats);
             spawnPerimeterSplinters(splinterPools, nextRand, wall, subRes.splinters, unitDir, exitSignZ, currentEnergyJ);
+            slabPool?.spawnDroppedSlabs(wall, subRes.droppedSlabs, unitDir, exitSignZ, currentEnergyJ, nextRand);
           }
         }
 
         volley.impacts.push({ u, v, cutRadiusM: 0.052, energyJ: currentEnergyJ, dirWorld: unitDir, exitSignZ });
-        tryApplyBuckshotClusterBlowout(physicsWorld, splinterPools, nextRand, uploadWallPanelMesh, wall, internal, volley, seg.caliberRadiusM);
+        tryApplyBuckshotClusterBlowout(physicsWorld, splinterPools, nextRand, uploadWallPanelMesh, wall, internal, volley, seg.caliberRadiusM, slabPool);
 
         if (
           hitStud &&
@@ -230,7 +233,10 @@ export function handleWoodWallRaySegment(
         if (subResult.cutAnyWood) {
           uploadWallPanelMesh(wall, subResult.meshStats);
           spawnPerimeterSplinters(splinterPools, nextRand, wall, subResult.splinters, unitDir, exitSignZ, currentEnergyJ);
-          if (subResult.droppedIslandAreaM2 > 0.004) {
+          const spawnedSlabs = slabPool
+            ? slabPool.spawnDroppedSlabs(wall, subResult.droppedSlabs, unitDir, exitSignZ, currentEnergyJ, nextRand)
+            : 0;
+          if (subResult.droppedIslandAreaM2 > 0.004 && spawnedSlabs === 0) {
             spawnPlankChunkBurst(splinterPools, nextRand, wall, u, v, 0.09, unitDir, exitSignZ, currentEnergyJ, 4);
           }
         }
@@ -289,6 +295,8 @@ export function handleWoodWallRaySegment(
         unitDir,
         exitSignZ,
         currentEnergyJ,
+        uploadWallPanelMesh,
+        slabPool,
       );
     } else {
       effectiveMaterial = 'WOOD_DRYWALL';

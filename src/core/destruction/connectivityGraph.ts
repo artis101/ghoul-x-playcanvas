@@ -24,4 +24,5 @@ export {
   severEdgesAtPoint,
   severEdgesFromBlast,
   findDetachedChunkIndices,
+  findDetachedSubgraphs,
 } from './graph/graphEdgeSolver.ts';

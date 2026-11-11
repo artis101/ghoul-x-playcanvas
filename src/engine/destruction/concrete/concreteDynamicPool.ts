@@ -29,7 +29,7 @@ export class ConcreteDynamicChunkPool {
 
   constructor(
     private readonly app: pc.Application,
-    private readonly rapierWorld: RapierPhysicsWorld,
+    public readonly rapierWorld: RapierPhysicsWorld,
     concreteMaterial: pc.StandardMaterial,
     maxDynamicVertices = 16384,
     maxDynamicIndices = 49152
@@ -52,6 +52,7 @@ export class ConcreteDynamicChunkPool {
     this.dynamicMeshInstance = new pc.MeshInstance(this.dynamicMesh, concreteMaterial);
     this.dynamicMeshInstance.castShadow = true;
     this.dynamicMeshInstance.receiveShadow = true;
+    this.dynamicMeshInstance.cull = false;
 
     this.dynamicEntity = new pc.Entity('DynamicConcreteChunksCombined');
     this.dynamicEntity.addComponent('render', {
@@ -59,6 +60,12 @@ export class ConcreteDynamicChunkPool {
       castShadows: true,
       receiveShadows: true,
     });
+    if (this.dynamicEntity.render) {
+      this.dynamicEntity.render.customAabb = new pc.BoundingBox(
+        new pc.Vec3(0, 10, -20),
+        new pc.Vec3(80, 30, 120),
+      );
+    }
     this.dynamicEntity.enabled = false;
     app.root.addChild(this.dynamicEntity);
   }

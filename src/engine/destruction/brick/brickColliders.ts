@@ -8,6 +8,7 @@ import {
   rotateVec3ByQuat,
 } from '../../../core/destruction/connectivityGraph.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
+import type { CompoundBoxChildSpec } from '../../physics/rapier/rapierBodies.ts';
 import type { BrickDynamicPool } from './brickDynamicPool.ts';
 import {
   BRICK_HEAVY_PENETRATOR_THRESHOLD_J,
@@ -153,6 +154,131 @@ export function convertBrickToDynamicBody(
       renderScale,
       wall.dynamicDebrisTtlS
     );
+  }
+}
+
+export function convertBrickIslandToCompoundBody(
+  wall: BrickWallInstanceState,
+  brickIndices: readonly number[],
+  linVel: Vec3Like,
+  angVel: Vec3Like,
+  rapierWorld: RapierPhysicsWorld,
+  dynamicPool: BrickDynamicPool,
+  spawnOffsetWorld?: Vec3Like
+): void {
+  if (brickIndices.length === 0) return;
+  if (brickIndices.length === 1) {
+    convertBrickToDynamicBody(
+      wall,
+      brickIndices[0],
+      linVel,
+      angVel,
+      rapierWorld,
+      dynamicPool,
+      spawnOffsetWorld
+    );
+    return;
+  }
+
+  const nodes = getGraphNodes(wall);
+  const validIndices: number[] = [];
+  let sumX = 0;
+  let sumY = 0;
+  let sumZ = 0;
+
+  for (let i = 0; i < brickIndices.length; i++) {
+    const idx = brickIndices[i];
+    const staticCol = wall.staticColliderHandles[idx];
+    if (staticCol >= 0) {
+      rapierWorld.removeCollider(staticCol);
+      wall.staticColliderHandles[idx] = -1;
+    }
+    if (wall.dynamicBodyHandles[idx] >= 0 || !nodes[idx]) continue;
+    validIndices.push(idx);
+    sumX += nodes[idx].localCenter.x;
+    sumY += nodes[idx].localCenter.y;
+    sumZ += nodes[idx].localCenter.z;
+  }
+
+  if (validIndices.length === 0) return;
+  const invN = 1 / validIndices.length;
+  const comLocal: Vec3Like = { x: sumX * invN, y: sumY * invN, z: sumZ * invN };
+  const rot = wall.transform.rotation ?? IDENTITY_QUAT;
+  const baseWorldCom = localToWorldPoint(comLocal, wall.transform);
+  const worldCom: Vec3Like = spawnOffsetWorld
+    ? {
+        x: baseWorldCom.x + spawnOffsetWorld.x,
+        y: baseWorldCom.y + spawnOffsetWorld.y,
+        z: baseWorldCom.z + spawnOffsetWorld.z,
+      }
+    : baseWorldCom;
+
+  const children: CompoundBoxChildSpec[] = [];
+  for (let i = 0; i < validIndices.length; i++) {
+    const idx = validIndices[i];
+    const node = nodes[idx];
+    const he = node.halfExtents ?? {
+      x: wall.brickW * 0.5,
+      y: wall.brickH * 0.5,
+      z: wall.brickD * 0.5,
+    };
+    const localOffset: Vec3Like = {
+      x: node.localCenter.x - comLocal.x,
+      y: node.localCenter.y - comLocal.y,
+      z: node.localCenter.z - comLocal.z,
+    };
+    const tag: ColliderSurfaceTag = {
+      material: 'BRICK_MASONRY',
+      objectId: wall.wallId,
+      chunkIndex: idx,
+      thicknessM: he.z * 2,
+      penetrationResistanceJ: BRICK_HEAVY_PENETRATOR_THRESHOLD_J,
+    };
+    children.push({
+      localOffset,
+      halfExtents: { x: he.x * 0.96, y: he.y * 0.96, z: he.z * 0.96 },
+      massKg: node.massKg,
+      tag,
+    });
+  }
+
+  const { bodyHandle } = rapierWorld.spawnDynamicCompoundBox(
+    worldCom,
+    children,
+    linVel,
+    angVel,
+    rot
+  );
+
+  for (let i = 0; i < validIndices.length; i++) {
+    const idx = validIndices[i];
+    const node = nodes[idx];
+    const he = node.halfExtents ?? {
+      x: wall.brickW * 0.5,
+      y: wall.brickH * 0.5,
+      z: wall.brickD * 0.5,
+    };
+    wall.dynamicBodyHandles[idx] = bodyHandle;
+    wall.intactBrickCount = Math.max(0, wall.intactBrickCount - 1);
+    wall.detachedBrickCount++;
+
+    const variant = wall.variantByBrick[idx];
+    const slotId = wall.poolSlotByBrick[idx];
+    if (slotId >= 0) {
+      const norm = dynamicPool.variantNormScales[variant];
+      const renderScale: Vec3Like = {
+        x: he.x * 2 * norm.x,
+        y: he.y * 2 * norm.y,
+        z: he.z * 2 * norm.z,
+      };
+      dynamicPool.variantPools[variant].bindSlotToRapierBody(
+        slotId,
+        bodyHandle,
+        renderScale,
+        wall.dynamicDebrisTtlS,
+        children[i].localOffset
+      );
+    }
   }
 }
 

@@ -61,16 +61,25 @@ export function routeExternalExplosionTrauma(
     if (wasAlive && !hs.alive) newlyKilledCount++;
 
     if (distM < 4.5 && hs.isRagdollActive) {
-      const closeLift = (1 - distM / 4.5) * 2.55;
+      const corpseScale = wasAlive ? 1.0 : 0.28;
+      const closePush = (1 - distM / 4.5) * 1.15 * corpseScale;
+      const closeLift = wasAlive ? (1 - distM / 4.5) * 0.38 : 0.0;
       const rawOut = sub(pelvisPos, center);
       const horizOut = vec3(rawOut.x, 0, rawOut.z);
       const outDir = length(horizOut) > 1e-3 ? normalize(horizOut) : vec3(0, 0, -1);
+      const maxBlastBoneSpeed = wasAlive ? 4.4 : 2.8;
       for (const z of ALL_GHOUL_ZONES) {
         const b = hs.ragdollBones[z];
         if (b.componentId === 'BODY') {
-          b.velocity.x += outDir.x * closeLift * 1.15;
-          b.velocity.y += closeLift;
-          b.velocity.z += outDir.z * closeLift * 1.15;
+          b.velocity.x += outDir.x * closePush;
+          b.velocity.y = Math.min(wasAlive ? 0.55 : 0.15, b.velocity.y + closeLift);
+          b.velocity.z += outDir.z * closePush;
+          const spd = length(b.velocity);
+          if (spd > maxBlastBoneSpeed) {
+            b.velocity.x *= maxBlastBoneSpeed / spd;
+            b.velocity.y *= maxBlastBoneSpeed / spd;
+            b.velocity.z *= maxBlastBoneSpeed / spd;
+          }
         }
       }
     }

@@ -8,6 +8,7 @@ import type {
 } from '../../../contracts/destruction.ts';
 import {
   findDetachedChunkIndices,
+  findDetachedSubgraphs,
   localToWorldPoint,
   rotateVec3ByQuat,
   severEdgesAtPoint,
@@ -15,7 +16,10 @@ import {
   worldToLocalPoint,
 } from '../../../core/destruction/connectivityGraph.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
-import { convertBrickToDynamicBody } from './brickColliders.ts';
+import {
+  convertBrickIslandToCompoundBody,
+  convertBrickToDynamicBody,
+} from './brickColliders.ts';
 import type { BrickDynamicPool } from './brickDynamicPool.ts';
 import {
   BRICK_HEAVY_PENETRATOR_THRESHOLD_J,
@@ -147,14 +151,15 @@ export function handleBrickRaySegment(
     );
     severDirectHitBrickBonds(matchedWall, hitChunkIdx, seg.kineticEnergyJ);
 
-    const newlyDetached = findDetachedChunkIndices(matchedWall.graph);
+    const subgraphs = findDetachedSubgraphs(matchedWall.graph, undefined, 10);
 
-    for (let i = 0; i < newlyDetached.length; i++) {
-      const brickIdx = newlyDetached[i];
-      const isPrimaryHit = brickIdx === hitChunkIdx;
+    for (let i = 0; i < subgraphs.length; i++) {
+      const island = subgraphs[i];
+      const brickIdx = island[0];
+      const isPrimaryHit = island.length === 1 && brickIdx === hitChunkIdx;
       const speedKick = isPrimaryHit
         ? Math.min(9.5, 3.0 + (seg.kineticEnergyJ - BRICK_HEAVY_PENETRATOR_THRESHOLD_J) * 0.0022)
-        : 2.4;
+        : 2.2;
 
       const linVel: Vec3Like = isPrimaryHit
         ? {
@@ -187,9 +192,9 @@ export function handleBrickRaySegment(
         z: wallExitNormal.z * clearDistM,
       };
 
-      convertBrickToDynamicBody(
+      convertBrickIslandToCompoundBody(
         matchedWall,
-        brickIdx,
+        island,
         linVel,
         angVel,
         rapierWorld,
@@ -244,8 +249,8 @@ export function applyBrickBlast(
 
   for (const wall of wallsById.values()) {
     severEdgesFromBlast(wall.graph, wall.transform, blast);
-    const newlyDetached = findDetachedChunkIndices(wall.graph);
-    if (newlyDetached.length === 0) {
+    const subgraphs = findDetachedSubgraphs(wall.graph, undefined, 10);
+    if (subgraphs.length === 0) {
       continue;
     }
 
@@ -255,9 +260,12 @@ export function applyBrickBlast(
     const rot = wall.transform.rotation ?? IDENTITY_QUAT;
     const wallAwayWorld = rotateVec3ByQuat({ x: 0, y: 0, z: awayLocalZ }, rot);
     const nodes = wall.graph.nodes ?? (wall.graph as { chunks?: ChunkConnectivityNode[] }).chunks ?? [];
+    let totalDetachedCount = 0;
 
-    for (let i = 0; i < newlyDetached.length; i++) {
-      const brickIdx = newlyDetached[i];
+    for (let i = 0; i < subgraphs.length; i++) {
+      const island = subgraphs[i];
+      totalDetachedCount += island.length;
+      const brickIdx = island[0];
       const node = nodes[brickIdx];
       const worldPos = localToWorldPoint(node.localCenter, wall.transform);
 
@@ -306,9 +314,9 @@ export function applyBrickBlast(
       }
 
       const blastClearDistM = wall.brickD * 0.95;
-      convertBrickToDynamicBody(
+      convertBrickIslandToCompoundBody(
         wall,
-        brickIdx,
+        island,
         linVel,
         angVel,
         rapierWorld,
@@ -324,7 +332,7 @@ export function applyBrickBlast(
     dynamicPool.spawnMortarChips(
       blast.centerWorld,
       { x: 0, y: 1, z: 0 },
-      Math.min(20, newlyDetached.length * 2),
+      Math.min(20, totalDetachedCount * 2),
       1.7,
       nextRandom
     );

@@ -88,7 +88,7 @@ export class GlassSystem implements IDestructibleSubsystem {
     this.voronoiIntactMaterial.gloss = 0.96;
     this.voronoiIntactMaterial.blendType = pc.BLEND_NORMAL;
     this.voronoiIntactMaterial.depthWrite = false;
-    this.voronoiIntactMaterial.cull = pc.CULLFACE_BACK;
+    this.voronoiIntactMaterial.cull = pc.CULLFACE_NONE;
     this.voronoiIntactMaterial.diffuseVertexColor = true;
     this.voronoiIntactMaterial.opacityVertexColor = true;
     this.voronoiIntactMaterial.update();
@@ -104,7 +104,7 @@ export class GlassSystem implements IDestructibleSubsystem {
     this.voronoiShardMaterial.gloss = 0.96;
     this.voronoiShardMaterial.blendType = pc.BLEND_NORMAL;
     this.voronoiShardMaterial.depthWrite = false;
-    this.voronoiShardMaterial.cull = pc.CULLFACE_BACK;
+    this.voronoiShardMaterial.cull = pc.CULLFACE_NONE;
     this.voronoiShardMaterial.diffuseVertexColor = true;
     this.voronoiShardMaterial.opacityVertexColor = true;
     this.voronoiShardMaterial.update();

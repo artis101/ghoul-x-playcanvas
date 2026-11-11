@@ -1,6 +1,15 @@
 import type { Vec3Like } from '../../contracts/ballistics.ts';
 import type { DestructibleMaterialKind } from '../../contracts/destruction.ts';
-import type { CombatAudioDiagnostics, CombatAudioEngineOptions, GoreImpactAudioKind, ShellCasingCaliber, VocalTraumaCueKind } from '../../core/audio/types.ts';
+import type {
+  CombatAudioDiagnostics,
+  CombatAudioEngineOptions,
+  EnemyBallisticShotAudioParams,
+  GoreImpactAudioKind,
+  NearMissGrazeAudioKind,
+  RadioBarkCueAudioParams,
+  ShellCasingCaliber,
+  VocalTraumaCueKind,
+} from '../../core/audio/types.ts';
 import { TINNITUS_PROXIMITY_RADIUS_M } from '../../core/audio/types.ts';
 import { clampNumber, clampTimeScale } from '../../core/audio/audioMath.ts';
 import type { InternalAudioGraph } from '../../core/audio/audioGraph.ts';
@@ -12,6 +21,13 @@ import { playGoreImpact } from '../../core/audio/synth/fleshGoreAudioSynth.ts';
 import { playVocalTraumaCue } from '../../core/audio/synth/vocalTraumaSynth.ts';
 import { playExplosion } from '../../core/audio/synth/explosionAudioSynth.ts';
 import { playSlowMoTransition, scheduleHeartbeatPair, type SlowMoSynthState } from '../../core/audio/synth/slowMoAudioSynth.ts';
+import {
+  playEnemyBallisticShot,
+  playNearMissGrazeTinnitus,
+  playRicochetSnap,
+  type SupersonicShotAudioResult,
+} from '../../core/audio/synth/supersonicBallisticSynth.ts';
+import { playRadioBarkCue } from '../../core/audio/synth/radioBarkSynth.ts';
 import { AudioSourceTracker } from './tinnitusSystem.ts';
 import { bindGestureUnlock, createGraphFactory, resolveBrowserAudioContextCtor } from './audioContextResolver.ts';
 import { AudioCounters } from './audioDiagnostics.ts';
@@ -179,6 +195,70 @@ export class CombatAudioEngine {
     this.counters.slowMoTransitionCount += 1;
     const g = this.ensureGraph();
     if (g) playSlowMoTransition(this.getSynthContext(g), this.slowMoState, entering);
+  }
+
+  public playEnemyBallisticShot(params: EnemyBallisticShotAudioParams): SupersonicShotAudioResult | null {
+    this.counters.weaponFireCount += 1;
+    const g = this.ensureGraph();
+    if (!g) return null;
+    const lPos = params.listenerPos ?? this.listenerPos;
+    return playEnemyBallisticShot(
+      this.getSynthContext(g),
+      params,
+      lPos,
+      this.listenerYawDeg,
+      this.pannerModel,
+      this.reverbWetMix,
+    );
+  }
+
+  public playNearMissGrazeTinnitus(
+    kind: NearMissGrazeAudioKind,
+    hitOrigin: Vec3Like,
+    listenerPos = this.listenerPos,
+  ): void {
+    this.counters.tinnitusTriggerCount += 1;
+    const g = this.ensureGraph();
+    if (!g) return;
+    this.tracker.triggerTinnitusSpike(g.ctx.currentTime, kind === 'HELMET_POP' ? 1.15 : 0.95);
+    playNearMissGrazeTinnitus(
+      this.getSynthContext(g),
+      kind,
+      hitOrigin,
+      listenerPos,
+      this.listenerYawDeg,
+      this.pannerModel,
+      this.reverbWetMix,
+    );
+  }
+
+  public playRadioBarkCue(params: RadioBarkCueAudioParams): void {
+    this.counters.vocalCueCount += 1;
+    const g = this.ensureGraph();
+    if (!g) return;
+    const lPos = params.listenerPos ?? this.listenerPos;
+    playRadioBarkCue(
+      this.getSynthContext(g),
+      params,
+      lPos,
+      this.listenerYawDeg,
+      this.pannerModel,
+      this.reverbWetMix,
+    );
+  }
+
+  public playRicochetSnap(origin: Vec3Like, listenerPos = this.listenerPos): void {
+    this.counters.materialImpactCount += 1;
+    const g = this.ensureGraph();
+    if (!g) return;
+    playRicochetSnap(
+      this.getSynthContext(g),
+      origin,
+      listenerPos,
+      this.listenerYawDeg,
+      this.pannerModel,
+      this.reverbWetMix,
+    );
   }
 
   public destroy(): void {

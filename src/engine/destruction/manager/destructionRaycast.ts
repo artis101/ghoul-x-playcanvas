@@ -6,7 +6,7 @@ import type {
   DestructibleMaterialKind,
   PenetrationRayHit,
 } from '../../../contracts/destruction.ts';
-import { add, normalize, scale } from '../../../core/ballistics/vec3.ts';
+import { add, dot, normalize, scale, sub } from '../../../core/ballistics/vec3.ts';
 import type { CombatAudioEngine } from '../../audio/combatAudioEngine.ts';
 import type { EnvironmentRayInterceptResult } from '../../combat/combatDirector.ts';
 import type { ExplosiveBarrelManager } from '../../fx/mayhemDirector.ts';
@@ -198,16 +198,17 @@ export function interceptRaySegment(
     };
 
     const energyBefore = curEnergyJ;
+    const speedBefore = curSpeedMs;
     const res = dispatchSubsystemRaySegment(ctx, hit, seg);
     if (!res) {
       continue;
     }
 
     const energyLost = energyBefore - res.remainingEnergyJ;
+    const audioMat: DestructibleMaterialKind = res.hitMaterial ?? hit.surface.material;
+    const audioPt = res.impactPointWorld ?? hit.pointWorld;
     if (energyLost > 1.0 || res.stopped) {
       ctx.notifyBreach();
-      const audioMat: DestructibleMaterialKind = res.hitMaterial ?? hit.surface.material;
-      const audioPt = res.impactPointWorld ?? hit.pointWorld;
       ctx.combatAudio?.playMaterialImpact(audioMat, audioPt, energyBefore, listenerPos);
     }
 
@@ -221,9 +222,37 @@ export function interceptRaySegment(
 
     if (res.stopped || curEnergyJ <= 10 || curSpeedMs <= 25) {
       const stopPt = res.impactPointWorld ?? hit.pointWorld;
+      const stopNormal = normalize(res.impactNormalWorld ?? hit.normalWorld);
       const sdx = stopPt.x - origin.x;
       const sdy = stopPt.y - origin.y;
       const sdz = stopPt.z - origin.z;
+
+      const isHardSurface =
+        audioMat === 'CONCRETE_INTACT' ||
+        audioMat === 'CONCRETE_CHUNKS' ||
+        audioMat === 'STEEL';
+      const ndot = dot(normDir, stopNormal);
+      const sinGrazing = Math.abs(ndot);
+      // Grazing angle < 22 degrees to surface plane (sin(22 deg) ≈ 0.3746)
+      if (isHardSurface && sinGrazing < 0.3746 && speedBefore >= 75) {
+        const outNormal = ndot <= 0 ? stopNormal : scale(stopNormal, -1);
+        const reflRaw = sub(normDir, scale(outNormal, 2 * dot(normDir, outNormal)));
+        const ricochetDir = normalize(reflRaw);
+        const ricochetSpeed = Math.max(45, speedBefore * (0.62 - sinGrazing * 0.65));
+        const ricochetEnergy = Math.max(25, 0.5 * massKg * ricochetSpeed * ricochetSpeed);
+        return {
+          remainingEnergyJ: 0,
+          remainingSpeedMs: 0,
+          blocked: true,
+          stoppedDistanceM: Math.hypot(sdx, sdy, sdz),
+          ricochetOriginWorld: add(stopPt, scale(outNormal, 0.025)),
+          ricochetDirWorld: ricochetDir,
+          ricochetSpeedMs: ricochetSpeed,
+          ricochetEnergyJ: ricochetEnergy,
+          ricochetSurface: audioMat,
+        };
+      }
+
       return {
         remainingEnergyJ: 0,
         remainingSpeedMs: 0,

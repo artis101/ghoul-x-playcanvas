@@ -1,10 +1,26 @@
 import * as pc from 'playcanvas';
+import type {
+  AiBarkCategory,
+  AiBarkPayload,
+  EnemyFireMode,
+  PlayerCombatVitals,
+  PlayerNearMissGrazeKind,
+  PlayerNearMissGrazePayload,
+} from '../../contracts/ai/aiContracts.ts';
 import type { EnemyArchetypeId, GhoulZoneId, Vec3Like } from '../../contracts/ballistics.ts';
 import type { CombatantTriageStatus } from '../../core/ballistics/solver.ts';
 import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
 import { DESTRUCTION_ZONE_LAYOUT } from '../world/arenaLayout.ts';
 
-export type { CombatantTriageStatus };
+export type {
+  AiBarkCategory,
+  AiBarkPayload,
+  CombatantTriageStatus,
+  EnemyFireMode,
+  PlayerCombatVitals,
+  PlayerNearMissGrazeKind,
+  PlayerNearMissGrazePayload,
+};
 
 export const BACKUP_SIDEARM_WEAPON_ID = 'weapon_beretta_m9';
 export const DOWNED_ONE_HANDED_SPREAD_MULTIPLIER = 4.5;
@@ -76,6 +92,11 @@ export const TACTICAL_COVER_STATIONS: readonly TacticalCoverStation[] = [
 export interface EnemyCoverShotInterceptResult {
   readonly blocked: boolean;
   readonly impactPointWorld?: Vec3Like;
+  readonly hitPointWorld?: Vec3Like;
+  readonly hitNormalWorld?: Vec3Like;
+  readonly impactNormalWorld?: Vec3Like;
+  readonly surfaceTag?: string;
+  readonly impactSurfaceTag?: string;
 }
 
 export interface EnemyTracerFireEvent {
@@ -84,6 +105,8 @@ export interface EnemyTracerFireEvent {
   readonly muzzleOriginWorld: Vec3Like;
   readonly shotDirectionWorld: Vec3Like;
   readonly impactPointWorld: Vec3Like;
+  readonly impactNormalWorld?: Vec3Like;
+  readonly impactSurfaceTag?: string;
   readonly tracerSpeedMs: number;
   readonly spreadConeRad: number;
   readonly spreadMultiplier: number;
@@ -94,17 +117,11 @@ export interface EnemyTracerFireEvent {
   readonly activeFiringHand: ActiveFiringHand;
   readonly usedBackupSidearm: boolean;
   readonly weaponId: string;
+  readonly isSupersonic: boolean;
+  readonly suppressionMode: boolean;
 }
 
-export interface PlayerCombatVitals {
-  health: number;
-  maxHealth: number;
-  armor: number;
-  maxArmor: number;
-  damageEnabled: boolean;
-  timeSinceLastHitS: number;
-  invulnerabilityRemainingS: number;
-}
+export type EnemyTracerEvent = EnemyTracerFireEvent;
 
 export interface EnemyAimProfile {
   readonly baseSpreadRad: number;
@@ -168,6 +185,12 @@ export interface EnemyAiAgentRuntime {
   lastAimAccuracyMultiplier: number;
   clutchingWound: boolean;
   lastAimTargetWorld: Vec3Like;
+
+  fireMode?: EnemyFireMode;
+  isOffScreen?: boolean;
+  alertReactionTimerS?: number;
+  hasFiredWarningShot?: boolean;
+  timeWithoutLosS?: number;
 }
 
 export interface EnemyHitNotification {
@@ -184,6 +207,7 @@ export interface TacticalCombatAiOptions {
   initialPlayerHealth?: number;
   initialPlayerArmor?: number;
   sightDetectionRangeM?: number;
+  maxAggressiveTokens?: number;
   resolveProfileOverrides?: Readonly<Record<string, CombatantResolveProfile>>;
   hardenedSidearmOverrides?: Readonly<Record<string, boolean>>;
   isLineOfSightBlocked?: (fromWorld: Vec3Like, toWorld: Vec3Like) => boolean;
@@ -194,9 +218,13 @@ export interface TacticalCombatAiOptions {
   ) => EnemyCoverShotInterceptResult;
   onEnemyFireTracer?: (event: EnemyTracerFireEvent) => void;
   onPlayerDamaged?: (vitals: Readonly<PlayerCombatVitals>, event: EnemyTracerFireEvent) => void;
+  onPlayerNearMissGraze?: (event: PlayerNearMissGrazePayload) => void;
+  onAiBark?: (bark: AiBarkPayload) => void;
   onEnemyStateChanged?: (
     targetId: string,
     prevState: EnemyTacticalAiState,
     nextState: EnemyTacticalAiState
   ) => void;
 }
+
+export type TacticalCombatAiConfig = TacticalCombatAiOptions;

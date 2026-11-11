@@ -3,7 +3,10 @@ import { CombatAudioEngine } from './combatAudioEngine.ts';
 import type { Vec3Like } from '../../contracts/ballistics.ts';
 import type { DestructibleMaterialKind } from '../../contracts/destruction.ts';
 import type {
+  EnemyBallisticShotAudioParams,
   GoreImpactAudioKind,
+  NearMissGrazeAudioKind,
+  RadioBarkCueAudioParams,
   ShellCasingCaliber,
   VocalTraumaCueKind,
 } from '../../core/audio/types.ts';
@@ -125,6 +128,34 @@ export class CombatAudioScript extends pc.Script {
     bind('audio:listenerTransform', (data: unknown) => {
       const p = data as { position: Vec3Like; yawDeg?: number; pitchDeg?: number };
       this.engine.updateListener(p.position, p.yawDeg ?? 0, p.pitchDeg ?? 0);
+    });
+
+    bind('audio:enemyBallisticShot', (data: unknown) => {
+      const p = data as EnemyBallisticShotAudioParams;
+      this.engine.playEnemyBallisticShot(p);
+    });
+
+    bind('audio:nearMissGraze', (data: unknown) => {
+      const p = data as {
+        kind: NearMissGrazeAudioKind;
+        hitOrigin: Vec3Like;
+        listenerPos?: Vec3Like;
+      };
+      this.engine.playNearMissGrazeTinnitus(
+        p.kind,
+        p.hitOrigin,
+        p.listenerPos ?? this.entity.getPosition(),
+      );
+    });
+
+    bind('audio:radioBark', (data: unknown) => {
+      const p = data as RadioBarkCueAudioParams;
+      this.engine.playRadioBarkCue(p);
+    });
+
+    bind('audio:ricochet', (data: unknown) => {
+      const p = data as { worldPos: Vec3Like; listenerPos?: Vec3Like };
+      this.engine.playRicochetSnap(p.worldPos, p.listenerPos ?? this.entity.getPosition());
     });
   }
 

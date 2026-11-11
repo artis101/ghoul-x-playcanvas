@@ -16,12 +16,22 @@ export interface BloodSplatterProjectionParams {
 
 const BLOOD_RAY_MAX_DIST_M = 4.5;
 const BLOOD_WALL_NORMAL_OFFSET_M = 0.004;
+const BLOOD_SUPPORT_PROBE_OFFSET_M = 0.05;
+const BLOOD_SUPPORT_PROBE_DIST_M = 0.12;
+
+export interface BloodSplatterSlotAnchor {
+  active: boolean;
+  isFloor: boolean;
+  pointWorld: Vec3Like;
+  normalWorld: Vec3Like;
+}
 
 export interface BloodSplatterContext {
   rapierWorld: RapierPhysicsWorld;
   bloodSplatterPool: HardwareInstancedPool;
   bulletTime: BulletTimeController;
   isSurfaceOpenAtHit?: SurfaceOpenPredicate;
+  slotAnchors?: BloodSplatterSlotAnchor[];
 }
 
 export function castWallOrFloorBloodRay(
@@ -36,6 +46,7 @@ export function castWallOrFloorBloodRay(
   let bestWallHit: { pointWorld: Vec3Like; normalWorld: Vec3Like; distanceM: number } | null = null;
   for (const h of wallHits) {
     if (h.surface.objectId.startsWith('hazard_barrel_')) continue;
+    if (!rapierWorld.isStaticCollider(h.colliderHandle)) continue;
     if (h.distanceM > 0.02 && h.distanceM <= maxDistM) {
       if (isSurfaceOpenAtHit?.(h, origin, dirNormalized, maxDistM)) continue;
       let n = h.normalWorld;
@@ -122,11 +133,62 @@ export function projectBloodSplatter(
       y: baseSize * stretchY,
       z: 1.0,
     });
+    if (ctx.slotAnchors && slotId >= 0 && slotId < ctx.slotAnchors.length) {
+      const anchor = ctx.slotAnchors[slotId];
+      anchor.active = true;
+      anchor.isFloor = hit.normalWorld.y > 0.9 && hit.pointWorld.y <= 0.035;
+      anchor.pointWorld = { x: hit.pointWorld.x, y: hit.pointWorld.y, z: hit.pointWorld.z };
+      anchor.normalWorld = { x: hit.normalWorld.x, y: hit.normalWorld.y, z: hit.normalWorld.z };
+    }
     stampedCount++;
   }
 
   if (stampedCount > 0) ctx.bloodSplatterPool.upload();
   return stampedCount;
+}
+
+export function pruneUnsupportedBloodSplatters(ctx: BloodSplatterContext): number {
+  const anchors = ctx.slotAnchors;
+  if (!anchors) return 0;
+
+  let freedCount = 0;
+  for (let slotId = 0; slotId < anchors.length; slotId++) {
+    const anchor = anchors[slotId];
+    if (!anchor.active || anchor.isFloor) continue;
+    if (!ctx.bloodSplatterPool.isSlotActive(slotId)) {
+      anchor.active = false;
+      continue;
+    }
+
+    const nx = anchor.normalWorld.x;
+    const ny = anchor.normalWorld.y;
+    const nz = anchor.normalWorld.z;
+    const origin: Vec3Like = {
+      x: anchor.pointWorld.x + nx * BLOOD_SUPPORT_PROBE_OFFSET_M,
+      y: anchor.pointWorld.y + ny * BLOOD_SUPPORT_PROBE_OFFSET_M,
+      z: anchor.pointWorld.z + nz * BLOOD_SUPPORT_PROBE_OFFSET_M,
+    };
+    const dir: Vec3Like = { x: -nx, y: -ny, z: -nz };
+    const hits = ctx.rapierWorld.castPenetrationRay(origin, dir, BLOOD_SUPPORT_PROBE_DIST_M);
+
+    let supported = false;
+    for (const h of hits) {
+      if (h.surface.objectId.startsWith('hazard_barrel_')) continue;
+      if (!ctx.rapierWorld.isStaticCollider(h.colliderHandle)) continue;
+      if (ctx.isSurfaceOpenAtHit?.(h, origin, dir, BLOOD_SUPPORT_PROBE_DIST_M)) continue;
+      supported = true;
+      break;
+    }
+
+    if (!supported) {
+      ctx.bloodSplatterPool.freeSlot(slotId);
+      anchor.active = false;
+      freedCount++;
+    }
+  }
+
+  if (freedCount > 0) ctx.bloodSplatterPool.upload();
+  return freedCount;
 }
 
 export function processShotSimulationReport(

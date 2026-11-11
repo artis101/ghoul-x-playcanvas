@@ -163,3 +163,53 @@ export function findDetachedChunkIndices(
   }
   return detached;
 }
+
+/**
+ * Groups newly detached chunk indices into connected subgraphs (`number[][]`) along unbroken
+ * (`!edge.severed`) internal bonds, capping each compound island to `maxIslandSize` chunks.
+ */
+export function findDetachedSubgraphs(
+  graph: ChunkConnectivityGraphJson | RuntimeConnectivityGraph,
+  detachedMask?: Uint8Array,
+  maxIslandSize = 12,
+): number[][] {
+  const newlyDetached = findDetachedChunkIndices(graph, detachedMask);
+  if (newlyDetached.length === 0) return [];
+
+  const nodes = graph.nodes;
+  const n = nodes.length;
+  const inDetachedSet = new Uint8Array(n);
+  for (let i = 0; i < newlyDetached.length; i++) {
+    inDetachedSet[newlyDetached[i]] = 1;
+  }
+
+  const grouped = new Uint8Array(n);
+  const subgraphs: number[][] = [];
+  const cap = Math.max(1, maxIslandSize);
+
+  for (let i = 0; i < newlyDetached.length; i++) {
+    const seed = newlyDetached[i];
+    if (grouped[seed] !== 0) continue;
+
+    const island: number[] = [seed];
+    grouped[seed] = 1;
+    let head = 0;
+
+    while (head < island.length && island.length < cap) {
+      const cur = island[head++];
+      const edges = nodes[cur].edges;
+      for (let e = 0; e < edges.length; e++) {
+        if (edges[e].severed) continue;
+        const nb = edges[e].neighborIndex;
+        if (nb >= 0 && nb < n && inDetachedSet[nb] === 1 && grouped[nb] === 0) {
+          grouped[nb] = 1;
+          island.push(nb);
+          if (island.length >= cap) break;
+        }
+      }
+    }
+    subgraphs.push(island);
+  }
+
+  return subgraphs;
+}

@@ -5,6 +5,13 @@ import { computeSlowMoAudioFactors } from '../../core/audio/audioMath.ts';
 export class AudioSourceTracker {
   public readonly activeSources: TrackedBufferSource[] = [];
   public readonly activeOscillators: TrackedOscillator[] = [];
+  public lastTinnitusTriggerTime = -10;
+  public activeTinnitusIntensity = 0;
+
+  public triggerTinnitusSpike(now: number, intensity = 1.0): void {
+    this.lastTinnitusTriggerTime = now;
+    this.activeTinnitusIntensity = Math.min(1.5, Math.max(this.activeTinnitusIntensity, intensity));
+  }
 
   public registerSource(
     source: { readonly playbackRate: AudioParamLike },

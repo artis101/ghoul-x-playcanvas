@@ -1,6 +1,6 @@
+import type { PlayerCombatVitals, PlayerNearMissGrazeKind } from '../../contracts/ai/aiContracts.ts';
 import type { AmmoSpec, WeaponSpec } from '../../contracts/ballistics.ts';
 import { WEAPONS } from '../../core/ballistics/weapons.ts';
-import type { PlayerCombatVitals } from '../ai/tacticalCombatAi.ts';
 import type { BulletTimeVignetteState } from '../fx/mayhemDirector.ts';
 import { queryEl } from './hudTypes.ts';
 
@@ -21,6 +21,9 @@ export class HudWeaponVitals {
   private slotPips: HTMLElement[] = [];
 
   private damageFlashAlpha = 0;
+  private grazeFlashKind: PlayerNearMissGrazeKind | null = null;
+  private urgentBleedActive = false;
+  private bleedPulsePhaseRad = 0;
   private lastBulletTimeCss = 'none';
   private lastAppliedVignetteCss = '';
   private lastHpRounded = -1;
@@ -70,11 +73,19 @@ export class HudWeaponVitals {
     const armorRounded = Math.max(0, Math.round(vitals.armor));
     const hpPct = Math.max(0, Math.min(100, (vitals.health / Math.max(1, vitals.maxHealth)) * 100));
     const armorPct = Math.max(0, Math.min(100, (vitals.armor / Math.max(1, vitals.maxArmor)) * 100));
+    const isBleeding =
+      (vitals.urgentBleedRemainingS ?? 0) > 0 && (vitals.urgentBleedHpPerSec ?? 0) > 0;
 
     if (this.healthValEl && hpRounded !== this.lastHpRounded) {
       this.lastHpRounded = hpRounded;
       this.healthValEl.textContent = `${hpRounded}`;
     }
+    if (isBleeding !== this.urgentBleedActive) {
+      this.urgentBleedActive = isBleeding;
+      this.healthValEl?.classList.toggle('urgent-bleed', isBleeding);
+      this.healthFillEl?.classList.toggle('urgent-bleed', isBleeding);
+    }
+
     const hpWidthStr = `${hpPct.toFixed(1)}%`;
     if (this.healthFillEl && hpWidthStr !== this.lastHpWidthStr) {
       this.lastHpWidthStr = hpWidthStr;
@@ -91,13 +102,26 @@ export class HudWeaponVitals {
     }
 
     if (this.damageFlashAlpha > 0) {
-      this.damageFlashAlpha = Math.max(0, this.damageFlashAlpha - dt * 2.8);
+      this.damageFlashAlpha = Math.max(0, this.damageFlashAlpha - dt * 2.4);
+      if (this.damageFlashAlpha <= 0) {
+        this.grazeFlashKind = null;
+      }
+      this.refreshVignetteOverlay();
+    } else if (this.urgentBleedActive) {
+      this.bleedPulsePhaseRad = (this.bleedPulsePhaseRad + dt * 7.5) % (Math.PI * 2);
       this.refreshVignetteOverlay();
     }
   }
 
   public triggerPlayerDamageFlash(): void {
+    this.grazeFlashKind = null;
     this.damageFlashAlpha = 0.42;
+    this.refreshVignetteOverlay();
+  }
+
+  public triggerNearMissGrazeFlash(kind: PlayerNearMissGrazeKind): void {
+    this.grazeFlashKind = kind;
+    this.damageFlashAlpha = kind === 'HELMET_DEFLECT' ? 0.56 : 0.68;
     this.refreshVignetteOverlay();
   }
 
@@ -128,9 +152,18 @@ export class HudWeaponVitals {
 
   private refreshVignetteOverlay(): void {
     if (!this.vignetteEl) return;
+    const bleedAlpha = this.urgentBleedActive
+      ? 0.16 + 0.08 * Math.sin(this.bleedPulsePhaseRad)
+      : 0;
+    const activeAlpha = Math.max(this.damageFlashAlpha, bleedAlpha);
+
     let targetCss: string;
-    if (this.damageFlashAlpha > 0.01) {
-      const dmgShadow = `inset 0 0 88px rgba(255, 42, 58, ${this.damageFlashAlpha.toFixed(3)})`;
+    if (activeAlpha > 0.01) {
+      const rgb =
+        this.grazeFlashKind === 'HELMET_DEFLECT' && this.damageFlashAlpha > 0.1
+          ? '255, 184, 52'
+          : '255, 32, 48';
+      const dmgShadow = `inset 0 0 96px rgba(${rgb}, ${activeAlpha.toFixed(3)})`;
       targetCss = this.lastBulletTimeCss !== 'none' ? `${dmgShadow}, ${this.lastBulletTimeCss}` : dmgShadow;
     } else {
       targetCss = this.lastBulletTimeCss;

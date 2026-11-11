@@ -5,9 +5,10 @@ import {
 import { computeMachDragMultiplier } from './machDrag.ts';
 
 /**
- * 4th-Order Runge-Kutta (RK4) numerical ballistic integrator.
+ * In-place 4th-Order Runge-Kutta (RK4) numerical ballistic integrator.
+ * Mutates `proj` directly to eliminate per-step object allocations in tight trajectory loops.
  */
-export function stepProjectileRK4(
+export function stepProjectileRK4InPlace(
   proj: ProjectileState,
   env: EnvironmentState,
   dt: number,
@@ -183,12 +184,33 @@ export function stepProjectileRK4(
   const nextSpeedSq = nextVx * nextVx + nextVy * nextVy + nextVz * nextVz;
   const stepDist = Math.sqrt(dpx * dpx + dpy * dpy + dpz * dpz);
 
-  return {
+  proj.position.x = p0x + dpx;
+  proj.position.y = p0y + dpy;
+  proj.position.z = p0z + dpz;
+  proj.velocity.x = nextVx;
+  proj.velocity.y = nextVy;
+  proj.velocity.z = nextVz;
+  proj.flightTimeS += dt;
+  proj.distanceTraveledM = distTraveled + stepDist;
+  proj.kineticEnergyJ = 0.5 * m * nextSpeedSq;
+
+  return proj;
+}
+
+/**
+ * 4th-Order Runge-Kutta (RK4) numerical ballistic integrator (immutable return).
+ */
+export function stepProjectileRK4(
+  proj: ProjectileState,
+  env: EnvironmentState,
+  dt: number,
+  pelletIndexOverride?: number
+): ProjectileState {
+  if (!proj.alive || dt <= 0) return proj;
+  const cloned: ProjectileState = {
     ...proj,
-    position: { x: p0x + dpx, y: p0y + dpy, z: p0z + dpz },
-    velocity: { x: nextVx, y: nextVy, z: nextVz },
-    flightTimeS: proj.flightTimeS + dt,
-    distanceTraveledM: distTraveled + stepDist,
-    kineticEnergyJ: 0.5 * m * nextSpeedSq,
+    position: { x: proj.position.x, y: proj.position.y, z: proj.position.z },
+    velocity: { x: proj.velocity.x, y: proj.velocity.y, z: proj.velocity.z },
   };
+  return stepProjectileRK4InPlace(cloned, env, dt, pelletIndexOverride);
 }

@@ -12,6 +12,7 @@ import {
   scale,
   sub,
   vec3,
+  Vec3Like,
 } from '../vec3.ts';
 import { getRagdollParticleRef } from './ragdollParticles.ts';
 import { projectConstraintsAndAnatomyOnce } from './ragdollConstraintsProjector.ts';
@@ -20,6 +21,47 @@ import {
   buildLivingGroundedPoseTargets,
   livingGroundAgonyClock,
 } from '../triage/groundedPoseTargets.ts';
+
+const MAX_PARTICLE_SPEED_MS = 11.0;
+const MAX_PARTICLE_SPEED_SQ = MAX_PARTICLE_SPEED_MS * MAX_PARTICLE_SPEED_MS;
+const MAX_GROUNDED_UPWARD_POP_MS = 4.0;
+
+interface CorpseSleepState {
+  settleTimerS: number;
+  sleeping: boolean;
+}
+
+const corpseSleepRegistry = new WeakMap<TargetHealthState, CorpseSleepState>();
+
+function clampParticleVelocity(vel: Vec3Like, grounded: boolean): void {
+  if (grounded && vel.y > MAX_GROUNDED_UPWARD_POP_MS) {
+    vel.y = MAX_GROUNDED_UPWARD_POP_MS;
+  }
+  const spSq = lengthSq(vel);
+  if (spSq > MAX_PARTICLE_SPEED_SQ) {
+    const s = MAX_PARTICLE_SPEED_MS / Math.sqrt(spSq);
+    vel.x *= s;
+    vel.y *= s;
+    vel.z *= s;
+  }
+}
+
+function freezeCorpseParticles(target: TargetHealthState): void {
+  for (const z of ALL_GHOUL_ZONES) {
+    const b = target.ragdollBones[z];
+    b.velocity.x = 0;
+    b.velocity.y = 0;
+    b.velocity.z = 0;
+    b.prevPosition = copyVec3(b.position);
+  }
+  for (const aId of ALL_AUX_PARTICLES) {
+    const a = target.auxParticles[aId];
+    a.velocity.x = 0;
+    a.velocity.y = 0;
+    a.velocity.z = 0;
+    a.prevPosition = copyVec3(a.position);
+  }
+}
 
 /**
  * Steps ongoing physiological bleedout, leg-shot stumble-to-ground transitions, active-ragdoll
@@ -34,6 +76,12 @@ export function stepRagdollPhysics(
 
   // 1. Tick Physiological Hemorrhage, Leg-Disable Fall & Pain Reactions on living combatants
   if (target.alive) {
+    const prevSleep = corpseSleepRegistry.get(target);
+    if (prevSleep) {
+      prevSleep.settleTimerS = 0;
+      prevSleep.sleeping = false;
+    }
+
     if (target.bloodLossRateMlPerSec > 0) {
       target.bloodVolumeMl = Math.max(0, target.bloodVolumeMl - target.bloodLossRateMlPerSec * dt);
       const bloodRatio = target.bloodVolumeMl / 5000;
@@ -109,30 +157,34 @@ export function stepRagdollPhysics(
     return;
   }
 
-  // Skip PBD skeleton solve when a dead grounded ragdoll has fully settled
-  if (!target.alive && target.isRagdollActive && target.posture === 'RAGDOLL_GROUNDED') {
-    let anyMoving = false;
+  // Permanent Corpse Sleep Check: once a dead ragdoll has settled on the floor, stay 100% still
+  let sleepState = corpseSleepRegistry.get(target);
+  if (!sleepState) {
+    sleepState = { settleTimerS: 0, sleeping: false };
+    corpseSleepRegistry.set(target, sleepState);
+  }
+
+  if (!target.alive && target.isRagdollActive && sleepState.sleeping) {
+    let wokenByImpulse = false;
     for (const z of ALL_GHOUL_ZONES) {
       const b = target.ragdollBones[z];
       if (b.goreMode === 'CRANIAL_POP') continue;
-      if (!b.grounded || lengthSq(b.velocity) > 1e-6) {
-        anyMoving = true;
-        break;
-      }
-    }
-    if (!anyMoving) {
-      for (const aId of ALL_AUX_PARTICLES) {
-        const a = target.auxParticles[aId];
-        if (target.ragdollBones[a.parentZone].goreMode === 'CRANIAL_POP') continue;
-        if (a.position.y > floorY + a.radiusM + 0.008 || lengthSq(a.velocity) > 1e-6) {
-          anyMoving = true;
-          break;
+      const vSq = lengthSq(b.velocity);
+      if (vSq > 0.25) {
+        wokenByImpulse = true;
+        if (vSq > 20.25) {
+          const s = 4.5 / Math.sqrt(vSq);
+          b.velocity.x *= s;
+          b.velocity.y *= s;
+          b.velocity.z *= s;
         }
       }
     }
-    if (!anyMoving) {
+    if (!wokenByImpulse) {
       return;
     }
+    sleepState.sleeping = false;
+    sleepState.settleTimerS = 1.25;
   }
 
   let agonyClock = livingGroundAgonyClock.get(target) || 0;
@@ -152,6 +204,7 @@ export function stepRagdollPhysics(
     ? Math.max(0.22, target.consciousness * (1.0 - 0.55 * target.painShock))
     : 0.0;
 
+  let finalGroundedCount = 0;
   for (let step = 0; step < subSteps; step++) {
     const activePoseTargets =
       muscleTone > 0.01 ? buildLivingGroundedPoseTargets(target, floorY, agonyClock) : null;
@@ -163,6 +216,7 @@ export function stepRagdollPhysics(
         (target.isRagdollActive || b.componentId !== 'BODY') && b.goreMode !== 'CRANIAL_POP';
       if (!active) continue;
 
+      clampParticleVelocity(b.velocity, b.grounded);
       b.prevPosition = copyVec3(b.position);
       b.velocity.y += gravity * h;
 
@@ -202,6 +256,8 @@ export function stepRagdollPhysics(
         parentBone.goreMode !== 'CRANIAL_POP';
       if (!active) continue;
 
+      const auxGrounded = a.position.y <= floorY + a.radiusM + 0.008;
+      clampParticleVelocity(a.velocity, auxGrounded);
       a.prevPosition = copyVec3(a.position);
       a.velocity.y += gravity * h;
 
@@ -232,19 +288,19 @@ export function stepRagdollPhysics(
       const newVel = scale(sub(b.position, b.prevPosition), 1 / h);
 
       const minFloor = floorY + b.radiusM;
-      if (b.position.y <= minFloor + 0.004) {
+      if (b.position.y <= minFloor + 0.006) {
         b.grounded = true;
         if (b.componentId === 'BODY') groundedCount++;
 
-        const slideFriction = Math.exp(-7.2 * h);
+        const slideFriction = Math.exp(-8.5 * h);
         newVel.x *= slideFriction;
         newVel.z *= slideFriction;
 
         if (preImpactVy < -1.8) {
-          newVel.y = Math.max(newVel.y, -preImpactVy * 0.16);
+          newVel.y = Math.max(newVel.y, -preImpactVy * 0.14);
         }
 
-        if (!target.alive && length(newVel) < 0.06) {
+        if (!target.alive && length(newVel) < 0.08) {
           newVel.x = 0;
           newVel.y = 0;
           newVel.z = 0;
@@ -255,6 +311,7 @@ export function stepRagdollPhysics(
         b.grounded = false;
       }
 
+      clampParticleVelocity(newVel, b.grounded);
       b.velocity = newVel;
     }
 
@@ -267,16 +324,18 @@ export function stepRagdollPhysics(
       if (!active) continue;
 
       const newVel = scale(sub(a.position, a.prevPosition), 1 / h);
-      if (a.position.y <= floorY + a.radiusM + 0.004) {
-        const slideFriction = Math.exp(-8.5 * h);
+      const auxGrounded = a.position.y <= floorY + a.radiusM + 0.006;
+      if (auxGrounded) {
+        const slideFriction = Math.exp(-9.5 * h);
         newVel.x *= slideFriction;
         newVel.z *= slideFriction;
-        if (length(newVel) < 0.06) {
+        if (length(newVel) < 0.08) {
           newVel.x = 0;
           newVel.y = 0;
           newVel.z = 0;
         }
       }
+      clampParticleVelocity(newVel, auxGrounded);
       a.velocity = newVel;
     }
 
@@ -301,8 +360,49 @@ export function stepRagdollPhysics(
       pB.velocity.z += (vCm.z - pB.velocity.z) * jointViscosityAlpha;
     }
 
+    finalGroundedCount = groundedCount;
     if (target.isRagdollActive) {
       target.posture = groundedCount >= 3 ? 'RAGDOLL_GROUNDED' : 'AIRBORNE_RAGDOLL';
+    }
+  }
+
+  // Progressive Corpse Settle Damping & Permanent Sleep Lock
+  if (!target.alive && target.isRagdollActive && finalGroundedCount >= 4) {
+    const settleDamp = Math.exp(-4.2 * dt * (1.0 + sleepState.settleTimerS * 2.8));
+    let maxSpeedSq = 0;
+    for (const z of ALL_GHOUL_ZONES) {
+      const b = target.ragdollBones[z];
+      if (b.goreMode === 'CRANIAL_POP') continue;
+      b.velocity.x *= settleDamp;
+      b.velocity.y *= settleDamp;
+      b.velocity.z *= settleDamp;
+      const spSq = lengthSq(b.velocity);
+      if (spSq > maxSpeedSq) maxSpeedSq = spSq;
+    }
+    for (const aId of ALL_AUX_PARTICLES) {
+      const a = target.auxParticles[aId];
+      a.velocity.x *= settleDamp;
+      a.velocity.y *= settleDamp;
+      a.velocity.z *= settleDamp;
+    }
+
+    const maxSpeed = Math.sqrt(maxSpeedSq);
+    if (maxSpeed < 0.15) {
+      sleepState.settleTimerS += dt * 2.2;
+    } else if (maxSpeed < 0.75) {
+      sleepState.settleTimerS += dt;
+    } else {
+      sleepState.settleTimerS = Math.max(0, sleepState.settleTimerS - dt * 0.5);
+    }
+
+    if (
+      (maxSpeed < 0.15 && sleepState.settleTimerS >= 0.30) ||
+      (maxSpeed < 0.60 && sleepState.settleTimerS >= 1.60) ||
+      sleepState.settleTimerS >= 2.10
+    ) {
+      freezeCorpseParticles(target);
+      target.posture = 'RAGDOLL_GROUNDED';
+      sleepState.sleeping = true;
     }
   }
 

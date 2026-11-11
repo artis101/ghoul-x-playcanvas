@@ -20,7 +20,7 @@ export class BrickDynamicPool {
     brickMaterial: pc.StandardMaterial,
     variantMeshes: readonly [pc.Mesh, pc.Mesh, pc.Mesh],
     maxBricksPerVariantPool = 1024,
-    maxMortarChips = 384
+    maxMortarChips = 1024
   ) {
     const maxBricks = Math.max(64, maxBricksPerVariantPool);
     this.variantNormScales = [0, 1, 2].map((i) => {

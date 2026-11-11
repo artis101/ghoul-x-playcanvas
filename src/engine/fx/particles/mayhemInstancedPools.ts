@@ -58,8 +58,8 @@ export function createMayhemInstancedPools(
   const brassMat = createGleamingBrassCasingMaterial(dev);
   const hullMat = createShotgunHullMaterial(dev);
 
-  const brassCasingPool = new HardwareInstancedPool(app, casingCylinderMesh, brassMat, limits.maxBrassCasings ?? 256, 'MayhemBrassCasingPool', false);
-  const shotgunHullPool = new HardwareInstancedPool(app, hullCylinderMesh, hullMat, limits.maxShotgunHulls ?? 128, 'MayhemShotgunHullPool', false);
+  const brassCasingPool = new HardwareInstancedPool(app, casingCylinderMesh, brassMat, limits.maxBrassCasings ?? 1536, 'MayhemBrassCasingPool', false);
+  const shotgunHullPool = new HardwareInstancedPool(app, hullCylinderMesh, hullMat, limits.maxShotgunHulls ?? 512, 'MayhemShotgunHullPool', false);
 
   const shrapnelBoxMesh = pc.Mesh.fromGeometry(dev, new pc.BoxGeometry());
   const shrapnelMat = new pc.StandardMaterial();

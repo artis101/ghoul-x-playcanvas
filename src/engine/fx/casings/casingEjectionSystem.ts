@@ -145,9 +145,54 @@ export function ejectWeaponCasing(
     casingScale,
     -9.81,
     restitution,
-    6.5,
+    0,
   );
 
   registerTrackedCasingBounce(ctx.trackedBuffer, ejectOrigin, ejectVel, restitution, isShotgunHull);
+  return { slotId, nextSeed: s + 1 };
+}
+
+export function ejectEnemyShellCasing(
+  ctx: CasingSystemContext,
+  originWorld: Vec3Like,
+  rightDirWorld: Vec3Like,
+  isSidearm = false,
+  seedCounter = 1,
+): { slotId: number; nextSeed: number } {
+  const right = normalize(rightDirWorld);
+  const s = seedCounter;
+  const jitterA = ((s * 73) % 19) / 19 - 0.5;
+  const jitterB = ((s * 131) % 23) / 23 - 0.5;
+
+  const sideSpeed = (isSidearm ? 2.1 : 2.55) + jitterA * 0.55;
+  const upSpeed = (isSidearm ? 1.35 : 1.65) + jitterB * 0.4;
+  const ejectVel: Vec3Like = {
+    x: right.x * sideSpeed + jitterB * 0.35,
+    y: upSpeed,
+    z: right.z * sideSpeed - jitterA * 0.35,
+  };
+
+  const spin: Vec3Like = {
+    x: 20 + jitterA * 14,
+    y: -24 + jitterB * 16,
+    z: 28 + jitterA * 12,
+  };
+
+  const casingScale: Vec3Like = isSidearm
+    ? { x: 0.0115, y: 0.032, z: 0.0115 }
+    : { x: 0.0105, y: 0.045, z: 0.0105 };
+
+  const restitution = 0.46;
+  const slotId = ctx.brassCasingPool.spawnKinematicParticle(
+    originWorld,
+    ejectVel,
+    spin,
+    casingScale,
+    -9.81,
+    restitution,
+    0,
+  );
+
+  registerTrackedCasingBounce(ctx.trackedBuffer, originWorld, ejectVel, restitution, false);
   return { slotId, nextSeed: s + 1 };
 }

@@ -7,7 +7,7 @@ import type {
   WeaponSpec,
 } from '../../contracts/ballistics.ts';
 import { add, copyVec3, distance, length, normalize, scale } from '../../core/ballistics/vec3.ts';
-import { simulateShot } from '../../core/ballistics/solver.ts';
+import { resolveMagnetizedAimDirection, simulateShot } from '../../core/ballistics/solver.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
 
 export function isTargetNearShotCone(
@@ -61,11 +61,13 @@ export function findBestTargetHit(
   const normAim = normalize(aimDir);
   let bestHit: { target: GhoulMannequinEntity; report: ShotSimulationReport } | null = null;
   let bestImpactTime = Infinity;
+  const nearCandidates: GhoulMannequinEntity[] = [];
 
   for (let i = 0; i < targets.length; i++) {
     const candidate = targets[i];
     if (excludeTargets?.has(candidate)) continue;
     if (!isTargetNearShotCone(candidate, origin, normAim, ammo, environment)) continue;
+    nearCandidates.push(candidate);
 
     const candReport = simulateShot(weapon, ammo, origin, normAim, candidate.healthState, environment);
     if (candReport.hitTarget) {
@@ -73,6 +75,28 @@ export function findBestTargetHit(
       if (tHit < bestImpactTime) {
         bestImpactTime = tHit;
         bestHit = { target: candidate, report: candReport };
+      }
+    }
+  }
+
+  if (!bestHit && nearCandidates.length > 0 && ammo.pelletCount <= 1) {
+    const magAim = resolveMagnetizedAimDirection(
+      origin,
+      normAim,
+      nearCandidates.map((c) => c.healthState),
+      ammo
+    );
+    if (magAim !== normAim) {
+      for (let i = 0; i < nearCandidates.length; i++) {
+        const candidate = nearCandidates[i];
+        const candReport = simulateShot(weapon, ammo, origin, magAim, candidate.healthState, environment);
+        if (candReport.hitTarget) {
+          const tHit = candReport.flightTimeAtImpactS || candReport.targetDistanceM / 500;
+          if (tHit < bestImpactTime) {
+            bestImpactTime = tHit;
+            bestHit = { target: candidate, report: candReport };
+          }
+        }
       }
     }
   }

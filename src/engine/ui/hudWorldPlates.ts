@@ -1,4 +1,3 @@
-import type { TargetHealthState } from '../../contracts/ballistics.ts';
 import { computeCombatantTriageStatus } from '../../core/ballistics/solver.ts';
 import {
   formatTriageLabel,
@@ -31,16 +30,21 @@ export function createWorldTriagePlateDom(parent: HTMLElement): WorldTriagePlate
   armorFill.className = 'wtp-armor-fill';
   armorTrack.appendChild(armorFill);
 
+  const barkPill = document.createElement('div');
+  barkPill.className = 'wtp-bark-pill hidden';
+
   root.appendChild(top);
   root.appendChild(hpTrack);
   root.appendChild(armorTrack);
+  root.appendChild(barkPill);
   parent.appendChild(root);
-  return { root, triageLabel, hpNum, hpFill, armorTrack, armorFill };
+  return { root, triageLabel, hpNum, hpFill, armorTrack, armorFill, barkPill };
 }
 
 export function updateWorldPlateEntry(
   dom: WorldTriagePlateDom,
-  entry: ProjectedTargetTriageEntry
+  entry: ProjectedTargetTriageEntry,
+  activeBarkText?: string
 ): void {
   if (!entry.visible) {
     dom.root.style.display = 'none';
@@ -79,5 +83,15 @@ export function updateWorldPlateEntry(
     dom.armorFill.style.width = `${(armorIntegrity * 100).toFixed(1)}%`;
   } else {
     dom.armorTrack.classList.add('hidden');
+  }
+
+  if (dom.barkPill) {
+    if (activeBarkText && entry.state.alive) {
+      dom.barkPill.classList.remove('hidden');
+      dom.barkPill.textContent = activeBarkText;
+    } else {
+      dom.barkPill.classList.add('hidden');
+      dom.barkPill.textContent = '';
+    }
   }
 }

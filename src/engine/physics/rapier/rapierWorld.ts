@@ -3,8 +3,10 @@ import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import type { BlastEvent, ColliderSurfaceTag, PenetrationRayHit, QuatLike } from '../../../contracts/destruction.ts';
 import { executeRadialBlastImpulse } from './rapierBlast.ts';
 import {
+  type CompoundBoxChildSpec,
   createStaticBoxCollider,
   spawnDynamicBoxBody,
+  spawnDynamicCompoundBoxBody,
   spawnDynamicConvexHullBody,
   removeRigidBodyFromWorld,
   removeColliderFromWorld,
@@ -67,6 +69,29 @@ export class RapierPhysicsWorld {
     this.bodySettleTimers.set(body.handle, 0);
     if (tag) this.surfaceTags.set(collider.handle, tag);
     return { bodyHandle: body.handle, colliderHandle: collider.handle };
+  }
+
+  public spawnDynamicCompoundBox(
+    center: Vec3Like,
+    children: readonly CompoundBoxChildSpec[],
+    linVel?: Vec3Like,
+    angVel?: Vec3Like,
+    rotationQuat?: QuatLike
+  ): { bodyHandle: number; colliderHandles: number[] } {
+    const { body, colliders } = spawnDynamicCompoundBoxBody(
+      this.world, center, children, linVel, angVel, rotationQuat
+    );
+    this.queryPipelineDirty = true;
+    this.dynamicBodyHandles.add(body.handle);
+    this.bodySettleTimers.set(body.handle, 0);
+    const colliderHandles: number[] = new Array(colliders.length);
+    for (let i = 0; i < colliders.length; i++) {
+      const h = colliders[i].handle;
+      colliderHandles[i] = h;
+      const tag = children[i].tag;
+      if (tag) this.surfaceTags.set(h, tag);
+    }
+    return { bodyHandle: body.handle, colliderHandles };
   }
 
   public spawnDynamicConvexHull(
@@ -171,6 +196,27 @@ export class RapierPhysicsWorld {
     if (this.destroyed) return true;
     const body = this.world.getRigidBody(bodyHandle) as RAPIER.RigidBody | undefined;
     return !body || body.isSleeping();
+  }
+
+  public isStaticCollider(colliderHandle: number): boolean {
+    if (this.destroyed) return false;
+    const col = this.world.getCollider(colliderHandle) as RAPIER.Collider | undefined;
+    if (!col) return false;
+    const parent = col.parent();
+    return !parent || parent.isFixed();
+  }
+
+  public wakeAllSleepingDynamicBodies(): number {
+    if (this.destroyed) return 0;
+    let woken = 0;
+    for (const handle of this.dynamicBodyHandles) {
+      const body = this.world.getRigidBody(handle) as RAPIER.RigidBody | undefined;
+      if (!body) continue;
+      if (body.isSleeping()) woken++;
+      body.wakeUp();
+      this.bodySettleTimers.set(handle, 0);
+    }
+    return woken;
   }
 
   public getBodyPose(bodyHandle: number): { position: Vec3Like; rotation: QuatLike } | null;

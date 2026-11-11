@@ -126,13 +126,24 @@ export function handleConcreteRaySegment(
     return null;
   }
 
-  pomDecals.spawnCraterImpact(
-    matchedHit.pointWorld,
-    matchedHit.normalWorld,
-    seg.directionWorld,
-    seg.kineticEnergyJ,
-    seg.caliberRadiusM
-  );
+  const col = rapierWorld.world.getCollider(matchedHit.colliderHandle);
+  const isStatic = Boolean(col && (!col.parent() || col.parent()!.isFixed()));
+  if (isStatic && matchedHit.surface.material !== 'CONCRETE_CHUNKS') {
+    pomDecals.spawnCraterImpact(
+      matchedHit.pointWorld,
+      matchedHit.normalWorld,
+      seg.directionWorld,
+      seg.kineticEnergyJ,
+      seg.caliberRadiusM
+    );
+  } else {
+    pomDecals.spawnSpallChipBurst(
+      matchedHit.pointWorld,
+      matchedHit.normalWorld,
+      seg.directionWorld,
+      1.0
+    );
+  }
 
   return {
     remainingEnergyJ: 0,
@@ -155,12 +166,14 @@ export function applyConcreteBlast(
     return;
   }
 
+  let anyDetached = false;
   for (const wall of wallsById.values()) {
     severEdgesFromBlast(wall.graph, wall.transform, blast);
     const newlyDetached = findDetachedChunkIndices(wall.graph);
     if (newlyDetached.length === 0) {
       continue;
     }
+    anyDetached = true;
 
     const localBlast = worldToLocalPoint(blast.centerWorld, wall.transform);
     const awayLocalZ = localBlast.z >= 0 ? -1 : 1;
@@ -244,6 +257,9 @@ export function applyConcreteBlast(
 
   if (dynamicPool.dynamicTopologyDirty) {
     dynamicPool.syncDynamicCombinedMesh(0, true, wallsById);
+  }
+  if (anyDetached) {
+    pomDecals.pruneUnsupportedCraters(dynamicPool.rapierWorld);
   }
 }
 

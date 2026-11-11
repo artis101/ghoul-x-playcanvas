@@ -26,7 +26,7 @@ import {
   sub,
   vec3,
 } from '../vec3.ts';
-import { stepProjectileRK4 } from '../external/rk4Integrator.ts';
+import { stepProjectileRK4InPlace } from '../external/rk4Integrator.ts';
 import { computeTargetLiveBounds } from '../math/segmentIntersections.ts';
 import { findSegmentHits } from './shotNarrowPhase.ts';
 import { evaluateArmorInteraction } from './shotArmorInteraction.ts';
@@ -146,10 +146,13 @@ export function simulateShot(
     let pelletEnergyDeposited = 0;
     let pelletImpulseTransferred = 0;
     let stepIdx = 0;
+    const prevPos: Vec3Like = { x: 0, y: 0, z: 0 };
 
     while (proj.alive && proj.distanceTraveledM < effectiveMaxRangeM && proj.flightTimeS < maxFlightTimeS && proj.position.y > -5.0) {
-      const prevPos = proj.position;
-      proj = stepProjectileRK4(proj, env, dt, pIdx);
+      prevPos.x = proj.position.x;
+      prevPos.y = proj.position.y;
+      prevPos.z = proj.position.z;
+      stepProjectileRK4InPlace(proj, env, dt, pIdx);
       const currPos = proj.position;
       stepIdx++;
 

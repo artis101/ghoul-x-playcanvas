@@ -1,6 +1,6 @@
 import type { AmmoSpec, EnvironmentState, Vec3Like, WeaponSpec } from '../../contracts/ballistics.ts';
 import type { InternalBallisticsReport } from '../../contracts/physiology.ts';
-import { add, distance, normalize, scale, sub } from '../../core/ballistics/vec3.ts';
+import { add, distance, dot, normalize, scale, sub } from '../../core/ballistics/vec3.ts';
 import { simulateShot } from '../../core/ballistics/solver.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
@@ -8,6 +8,70 @@ import type { EnvironmentRayInterceptor } from './combatTypes.ts';
 import { findBestTargetHit, truncateTrajectorySamples, buildSyntheticFlightSamples } from './hitRoutingUtils.ts';
 import { applyImpactFxAndState, type ImpactDispatcherContext } from './impactDamageDispatcher.ts';
 import { fireMultiPelletShot } from './shotgunPelletSolver.ts';
+
+function dispatchSecondaryRicochet(
+  weapon: WeaponSpec,
+  baseAmmo: AmmoSpec,
+  ricOrigin: Vec3Like,
+  ricDirRaw: Vec3Like,
+  ricSpeedMs: number,
+  targets: GhoulMannequinEntity[],
+  environment: EnvironmentState,
+  fxManager: GoreAndBallisticsFxManager,
+  interceptor?: EnvironmentRayInterceptor,
+  impactCtx?: ImpactDispatcherContext,
+  excluded?: Set<GhoulMannequinEntity>
+): void {
+  const safeSpeed = Math.max(85, ricSpeedMs);
+  const ricDir = normalize(ricDirRaw);
+  const ricOriginNudged = add(ricOrigin, scale(ricDir, 0.04));
+  const ricEnergyJ = 0.5 * baseAmmo.massKg * safeSpeed * safeSpeed;
+  const ricAmmo: AmmoSpec = {
+    ...baseAmmo,
+    muzzleVelocityMs: safeSpeed,
+    spreadRadians: 0,
+  };
+
+  if (impactCtx?.combatAudio) {
+    impactCtx.combatAudio.playRicochetSnap(ricOriginNudged, impactCtx.getViewerPosVec3());
+  }
+
+  const hitMatch = findBestTargetHit(weapon, ricAmmo, ricOriginNudged, ricDir, targets, environment, excluded);
+  if (hitMatch && hitMatch.report.hitTarget) {
+    const wound = hitMatch.report.woundEvents[0];
+    const hitDistM = wound ? distance(ricOriginNudged, wound.entryPointWorld) : hitMatch.report.targetDistanceM;
+    const envCheck = interceptor?.(
+      ricOriginNudged,
+      ricDir,
+      hitDistM,
+      ricEnergyJ,
+      safeSpeed,
+      baseAmmo.diameterM,
+      false
+    );
+    if (!envCheck?.blocked) {
+      if (hitMatch.report.trajectorySamples.length > 1) {
+        fxManager.spawnFlyingProjectile(hitMatch.report.trajectorySamples, false);
+      }
+      if (impactCtx) {
+        applyImpactFxAndState(hitMatch.target, hitMatch.report, `${weapon.codeName} [RICOCHET]`, impactCtx, ricAmmo);
+      }
+      return;
+    }
+  }
+
+  const postEnv = interceptor?.(ricOriginNudged, ricDir, 32.0, ricEnergyJ, safeSpeed, baseAmmo.diameterM, false);
+  const traceDist = Math.max(0.5, postEnv?.stoppedDistanceM ?? 24.0);
+  const samples = buildSyntheticFlightSamples(
+    ricOriginNudged,
+    ricDir,
+    safeSpeed,
+    baseAmmo.massKg,
+    traceDist,
+    environment.speedOfSoundMs
+  );
+  fxManager.spawnFlyingProjectile(samples, false);
+}
 
 export function routeWeaponFire(
   weapon: WeaponSpec,
@@ -36,6 +100,20 @@ export function routeWeaponFire(
     if (interceptor) {
       const envRes = interceptor(origin, normAim, 150.0, muzzleEnergyJ, muzzleSpeedMs, ammo.diameterM, isAp);
       stoppedDistM = envRes.stoppedDistanceM;
+      if (envRes.ricochetOriginWorld && envRes.ricochetDirWorld) {
+        dispatchSecondaryRicochet(
+          weapon,
+          ammo,
+          envRes.ricochetOriginWorld,
+          envRes.ricochetDirWorld,
+          envRes.ricochetSpeedMs ?? muzzleSpeedMs * 0.52,
+          targets,
+          environment,
+          fxManager,
+          interceptor,
+          impactCtx
+        );
+      }
     }
     const traceDistM = Math.max(0.25, stoppedDistM ?? 85.0);
     const samples = match && match.report.trajectorySamples.length > 1
@@ -61,6 +139,20 @@ export function routeWeaponFire(
       const stopAtM = Math.max(0.25, preIntercept.stoppedDistanceM ?? hitDistM);
       const stoppedSamples = truncateTrajectorySamples(report.trajectorySamples, origin, stopAtM);
       fxManager.spawnFlyingProjectile(stoppedSamples, false);
+      if (preIntercept.ricochetOriginWorld && preIntercept.ricochetDirWorld) {
+        dispatchSecondaryRicochet(
+          weapon,
+          ammo,
+          preIntercept.ricochetOriginWorld,
+          preIntercept.ricochetDirWorld,
+          preIntercept.ricochetSpeedMs ?? muzzleSpeedMs * 0.52,
+          targets,
+          environment,
+          fxManager,
+          interceptor,
+          impactCtx
+        );
+      }
       return null;
     }
 
@@ -96,6 +188,29 @@ export function routeWeaponFire(
 
   if (!impactCtx) return null;
   const primaryInternalReport = applyImpactFxAndState(target, report, weapon.codeName, impactCtx, effectiveAmmo);
+
+  const helmetDeflected =
+    report.headgearKnockedOff ||
+    (firstWound && firstWound.colliderId === 'vol_helmet_kevlar' && firstWound.armorStopped);
+  if (helmetDeflected && firstWound) {
+    const n = normalize(firstWound.entryNormalWorld);
+    const inc = normalize(firstWound.impactDirectionWorld);
+    const d = dot(inc, n);
+    const reflectDir = d < 0 ? normalize(sub(inc, scale(n, 2 * d))) : normalize(add(inc, scale(n, 0.85)));
+    dispatchSecondaryRicochet(
+      weapon,
+      effectiveAmmo,
+      firstWound.entryPointWorld,
+      reflectDir,
+      Math.max(120, firstWound.entryVelocityMs * 0.54),
+      targets,
+      environment,
+      fxManager,
+      interceptor,
+      impactCtx,
+      new Set<GhoulMannequinEntity>([target])
+    );
+  }
 
   if (report.woundEvents.length > 0) {
     const lastWound = report.woundEvents[report.woundEvents.length - 1];

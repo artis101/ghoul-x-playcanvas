@@ -74,6 +74,42 @@ export function spawnDynamicBoxBody(
   return { body, collider };
 }
 
+export interface CompoundBoxChildSpec {
+  localOffset: Vec3Like;
+  halfExtents: Vec3Like;
+  massKg: number;
+  tag?: ColliderSurfaceTag;
+}
+
+export function spawnDynamicCompoundBoxBody(
+  world: RAPIER.World,
+  center: Vec3Like,
+  children: readonly CompoundBoxChildSpec[],
+  linVel?: Vec3Like,
+  angVel?: Vec3Like,
+  rotationQuat?: QuatLike
+): { body: RAPIER.RigidBody; colliders: RAPIER.Collider[] } {
+  const bodyDesc = createConfiguredDynamicBodyDesc(center, linVel, angVel, rotationQuat);
+  const body = world.createRigidBody(bodyDesc);
+  const colliders: RAPIER.Collider[] = [];
+
+  for (let i = 0; i < children.length; i++) {
+    const ch = children[i];
+    const colDesc = RAPIER.ColliderDesc.cuboid(
+      Math.max(1e-4, ch.halfExtents.x),
+      Math.max(1e-4, ch.halfExtents.y),
+      Math.max(1e-4, ch.halfExtents.z)
+    )
+      .setTranslation(ch.localOffset.x, ch.localOffset.y, ch.localOffset.z)
+      .setMass(Math.max(0.005, ch.massKg))
+      .setRestitution(DEFAULT_RESTITUTION)
+      .setFriction(DEFAULT_FRICTION);
+    colliders.push(world.createCollider(colDesc, body));
+  }
+
+  return { body, colliders };
+}
+
 export function spawnDynamicConvexHullBody(
   world: RAPIER.World,
   center: Vec3Like,
@@ -130,5 +166,5 @@ export function removeColliderFromWorld(
   const col = world.getCollider(colliderHandle) as RAPIER.Collider | undefined;
   if (!col) return;
   surfaceTags.delete(colliderHandle);
-  world.removeCollider(col, false);
+  world.removeCollider(col, true);
 }

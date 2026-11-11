@@ -1,12 +1,23 @@
 import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import { add, normalize, scale } from '../../../core/ballistics/vec3.ts';
 import { isPointInOpenHole } from '../../../core/destruction/woodPolygonClipper.ts';
-import type { PenetrationRayHit } from '../../../contracts/destruction.ts';
+import type {
+  DestructibleMaterialKind,
+  PenetrationRayHit,
+} from '../../../contracts/destruction.ts';
 import type { WoodWallSystem } from '../woodWallSystem.ts';
 import {
   classifyHitGroup,
   type DestructionRaycastContext,
 } from './destructionRaycast.ts';
+
+export interface EnemyShotInterceptResult {
+  blocked: boolean;
+  impactPointWorld?: Vec3Like;
+  hitPointWorld?: Vec3Like;
+  hitNormalWorld?: Vec3Like;
+  surfaceTag?: DestructibleMaterialKind;
+}
 
 export function isWoodWallRayInOpenHole(
   woodWalls: WoodWallSystem,
@@ -115,7 +126,7 @@ export function interceptEnemyShot(
   dir: Vec3Like,
   maxDistM: number,
   kineticEnergyJ = 460
-): { blocked: boolean; impactPointWorld?: Vec3Like } {
+): EnemyShotInterceptResult {
   if (maxDistM <= 0) {
     return { blocked: false };
   }
@@ -165,6 +176,11 @@ export function interceptEnemyShot(
   let curEnergyJ = Math.max(60, kineticEnergyJ);
   let curSpeedMs = 390;
   const listenerPos = ctx.getListenerPos ? ctx.getListenerPos() : { x: 0, y: 1.62, z: 0 };
+  let firstPassThroughHit: {
+    pointWorld: Vec3Like;
+    normalWorld: Vec3Like;
+    surfaceTag: DestructibleMaterialKind;
+  } | null = null;
 
   for (let i = 0; i < orderedObjects.length; i++) {
     const entry = orderedObjects[i];
@@ -193,9 +209,16 @@ export function interceptEnemyShot(
       if (!barrelRes) continue;
       ctx.notifyBreach();
       const impactPt = barrelRes.impactPointWorld ?? hit.pointWorld;
+      const impactNrm = barrelRes.impactNormalWorld ?? hit.normalWorld;
       ctx.combatAudio?.playMaterialImpact('STEEL', impactPt, curEnergyJ, listenerPos);
       if (barrelRes.stopped || barrelRes.remainingEnergyJ <= 20) {
-        return { blocked: true, impactPointWorld: impactPt };
+        return {
+          blocked: true,
+          impactPointWorld: impactPt,
+          hitPointWorld: impactPt,
+          hitNormalWorld: impactNrm,
+          surfaceTag: 'STEEL',
+        };
       }
       curEnergyJ = barrelRes.remainingEnergyJ;
       curSpeedMs = barrelRes.remainingSpeedMs;
@@ -215,14 +238,24 @@ export function interceptEnemyShot(
       if (!res) continue;
 
       const energyLost = curEnergyJ - res.remainingEnergyJ;
+      const impactPt = res.impactPointWorld ?? hit.pointWorld;
+      const impactNrm = res.impactNormalWorld ?? hit.normalWorld;
+      const hitMat = res.hitMaterial ?? mat;
       if (energyLost > 1.0 || res.stopped) {
         ctx.notifyBreach();
         ctx.combatAudio?.playMaterialImpact(
-          res.hitMaterial ?? mat,
-          res.impactPointWorld ?? hit.pointWorld,
+          hitMat,
+          impactPt,
           curEnergyJ,
           listenerPos
         );
+        if (!firstPassThroughHit) {
+          firstPassThroughHit = {
+            pointWorld: impactPt,
+            normalWorld: impactNrm,
+            surfaceTag: hitMat,
+          };
+        }
       }
 
       curEnergyJ = Math.max(0, res.remainingEnergyJ);
@@ -230,7 +263,10 @@ export function interceptEnemyShot(
       if (res.stopped || curEnergyJ <= 15 || curSpeedMs <= 25) {
         return {
           blocked: true,
-          impactPointWorld: res.impactPointWorld ?? hit.pointWorld,
+          impactPointWorld: impactPt,
+          hitPointWorld: impactPt,
+          hitNormalWorld: impactNrm,
+          surfaceTag: hitMat,
         };
       }
       continue;
@@ -260,8 +296,10 @@ export function interceptEnemyShot(
 
       ctx.notifyBreach();
       const impactPt = res.impactPointWorld ?? hit.pointWorld;
+      const impactNrm = res.impactNormalWorld ?? hit.normalWorld;
+      const hitMat = res.hitMaterial ?? (entry.hitStud ? 'WOOD_STUD' : 'WOOD_DRYWALL');
       ctx.combatAudio?.playMaterialImpact(
-        res.hitMaterial ?? (entry.hitStud ? 'WOOD_STUD' : 'WOOD_DRYWALL'),
+        hitMat,
         impactPt,
         curEnergyJ,
         listenerPos
@@ -269,6 +307,9 @@ export function interceptEnemyShot(
       return {
         blocked: true,
         impactPointWorld: impactPt,
+        hitPointWorld: impactPt,
+        hitNormalWorld: impactNrm,
+        surfaceTag: hitMat,
       };
     }
 
@@ -286,15 +327,20 @@ export function interceptEnemyShot(
 
       ctx.notifyBreach();
       const impactPt = res.impactPointWorld ?? hit.pointWorld;
+      const impactNrm = res.impactNormalWorld ?? hit.normalWorld;
       ctx.combatAudio?.playMaterialImpact('BRICK_MASONRY', impactPt, curEnergyJ, listenerPos);
       return {
         blocked: true,
         impactPointWorld: impactPt,
+        hitPointWorld: impactPt,
+        hitNormalWorld: impactNrm,
+        surfaceTag: 'BRICK_MASONRY',
       };
     }
 
     if (mat === 'CONCRETE_CHUNKS' || mat === 'CONCRETE_INTACT') {
       let impactPt = hit.pointWorld;
+      let impactNrm = hit.normalWorld;
       if (ctx.concreteWalls.getWall(objId)) {
         const res = ctx.concreteWalls.handleRaySegment({
           originWorld: segOrigin,
@@ -309,6 +355,9 @@ export function interceptEnemyShot(
         if (res.impactPointWorld) {
           impactPt = res.impactPointWorld;
         }
+        if (res.impactNormalWorld) {
+          impactNrm = res.impactNormalWorld;
+        }
       } else {
         ctx.pomDecals.spawnCraterImpact(hit.pointWorld, hit.normalWorld, normDir, curEnergyJ, 0.0045);
       }
@@ -317,6 +366,9 @@ export function interceptEnemyShot(
       return {
         blocked: true,
         impactPointWorld: impactPt,
+        hitPointWorld: impactPt,
+        hitNormalWorld: impactNrm,
+        surfaceTag: mat,
       };
     }
 
@@ -325,6 +377,18 @@ export function interceptEnemyShot(
     return {
       blocked: true,
       impactPointWorld: hit.pointWorld,
+      hitPointWorld: hit.pointWorld,
+      hitNormalWorld: hit.normalWorld,
+      surfaceTag: 'STEEL',
+    };
+  }
+
+  if (firstPassThroughHit) {
+    return {
+      blocked: false,
+      hitPointWorld: firstPassThroughHit.pointWorld,
+      hitNormalWorld: firstPassThroughHit.normalWorld,
+      surfaceTag: firstPassThroughHit.surfaceTag,
     };
   }
 

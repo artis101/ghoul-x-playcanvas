@@ -112,6 +112,12 @@ export function registerWaveTargetsInternal(
       lastAimAccuracyMultiplier: 1.0,
       clutchingWound: false,
       lastAimTargetWorld: vec3(0, 1.5, 0),
+
+      fireMode: 'AGGRESSIVE_LETHAL',
+      isOffScreen: false,
+      alertReactionTimerS: 0,
+      hasFiredWarningShot: false,
+      timeWithoutLosS: 0,
     };
 
     agents.set(hs.targetId, agent);

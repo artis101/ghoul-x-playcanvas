@@ -1,3 +1,4 @@
+import type { AiBarkPayload } from '../../contracts/ai/aiContracts.ts';
 import type { ShotSimulationReport, TargetHealthState } from '../../contracts/ballistics.ts';
 import type { PhysiologicalEntityState } from '../../contracts/physiology.ts';
 import { computeCombatantTriageStatus } from '../../core/ballistics/solver.ts';
@@ -14,6 +15,7 @@ import { createWorldTriagePlateDom, updateWorldPlateEntry } from './hudWorldPlat
 export class HudTriageFeed {
   private worldTriageLayerEl = queryEl('hud-world-triage-layer');
   private worldPlates = new Map<string, WorldTriagePlateDom>();
+  private activeBarks = new Map<string, { text: string; expiresAtMs: number }>();
 
   private targetCardEl = queryEl('hud-target-triage-card');
   private targetNameEl = queryEl('hud-target-name');
@@ -35,6 +37,7 @@ export class HudTriageFeed {
     focusedTarget: TargetHealthState | null,
     focusedPhysiology?: PhysiologicalEntityState | null
   ): void {
+    const nowMs = Date.now();
     if (this.worldTriageLayerEl && typeof document !== 'undefined') {
       const seenRefs = new Set<string>();
       for (const entry of entries) {
@@ -46,7 +49,13 @@ export class HudTriageFeed {
           dom = createWorldTriagePlateDom(this.worldTriageLayerEl);
           this.worldPlates.set(key, dom);
         }
-        updateWorldPlateEntry(dom, entry);
+        const barkEntry = this.activeBarks.get(key);
+        const barkText =
+          barkEntry && nowMs < barkEntry.expiresAtMs ? barkEntry.text : undefined;
+        if (barkEntry && nowMs >= barkEntry.expiresAtMs) {
+          this.activeBarks.delete(key);
+        }
+        updateWorldPlateEntry(dom, entry, barkText);
       }
 
       for (const [key, dom] of this.worldPlates.entries()) {
@@ -126,12 +135,22 @@ export class HudTriageFeed {
     if (!this.killfeedEl || !report.hitTarget || typeof document === 'undefined') return;
     const cleanTarget = targetName.split(' (')[0];
     const killedNow = wasAliveBefore && !isAliveAfter;
-    let detail = killedNow ? 'NEUTRALIZED' : 'HIT';
+    const detail = killedNow ? 'NEUTRALIZED' : 'HIT';
     this.addFeedRow(cleanTarget, weaponCode, detail, killedNow);
   }
 
   public pushSystemToast(tag: string, message: string): void {
     this.addFeedRow(message, tag, '', false);
+  }
+
+  public pushRadioBark(bark: AiBarkPayload): void {
+    const durationMs = Math.max(800, Math.round(bark.durationS * 1000));
+    this.activeBarks.set(bark.speakerId, {
+      text: bark.text,
+      expiresAtMs: Date.now() + durationMs,
+    });
+    const tag = bark.isRadio ? `RADIO • ${bark.callsign}` : `TRAUMA • ${bark.callsign}`;
+    this.addFeedRow(bark.text, tag, '', false);
   }
 
   private addFeedRow(subject: string, tag: string, outcome: string, isLethal: boolean): void {

@@ -169,6 +169,10 @@ export function computeEnemyAimProfile(
     spreadMultiplier *= 1 / Math.max(0.08, Math.min(1.0, externalAccuracyMultiplier));
   }
 
+  if (agent?.isOffScreen) {
+    spreadMultiplier *= 4.0; // 0.25x off-screen accuracy nerf
+  }
+
   const aimAccuracyMultiplier = Math.max(0.08, Math.min(1.0, 1.0 / spreadMultiplier));
   const activeHand: ActiveFiringHand = sidearmActive
     ? agent!.activeFiringHand

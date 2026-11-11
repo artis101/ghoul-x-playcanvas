@@ -82,7 +82,8 @@ export class DenseInstancePacker {
     slotId: number,
     bodyHandle: number,
     scale: Vec3Like = UNIT_SCALE,
-    ttlSeconds = 0
+    ttlSeconds = 0,
+    localOffset?: Vec3Like
   ): boolean {
     if (slotId < 0 || slotId >= this.maxInstances) return false;
     const denseIndex = this.soa.slotToDense[slotId];
@@ -94,6 +95,9 @@ export class DenseInstancePacker {
     this.soa.denseScaleX[denseIndex] = scale.x;
     this.soa.denseScaleY[denseIndex] = scale.y;
     this.soa.denseScaleZ[denseIndex] = scale.z;
+    this.soa.densePosX[denseIndex] = localOffset ? localOffset.x : 0;
+    this.soa.densePosY[denseIndex] = localOffset ? localOffset.y : 0;
+    this.soa.densePosZ[denseIndex] = localOffset ? localOffset.z : 0;
     this.soa.denseAgeS[denseIndex] = 0;
     this.soa.denseTtlS[denseIndex] = ttlSeconds > 0 ? ttlSeconds : 0;
     this.soa.isDirty = true;
@@ -149,7 +153,7 @@ export class DenseInstancePacker {
     this.soa.denseGravityY[d] = gravityY;
     this.soa.denseRestitution[d] = Math.max(0, Math.min(0.95, floorBounceRestitution));
     this.soa.denseAgeS[d] = 0;
-    this.soa.denseTtlS[d] = Math.max(0.05, ttlSeconds);
+    this.soa.denseTtlS[d] = ttlSeconds <= 0 ? 0 : Math.max(0.05, ttlSeconds);
 
     writeColumnMajorTrsMatrix4(this.matrixData, d * 16, pos.x, pos.y, pos.z, qx, qy, qz, qw, scale.x, scale.y, scale.z);
     this.soa.isDirty = true;
@@ -183,13 +187,25 @@ export class DenseInstancePacker {
         const isSleeping = rapierWorld.isBodySleeping(bodyHandle);
         if (isSleeping && this.soa.denseSleepingSynced[d] === 1 && shrink >= 1) continue;
 
-        const ok = rapierWorld.writeBodyMatrix4(
-          bodyHandle, this.matrixData, d * 16,
-          this.soa.denseScaleX[d] * shrink, this.soa.denseScaleY[d] * shrink, this.soa.denseScaleZ[d] * shrink
-        );
+        const sx = this.soa.denseScaleX[d] * shrink;
+        const sy = this.soa.denseScaleY[d] * shrink;
+        const sz = this.soa.denseScaleZ[d] * shrink;
+        const base = d * 16;
+        const ok = rapierWorld.writeBodyMatrix4(bodyHandle, this.matrixData, base, sx, sy, sz);
         if (!ok) {
           this.freeSlot(this.soa.denseToSlot[d]);
           continue;
+        }
+        const ox = this.soa.densePosX[d] * shrink;
+        const oy = this.soa.densePosY[d] * shrink;
+        const oz = this.soa.densePosZ[d] * shrink;
+        if (ox !== 0 || oy !== 0 || oz !== 0) {
+          const ux = sx > 1e-6 ? ox / sx : 0;
+          const uy = sy > 1e-6 ? oy / sy : 0;
+          const uz = sz > 1e-6 ? oz / sz : 0;
+          this.matrixData[base + 12] += this.matrixData[base] * ux + this.matrixData[base + 4] * uy + this.matrixData[base + 8] * uz;
+          this.matrixData[base + 13] += this.matrixData[base + 1] * ux + this.matrixData[base + 5] * uy + this.matrixData[base + 9] * uz;
+          this.matrixData[base + 14] += this.matrixData[base + 2] * ux + this.matrixData[base + 6] * uy + this.matrixData[base + 10] * uz;
         }
         this.soa.denseSleepingSynced[d] = isSleeping ? 1 : 0;
         this.soa.isDirty = true;
@@ -279,16 +295,26 @@ export class DenseInstancePacker {
   }
 
   private findOldestKinematicSlot(): number {
+    let bestSettledSlot = -1;
+    let oldestSettledAge = -1;
     let bestSlot = -1;
     let smallestRemaining = Infinity;
     for (let d = 0; d < this.soa.count; d++) {
       if (this.soa.denseMode[d] !== SLOT_MODE_KINEMATIC) continue;
-      const rem = this.soa.denseTtlS[d] - this.soa.denseAgeS[d];
+      const age = this.soa.denseAgeS[d];
+      const ttl = this.soa.denseTtlS[d];
+      if (this.soa.denseSleepingSynced[d] === 1 || ttl <= 0) {
+        if (age > oldestSettledAge) {
+          oldestSettledAge = age;
+          bestSettledSlot = this.soa.denseToSlot[d];
+        }
+      }
+      const rem = ttl > 0 ? ttl - age : 1e6 - age;
       if (rem < smallestRemaining) {
         smallestRemaining = rem;
         bestSlot = this.soa.denseToSlot[d];
       }
     }
-    return bestSlot;
+    return bestSettledSlot >= 0 ? bestSettledSlot : bestSlot;
   }
 }

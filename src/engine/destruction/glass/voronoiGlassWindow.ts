@@ -84,8 +84,15 @@ export class VoronoiGlassWindow {
       this.heightM,
       this.thicknessM,
     );
+    const horizSpan = this.widthM * 0.5 + this.thicknessM + 0.2;
+    const localWindowAabb = new pc.BoundingBox(
+      new pc.Vec3(0, 0, 0),
+      new pc.Vec3(horizSpan, this.heightM * 0.5 + 0.2, horizSpan),
+    );
+
     this.intactMeshInstance = new pc.MeshInstance(this.intactMesh, intactMaterial);
     this.intactMeshInstance.castShadows = false;
+    this.intactMeshInstance.cull = false;
 
     this.intactEntity = new pc.Entity(this.id);
     this.intactEntity.setPosition(this.centerWorld.x, this.centerWorld.y, this.centerWorld.z);
@@ -95,6 +102,9 @@ export class VoronoiGlassWindow {
       castShadows: false,
       receiveShadows: false,
     });
+    if (this.intactEntity.render) {
+      this.intactEntity.render.customAabb = localWindowAabb;
+    }
     app.root.addChild(this.intactEntity);
 
     const maxFangVerts = this.voronoiShardCount * 96;
@@ -122,6 +132,7 @@ export class VoronoiGlassWindow {
 
     this.fangMeshInstance = new pc.MeshInstance(this.fangMesh, intactMaterial);
     this.fangMeshInstance.castShadows = false;
+    this.fangMeshInstance.cull = false;
 
     this.fangEntity = new pc.Entity(`${this.id}_fangs`);
     this.fangEntity.setPosition(this.centerWorld.x, this.centerWorld.y, this.centerWorld.z);
@@ -131,6 +142,9 @@ export class VoronoiGlassWindow {
       castShadows: false,
       receiveShadows: false,
     });
+    if (this.fangEntity.render) {
+      this.fangEntity.render.customAabb = localWindowAabb;
+    }
     this.fangEntity.enabled = false;
     app.root.addChild(this.fangEntity);
 

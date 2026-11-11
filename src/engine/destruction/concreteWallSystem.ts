@@ -77,6 +77,8 @@ export class ConcreteWallSystem implements IDestructibleSubsystem {
     const device = app.graphicsDevice;
     if (options.material) {
       this.concreteMaterial = options.material;
+      this.concreteMaterial.cull = pc.CULLFACE_NONE;
+      this.concreteMaterial.update();
       this.ownedDiffuseTexture = null;
       this.ownsMaterial = false;
     } else {
@@ -176,6 +178,7 @@ export class ConcreteWallSystem implements IDestructibleSubsystem {
 
     const intactMeshInstance = new pc.MeshInstance(intactMesh, this.concreteMaterial);
     intactMeshInstance.castShadows = true;
+    intactMeshInstance.cull = false;
 
     const drawCommands = intactMeshInstance.setMultiDraw(null, Math.max(1, chunkCount));
 
@@ -187,6 +190,14 @@ export class ConcreteWallSystem implements IDestructibleSubsystem {
       castShadows: true,
       receiveShadows: true,
     });
+    if (intactEntity.render) {
+      const wSpan = (config.width ?? 3.2) * 0.6 + 0.5;
+      const hSpan = (config.height ?? 2.2) * 0.6 + 0.5;
+      intactEntity.render.customAabb = new pc.BoundingBox(
+        new pc.Vec3(0, (config.height ?? 2.2) * 0.5, 0),
+        new pc.Vec3(wSpan, hSpan, wSpan),
+      );
+    }
     this.app.root.addChild(intactEntity);
 
     const state: ConcreteWallInstanceState = {

@@ -127,14 +127,15 @@ export function createWoodWallInstance(
   rootEntity.setPosition(centerWorld.x, centerWorld.y, centerWorld.z);
   rootEntity.setRotation(rotationQuat.x, rotationQuat.y, rotationQuat.z, rotationQuat.w);
 
-  const horizSpan = widthM * 0.5 + thicknessM + 0.2;
+  const horizSpan = widthM * 0.5 + thicknessM + 0.25;
   const wallCustomAabb = new pc.BoundingBox(
-    new pc.Vec3(centerWorld.x, centerWorld.y, centerWorld.z),
-    new pc.Vec3(horizSpan, heightM * 0.5 + 0.2, horizSpan),
+    new pc.Vec3(0, 0, 0),
+    new pc.Vec3(horizSpan, heightM * 0.5 + 0.25, horizSpan),
   );
 
   const panelEntity = new pc.Entity(`WoodWallPanel_${config.id}`);
   const panelMi = new pc.MeshInstance(panelMesh, panelMaterial);
+  panelMi.cull = false;
   panelEntity.addComponent('render', {
     meshInstances: [panelMi],
     castShadows: true,
@@ -145,6 +146,7 @@ export function createWoodWallInstance(
 
   const studFrameEntity = new pc.Entity(`WoodWallStuds_${config.id}`);
   const studMi = new pc.MeshInstance(studFrameMesh, studMaterial);
+  studMi.cull = false;
   studFrameEntity.addComponent('render', {
     meshInstances: [studMi],
     castShadows: true,

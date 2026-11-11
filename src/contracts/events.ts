@@ -1,6 +1,22 @@
 import type { AmmoSpec, GhoulZoneId, Vec3Like, WeaponSpec } from './ballistics.ts';
-import type { PlayerCombatVitals } from '../engine/ai/tacticalCombatAi.ts';
+import type {
+  AiBarkCategory,
+  AiBarkPayload,
+  EnemyFireMode,
+  PlayerCombatVitals,
+  PlayerNearMissGrazeKind,
+  PlayerNearMissGrazePayload,
+} from './ai/aiContracts.ts';
 import type { BlastEvent } from './destruction.ts';
+
+export type {
+  AiBarkCategory,
+  AiBarkPayload,
+  EnemyFireMode,
+  PlayerCombatVitals,
+  PlayerNearMissGrazeKind,
+  PlayerNearMissGrazePayload,
+};
 
 export interface WeaponFiredPayload {
   weapon: WeaponSpec;
@@ -105,8 +121,10 @@ export interface AppEventMap {
   'weapon:ammo_cycle': WeaponAmmoCyclePayload;
   'weapon:reload_start': WeaponReloadStartPayload;
   'player:damage': PlayerDamagePayload;
+  'player:near_miss_graze': PlayerNearMissGrazePayload;
   'player:shake': PlayerShakePayload;
   'player:bullet_time_toggle': PlayerBulletTimeTogglePayload;
+  'ai:bark': AiBarkPayload;
   'combat:shot_fired': CombatShotFiredPayload;
   'combat:target_hit': CombatTargetHitPayload;
   'combat:wave_spawn': CombatWaveEventPayload;

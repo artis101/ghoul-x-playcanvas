@@ -22,7 +22,7 @@ export function buildFragBlastReportForTarget(
   const rawDelta = sub(pelvisPos, blastCenter);
   const horizDelta = vec3(rawDelta.x, 0, rawDelta.z);
   const horizDir = length(horizDelta) > 1e-3 ? normalize(horizDelta) : vec3(0, 0, -1);
-  const blastDir = normalize(vec3(horizDir.x, 0.45, horizDir.z));
+  const blastDir = normalize(vec3(horizDir.x, 0.18, horizDir.z));
 
   const energyScale = Math.min(2.2, Math.max(1.0, peakEnergyJ / 4400.0));
   const totalDamageHp = 245.0 * falloff * (0.75 + 0.25 * energyScale);
@@ -164,8 +164,8 @@ export function buildFragBlastReportForTarget(
       activationTimeS: 0,
       primaryHitZone,
       netRootImpulseWorld,
-      launchLiftVelocityMs: Math.min(1.35, 1.45 * falloff),
-      estimatedLaunchDistanceM: 3.4 * falloff,
+      launchLiftVelocityMs: Math.min(0.45, 0.55 * falloff),
+      estimatedLaunchDistanceM: 2.2 * falloff,
       zoneImpulses,
       netTorqueWorld: vec3(blastDir.z * -45 * falloff, 18 * falloff, blastDir.x * 45 * falloff),
       dismembermentEvents,

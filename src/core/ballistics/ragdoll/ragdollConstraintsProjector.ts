@@ -1,19 +1,33 @@
 import {
   GhoulZoneId,
+  RagdollBoneState,
   TargetHealthState,
 } from '../../../contracts/ballistics.ts';
 import { ALL_AUX_PARTICLES, ALL_GHOUL_ZONES } from '../../ghoul/anatomy.ts';
 import {
   add,
+  cross,
   dot,
   length,
   lengthSq,
   normalize,
   scale,
   sub,
-  cross,
+  Vec3Like,
 } from '../vec3.ts';
 import { getRagdollParticleRef } from './ragdollParticles.ts';
+
+const WAREHOUSE_BOUND_XZ_M = 28.0;
+
+function applyDampedGuardShift(bone: RagdollBoneState, delta: Vec3Like, prevFollow = 0.78): void {
+  bone.position.x += delta.x;
+  bone.position.y += delta.y;
+  bone.position.z += delta.z;
+  const follow = bone.grounded ? Math.max(0.88, prevFollow) : prevFollow;
+  bone.prevPosition.x += delta.x * follow;
+  bone.prevPosition.y += delta.y * follow;
+  bone.prevPosition.z += delta.z * follow;
+}
 
 export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floorY: number): void {
   for (const c of target.ragdollConstraints) {
@@ -60,7 +74,7 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
     const tL = target.ragdollBones.THIGH_LEFT;
     const tR = target.ragdollBones.THIGH_RIGHT;
 
-    // 1. Torso Axial Anti-Twist Guard
+    // 1. Symmetric Momentum-Conserving Torso Axial Anti-Twist Guard
     if (
       pelvis.componentId === 'BODY' && abdomen.componentId === 'BODY' && thorax.componentId === 'BODY' &&
       shL.componentId === 'BODY' && shR.componentId === 'BODY' && tL.componentId === 'BODY' && tR.componentId === 'BODY'
@@ -76,19 +90,26 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
       if (hipLen > 0.08 && shLen > 0.12) {
         const hipDir = scale(hipOrtho, 1 / hipLen);
         const shDir = scale(shOrtho, 1 / shLen);
-        if (dot(hipDir, shDir) < 0.72) {
-          const targetDir = normalize(add(shDir, scale(hipDir, 0.85)));
-          const halfSpan = shLen * 0.5;
+        if (dot(hipDir, shDir) < 0.55) {
+          const targetDir = normalize(add(shDir, hipDir));
+          const shHalf = shLen * 0.5;
           const midSh = scale(add(shL.position, shR.position), 0.5);
-          const desL = add(midSh, scale(targetDir, -halfSpan));
-          const desR = add(midSh, scale(targetDir, halfSpan));
-          shL.position = add(scale(shL.position, 0.55), scale(desL, 0.45));
-          shR.position = add(scale(shR.position, 0.55), scale(desR, 0.45));
+          const desShL = add(midSh, scale(targetDir, -shHalf));
+          const desShR = add(midSh, scale(targetDir, shHalf));
+          applyDampedGuardShift(shL, scale(sub(desShL, shL.position), 0.28));
+          applyDampedGuardShift(shR, scale(sub(desShR, shR.position), 0.28));
+
+          const hipHalf = hipLen * 0.5;
+          const midHip = scale(add(tL.position, tR.position), 0.5);
+          const desHipL = add(midHip, scale(targetDir, -hipHalf));
+          const desHipR = add(midHip, scale(targetDir, hipHalf));
+          applyDampedGuardShift(tL, scale(sub(desHipL, tL.position), 0.16));
+          applyDampedGuardShift(tR, scale(sub(desHipR, tR.position), 0.16));
         }
       }
     }
 
-    // 2. Head / Jaw Anti-Spin Guard
+    // 2. Symmetric Head / Jaw Anti-Spin Guard
     const cranium = target.ragdollBones.HEAD_CRANIUM;
     const jaw = target.ragdollBones.HEAD_FACE_JAW;
     if (cranium.componentId === 'BODY' && jaw.componentId === 'BODY' && cranium.goreMode !== 'CRANIAL_POP' && shL.componentId === 'BODY' && shR.componentId === 'BODY') {
@@ -100,16 +121,21 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
         const jawLen = length(jawRel);
         if (jawLen > 0.04) {
           const jawDir = scale(jawRel, 1 / jawLen);
-          if (dot(jawDir, thoraxFwd) < 0.35) {
-            const clampedDir = normalize(add(jawDir, scale(thoraxFwd, 0.75)));
-            const desJaw = add(cranium.position, scale(clampedDir, jawLen));
-            jaw.position = add(scale(jaw.position, 0.5), scale(desJaw, 0.5));
+          if (dot(jawDir, thoraxFwd) < 0.25) {
+            const clampedDir = normalize(add(jawDir, scale(thoraxFwd, 0.65)));
+            const desJawRel = scale(clampedDir, jawLen);
+            const corr = scale(sub(desJawRel, jawRel), 0.35);
+            const wCranium = 1 / cranium.massKg;
+            const wJaw = 1 / jaw.massKg;
+            const wSum = wCranium + wJaw;
+            applyDampedGuardShift(jaw, scale(corr, wJaw / wSum), 0.85);
+            applyDampedGuardShift(cranium, scale(corr, -wCranium / wSum), 0.85);
           }
         }
       }
     }
 
-    // 3. Anatomical Knee Anti-Hyperextension Check
+    // 3. Momentum-Conserving Anatomical Knee Anti-Hyperextension Check
     if (tL.componentId === pelvis.componentId && tR.componentId === pelvis.componentId && abdomen.componentId === pelvis.componentId) {
       const pUp = normalize(sub(abdomen.position, pelvis.position));
       const pRight = sub(tR.position, tL.position);
@@ -124,24 +150,47 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
             const mid = scale(add(thigh.position, shin.position), 0.5);
             const kneeOffset = sub(knee.position, mid);
             const fwdProj = dot(kneeOffset, pFwd);
-            if (fwdProj < -0.01) {
-              const push = scale(pFwd, (-0.01 - fwdProj) * 0.70);
-              knee.position.x += push.x;
-              knee.position.y += push.y;
-              knee.position.z += push.z;
+            if (fwdProj < -0.015) {
+              const pushMag = (-0.015 - fwdProj) * 0.48;
+              const push = scale(pFwd, pushMag);
+              applyDampedGuardShift(knee, scale(push, 0.55), 0.85);
+              applyDampedGuardShift(thigh, scale(push, -0.225), 0.85);
+              applyDampedGuardShift(shin, scale(push, -0.225), 0.85);
             }
           }
         }
       }
     }
 
-    // 4. Forearm & Hand vs Torso Self-Collision Pushout
+    // 4. Gentle Elbow Anti-Hyperextension + Forearm/Hand vs Torso Self-Collision Pushout
     if (pelvis.componentId === 'BODY' && thorax.componentId === 'BODY') {
+      const shRight = normalize(sub(shR.position, shL.position));
+      const spUp = normalize(sub(thorax.position, pelvis.position));
+      const chestFwd = normalize(cross(shRight, spUp));
+      if (length(chestFwd) > 0.5) {
+        for (const side of ['LEFT', 'RIGHT'] as const) {
+          const upper = target.ragdollBones[side === 'LEFT' ? 'UPPER_ARM_LEFT' : 'UPPER_ARM_RIGHT'];
+          const forearm = target.ragdollBones[side === 'LEFT' ? 'FOREARM_LEFT' : 'FOREARM_RIGHT'];
+          const hand = target.ragdollBones[side === 'LEFT' ? 'HAND_LEFT' : 'HAND_RIGHT'];
+          if (upper.componentId === 'BODY' && forearm.componentId === 'BODY' && hand.componentId === 'BODY') {
+            const midArm = scale(add(upper.position, hand.position), 0.5);
+            const elbowOff = sub(forearm.position, midArm);
+            // Elbows bend forward/inward; prevent extreme backward hyperextension behind the back plane
+            const fwdDot = dot(elbowOff, chestFwd);
+            if (fwdDot > 0.08) {
+              const corr = scale(chestFwd, (0.08 - fwdDot) * 0.35);
+              applyDampedGuardShift(forearm, scale(corr, 0.5), 0.85);
+              applyDampedGuardShift(hand, scale(corr, -0.5), 0.85);
+            }
+          }
+        }
+      }
+
       const seg = sub(thorax.position, pelvis.position);
       const segLenSq = lengthSq(seg);
       if (segLenSq > 1e-4) {
         const armZones: GhoulZoneId[] = ['FOREARM_LEFT', 'HAND_LEFT', 'FOREARM_RIGHT', 'HAND_RIGHT'];
-        const minChestClearanceM = 0.155;
+        const minChestClearanceM = 0.145;
         for (const az of armZones) {
           const armBone = target.ragdollBones[az];
           if (armBone.componentId !== 'BODY') continue;
@@ -150,30 +199,73 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
           const radial = sub(armBone.position, closestOnSpine);
           const rDist = length(radial);
           if (rDist > 1e-5 && rDist < minChestClearanceM) {
-            const pushOut = scale(radial, ((minChestClearanceM - rDist) / rDist) * 0.65);
-            armBone.position = add(armBone.position, pushOut);
+            const pushOut = scale(radial, ((minChestClearanceM - rDist) / rDist) * 0.45);
+            const wArm = 1 / armBone.massKg;
+            const wTorso = 1 / (thorax.massKg + pelvis.massKg);
+            const wSum = wArm + wTorso;
+            applyDampedGuardShift(armBone, scale(pushOut, wArm / wSum), 0.85);
+            applyDampedGuardShift(thorax, scale(pushOut, (-wTorso / wSum) * tProj), 0.85);
+            applyDampedGuardShift(pelvis, scale(pushOut, (-wTorso / wSum) * (1 - tProj)), 0.85);
           }
         }
       }
     }
   }
 
-  // 5. Floor & Range Barrier Collision Projection
+  // 5. Floor & Warehouse Boundary Collision Projection (preserving prevPosition delta on XZ clamp)
   for (const z of ALL_GHOUL_ZONES) {
     const b = target.ragdollBones[z];
     const active = (target.isRagdollActive || b.componentId !== 'BODY') && b.goreMode !== 'CRANIAL_POP';
     if (!active) continue;
 
     const minFloor = floorY + b.radiusM;
-    if (b.position.y < minFloor) b.position.y = minFloor;
-    if (b.position.x < -9.7) b.position.x = -9.7;
-    if (b.position.x > 9.7) b.position.x = 9.7;
+    if (b.position.y < minFloor) {
+      b.position.y = minFloor;
+    }
+    if (b.position.x < -WAREHOUSE_BOUND_XZ_M) {
+      const dx = -WAREHOUSE_BOUND_XZ_M - b.position.x;
+      b.position.x = -WAREHOUSE_BOUND_XZ_M;
+      b.prevPosition.x += dx;
+    } else if (b.position.x > WAREHOUSE_BOUND_XZ_M) {
+      const dx = WAREHOUSE_BOUND_XZ_M - b.position.x;
+      b.position.x = WAREHOUSE_BOUND_XZ_M;
+      b.prevPosition.x += dx;
+    }
+    if (b.position.z < -WAREHOUSE_BOUND_XZ_M) {
+      const dz = -WAREHOUSE_BOUND_XZ_M - b.position.z;
+      b.position.z = -WAREHOUSE_BOUND_XZ_M;
+      b.prevPosition.z += dz;
+    } else if (b.position.z > WAREHOUSE_BOUND_XZ_M) {
+      const dz = WAREHOUSE_BOUND_XZ_M - b.position.z;
+      b.position.z = WAREHOUSE_BOUND_XZ_M;
+      b.prevPosition.z += dz;
+    }
   }
 
   for (const aId of ALL_AUX_PARTICLES) {
     const a = target.auxParticles[aId];
     if (!target.isRagdollActive && a.componentId === 'BODY') continue;
     const minFloor = floorY + a.radiusM;
-    if (a.position.y < minFloor) a.position.y = minFloor;
+    if (a.position.y < minFloor) {
+      a.position.y = minFloor;
+    }
+    if (a.position.x < -WAREHOUSE_BOUND_XZ_M) {
+      const dx = -WAREHOUSE_BOUND_XZ_M - a.position.x;
+      a.position.x = -WAREHOUSE_BOUND_XZ_M;
+      a.prevPosition.x += dx;
+    } else if (a.position.x > WAREHOUSE_BOUND_XZ_M) {
+      const dx = WAREHOUSE_BOUND_XZ_M - a.position.x;
+      a.position.x = WAREHOUSE_BOUND_XZ_M;
+      a.prevPosition.x += dx;
+    }
+    if (a.position.z < -WAREHOUSE_BOUND_XZ_M) {
+      const dz = -WAREHOUSE_BOUND_XZ_M - a.position.z;
+      a.position.z = -WAREHOUSE_BOUND_XZ_M;
+      a.prevPosition.z += dz;
+    } else if (a.position.z > WAREHOUSE_BOUND_XZ_M) {
+      const dz = WAREHOUSE_BOUND_XZ_M - a.position.z;
+      a.position.z = WAREHOUSE_BOUND_XZ_M;
+      a.prevPosition.z += dz;
+    }
   }
 }

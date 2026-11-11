@@ -51,4 +51,5 @@ export {
   MayhemDirector,
   type MayhemDirectorOptions,
 } from './mayhemDirectorCore.ts';
+export { LingeringGunsmokePool } from './smoke/lingeringGunsmokePool.ts';
 export { MayhemDirectorScript } from './mayhemDirectorScript.ts';

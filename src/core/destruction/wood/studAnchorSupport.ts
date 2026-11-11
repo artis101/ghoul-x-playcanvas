@@ -43,6 +43,7 @@ export function countShellStructuralAnchors(
   if (maxY >= hScaled - edgeTol) frameEdgeCount++;
 
   let studAnchorCount = 0;
+  let maxStudOverlapScaled = 0;
   const studAnchors = state.studAnchors;
   if (studAnchors && studAnchors.length > 0 && frameEdgeCount < 2) {
     const anchoredStudU = new Set<number>();
@@ -60,12 +61,13 @@ export function countShellStructuralAnchors(
 
       const overlapYMin = Math.max(minY, syMin);
       const overlapYMax = Math.min(maxY, syMax);
-      if (overlapYMax - overlapYMin < Math.round(0.025 * WOOD_CLIPPER_SCALE)) continue;
+      const overlapSpan = overlapYMax - overlapYMin;
+      if (overlapSpan < Math.round(0.06 * WOOD_CLIPPER_SCALE)) continue;
 
       const probeX = Math.round(span.u * WOOD_CLIPPER_SCALE);
       let hitsStud = false;
       for (let p = 0; p <= 4; p++) {
-        const probeY = Math.round(overlapYMin + ((overlapYMax - overlapYMin) * p) / 4);
+        const probeY = Math.round(overlapYMin + (overlapSpan * p) / 4);
         if (classifyPointInPath64(probeX, probeY, shellPath) !== 'OUTSIDE') {
           hitsStud = true;
           break;
@@ -75,8 +77,19 @@ export function countShellStructuralAnchors(
       if (hitsStud) {
         anchoredStudU.add(uKey);
         studAnchorCount++;
+        if (overlapSpan > maxStudOverlapScaled) {
+          maxStudOverlapScaled = overlapSpan;
+        }
       }
     }
+  }
+
+  if (
+    frameEdgeCount === 0 &&
+    studAnchorCount === 1 &&
+    maxStudOverlapScaled < Math.round(0.16 * WOOD_CLIPPER_SCALE)
+  ) {
+    studAnchorCount = 0;
   }
 
   return {
@@ -144,7 +157,11 @@ export function rebuildCleanShellsAndPaths(
       }
     }
 
-    if ((enclosedByHole && candidate.area <= maxFloatingIslandScaled) || countShellStructuralAnchors(candidate.path, state).totalAnchors < 2) {
+    const anchors = countShellStructuralAnchors(candidate.path, state);
+    if (
+      (enclosedByHole && anchors.studAnchorCount === 0) ||
+      (anchors.studAnchorCount === 0 && anchors.frameEdgeCount < 2)
+    ) {
       droppedIslands.push(candidate.path);
       continue;
     }

@@ -51,6 +51,7 @@ export function createProceduralConcreteMaterial(device: pc.GraphicsDevice): {
   material.diffuse = new pc.Color(0.92, 0.91, 0.89);
   material.diffuseMap = tex;
   material.gloss = 0.2;
+  material.cull = pc.CULLFACE_NONE;
   material.update();
 
   return { material, diffuseTexture: tex };

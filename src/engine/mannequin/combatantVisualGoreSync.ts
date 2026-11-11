@@ -109,7 +109,17 @@ export class CombatantVisualGoreSync {
     isXRayActive: boolean,
     elapsedTime: number
   ): void {
-    if (!isXRayActive || !healthState.alive || !glb) return;
+    if (!glb) return;
+    if (!healthState.alive) {
+      if (glb.internalAnatomyEntities.organHeart) {
+        glb.internalAnatomyEntities.organHeart.setLocalScale(1, 1, 1);
+      }
+      if (glb.internalAnatomyEntities.organBrain) {
+        glb.internalAnatomyEntities.organBrain.setLocalScale(1, 1, 1);
+      }
+      return;
+    }
+    if (!isXRayActive) return;
     const bpmHz = (healthState.heartRateBpm / 60) * Math.PI * 2;
     const pulse = 1.0 + Math.sin(elapsedTime * bpmHz) * 0.1;
     const bPulse = 1.0 + Math.sin(elapsedTime * 2.5) * 0.04;

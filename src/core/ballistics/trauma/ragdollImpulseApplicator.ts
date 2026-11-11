@@ -32,9 +32,12 @@ export function applyRagdollActivationAndImpulses(
 
   const bodyMassKg = 82.0;
   const impulse = report.ragdollPlan.netRootImpulseWorld;
-  const liftY = wasAlreadyRagdoll
-    ? Math.min(0.32, report.ragdollPlan.launchLiftVelocityMs * 0.4)
-    : report.ragdollPlan.launchLiftVelocityMs;
+  const isOverkillCorpseHit = wasAlreadyRagdoll && !target.alive;
+  const liftY = isOverkillCorpseHit
+    ? 0.0
+    : wasAlreadyRagdoll
+      ? Math.min(0.18, report.ragdollPlan.launchLiftVelocityMs * 0.25)
+      : Math.min(0.42, report.ragdollPlan.launchLiftVelocityMs * 0.45);
 
   const isStomachHit = hitZone === 'TORSO_LOWER_ABDOMEN';
   const horizImp = vec3(impulse.x, 0, impulse.z);
@@ -44,24 +47,34 @@ export function applyRagdollActivationAndImpulses(
       ? scale(horizImp, 1 / horizImpMag)
       : normalize(vec3(report.aimDirectionWorld.x, 0, report.aimDirectionWorld.z));
 
-  const targetHorizSpeed = Math.min(5.6, horizImpMag / bodyMassKg);
+  const maxRootHorizSpeed = isOverkillCorpseHit ? 1.35 : 3.6;
+  const targetHorizSpeed = Math.min(maxRootHorizSpeed, horizImpMag / bodyMassKg);
 
   const baseVel = vec3(
     horizDir.x * targetHorizSpeed,
-    Math.max(-0.4, Math.min(1.25, impulse.y / bodyMassKg + liftY)),
+    isOverkillCorpseHit
+      ? Math.max(-0.25, Math.min(0.08, impulse.y / bodyMassKg))
+      : Math.max(-0.4, Math.min(0.45, impulse.y / bodyMassKg + liftY)),
     horizDir.z * targetHorizSpeed
   );
 
   if (!wasAlreadyRagdoll) {
     target.ragdollRootVelocity = copyVec3(baseVel);
   } else {
-    target.ragdollRootVelocity = add(target.ragdollRootVelocity, scale(baseVel, 0.55));
+    const blend = isOverkillCorpseHit ? 0.25 : 0.45;
+    target.ragdollRootVelocity = add(target.ragdollRootVelocity, scale(baseVel, blend));
+    const rootSpd = length(target.ragdollRootVelocity);
+    if (rootSpd > 3.8) {
+      target.ragdollRootVelocity = scale(target.ragdollRootVelocity, 3.8 / rootSpd);
+    }
   }
 
   target.ragdollAngularVelocity = scale(report.ragdollPlan.netTorqueWorld, 1 / 65.0);
 
   const facingFwd = vec3(Math.sin(target.yawRad), 0, Math.cos(target.yawRad));
   const isLowImpulseCollapse = !wasAlreadyRagdoll && targetHorizSpeed < 1.0;
+  const maxBoneSpeedMs = isOverkillCorpseHit ? 2.6 : 4.2;
+  const maxLocalKickMs = isOverkillCorpseHit ? 1.15 : 2.1;
 
   for (const z of ALL_GHOUL_ZONES) {
     const bone = target.ragdollBones[z];
@@ -89,16 +102,22 @@ export function applyRagdollActivationAndImpulses(
     const zImp = report.ragdollPlan.zoneImpulses[z];
     const rawKick = zImp ? scale(zImp, 1 / (bone.massKg * 3.2 + 12.0)) : vec3(0, 0, 0);
     const kickMag = length(rawKick);
-    const localKick = kickMag > 2.6 ? scale(rawKick, 2.6 / kickMag) : rawKick;
+    const localKick = kickMag > maxLocalKickMs ? scale(rawKick, maxLocalKickMs / kickMag) : rawKick;
 
     let nextVel = !wasAlreadyRagdoll
       ? add(scale(baseVel, weight), localKick)
-      : add(bone.velocity, add(scale(baseVel, weight * 0.45), localKick));
+      : add(bone.velocity, add(scale(baseVel, weight * (isOverkillCorpseHit ? 0.22 : 0.4)), localKick));
 
     if (isLowImpulseCollapse && (z === 'KNEE_LEFT' || z === 'KNEE_RIGHT')) {
       nextVel = add(nextVel, add(scale(facingFwd, 0.85), vec3(0, -0.35, 0)));
     } else if (isLowImpulseCollapse && z === 'PELVIS_GROIN') {
       nextVel = add(nextVel, vec3(0, -0.45, 0));
+    }
+
+    nextVel.y = Math.min(isOverkillCorpseHit ? 0.12 : 0.48, nextVel.y);
+    const nextMag = length(nextVel);
+    if (nextMag > maxBoneSpeedMs) {
+      nextVel = scale(nextVel, maxBoneSpeedMs / nextMag);
     }
 
     bone.velocity = nextVel;

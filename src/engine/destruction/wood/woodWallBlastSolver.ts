@@ -10,6 +10,7 @@ import type { HardwareInstancedPool } from '../../physics/instancedPool.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 import { damageInteriorStudSections } from './woodStudDamageSolver.ts';
 import { spawnBlastSplinterShower } from './woodSplinterEmitter.ts';
+import type { WoodSlabDynamicPool } from './woodSlabDynamicPool.ts';
 import type { WallInternalState, WoodWallInstance } from './woodWallTypes.ts';
 
 export function uploadWallPanelMesh(
@@ -38,6 +39,7 @@ export function applyWoodWallRadialBlast(
   splinterPools: readonly HardwareInstancedPool[],
   nextRand: () => number,
   blast: BlastEvent,
+  slabPool?: WoodSlabDynamicPool,
 ): void {
   if (blast.radiusM <= 0 || blast.peakEnergyJ <= 0 || walls.length === 0) return;
 
@@ -100,6 +102,8 @@ export function applyWoodWallRadialBlast(
         awayDir,
         awaySignZ,
         blast.peakEnergyJ,
+        uploadWallPanelMesh,
+        slabPool,
       );
     }
 
@@ -116,6 +120,12 @@ export function applyWoodWallRadialBlast(
     const subRes = stampHoleInWoodPanel(wall.panelState, stamp, wall.scratchBuffers, 6);
     if (subRes.cutAnyWood) {
       uploadWallPanelMesh(wall, subRes.meshStats);
+      const awayDir: Vec3Like = {
+        x: awaySignZ * wall.sinYaw,
+        y: 0.25,
+        z: awaySignZ * wall.cosYaw,
+      };
+      slabPool?.spawnDroppedSlabs(wall, subRes.droppedSlabs, awayDir, awaySignZ, blast.peakEnergyJ, nextRand);
     }
 
     spawnBlastSplinterShower(

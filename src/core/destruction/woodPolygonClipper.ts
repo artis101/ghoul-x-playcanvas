@@ -30,5 +30,17 @@ export {
 } from './wood/panelTriangulator.ts';
 
 export {
+  points2DToPath64,
+} from './wood/pathClassification.ts';
+
+export {
+  recheckUnanchoredWoodShells,
   stampHoleInWoodPanel,
 } from './wood/clipperBooleanSolver.ts';
+
+export {
+  MIN_SAWN_WOOD_SLAB_AREA_M2,
+  type ExtrudedWoodSlabMesh,
+  extrudeWoodIslandToSlab,
+  extrudeDroppedWoodSlabs,
+} from './wood/woodSlabExtruder.ts';

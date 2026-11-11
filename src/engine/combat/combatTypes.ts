@@ -10,6 +10,11 @@ export interface EnvironmentRayInterceptResult {
   remainingSpeedMs: number;
   blocked: boolean;
   stoppedDistanceM?: number;
+  ricochetOriginWorld?: Vec3Like;
+  ricochetDirWorld?: Vec3Like;
+  ricochetSpeedMs?: number;
+  ricochetEnergyJ?: number;
+  ricochetSurface?: string;
 }
 
 export type EnvironmentRayInterceptor = (
