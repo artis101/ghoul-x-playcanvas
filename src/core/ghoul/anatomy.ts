@@ -1289,11 +1289,13 @@ export function buildRagdollConstraints(): RagdollDistanceConstraint[] {
   addRangeLimit('THIGH_LEFT', 'SHOULDER_RIGHT', 0.84, 1.10, 0.78);
   addRangeLimit('THIGH_RIGHT', 'SHOULDER_LEFT', 0.84, 1.10, 0.78);
 
-  // Neck Capsule Limits (keeps head naturally supported on neck!)
+  // Neck Capsule Limits (keeps head & articulated mandible naturally supported on neck without lateral line-hinge drift!)
   addRangeLimit('TORSO_UPPER_THORAX', 'HEAD_CRANIUM', 0.88, 1.04, 0.82);
   addRangeLimit('TORSO_UPPER_THORAX', 'HEAD_TOP', 0.88, 1.04, 0.78);
   addRangeLimit('SHOULDER_LEFT', 'HEAD_CRANIUM', 0.84, 1.16, 0.75);
   addRangeLimit('SHOULDER_RIGHT', 'HEAD_CRANIUM', 0.84, 1.16, 0.75);
+  addRangeLimit('SHOULDER_LEFT', 'HEAD_FACE_JAW', 0.84, 1.16, 0.78);
+  addRangeLimit('SHOULDER_RIGHT', 'HEAD_FACE_JAW', 0.84, 1.16, 0.78);
 
   // Knee Flexion & Hip Capsule Anti-Split Limits
   addMeterBounds('THIGH_LEFT', 'FOOT_LEFT', 0.48, 0.796, 0.78);

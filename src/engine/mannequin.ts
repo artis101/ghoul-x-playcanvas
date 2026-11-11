@@ -270,8 +270,13 @@ export class GhoulMannequinEntity {
 
     const intactClone = baseSource.clone();
     this.clonedGlbMaterials.push(intactClone);
+    intactClone.enableGGXSpecular = true;
+    intactClone.fresnelModel = pc.FRESNEL_SCHLICK;
+    if (intactClone.normalMap) {
+      intactClone.bumpiness = Math.max(intactClone.bumpiness || 1.0, 1.15);
+    }
 
-    // Apply subtle archetype uniform palette variation on primary garment primitives while preserving baked textures
+    // Apply subtle archetype uniform palette variation on primary garment primitives while preserving baked PBR maps
     if (primIndex === 0) {
       const isTorsoShirt = zone === 'TORSO_UPPER_THORAX' || zone === 'TORSO_LOWER_ABDOMEN';
       const isSleeve =
@@ -291,7 +296,7 @@ export class GhoulMannequinEntity {
 
       if (arch === 'SKINHEAD_PUNK') {
         if (isTorsoShirt) {
-          intactClone.diffuse.set(0.55, 0.55, 0.60);
+          intactClone.diffuse.set(0.56, 0.56, 0.62);
         } else if (isTrousers) {
           intactClone.diffuse.set(0.76, 0.80, 0.86);
         }
@@ -299,25 +304,34 @@ export class GhoulMannequinEntity {
         if (isTorsoShirt || isSleeve || isTrousers) {
           intactClone.diffuse.set(0.50, 0.58, 0.72);
         } else if (isForearmSkin) {
-          // Full-sleeve dark Kevlar SWAT uniform
+          // Full-sleeve dark Kevlar SWAT uniform while keeping normal/roughness micro-detail
           intactClone.diffuseMap = null;
           intactClone.diffuse.set(0.14, 0.17, 0.22);
         }
       } else if (arch === 'SNIPER_OPERATIVE') {
+        // Cold urban/arctic slate camo without exceeding realistic PBR albedo bounds
         if (isTorsoShirt || isSleeve) {
-          intactClone.diffuse.set(1.32, 1.36, 1.40);
+          intactClone.diffuse.set(0.92, 0.96, 1.02);
         } else if (isTrousers) {
-          intactClone.diffuse.set(1.16, 1.12, 0.90);
+          intactClone.diffuse.set(0.88, 0.85, 0.72);
         }
       }
-      intactClone.update();
     }
+    intactClone.update();
 
     const bloodyClone = intactClone.clone();
     this.clonedGlbMaterials.push(bloodyClone);
-    bloodyClone.diffuse.set(0.56, 0.08, 0.09);
-    bloodyClone.emissive.set(0.10, 0.01, 0.012);
-    bloodyClone.gloss = 0.72;
+    bloodyClone.diffuse.set(0.42, 0.04, 0.05);
+    bloodyClone.emissive.set(0.04, 0.004, 0.005);
+    // glTF StandardMaterials set glossInvert = true (where gloss stores roughness: 0 = mirror, 1 = matte)
+    bloodyClone.gloss = bloodyClone.glossInvert ? 0.16 : 0.86;
+    if (bloodyClone.useMetalness) {
+      bloodyClone.metalness = 0.08;
+    } else {
+      bloodyClone.specular.set(0.24, 0.08, 0.08);
+    }
+    bloodyClone.enableGGXSpecular = true;
+    bloodyClone.fresnelModel = pc.FRESNEL_SCHLICK;
     bloodyClone.update();
 
     return { intactMat: intactClone, laceratedMat: bloodyClone };
@@ -1086,6 +1100,35 @@ export class GhoulMannequinEntity {
     if (!boneNode || !bind || !rest) return;
 
     const boneState = this.healthState.ragdollBones[zone];
+
+    // Lock Bone_HEAD_FACE_JAW rigidly to HEAD_CRANIUM's exact rigid delta unless the jaw is severed!
+    if (zone === 'HEAD_FACE_JAW') {
+      const headState = this.healthState.ragdollBones.HEAD_CRANIUM;
+      const headRest = REST_RAGDOLL_FRAMES.get('HEAD_CRANIUM');
+      if (boneState.componentId === headState.componentId && headRest) {
+        basisToQuat(
+          headState.basisRight,
+          headState.basisUp,
+          headState.basisForward,
+          this.tmpMat4,
+          this.tmpRagQuat
+        );
+        this.tmpDeltaQuat.mul2(this.tmpRagQuat, headRest.restRotInv);
+        this.tmpWorldQuat.mul2(this.tmpDeltaQuat, bind.modelRot);
+
+        this.tmpOffsetVec.sub2(bind.modelPos, headRest.restPos);
+        this.tmpDeltaQuat.transformVector(this.tmpOffsetVec, this.tmpRotOffsetVec);
+
+        boneNode.setPosition(
+          headState.position.x + this.tmpRotOffsetVec.x,
+          headState.position.y + this.tmpRotOffsetVec.y,
+          headState.position.z + this.tmpRotOffsetVec.z
+        );
+        boneNode.setRotation(this.tmpWorldQuat);
+        return;
+      }
+    }
+
     basisToQuat(
       boneState.basisRight,
       boneState.basisUp,
@@ -1359,7 +1402,27 @@ export class GhoulMannequinEntity {
         0,
         Math.cos(this.healthState.yawRad)
       );
-      let gripPos: Vec3Like;
+      const weaponId = this.heldWeaponGlb?.weaponId ?? getArchetypeWeaponAssetId(this.healthState.archetype);
+      const gripUpOffset =
+        weaponId === 'msg90_sniper'
+          ? 0.062
+          : weaponId === 'm4a1_carbine'
+            ? 0.056
+            : 0.054;
+      const gripFwdOffset =
+        weaponId === 'm590_shotgun'
+          ? 0.035
+          : weaponId === 'm4a1_carbine'
+            ? 0.018
+            : 0.022;
+      const forendRiseOffset =
+        weaponId === 'msg90_sniper'
+          ? 0.070
+          : weaponId === 'm590_shotgun'
+            ? 0.044
+            : 0.032;
+
+      let palmTrig: Vec3Like;
       let gunFwd: Vec3Like;
 
       const glbTrigNode = glb?.boneNodes.get(triggerHandZone);
@@ -1367,43 +1430,73 @@ export class GhoulMannequinEntity {
 
       if (glb && glbTrigNode && glbSuppNode) {
         const pT = glbTrigNode.getPosition();
+        const uT = glbTrigNode.up;
         const pS = glbSuppNode.getPosition();
-        gripPos = vec3(pT.x, pT.y, pT.z);
+        const uS = glbSuppNode.up;
 
-        const handSpan = sub(vec3(pS.x, pS.y, pS.z), gripPos);
+        // Advance from wrist joint along hand +Y axis into actual palm grip & support cradle centers
+        palmTrig = vec3(
+          pT.x + uT.x * 0.052,
+          pT.y + uT.y * 0.052,
+          pT.z + uT.z * 0.052
+        );
+        const palmSupp = vec3(
+          pS.x + uS.x * 0.050,
+          pS.y + uS.y * 0.050,
+          pS.z + uS.z * 0.050
+        );
+
         const isOneHandedOrClutching =
+          weaponId === 'silver_talon_50ae' ||
           this.healthState.archetype === 'SKINHEAD_PUNK' ||
           this.healthState.posture === 'GUT_HURT' ||
           this.healthState.posture === 'THROAT_CLUTCH' ||
           this.healthState.severedZones.has(supportHandZone);
 
-        if (!isOneHandedOrClutching && length(handSpan) > 0.08) {
-          gunFwd = normalize(add(scale(normalize(handSpan), 0.72), scale(charFwd, 0.28)));
+        const aimSpan = sub(palmSupp, add(palmTrig, vec3(0, forendRiseOffset, 0)));
+        if (!isOneHandedOrClutching && length(aimSpan) > 0.08) {
+          gunFwd = normalize(add(scale(normalize(aimSpan), 0.88), scale(charFwd, 0.12)));
         } else {
-          gunFwd = normalize(charFwd);
+          const handAim = vec3(uT.x, uT.y * 0.35, uT.z);
+          gunFwd =
+            length(handAim) > 0.15
+              ? normalize(add(scale(normalize(handAim), 0.32), scale(charFwd, 0.68)))
+              : normalize(charFwd);
         }
       } else {
         const handTrig = this.healthState.ragdollBones[triggerHandZone];
+        const handSupp = this.healthState.ragdollBones[supportHandZone];
         const thorax = this.healthState.ragdollBones.TORSO_UPPER_THORAX;
-        gripPos = handTrig.position;
-        const inwardSign = isSouthpaw ? -0.22 : 0.22;
-        gunFwd = normalize(
-          add(scale(thorax.basisForward, 0.95), scale(thorax.basisRight, inwardSign))
-        );
+        palmTrig = add(handTrig.position, scale(handTrig.basisForward, 0.045));
+        const palmSupp = add(handSupp.position, scale(handSupp.basisForward, 0.045));
+        const isOneHanded =
+          weaponId === 'silver_talon_50ae' ||
+          this.healthState.archetype === 'SKINHEAD_PUNK' ||
+          this.healthState.severedZones.has(supportHandZone);
+        const aimSpan = sub(palmSupp, add(palmTrig, vec3(0, forendRiseOffset, 0)));
+        if (!isOneHanded && length(aimSpan) > 0.08) {
+          gunFwd = normalize(add(scale(normalize(aimSpan), 0.82), scale(thorax.basisForward, 0.18)));
+        } else {
+          const inwardSign = isSouthpaw ? -0.16 : 0.16;
+          gunFwd = normalize(
+            add(scale(thorax.basisForward, 0.96), scale(thorax.basisRight, inwardSign))
+          );
+        }
       }
 
       const worldUp = vec3(0, 1, 0);
       if (this.heldWeaponGlb) {
-        // Blender weapon GLBs have barrel along -Z, top rail along +Y, ejection port along +X!
+        // Blender weapon GLBs have barrel along -Z, top rail along +Y, ejection port along +X,
+        // and pistol grip center at local (0, -gripUpOffset, +gripFwdOffset) relative to Bone_Root!
         const zBack = scale(gunFwd, -1);
         let xRight = cross(worldUp, zBack);
         if (length(xRight) < 1e-4) xRight = vec3(1, 0, 0);
         xRight = normalize(xRight);
         const yUp = normalize(cross(zBack, xRight));
         this.heldWeaponNode.setLocalPosition(
-          gripPos.x + gunFwd.x * 0.04,
-          gripPos.y + 0.015,
-          gripPos.z + gunFwd.z * 0.04
+          palmTrig.x + yUp.x * gripUpOffset + gunFwd.x * gripFwdOffset,
+          palmTrig.y + yUp.y * gripUpOffset + gunFwd.y * gripFwdOffset,
+          palmTrig.z + yUp.z * gripUpOffset + gunFwd.z * gripFwdOffset
         );
         this.setEntityBasisRotation(this.heldWeaponNode, xRight, yUp, zBack);
       } else {
@@ -1411,7 +1504,11 @@ export class GhoulMannequinEntity {
         if (length(gunRight) < 1e-4) gunRight = vec3(1, 0, 0);
         gunRight = normalize(gunRight);
         const gunUp = normalize(cross(gunFwd, gunRight));
-        this.heldWeaponNode.setLocalPosition(gripPos.x, gripPos.y, gripPos.z);
+        this.heldWeaponNode.setLocalPosition(
+          palmTrig.x + gunUp.x * 0.042 + gunFwd.x * 0.02,
+          palmTrig.y + gunUp.y * 0.042 + gunFwd.y * 0.02,
+          palmTrig.z + gunUp.z * 0.042 + gunFwd.z * 0.02
+        );
         this.setEntityBasisRotation(this.heldWeaponNode, gunRight, gunUp, gunFwd);
       }
     }
@@ -1437,17 +1534,46 @@ export class GhoulMannequinEntity {
         this.alignZoneNodeFromAnimatedGlbJoint(glb, zone, bundle.zoneNode);
 
       if (!alignedToAnimGlb) {
-        bundle.zoneNode.setLocalPosition(
-          boneState.position.x,
-          boneState.position.y,
-          boneState.position.z
-        );
-        this.setEntityBasisRotation(
-          bundle.zoneNode,
-          boneState.basisRight,
-          boneState.basisUp,
-          boneState.basisForward
-        );
+        const headState = this.healthState.ragdollBones.HEAD_CRANIUM;
+        const headRest = REST_RAGDOLL_FRAMES.get('HEAD_CRANIUM');
+        const jawRest = REST_RAGDOLL_FRAMES.get('HEAD_FACE_JAW');
+        if (
+          zone === 'HEAD_FACE_JAW' &&
+          boneState.componentId === headState.componentId &&
+          headRest &&
+          jawRest
+        ) {
+          // Rigidly lock unsevered jaw zoneNode to HEAD_CRANIUM (0.000mm relative drift in fallback & decals)
+          basisToQuat(
+            headState.basisRight,
+            headState.basisUp,
+            headState.basisForward,
+            this.tmpMat4,
+            this.tmpRagQuat
+          );
+          this.tmpDeltaQuat.mul2(this.tmpRagQuat, headRest.restRotInv);
+          this.tmpOffsetVec.sub2(jawRest.restPos, headRest.restPos);
+          this.tmpDeltaQuat.transformVector(this.tmpOffsetVec, this.tmpRotOffsetVec);
+          bundle.zoneNode.setLocalPosition(
+            headState.position.x + this.tmpRotOffsetVec.x,
+            headState.position.y + this.tmpRotOffsetVec.y,
+            headState.position.z + this.tmpRotOffsetVec.z
+          );
+          this.tmpWorldQuat.mul2(this.tmpDeltaQuat, jawRest.restRot);
+          bundle.zoneNode.setLocalRotation(this.tmpWorldQuat);
+        } else {
+          bundle.zoneNode.setLocalPosition(
+            boneState.position.x,
+            boneState.position.y,
+            boneState.position.z
+          );
+          this.setEntityBasisRotation(
+            bundle.zoneNode,
+            boneState.basisRight,
+            boneState.basisUp,
+            boneState.basisForward
+          );
+        }
       }
 
       // Legacy procedural flesh stays PERMANENTLY disabled whenever Blender GLB pipeline is active!

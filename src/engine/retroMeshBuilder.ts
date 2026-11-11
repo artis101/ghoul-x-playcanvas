@@ -64,8 +64,8 @@ class FacetedMeshBuilder {
   }
 
   /**
-   * Builds a faceted PS1-style lofted prism from cross-section rings around the Y axis.
-   * Angle theta = 0 maps to +Z (front) with u = 0.5!
+   * Builds a smooth-shaded anatomical lofted mesh from cross-section rings around the Y axis.
+   * Angle theta = 0 maps to +Z (front) with u = 0.5, with seamless normal averaging across u = 0/1.
    */
   public addLoft(
     rings: LoftRing[],
@@ -107,22 +107,74 @@ class FacetedMeshBuilder {
       ringPts.push(pts);
     }
 
+    // Compute smooth seam-welded vertex normals across the loft surface
+    const accumNormals: Array<Array<[number, number, number]>> = Array.from(
+      { length: rings.length },
+      () => Array.from({ length: sides }, () => [0, 0, 0] as [number, number, number])
+    );
+
+    const addFaceNormalTo = (
+      rA: number,
+      sA: number,
+      rB: number,
+      sB: number,
+      rC: number,
+      sC: number
+    ): void => {
+      const pA = ringPts[rA][sA];
+      const pB = ringPts[rB][sB];
+      const pC = ringPts[rC][sC];
+      const ux = pB[0] - pA[0];
+      const uy = pB[1] - pA[1];
+      const uz = pB[2] - pA[2];
+      const vx = pC[0] - pA[0];
+      const vy = pC[1] - pA[1];
+      const vz = pC[2] - pA[2];
+      const nx = uy * vz - uz * vy;
+      const ny = uz * vx - ux * vz;
+      const nz = ux * vy - uy * vx;
+      for (const [ri, si] of [
+        [rA, sA % sides],
+        [rB, sB % sides],
+        [rC, sC % sides],
+      ]) {
+        accumNormals[ri][si][0] += nx;
+        accumNormals[ri][si][1] += ny;
+        accumNormals[ri][si][2] += nz;
+      }
+    };
+
     for (let r = 0; r < rings.length - 1; r++) {
-      const v0 = ringVs[r];
-      const v1 = ringVs[r + 1];
       for (let s = 0; s < sides; s++) {
-        const u0 = s / sides;
-        const u1 = (s + 1) / sides;
-        this.addQuad(
-          ringPts[r][s],
-          ringPts[r][s + 1],
-          ringPts[r + 1][s + 1],
-          ringPts[r + 1][s],
-          [u0, v0],
-          [u1, v0],
-          [u1, v1],
-          [u0, v1]
-        );
+        addFaceNormalTo(r, s, r, s + 1, r + 1, s + 1);
+        addFaceNormalTo(r, s, r + 1, s + 1, r + 1, s);
+      }
+    }
+
+    const baseVert = this.positions.length / 3;
+    for (let r = 0; r < rings.length; r++) {
+      const v = ringVs[r];
+      for (let s = 0; s <= sides; s++) {
+        const pt = ringPts[r][s];
+        const nAcc = accumNormals[r][s % sides];
+        const nLen = Math.hypot(nAcc[0], nAcc[1], nAcc[2]);
+        const nx = nLen > 1e-8 ? nAcc[0] / nLen : 0;
+        const ny = nLen > 1e-8 ? nAcc[1] / nLen : 1;
+        const nz = nLen > 1e-8 ? nAcc[2] / nLen : 0;
+        this.positions.push(pt[0], pt[1], pt[2]);
+        this.normals.push(nx, ny, nz);
+        this.uvs.push(s / sides, v);
+      }
+    }
+
+    const stride = sides + 1;
+    for (let r = 0; r < rings.length - 1; r++) {
+      for (let s = 0; s < sides; s++) {
+        const i00 = baseVert + r * stride + s;
+        const i10 = i00 + 1;
+        const i01 = baseVert + (r + 1) * stride + s;
+        const i11 = i01 + 1;
+        this.indices.push(i00, i10, i11, i00, i11, i01);
       }
     }
 
@@ -241,41 +293,44 @@ export interface RetroMeshLibrary {
   ammoPouch: pc.Mesh;
 }
 
-let cachedMeshLib: RetroMeshLibrary | null = null;
+const cachedMeshLibs = new WeakMap<pc.GraphicsDevice, RetroMeshLibrary>();
 
 /**
- * Builds and caches all sculpted low-poly PS1/PS2 anatomical character & tactical gear meshes.
+ * Builds and caches smooth, anatomically aligned procedural character & tactical gear fallback meshes.
  */
 export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibrary {
-  if (cachedMeshLib) return cachedMeshLib;
+  const existing = cachedMeshLibs.get(device);
+  if (existing) return existing;
 
-  // 1. Head Cranium (8-sided sculpted skull with brow ridge, cheekbones, and angular nose wedge!)
+  // 1. Head Cranium (16-sided sculpted skull with brow ridge, cheekbones, and anatomical nose bridge)
   const headB = new FacetedMeshBuilder();
   headB.addLoft(
     [
-      { y: -0.02, rx: 0.072, rz: 0.082, cz: -0.005, v: 0.22 },
+      { y: -0.02, rx: 0.074, rz: 0.084, cz: -0.004, v: 0.22 },
       { y: 0.02, rx: 0.088, rz: 0.098, cz: 0.004, v: 0.42 }, // Cheekbones
-      { y: 0.065, rx: 0.092, rz: 0.106, cz: 0.008, v: 0.60 }, // Pronounced PS1 Brow Ridge
+      { y: 0.065, rx: 0.091, rz: 0.105, cz: 0.006, v: 0.60 }, // Brow ridge
       { y: 0.115, rx: 0.086, rz: 0.098, cz: -0.004, v: 0.80 }, // Forehead / Temple
       { y: 0.152, rx: 0.058, rz: 0.068, cz: -0.008, v: 0.98 }, // Crown
     ],
-    8
+    16
   );
-  // Angular PS1 nose bridge prism on +Z front!
-  headB.addBox(0, 0.032, 0.108, 0.026, 0.048, 0.032, 0.65, 0.55);
-  // Low-poly ears on ±X
-  headB.addBox(-0.092, 0.042, -0.005, 0.018, 0.042, 0.028);
-  headB.addBox(0.092, 0.042, -0.005, 0.018, 0.042, 0.028);
+  // Sculpted nose bridge prism on +Z front
+  headB.addBox(0, 0.030, 0.102, 0.024, 0.044, 0.028, 0.65, 0.55);
+  // Ears on ±X
+  headB.addBox(-0.091, 0.042, -0.006, 0.016, 0.040, 0.026);
+  headB.addBox(0.091, 0.042, -0.006, 0.016, 0.040, 0.026);
 
   // 2. Articulated Jaw / Chin
+  // Joint HEAD_FACE_JAW sits at (0, 1.61, +0.08) vs HEAD_CRANIUM at (0, 1.66, 0.00).
+  // Shift local cz back by ~-0.058m so the chin & maxilla sit flush under the cranium (+0.084m model Z) with zero underbite!
   const jawB = new FacetedMeshBuilder();
   jawB.addLoft(
     [
-      { y: -0.042, rx: 0.046, rz: 0.048, cz: 0.012, v: 0.1 }, // Square chin
-      { y: -0.005, rx: 0.068, rz: 0.062, cz: 0.0, v: 0.55 }, // Mandible angle
-      { y: 0.032, rx: 0.074, rz: 0.064, cz: -0.006, v: 0.92 }, // Upper lip / maxilla seam
+      { y: -0.042, rx: 0.045, rz: 0.048, cz: -0.046, v: 0.10 }, // Chin mentum (model z front = +0.082m)
+      { y: -0.005, rx: 0.068, rz: 0.062, cz: -0.058, v: 0.55 }, // Mandible angle (model z front = +0.084m)
+      { y: 0.032, rx: 0.074, rz: 0.068, cz: -0.064, v: 0.92 }, // Maxilla seam (meets cranium y=-0.02 at z=+0.084m)
     ],
-    8
+    16
   );
 
   // 3. Neck & Jacket Collar
@@ -286,19 +341,19 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
       { y: 0.01, rx: 0.062, rz: 0.062, v: 0.45 },
       { y: 0.09, rx: 0.056, rz: 0.058, v: 1.0 },
     ],
-    6
+    14
   );
 
-  // 4. Heroic V-Tapered PS1 Thorax (joint at y=0 corresponds to y=1.30m, neck at y=+0.25m)
+  // 4. Athletic V-Tapered Thorax (joint at y=0 corresponds to y=1.30m, neck at y=+0.25m)
   const thoraxB = new FacetedMeshBuilder();
   thoraxB.addLoft(
     [
       { y: -0.03, rx: 0.152, rz: 0.112, cz: 0.004, v: 0.05 }, // Lower ribcage seam
       { y: 0.06, rx: 0.178, rz: 0.132, cz: 0.012, v: 0.38 }, // Pectoral plate & lats
-      { y: 0.16, rx: 0.205, rz: 0.138, cz: 0.008, v: 0.75 }, // Broad PS1 upper chest
+      { y: 0.16, rx: 0.205, rz: 0.138, cz: 0.008, v: 0.75 }, // Broad upper chest
       { y: 0.235, rx: 0.165, rz: 0.105, cz: -0.004, v: 0.98 }, // Clavicle / trapezius shelf
     ],
-    8
+    16
   );
 
   // 5. Intact Lower Abdomen (joint at y=0 corresponds to y=1.10m, thorax at y=+0.20m)
@@ -309,10 +364,10 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
       { y: 0.09, rx: 0.146, rz: 0.108, cz: 0.005, v: 0.5 }, // Athletic waist taper
       { y: 0.20, rx: 0.156, rz: 0.115, cz: 0.005, v: 0.95 },
     ],
-    8
+    16
   );
 
-  // 6. Eviscerated Gut Outer Shell (hollowed front cavity for Soldier of Fortune stomach shotgun wound!)
+  // 6. Eviscerated Gut Outer Shell (hollowed front cavity for stomach shotgun wound)
   const abdGoreB = new FacetedMeshBuilder();
   abdGoreB.addLoft(
     [
@@ -320,11 +375,11 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
       { y: 0.09, rx: 0.152, rz: 0.112, v: 0.5 },
       { y: 0.20, rx: 0.158, rz: 0.116, v: 0.95 },
     ],
-    8,
+    16,
     true,
     true,
     (r, _s, theta, pt) => {
-      // Push front (+Z) middle vertices inward to carve a jagged visceral gut crater!
+      // Push front (+Z) middle vertices inward to carve a visceral gut crater
       if (r === 1 && Math.abs(theta) < 0.9) {
         pt[2] = -0.015;
       }
@@ -340,7 +395,7 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
       { y: 0.09, rx: 0.162, rz: 0.116, v: 0.74 }, // Waistline
       { y: 0.155, rx: 0.166, rz: 0.120, v: 0.98 }, // Tactical Web Belt Rim
     ],
-    8
+    16
   );
 
   // 8. Sculpted Deltoid Shoulder Cap
@@ -351,7 +406,7 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
       { y: -0.02, rx: 0.082, rz: 0.080, v: 0.55 },
       { y: 0.05, rx: 0.058, rz: 0.058, v: 0.95 },
     ],
-    7
+    14
   );
 
   // 9. Muscular Upper Arm (rounded humeral ball cap at +0.05m down to elbow at -0.26m)
@@ -361,9 +416,9 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
       { y: -0.265, rx: 0.048, rz: 0.048, v: 0.04 }, // Elbow condyle cap
       { y: -0.14, rx: 0.064, rz: 0.068, cz: 0.005, v: 0.52 }, // Bicep / Tricep peak
       { y: 0.01, rx: 0.060, rz: 0.060, v: 0.88 }, // Deltoid insertion
-      { y: 0.052, rx: 0.046, rz: 0.046, v: 0.98 }, // Rounded shoulder ball-joint cap (zero gap on bend!)
+      { y: 0.052, rx: 0.046, rz: 0.046, v: 0.98 }, // Rounded shoulder ball-joint cap
     ],
-    6
+    14
   );
 
   // 10. Tapered Forearm (rounded olecranon elbow cap at +0.04m down to wrist at -0.275m)
@@ -375,53 +430,50 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
       { y: 0.005, rx: 0.050, rz: 0.050, v: 0.90 }, // Elbow socket
       { y: 0.042, rx: 0.038, rz: 0.040, v: 0.98 }, // Rounded elbow ball-joint cap
     ],
-    6
+    14
   );
 
-  // 11. PS1 Blocky Tactical Mitten Hands (Left & Right with distinct thumb wedges!)
+  // 11. Sculpted Tactical Gloved Hands (Left & Right with distinct thumb wedges)
   const makeHand = (isRight: boolean) => {
     const hb = new FacetedMeshBuilder();
     const dir = isRight ? -1 : 1;
-    // Palm + curled fingers block along -Y (wrist ball at y=+0.025, knuckles at y=-0.10)
     hb.addLoft(
       [
         { y: -0.10, rx: 0.024, rz: 0.038, cz: 0.008, v: 0.08 }, // Curled fingertips
         { y: -0.045, rx: 0.028, rz: 0.046, cz: 0.004, v: 0.50 }, // Knuckles / palm
         { y: 0.024, rx: 0.034, rz: 0.038, v: 0.96 }, // Rounded wrist cuff
       ],
-      6
+      12
     );
-    // Thumb wedge
-    hb.addBox(dir * 0.028, -0.038, 0.036, 0.024, 0.048, 0.026, 0.8, 0.8);
+    hb.addBox(dir * 0.028, -0.038, 0.036, 0.022, 0.046, 0.024, 0.8, 0.8);
     return hb.build(device);
   };
 
-  // 12. Baggy Creased BDU Cargo Thigh (rounded hip ball at +0.065m down to knee at -0.365m)
+  // 12. Creased BDU Cargo Thigh (rounded hip ball at +0.065m down to knee at -0.365m)
   const thighB = new FacetedMeshBuilder();
   thighB.addLoft(
     [
       { y: -0.368, rx: 0.068, rz: 0.072, v: 0.04 }, // Distal femur condyle
-      { y: -0.20, rx: 0.092, rz: 0.096, cz: 0.004, v: 0.48 }, // Baggy cargo trouser mid-thigh
+      { y: -0.20, rx: 0.092, rz: 0.096, cz: 0.004, v: 0.48 }, // Cargo trouser mid-thigh
       { y: -0.05, rx: 0.096, rz: 0.100, v: 0.82 }, // Upper quad / glute tie-in
       { y: 0.03, rx: 0.086, rz: 0.090, v: 0.94 }, // Hip socket collar
-      { y: 0.068, rx: 0.064, rz: 0.068, v: 0.99 }, // Rounded hip ball-joint cap (zero hip gap!)
+      { y: 0.068, rx: 0.064, rz: 0.068, v: 0.99 }, // Rounded hip ball-joint cap
     ],
-    7
+    14
   );
 
-  // 13. Upper Tibia + Armored Knee-Pad (spans +0.055m knee ball all the way down to -0.225m mid-shin!)
+  // 13. Upper Tibia + Armored Knee-Pad (spans +0.055m knee ball down to -0.225m mid-shin)
   const kneeB = new FacetedMeshBuilder();
   kneeB.addLoft(
     [
-      { y: -0.225, rx: 0.062, rz: 0.066, v: 0.05 }, // Seamlessly overlaps SHIN_LEFT/RIGHT at y=-0.2175m!
+      { y: -0.225, rx: 0.062, rz: 0.066, v: 0.05 }, // Seamlessly overlaps SHIN_LEFT/RIGHT at y=-0.2175m
       { y: -0.11, rx: 0.066, rz: 0.070, cz: -0.004, v: 0.42 }, // Upper gastrocnemius / shin trouser
       { y: 0.0, rx: 0.068, rz: 0.072, v: 0.78 }, // Knee joint center
       { y: 0.055, rx: 0.056, rz: 0.060, v: 0.98 }, // Rounded knee ball-joint cap
     ],
-    6
+    14
   );
-  // Front armored knee-pad shell
-  kneeB.addBox(0, -0.01, 0.058, 0.095, 0.105, 0.034, 0.85, 0.8);
+  kneeB.addBox(0, -0.01, 0.058, 0.092, 0.102, 0.032, 0.85, 0.8);
 
   // 14. Lower Bloused Shin / Calf BDU Trouser (overlaps upper tibia at +0.04m down to boot at -0.22m)
   const shinB = new FacetedMeshBuilder();
@@ -432,20 +484,18 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
       { y: -0.06, rx: 0.066, rz: 0.072, cz: -0.006, v: 0.70 }, // Gastrocnemius calf muscle
       { y: 0.04, rx: 0.062, rz: 0.064, v: 0.97 }, // Seamless overlap into upper tibia
     ],
-    6
+    14
   );
 
-  // 15. Chunky Sculpted PS1 Combat Boot (+Z points from heel toward steel toe, sole at y = -0.065!)
+  // 15. Sculpted Tactical Combat Boot (+Z points from heel toward steel toe, sole at y = -0.065)
   const bootB = new FacetedMeshBuilder();
-  // Ankle shaft
   bootB.addLoft(
     [
       { y: -0.025, rx: 0.050, rz: 0.056, cz: 0.005, v: 0.35 },
       { y: 0.055, rx: 0.052, rz: 0.054, cz: -0.004, v: 0.95 },
     ],
-    6
+    14
   );
-  // Chunky lug-soled foot & steel toe box extending forward along +Z!
   bootB.addLoft(
     [
       { y: -0.065, rx: 0.056, rz: 0.125, cz: 0.052, v: 0.02 }, // Heavy rubber lug sole
@@ -453,10 +503,10 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
       { y: -0.012, rx: 0.049, rz: 0.112, cz: 0.046, v: 0.62 }, // Laced instep & rounded steel toe
       { y: 0.008, rx: 0.042, rz: 0.072, cz: 0.018, v: 0.85 }, // Upper tongue
     ],
-    8
+    14
   );
 
-  // 16. Detachable Headgear Meshes!
+  // 16. Detachable Headgear Meshes
   // A) PASGT Kevlar Ballistic Helmet (with flared ear guards & brow brim)
   const helmB = new FacetedMeshBuilder();
   helmB.addLoft(
@@ -466,7 +516,7 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
       { y: 0.135, rx: 0.098, rz: 0.108, cz: -0.002, v: 0.78 },
       { y: 0.172, rx: 0.055, rz: 0.065, cz: -0.005, v: 0.98 },
     ],
-    8,
+    16,
     false,
     true
   );
@@ -476,10 +526,10 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
   beretB.addLoft(
     [
       { y: 0.085, rx: 0.096, rz: 0.104, v: 0.05 }, // Leather headband
-      { y: 0.118, rx: 0.116, rz: 0.116, cx: 0.024, cz: -0.006, v: 0.55 }, // Classic military beret drape to right side
+      { y: 0.118, rx: 0.116, rz: 0.116, cx: 0.024, cz: -0.006, v: 0.55 }, // Military beret drape
       { y: 0.148, rx: 0.078, rz: 0.084, cx: 0.018, cz: -0.008, v: 0.96 },
     ],
-    8,
+    16,
     false,
     true
   );
@@ -492,7 +542,7 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
       { y: 0.105, rx: 0.096, rz: 0.104, v: 0.42 },
       { y: 0.158, rx: 0.062, rz: 0.070, cz: -0.006, v: 0.98 },
     ],
-    8,
+    16,
     false,
     true
   );
@@ -502,7 +552,7 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
   for (let i = 0; i < 4; i++) {
     const zOff = 0.06 - i * 0.045;
     const yOff = 0.155 - Math.abs(i - 1.2) * 0.012;
-    mohawkB.addBox(0, yOff + 0.035, zOff, 0.026, 0.085, 0.038, 0.25, 0.35);
+    mohawkB.addBox(0, yOff + 0.035, zOff, 0.024, 0.082, 0.036, 0.25, 0.35);
   }
 
   // E) Wraparound Street Shades / Tactical Goggles
@@ -515,7 +565,7 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
   const pouchB = new FacetedMeshBuilder();
   pouchB.addBox(0, 0, 0, 0.068, 0.105, 0.045, 0.92, 0.88);
 
-  cachedMeshLib = {
+  const built: RetroMeshLibrary = {
     headCranium: headB.build(device),
     headJaw: jawB.build(device),
     neckCollar: neckB.build(device),
@@ -540,7 +590,8 @@ export function getOrCreateRetroMeshes(device: pc.GraphicsDevice): RetroMeshLibr
     ammoPouch: pouchB.build(device),
   };
 
-  return cachedMeshLib;
+  cachedMeshLibs.set(device, built);
+  return built;
 }
 
 /**

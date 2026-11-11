@@ -295,6 +295,79 @@ function collectBoneNodes(root: pc.GraphNode, out: Map<string, pc.GraphNode>): v
   }
 }
 
+const upgradedGlbMaterials = new WeakSet<pc.StandardMaterial>();
+const upgradedGlbTextures = new WeakSet<pc.Texture>();
+
+function upgradeGlbTexture(tex: pc.Texture | null | undefined, maxAniso: number): void {
+  if (!tex || upgradedGlbTextures.has(tex)) return;
+  upgradedGlbTextures.add(tex);
+  tex.anisotropy = maxAniso;
+  if (tex.mipmaps) {
+    tex.minFilter = pc.FILTER_LINEAR_MIPMAP_LINEAR;
+    tex.magFilter = pc.FILTER_LINEAR;
+  }
+}
+
+function upgradeGlbStandardMaterial(mat: pc.Material | null | undefined, device: pc.GraphicsDevice): void {
+  if (!(mat instanceof pc.StandardMaterial) || upgradedGlbMaterials.has(mat)) return;
+  upgradedGlbMaterials.add(mat);
+
+  const maxAniso =
+    device instanceof pc.NullGraphicsDevice
+      ? 1
+      : Math.max(1, Math.min(16, device.maxAnisotropy || 1));
+
+  upgradeGlbTexture(mat.diffuseMap, maxAniso);
+  upgradeGlbTexture(mat.normalMap, maxAniso);
+  upgradeGlbTexture(mat.glossMap, maxAniso);
+  upgradeGlbTexture(mat.metalnessMap, maxAniso);
+  upgradeGlbTexture(mat.aoMap, maxAniso);
+  upgradeGlbTexture(mat.emissiveMap, maxAniso);
+  upgradeGlbTexture(mat.specularMap, maxAniso);
+
+  mat.enableGGXSpecular = true;
+  mat.fresnelModel = pc.FRESNEL_SCHLICK;
+  mat.useSkybox = true;
+  if (mat.aoMap) {
+    mat.occludeSpecular = pc.SPECOCC_GLOSSDEPENDENT;
+  }
+  if (mat.normalMap) {
+    mat.bumpiness = Math.max(mat.bumpiness || 1.0, 1.22);
+  }
+  mat.update();
+}
+
+function upgradeContainerPbrQuality(container: pc.ContainerResource, device: pc.GraphicsDevice): void {
+  const maxAniso =
+    device instanceof pc.NullGraphicsDevice
+      ? 1
+      : Math.max(1, Math.min(16, device.maxAnisotropy || 1));
+
+  if (Array.isArray(container.textures)) {
+    for (const texAsset of container.textures) {
+      if (texAsset?.resource instanceof pc.Texture) {
+        upgradeGlbTexture(texAsset.resource, maxAniso);
+      }
+    }
+  }
+  if (Array.isArray(container.materials)) {
+    for (const matAsset of container.materials) {
+      if (matAsset?.resource instanceof pc.StandardMaterial) {
+        upgradeGlbStandardMaterial(matAsset.resource, device);
+      }
+    }
+  }
+}
+
+function upgradeEntityHierarchyPbr(root: pc.Entity, device: pc.GraphicsDevice): void {
+  const renderComps = root.findComponents('render') as pc.RenderComponent[];
+  for (const rc of renderComps) {
+    for (const mi of rc.meshInstances) {
+      upgradeGlbStandardMaterial(mi.material, device);
+    }
+  }
+}
+
 /**
  * PlayCanvas 2.4 GLB Container Asset Registry & Factory.
  *
@@ -332,13 +405,15 @@ export class GlbModelRegistry {
     return `${this.baseUrl}/concrete_wall_connectivity.json`;
   }
 
-  public isLoaded(key: GlbAssetKey): boolean {
-    const asset = this.containerAssets.get(key);
+  public isLoaded(key: GlbAssetKey | 'weapon_beretta_m9'): boolean {
+    const resolvedKey: GlbAssetKey = key === 'weapon_beretta_m9' ? 'silver_talon_50ae' : key;
+    const asset = this.containerAssets.get(resolvedKey);
     return Boolean(asset && asset.resource);
   }
 
-  public getContainer(key: GlbAssetKey): pc.ContainerResource | null {
-    const asset = this.containerAssets.get(key);
+  public getContainer(key: GlbAssetKey | 'weapon_beretta_m9'): pc.ContainerResource | null {
+    const resolvedKey: GlbAssetKey = key === 'weapon_beretta_m9' ? 'silver_talon_50ae' : key;
+    const asset = this.containerAssets.get(resolvedKey);
     if (!asset || !asset.resource) {
       return null;
     }
@@ -349,6 +424,7 @@ export class GlbModelRegistry {
    * Registers an already-parsed `pc.ContainerResource` under `key` (for synchronous preload / headless tests).
    */
   public registerContainerResource(key: GlbAssetKey, container: pc.ContainerResource): void {
+    upgradeContainerPbrQuality(container, this.app.graphicsDevice);
     const asset = new pc.Asset(`glb_${key}`, 'container');
     asset.resource = container;
     this.containerAssets.set(key, asset);
@@ -381,6 +457,7 @@ export class GlbModelRegistry {
           reject(new Error(`Container resource missing after loading ${url}`));
           return;
         }
+        upgradeContainerPbrQuality(resource, this.app.graphicsDevice);
         resolve(resource);
       };
 
@@ -441,6 +518,7 @@ export class GlbModelRegistry {
       castShadows: options?.castShadows ?? true,
       receiveShadows: options?.receiveShadows ?? true,
     });
+    upgradeEntityHierarchyPbr(rootEntity, this.app.graphicsDevice);
     rootEntity.name = 'GhoulCombatantRoot';
     rootEntity.setPosition(0, 0, 0);
     rootEntity.setEulerAngles(0, 0, 0);
@@ -702,9 +780,11 @@ export class GlbModelRegistry {
     }
 
     const propRoot = new pc.Entity(`DetachedHeadgear_${archetype}`);
-    const meshInstances = primitives.map(
-      (p) => new pc.MeshInstance(p.mesh, p.material ?? new pc.StandardMaterial())
-    );
+    const meshInstances = primitives.map((p) => {
+      const mat = p.material ?? new pc.StandardMaterial();
+      upgradeGlbStandardMaterial(mat, this.app.graphicsDevice);
+      return new pc.MeshInstance(p.mesh, mat);
+    });
     propRoot.addComponent('render', {
       meshInstances,
       castShadows: true,
@@ -715,22 +795,43 @@ export class GlbModelRegistry {
 
   /**
    * Instantiates an animated 3D weapon viewmodel or world prop (`m590_shotgun`, `silver_talon_50ae`,
-   * `msg90_sniper`, `m4a1_carbine`, or `frag_grenade`).
+   * `msg90_sniper`, `m4a1_carbine`, or `frag_grenade`, plus compact `weapon_beretta_m9` sidearm alias).
    */
   public instantiateWeapon(
-    weaponId: WeaponAssetId,
+    weaponId: WeaponAssetId | 'weapon_beretta_m9',
     options?: { castShadows?: boolean; receiveShadows?: boolean }
   ): WeaponGlbInstance {
-    const container = this.getContainer(weaponId);
+    const isBerettaAlias = weaponId === 'weapon_beretta_m9';
+    const resolvedWeaponId: WeaponAssetId = isBerettaAlias ? 'silver_talon_50ae' : weaponId;
+    const container = this.getContainer(resolvedWeaponId);
     if (!container) {
-      throw new Error(`${weaponId}.glb is not loaded yet; await preloadAll() or loadContainer("${weaponId}") first.`);
+      throw new Error(`${resolvedWeaponId}.glb is not loaded yet; await preloadAll() or loadContainer("${resolvedWeaponId}") first.`);
     }
 
     const rootEntity = container.instantiateRenderEntity({
       castShadows: options?.castShadows ?? false,
       receiveShadows: options?.receiveShadows ?? true,
     });
+    upgradeEntityHierarchyPbr(rootEntity, this.app.graphicsDevice);
     rootEntity.name = `Weapon_${weaponId}`;
+
+    const clonedSidearmMats: pc.StandardMaterial[] = [];
+    if (isBerettaAlias) {
+      // Compact dark-parkerized 9mm service sidearm profile derived from pistol container
+      rootEntity.setLocalScale(0.84, 0.84, 0.84);
+      const renderComps = rootEntity.findComponents('render') as pc.RenderComponent[];
+      for (const rc of renderComps) {
+        for (const mi of rc.meshInstances) {
+          if (mi.material instanceof pc.StandardMaterial) {
+            const m9Mat = mi.material.clone();
+            m9Mat.diffuse.set(0.24, 0.26, 0.29);
+            m9Mat.update();
+            mi.material = m9Mat;
+            clonedSidearmMats.push(m9Mat);
+          }
+        }
+      }
+    }
 
     const boneNodes = new Map<string, pc.GraphNode>();
     collectBoneNodes(rootEntity, boneNodes);
@@ -738,7 +839,7 @@ export class GlbModelRegistry {
     let muzzleNode = rootEntity.findByName('Bone_Muzzle') ?? rootEntity.findByName('MuzzleSocket');
     if (!muzzleNode) {
       const fallback = new pc.Entity('Bone_Muzzle');
-      const offset = DEFAULT_MUZZLE_OFFSETS[weaponId];
+      const offset = DEFAULT_MUZZLE_OFFSETS[resolvedWeaponId];
       fallback.setLocalPosition(offset.x, offset.y, offset.z);
       rootEntity.addChild(fallback);
       muzzleNode = fallback;
@@ -784,7 +885,7 @@ export class GlbModelRegistry {
     };
 
     return {
-      weaponId,
+      weaponId: resolvedWeaponId,
       rootEntity,
       animComponent,
       muzzleNode,
@@ -812,6 +913,9 @@ export class GlbModelRegistry {
       },
       destroy(): void {
         rootEntity.destroy();
+        for (const m of clonedSidearmMats) {
+          m.destroy();
+        }
       },
     };
   }
@@ -830,6 +934,7 @@ export class GlbModelRegistry {
     }
 
     const tempRoot = container.instantiateRenderEntity();
+    upgradeEntityHierarchyPbr(tempRoot, this.app.graphicsDevice);
     try {
       const intactEnt = findEntityByName(tempRoot, 'IntactConcreteWall');
       const intactMi = intactEnt?.render?.meshInstances?.[0];
@@ -887,6 +992,7 @@ export class GlbModelRegistry {
     }
 
     const tempRoot = container.instantiateRenderEntity();
+    upgradeEntityHierarchyPbr(tempRoot, this.app.graphicsDevice);
     try {
       const brickMeshes: pc.Mesh[] = [];
       const brickLocalVertices: Float32Array[] = [];
