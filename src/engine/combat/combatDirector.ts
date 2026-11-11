@@ -23,6 +23,8 @@ import {
   add,
   sub,
   scale,
+  cross,
+  dot,
   length,
   normalize,
   distance,
@@ -50,15 +52,22 @@ import { GoreAndBallisticsFxManager } from '../goreFx.ts';
 import { VascularBloodFxEmitter } from '../gore/vascularBloodFx.ts';
 import { HudController, ProjectedTargetTriageEntry } from '../hudController.ts';
 import type { MayhemDirector } from '../fx/mayhemDirector.ts';
-import type {
-  BrutalKillRewardKind,
-  TacticalCombatAiSystem,
+import {
+  isArmChainIntactAndFunctional,
+  type ActiveFiringHand,
+  type BrutalKillRewardKind,
+  type TacticalCombatAiSystem,
 } from '../ai/tacticalCombatAi.ts';
 import type {
   CombatAudioEngine,
   GoreImpactAudioKind,
 } from '../audio/combatAudioEngine.ts';
-import type { GlbModelRegistry, WeaponGlbInstance } from '../assets/glbLoader.ts';
+import type {
+  CombatantGlbInstance,
+  GlbModelRegistry,
+  WeaponAssetId,
+  WeaponGlbInstance,
+} from '../assets/glbLoader.ts';
 
 export interface RangeTargetConfig {
   id: string;
@@ -195,6 +204,77 @@ interface ActiveBlastFlashFx {
   maxRadiusM: number;
 }
 
+interface OffhandSidearmRig {
+  targetId: string;
+  holderEntity: pc.Entity;
+  glbInstance: WeaponGlbInstance | null;
+  isGlbModel: boolean;
+  wasHeldLastFrame: boolean;
+  lastHand: ActiveFiringHand | null;
+  clonedMaterials: pc.StandardMaterial[];
+}
+
+interface RestArmBoneFrame {
+  restPos: pc.Vec3;
+  restRot: pc.Quat;
+  restRotInv: pc.Quat;
+}
+
+function basisVectorsToQuat(
+  right: Vec3Like,
+  up: Vec3Like,
+  forward: Vec3Like,
+  tmpMat: pc.Mat4,
+  outQuat: pc.Quat
+): pc.Quat {
+  const d = tmpMat.data;
+  d[0] = right.x;
+  d[1] = right.y;
+  d[2] = right.z;
+  d[3] = 0;
+
+  d[4] = up.x;
+  d[5] = up.y;
+  d[6] = up.z;
+  d[7] = 0;
+
+  d[8] = forward.x;
+  d[9] = forward.y;
+  d[10] = forward.z;
+  d[11] = 0;
+
+  d[12] = 0;
+  d[13] = 0;
+  d[14] = 0;
+  d[15] = 1;
+
+  outQuat.setFromMat4(tmpMat);
+  return outQuat;
+}
+
+const REST_ARM_BONE_FRAMES: ReadonlyMap<GhoulZoneId, RestArmBoneFrame> = (() => {
+  const refState = createTargetHealthState('__sidearm_rest_ref__', 'RestRef', vec3(0, 0, 0), 0);
+  const mat = new pc.Mat4();
+  const map = new Map<GhoulZoneId, RestArmBoneFrame>();
+  for (const zone of ALL_GHOUL_ZONES) {
+    const b = refState.ragdollBones[zone];
+    const restRot = basisVectorsToQuat(
+      b.basisRight,
+      b.basisUp,
+      b.basisForward,
+      mat,
+      new pc.Quat()
+    );
+    const restRotInv = restRot.clone().invert();
+    map.set(zone, {
+      restPos: new pc.Vec3(b.position.x, b.position.y, b.position.z),
+      restRot,
+      restRotInv,
+    });
+  }
+  return map;
+})();
+
 export class CombatDirector {
   public static readonly TARGET_CONFIGS: readonly RangeTargetConfig[] = TARGET_CONFIGS;
   public readonly TARGET_CONFIGS: readonly RangeTargetConfig[] = TARGET_CONFIGS;
@@ -241,15 +321,25 @@ export class CombatDirector {
 
   private readonly activeGrenades: ActiveFragGrenade[] = [];
   private readonly activeBlastFlashes: ActiveBlastFlashFx[] = [];
+  private readonly offhandSidearmRigs = new Map<string, OffhandSidearmRig>();
   private readonly lastHitClockByTarget = new Map<string, number>();
   private lastUpdateClockS = 0;
   private grenadeCooldownS = 0;
 
   private readonly blastFireballMat: pc.StandardMaterial;
+  private readonly proceduralM9NitrideMat: pc.StandardMaterial;
+  private readonly proceduralM9GripMat: pc.StandardMaterial;
   private readonly scratchWorldPt = new pc.Vec3();
   private readonly scratchScreenPt = new pc.Vec3();
   private readonly scratchBodyScreenPt = new pc.Vec3();
   private readonly lastViewerWorldPos = new pc.Vec3(0, 1.62, 0);
+  private readonly scratchSidearmMat4 = new pc.Mat4();
+  private readonly scratchSidearmQuat = new pc.Quat();
+  private readonly scratchRagQuat = new pc.Quat();
+  private readonly scratchDeltaQuat = new pc.Quat();
+  private readonly scratchWorldQuat = new pc.Quat();
+  private readonly scratchOffsetVec = new pc.Vec3();
+  private readonly scratchRotOffsetVec = new pc.Vec3();
 
   constructor(
     app: pc.AppBase,
@@ -282,6 +372,22 @@ export class CombatDirector {
     this.blastFireballMat.depthWrite = false;
     this.blastFireballMat.cull = pc.CULLFACE_NONE;
     this.blastFireballMat.update();
+
+    this.proceduralM9NitrideMat = new pc.StandardMaterial();
+    this.proceduralM9NitrideMat.name = 'berettaM9DarkNitrideMat';
+    this.proceduralM9NitrideMat.diffuse = new pc.Color(0.14, 0.15, 0.17);
+    this.proceduralM9NitrideMat.useMetalness = true;
+    this.proceduralM9NitrideMat.metalness = 0.86;
+    this.proceduralM9NitrideMat.gloss = 0.62;
+    this.proceduralM9NitrideMat.update();
+
+    this.proceduralM9GripMat = new pc.StandardMaterial();
+    this.proceduralM9GripMat.name = 'berettaM9PolymerGripMat';
+    this.proceduralM9GripMat.diffuse = new pc.Color(0.08, 0.085, 0.095);
+    this.proceduralM9GripMat.useMetalness = true;
+    this.proceduralM9GripMat.metalness = 0.12;
+    this.proceduralM9GripMat.gloss = 0.28;
+    this.proceduralM9GripMat.update();
   }
 
   public connectSubsystems(subsystems: CombatDirectorSubsystems): void {
@@ -316,6 +422,11 @@ export class CombatDirector {
       if (target.attachCombatantGlb(glbRegistry)) {
         upgraded++;
       }
+      const existingRig = this.offhandSidearmRigs.get(target.healthState.targetId);
+      if (existingRig && !existingRig.isGlbModel) {
+        this.destroySingleSidearmRig(existingRig);
+        this.offhandSidearmRigs.delete(target.healthState.targetId);
+      }
     }
     return upgraded;
   }
@@ -336,6 +447,7 @@ export class CombatDirector {
     const nextTargets: GhoulMannequinEntity[] = [];
 
     this.clearLiveGrenadesAndFlashes();
+    this.destroyOffhandSidearmRigs();
     this.lastHitClockByTarget.clear();
     this.fxManager.clearAll();
     this.vascularFx.clearAll();
@@ -589,14 +701,33 @@ export class CombatDirector {
     hs.painShock = Math.max(hs.painShock, physio.painShockLevel);
 
     if (!physio.conscious) {
-      hs.consciousness = Math.min(hs.consciousness, 0.18);
+      const aiAgent = this.tacticalAi?.getAgent(hs.targetId);
+      if (
+        physio.neurogenicShockCollapsed &&
+        hs.alive &&
+        aiAgent &&
+        aiAgent.neurogenicShockTimerS <= 0 &&
+        physio.bloodVolumeMl > 2650 &&
+        physio.oxygenSaturationPct >= 58
+      ) {
+        physio.neurogenicShockCollapsed = false;
+        physio.conscious = true;
+        physio.alertnessState = 'COMBAT_ALERT';
+        physio.adrenalineLevel = Math.max(physio.adrenalineLevel, 0.92);
+        hs.consciousness = Math.max(hs.consciousness, 0.52);
+      } else {
+        hs.consciousness = Math.min(hs.consciousness, 0.18);
+      }
     }
 
     if (!physio.leftLegFunctional) hs.leftLegFunctional = false;
     if (!physio.rightLegFunctional) hs.rightLegFunctional = false;
     if (!physio.leftArmFunctional) hs.leftArmFunctional = false;
     if (!physio.rightArmFunctional) hs.rightArmFunctional = false;
-    if (physio.weaponDropped) hs.weaponDropped = true;
+    if (physio.weaponDropped) {
+      hs.weaponDropped = true;
+      hs.primaryArmDisarmed = true;
+    }
 
     if (!hs.isRagdollActive && hs.alive) {
       if (physio.readability.immediatePostureReaction === 'DIAPHRAGM_DROP_KNEEL') {
@@ -1681,10 +1812,12 @@ export class CombatDirector {
       );
     }
 
-    // 5. Step 3D Articulated PBD Ragdoll Physics & Sync Combatants
+    // 5. Step 3D Articulated PBD Ragdoll Physics, Sync Combatants & Pose Off-Hand Backup Handguns
+    const viewerWorldPos = this.getViewerPosVec3();
     for (const t of this.targets) {
       stepRagdollPhysics(t.healthState, dt, 0.0);
       t.syncFromHealthState(dt, totalElapsedTimeS);
+      this.syncOffhandBackupSidearm(t, viewerWorldPos);
     }
 
     // 6. Project 3D Enemy Health Bars, Triage & Live Physiological Vitals onto HUD Overlay
@@ -1768,8 +1901,460 @@ export class CombatDirector {
     }
   }
 
+  private setEntityWorldBasis(
+    entity: pc.Entity,
+    right: Vec3Like,
+    up: Vec3Like,
+    forward: Vec3Like
+  ): void {
+    basisVectorsToQuat(
+      right,
+      up,
+      forward,
+      this.scratchSidearmMat4,
+      this.scratchSidearmQuat
+    );
+    entity.setLocalRotation(this.scratchSidearmQuat);
+  }
+
+  private applyPosedArmBoneToGlbJoint(
+    glb: CombatantGlbInstance,
+    zone: GhoulZoneId
+  ): void {
+    const boneNode = glb.boneNodes.get(zone);
+    const bind = glb.boneBindPoses.get(zone);
+    const rest = REST_ARM_BONE_FRAMES.get(zone);
+    if (!boneNode || !bind || !rest) return;
+
+    const boneState = this.targets.find((t) => t.combatantGlb === glb)?.healthState.ragdollBones[zone];
+    if (!boneState) return;
+
+    basisVectorsToQuat(
+      boneState.basisRight,
+      boneState.basisUp,
+      boneState.basisForward,
+      this.scratchSidearmMat4,
+      this.scratchRagQuat
+    );
+
+    this.scratchDeltaQuat.mul2(this.scratchRagQuat, rest.restRotInv);
+    this.scratchWorldQuat.mul2(this.scratchDeltaQuat, bind.modelRot);
+
+    this.scratchOffsetVec.sub2(bind.modelPos, rest.restPos);
+    this.scratchDeltaQuat.transformVector(this.scratchOffsetVec, this.scratchRotOffsetVec);
+
+    boneNode.setPosition(
+      boneState.position.x + this.scratchRotOffsetVec.x,
+      boneState.position.y + this.scratchRotOffsetVec.y,
+      boneState.position.z + this.scratchRotOffsetVec.z
+    );
+    boneNode.setRotation(this.scratchWorldQuat);
+  }
+
+  private buildProceduralBerettaM9Entity(): pc.Entity {
+    const pistolRoot = new pc.Entity('ProceduralBerettaM9');
+
+    // Oriented with barrel along -Z, top sights along +Y, ejection port along +X (matches GLB weapon convention!)
+    const slide = new pc.Entity('M9_Slide');
+    slide.addComponent('render', {
+      type: 'box',
+      material: this.proceduralM9NitrideMat,
+      castShadows: true,
+      receiveShadows: true,
+    });
+    slide.setLocalPosition(0, 0.022, -0.055);
+    slide.setLocalScale(0.028, 0.032, 0.195);
+    pistolRoot.addChild(slide);
+
+    const barrel = new pc.Entity('M9_Barrel');
+    barrel.addComponent('render', {
+      type: 'cylinder',
+      material: this.proceduralM9NitrideMat,
+      castShadows: false,
+      receiveShadows: true,
+    });
+    barrel.setLocalPosition(0, 0.024, -0.145);
+    barrel.setLocalEulerAngles(90, 0, 0);
+    barrel.setLocalScale(0.013, 0.055, 0.013);
+    pistolRoot.addChild(barrel);
+
+    const grip = new pc.Entity('M9_Grip');
+    grip.addComponent('render', {
+      type: 'box',
+      material: this.proceduralM9GripMat,
+      castShadows: true,
+      receiveShadows: true,
+    });
+    grip.setLocalPosition(0, -0.036, 0.012);
+    grip.setLocalEulerAngles(-14, 0, 0);
+    grip.setLocalScale(0.026, 0.098, 0.044);
+    pistolRoot.addChild(grip);
+
+    const triggerGuard = new pc.Entity('M9_TriggerGuard');
+    triggerGuard.addComponent('render', {
+      type: 'box',
+      material: this.proceduralM9NitrideMat,
+      castShadows: false,
+      receiveShadows: false,
+    });
+    triggerGuard.setLocalPosition(0, -0.008, -0.028);
+    triggerGuard.setLocalScale(0.014, 0.024, 0.046);
+    pistolRoot.addChild(triggerGuard);
+
+    const frontSight = new pc.Entity('M9_FrontSight');
+    frontSight.addComponent('render', {
+      type: 'box',
+      material: this.proceduralM9GripMat,
+      castShadows: false,
+      receiveShadows: false,
+    });
+    frontSight.setLocalPosition(0, 0.041, -0.14);
+    frontSight.setLocalScale(0.006, 0.008, 0.012);
+    pistolRoot.addChild(frontSight);
+
+    return pistolRoot;
+  }
+
+  private ensureOffhandSidearmRig(target: GhoulMannequinEntity): OffhandSidearmRig {
+    const id = target.healthState.targetId;
+    const existing = this.offhandSidearmRigs.get(id);
+    if (existing) {
+      return existing;
+    }
+
+    const holderEntity = new pc.Entity('OffhandBackupHandgun_M9');
+    holderEntity.enabled = false;
+    target.rootEntity.addChild(holderEntity);
+
+    let glbInstance: WeaponGlbInstance | null = null;
+    let isGlbModel = false;
+    const clonedMaterials: pc.StandardMaterial[] = [];
+
+    if (this.glbRegistry) {
+      // 1. Primary attempt: instantiate `weapon_beretta_m9` directly if registered in GlbModelRegistry
+      try {
+        glbInstance = this.glbRegistry.instantiateWeapon(
+          'weapon_beretta_m9' as WeaponAssetId,
+          {
+            castShadows: true,
+            receiveShadows: true,
+          }
+        );
+        if (glbInstance.animComponent) {
+          glbInstance.animComponent.playing = false;
+        }
+        holderEntity.addChild(glbInstance.rootEntity);
+        isGlbModel = true;
+      } catch {
+        glbInstance = null;
+      }
+
+      // 2. Live GLB pistol fallback: compact dark-nitride M9-proportioned handgun from loaded pistol GLB
+      if (!glbInstance && this.glbRegistry.isLoaded('silver_talon_50ae')) {
+        try {
+          glbInstance = this.glbRegistry.instantiateWeapon('silver_talon_50ae', {
+            castShadows: true,
+            receiveShadows: true,
+          });
+          if (glbInstance.animComponent) {
+            glbInstance.animComponent.playing = false;
+          }
+          glbInstance.rootEntity.setLocalScale(0.76, 0.78, 0.76);
+          const renders = glbInstance.rootEntity.findComponents('render') as pc.RenderComponent[];
+          for (const rc of renders) {
+            for (const mi of rc.meshInstances) {
+              if (mi.material instanceof pc.StandardMaterial) {
+                const darkM9Mat = mi.material.clone();
+                darkM9Mat.diffuse = new pc.Color(0.14, 0.15, 0.17);
+                darkM9Mat.metalness = Math.min(0.86, darkM9Mat.metalness);
+                darkM9Mat.gloss = 0.58;
+                darkM9Mat.update();
+                mi.material = darkM9Mat;
+                clonedMaterials.push(darkM9Mat);
+              }
+            }
+          }
+          holderEntity.addChild(glbInstance.rootEntity);
+          isGlbModel = true;
+        } catch {
+          glbInstance = null;
+        }
+      }
+    }
+
+    // 3. Compact dark-metallic procedural Beretta M9 fallback (headless / pre-stream)
+    if (!glbInstance) {
+      const procM9 = this.buildProceduralBerettaM9Entity();
+      holderEntity.addChild(procM9);
+    }
+
+    const rig: OffhandSidearmRig = {
+      targetId: id,
+      holderEntity,
+      glbInstance,
+      isGlbModel,
+      wasHeldLastFrame: false,
+      lastHand: null,
+      clonedMaterials,
+    };
+    this.offhandSidearmRigs.set(id, rig);
+    return rig;
+  }
+
+  /**
+   * Synchronizes 3D off-hand Beretta M9 handgun visibility, dynamic single-arm IK aiming pose
+   * (`UPPER_ARM_*` -> `FOREARM_*` -> `HAND_*`), and dropped backup pistol physics right after
+   * `t.syncFromHealthState(...)`.
+   */
+  private syncOffhandBackupSidearm(
+    target: GhoulMannequinEntity,
+    viewerWorldPos: Vec3Like
+  ): void {
+    const hs = target.healthState;
+    const sidearmState = this.tacticalAi?.getSidearmVisualState(hs.targetId);
+    const hand: ActiveFiringHand | null = sidearmState?.hand ?? null;
+    const armIntact = hand !== null && isArmChainIntactAndFunctional(hs, hand);
+    const notAirborneRagdoll = !(hs.isRagdollActive && hs.posture === 'AIRBORNE_RAGDOLL');
+
+    const shouldShowSidearm =
+      Boolean(sidearmState?.visible) &&
+      hs.alive &&
+      hs.currentHp > 0 &&
+      armIntact &&
+      notAirborneRagdoll;
+
+    const existingRig = this.offhandSidearmRigs.get(hs.targetId);
+
+    if (!shouldShowSidearm) {
+      if (existingRig) {
+        if (existingRig.wasHeldLastFrame) {
+          existingRig.wasHeldLastFrame = false;
+          const dropZone: GhoulZoneId =
+            existingRig.lastHand === 'LEFT' ? 'HAND_LEFT' : 'HAND_RIGHT';
+          const handBone = hs.ragdollBones[dropZone];
+          const glbHandNode = target.combatantGlb?.boneNodes.get(dropZone);
+          const dropPos = glbHandNode
+            ? vec3(
+                glbHandNode.getPosition().x,
+                glbHandNode.getPosition().y,
+                glbHandNode.getPosition().z
+              )
+            : handBone.position;
+          this.fxManager.spawnDroppedWeaponProp(
+            'SKINHEAD_PUNK',
+            dropPos,
+            handBone.velocity
+          );
+        }
+        existingRig.holderEntity.enabled = false;
+      }
+      return;
+    }
+
+    const activeHand = hand!;
+    const rig = this.ensureOffhandSidearmRig(target);
+    rig.holderEntity.enabled = true;
+    rig.wasHeldLastFrame = true;
+    rig.lastHand = activeHand;
+
+    const upperArmZone: GhoulZoneId =
+      activeHand === 'LEFT' ? 'UPPER_ARM_LEFT' : 'UPPER_ARM_RIGHT';
+    const forearmZone: GhoulZoneId =
+      activeHand === 'LEFT' ? 'FOREARM_LEFT' : 'FOREARM_RIGHT';
+    const handZone: GhoulZoneId =
+      activeHand === 'LEFT' ? 'HAND_LEFT' : 'HAND_RIGHT';
+    const handTipAuxId = activeHand === 'LEFT' ? 'HAND_TIP_LEFT' : 'HAND_TIP_RIGHT';
+    const sideSign = activeHand === 'LEFT' ? -1 : 1;
+
+    // Anchor upper-arm shoulder socket from animated GLB joint when upright, else ragdoll bone
+    let pUpper = copyVec3(hs.ragdollBones[upperArmZone].position);
+    if (target.combatantGlb && !hs.isRagdollActive) {
+      const glbUpper = target.combatantGlb.boneNodes.get(upperArmZone);
+      const bindUpper = target.combatantGlb.boneBindPoses.get(upperArmZone);
+      const restUpper = REST_ARM_BONE_FRAMES.get(upperArmZone);
+      if (glbUpper && bindUpper && restUpper) {
+        const pAnim = glbUpper.getPosition();
+        const qAnim = glbUpper.getRotation();
+        const bindInv = bindUpper.modelRot.clone().invert();
+        this.scratchDeltaQuat.mul2(qAnim, bindInv);
+        this.scratchOffsetVec.sub2(bindUpper.modelPos, restUpper.restPos);
+        this.scratchDeltaQuat.transformVector(
+          this.scratchOffsetVec,
+          this.scratchRotOffsetVec
+        );
+        pUpper = vec3(
+          pAnim.x - this.scratchRotOffsetVec.x,
+          pAnim.y - this.scratchRotOffsetVec.y,
+          pAnim.z - this.scratchRotOffsetVec.z
+        );
+      }
+    }
+
+    const charFwd = vec3(Math.sin(hs.yawRad), 0, Math.cos(hs.yawRad));
+    const charRight = vec3(-Math.cos(hs.yawRad), 0, Math.sin(hs.yawRad));
+
+    const aimTarget = sidearmState?.aimTargetWorld ?? vec3(
+      viewerWorldPos.x,
+      viewerWorldPos.y - 0.16,
+      viewerWorldPos.z
+    );
+    let rawAimDir = normalize(sub(aimTarget, pUpper));
+    if (length(rawAimDir) < 1e-4) {
+      rawAimDir = charFwd;
+    }
+
+    // Clamp pitch & horizontal twist relative to torso so the off-hand arm poses naturally without hyperextension
+    const clampedY = Math.max(-0.52, Math.min(0.52, rawAimDir.y));
+    let horizDir = vec3(rawAimDir.x, 0, rawAimDir.z);
+    if (length(horizDir) < 1e-4) {
+      horizDir = charFwd;
+    } else {
+      horizDir = normalize(horizDir);
+      if (dot(horizDir, charFwd) < 0.25) {
+        horizDir = normalize(add(scale(charFwd, 0.72), scale(horizDir, 0.28)));
+      }
+    }
+    const aimDir = normalize(
+      vec3(horizDir.x * Math.sqrt(1 - clampedY * clampedY), clampedY, horizDir.z * Math.sqrt(1 - clampedY * clampedY))
+    );
+
+    const drawProgress = Math.max(0, Math.min(1, sidearmState?.drawProgress ?? 1.0));
+    const smoothDraw = drawProgress * drawProgress * (3 - 2 * drawProgress);
+    const holsterDir = normalize(
+      add(scale(charFwd, 0.26), vec3(charRight.x * sideSign * 0.22, -0.86, charRight.z * sideSign * 0.22))
+    );
+    const armAimDir = normalize(
+      add(scale(holsterDir, 1 - smoothDraw), scale(aimDir, smoothDraw))
+    );
+
+    const upperLenM = 0.26;
+    const forearmLenM = 0.25;
+    const elbowDir = normalize(
+      add(
+        armAimDir,
+        vec3(charRight.x * sideSign * 0.12, -0.14, charRight.z * sideSign * 0.12)
+      )
+    );
+    const pForearm = add(pUpper, scale(elbowDir, upperLenM));
+    const wristGoal = add(pUpper, scale(armAimDir, upperLenM + forearmLenM - 0.015));
+    const forearmDir = normalize(sub(wristGoal, pForearm));
+    const pHand = add(pForearm, scale(forearmDir, forearmLenM));
+
+    const worldUp = vec3(0, 1, 0);
+    const computeSegmentBasis = (segFwd: Vec3Like) => {
+      let r = cross(worldUp, segFwd);
+      if (length(r) < 1e-4) r = vec3(1, 0, 0);
+      r = normalize(r);
+      const u = normalize(cross(segFwd, r));
+      return { right: r, up: u, forward: segFwd };
+    };
+
+    const upperBasis = computeSegmentBasis(elbowDir);
+    const forearmBasis = computeSegmentBasis(forearmDir);
+    const handBasis = computeSegmentBasis(armAimDir);
+
+    const applyBoneState = (
+      zone: GhoulZoneId,
+      pos: Vec3Like,
+      basis: { right: Vec3Like; up: Vec3Like; forward: Vec3Like }
+    ) => {
+      const b = hs.ragdollBones[zone];
+      b.position = copyVec3(pos);
+      b.prevPosition = copyVec3(pos);
+      b.basisRight = basis.right;
+      b.basisUp = basis.up;
+      b.basisForward = basis.forward;
+    };
+
+    applyBoneState(upperArmZone, pUpper, upperBasis);
+    applyBoneState(forearmZone, pForearm, forearmBasis);
+    applyBoneState(handZone, pHand, handBasis);
+
+    const tipAux = hs.auxParticles[handTipAuxId];
+    if (tipAux && tipAux.componentId === 'BODY') {
+      tipAux.position = add(pHand, scale(armAimDir, 0.09));
+      tipAux.prevPosition = copyVec3(tipAux.position);
+    }
+
+    // Pose 3D skeletal arm nodes (`combatantGlb` or custom `Bone_*` hierarchy + `Zone_*` bundles)
+    if (target.combatantGlb) {
+      this.applyPosedArmBoneToGlbJoint(target.combatantGlb, upperArmZone);
+      this.applyPosedArmBoneToGlbJoint(target.combatantGlb, forearmZone);
+      this.applyPosedArmBoneToGlbJoint(target.combatantGlb, handZone);
+      target.combatantGlb.rootEntity.syncHierarchy();
+    } else {
+      for (const z of [upperArmZone, forearmZone, handZone] as const) {
+        const customBone = target.rootEntity.findByName(`Bone_${z}`);
+        if (customBone instanceof pc.Entity) {
+          const b = hs.ragdollBones[z];
+          customBone.setPosition(b.position.x, b.position.y, b.position.z);
+          basisVectorsToQuat(
+            b.basisRight,
+            b.basisUp,
+            b.basisForward,
+            this.scratchSidearmMat4,
+            this.scratchSidearmQuat
+          );
+          customBone.setRotation(this.scratchSidearmQuat);
+        }
+      }
+    }
+
+    for (const z of [upperArmZone, forearmZone, handZone] as const) {
+      const zoneNode = target.rootEntity.findByName(`Zone_${z}`);
+      if (zoneNode instanceof pc.Entity) {
+        const b = hs.ragdollBones[z];
+        zoneNode.setLocalPosition(b.position.x, b.position.y, b.position.z);
+        this.setEntityWorldBasis(zoneNode, b.basisRight, b.basisUp, b.basisForward);
+      }
+    }
+
+    // Mount Beretta M9 in the posed off-hand (`-Z` barrel forward along `armAimDir`!)
+    let gripPos = pHand;
+    if (target.combatantGlb) {
+      const glbHand = target.combatantGlb.boneNodes.get(handZone);
+      if (glbHand) {
+        const gp = glbHand.getPosition();
+        gripPos = vec3(gp.x, gp.y, gp.z);
+      }
+    }
+
+    const zBack = scale(armAimDir, -1);
+    let xRight = cross(worldUp, zBack);
+    if (length(xRight) < 1e-4) xRight = vec3(1, 0, 0);
+    xRight = normalize(xRight);
+    const yUp = normalize(cross(zBack, xRight));
+
+    rig.holderEntity.setLocalPosition(
+      gripPos.x + armAimDir.x * 0.042,
+      gripPos.y + 0.012,
+      gripPos.z + armAimDir.z * 0.042
+    );
+    this.setEntityWorldBasis(rig.holderEntity, xRight, yUp, zBack);
+  }
+
+  private destroySingleSidearmRig(rig: OffhandSidearmRig): void {
+    if (rig.glbInstance) {
+      rig.glbInstance.destroy();
+      rig.glbInstance = null;
+    }
+    for (const m of rig.clonedMaterials) {
+      m.destroy();
+    }
+    rig.clonedMaterials.length = 0;
+    rig.holderEntity.destroy();
+  }
+
+  private destroyOffhandSidearmRigs(): void {
+    for (const rig of this.offhandSidearmRigs.values()) {
+      this.destroySingleSidearmRig(rig);
+    }
+    this.offhandSidearmRigs.clear();
+  }
+
   public destroy(): void {
     this.clearLiveGrenadesAndFlashes();
+    this.destroyOffhandSidearmRigs();
     this.lastHitClockByTarget.clear();
     for (const t of this.targets) {
       t.destroy();
@@ -1778,5 +2363,7 @@ export class CombatDirector {
     this.physiologySystem.reset();
     this.vascularFx.destroy();
     this.blastFireballMat.destroy();
+    this.proceduralM9NitrideMat.destroy();
+    this.proceduralM9GripMat.destroy();
   }
 }

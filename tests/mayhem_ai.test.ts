@@ -12,10 +12,15 @@ import {
   computeSurfaceAlignedQuadQuaternion,
 } from '../src/engine/fx/mayhemDirector.ts';
 import {
+  BACKUP_SIDEARM_WEAPON_ID,
+  CombatantResolveProfile,
   DOWNED_ONE_HANDED_SPREAD_MULTIPLIER,
   EnemyTacticalAiState,
   EnemyTracerFireEvent,
+  OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
+  SIDEARM_DRAW_DURATION_S,
   TacticalCombatAiSystem,
+  resolveDefaultCombatantProfile,
 } from '../src/engine/ai/tacticalCombatAi.ts';
 import {
   initRapierPhysics,
@@ -23,13 +28,22 @@ import {
   writeColumnMajorTrsMatrix4,
 } from '../src/engine/physics/rapierWorld.ts';
 import { createTargetHealthState } from '../src/core/ghoul/anatomy.ts';
+import { simulateShot, applyShotReportToTarget } from '../src/core/ballistics/solver.ts';
+import { add, distance, normalize, sub, vec3 } from '../src/core/ballistics/vec3.ts';
 import {
   AMMO_12G_00_BUCK,
   AMMO_50AE_JHP,
   AMMO_762_NATO_M118LR,
+  DEFAULT_ENVIRONMENT,
+  WEAPON_SILVER_TALON,
   WEAPON_M590,
   WEAPON_MSG90,
 } from '../src/core/ballistics/weapons.ts';
+import { CombatDirector, TARGET_CONFIGS } from '../src/engine/combat/combatDirector.ts';
+import { getOrCreateMaterials } from '../src/engine/materials.ts';
+import { GoreAndBallisticsFxManager } from '../src/engine/goreFx.ts';
+import { HudController } from '../src/engine/hudController.ts';
+import type { GlbModelRegistry } from '../src/engine/assets/glbLoader.ts';
 import type { BlastEvent, ColliderSurfaceTag } from '../src/contracts/destruction.ts';
 
 function createHeadlessPlayCanvasApp(): pc.Application {
@@ -554,13 +568,15 @@ describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
       expect(alertedFighter.consciousness).toBeGreaterThan(0.9);
       expect(alertedAgent.adrenaline).toBeGreaterThanOrEqual(0.9);
 
-      // Inflict organ rupture / heavy blood loss -> MORTALLY_WOUNDED clutches wounds instead of laser-aiming!
+      // Inflict organ rupture / heavy blood loss -> MORTALLY_WOUNDED still fights till death,
+      // while physiological tremor & hypotension severely degrade aim (no laser-aiming!)
       alertedFighter.rupturedOrgans.add('ORGAN_LIVER');
       alertedFighter.systolicBpMmHg = 68;
       const mortalAim = ai.computeEnemyAimProfile(alertedFighter, alertedAgent);
-      expect(mortalAim.clutchingWound).toBe(true);
-      expect(mortalAim.canReturnFire).toBe(false);
-      expect(mortalAim.aimAccuracyMultiplier).toBeLessThanOrEqual(0.12);
+      expect(mortalAim.clutchingWound).toBe(false);
+      expect(mortalAim.canReturnFire).toBe(true);
+      expect(mortalAim.spreadMultiplier).toBeGreaterThan(3.5);
+      expect(mortalAim.aimAccuracyMultiplier).toBeLessThanOrEqual(0.28);
 
       ai.destroy();
     });
@@ -799,6 +815,384 @@ describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
         ai.destroy();
       } finally {
         peekWorld.destroy();
+      }
+    });
+
+    it('keeps gut-shot, chest-shot, hypotensive, hypoxic, and leg-buckled combatants fighting till death', () => {
+      const firedShots: EnemyTracerFireEvent[] = [];
+      const ai = new TacticalCombatAiSystem({
+        onEnemyFireTracer: (ev) => firedShots.push(ev),
+      });
+
+      const lastStandGunner = createTargetHealthState(
+        'last_stand_gunner',
+        'Wounded Militia',
+        { x: 0, y: 0, z: -12.0 },
+        0,
+        'MILITIA_GUNNER',
+      );
+      ai.registerWaveTargets([lastStandGunner], false);
+      ai.notifyGunshotOrExplosion({ x: 0, y: 1.6, z: 0 }, 30.0);
+
+      // Inflict severe gut/chest trauma, hypotension (<72 mmHg), hypoxia (<74%), low consciousness (0.22 > 0.12), AND leg buckle!
+      lastStandGunner.currentHp = 14;
+      lastStandGunner.systolicBpMmHg = 62;
+      lastStandGunner.oxygenSaturationPct = 66;
+      lastStandGunner.consciousness = 0.22;
+      lastStandGunner.painShock = 0.85;
+      lastStandGunner.rupturedOrgans.add('ORGAN_LIVER');
+      lastStandGunner.rupturedOrgans.add('ORGAN_LUNG_LEFT');
+      lastStandGunner.leftLegFunctional = false;
+      ai.notifyEnemyHit(lastStandGunner, {
+        hitZone: 'TORSO_LOWER_ABDOMEN',
+        energyDepositedJ: 680,
+      });
+
+      // Step through brief hit flinch and verify mortally wounded, leg-buckled fighter actively returns fire!
+      for (let i = 0; i < 45; i++) {
+        ai.update(0.05, [lastStandGunner], { x: 0, y: 1.62, z: 0 });
+      }
+      expect(firedShots.length).toBeGreaterThan(0);
+      expect(lastStandGunner.combatantStatusTag).toBe('LAST_STAND');
+
+      // Verify airborne ragdoll temporarily prevents shooting, while grounded living ragdoll resumes shooting!
+      lastStandGunner.isRagdollActive = true;
+      lastStandGunner.posture = 'AIRBORNE_RAGDOLL';
+      expect(ai.computeEnemyAimProfile(lastStandGunner, ai.getAgent('last_stand_gunner')).canReturnFire).toBe(false);
+
+      lastStandGunner.posture = 'RAGDOLL_GROUNDED';
+      lastStandGunner.weaponDropped = true; // Dropped 2-handed rifle on ragdoll ground settle, arms still intact!
+      const countBeforeGrounded = firedShots.length;
+      for (let i = 0; i < 40; i++) {
+        ai.update(0.05, [lastStandGunner], { x: 0, y: 1.62, z: 0 });
+      }
+      expect(firedShots.length).toBeGreaterThan(countBeforeGrounded);
+
+      // Dropping consciousness <= 0.12 or dying finally stops return fire
+      lastStandGunner.consciousness = 0.08;
+      expect(ai.computeEnemyAimProfile(lastStandGunner, ai.getAgent('last_stand_gunner')).canReturnFire).toBe(false);
+
+      ai.destroy();
+    });
+
+    it('exhibits deterministic combatant resolve variety across arena squad and distinct wounded behaviors', () => {
+      // 1. All 4 resolve personalities are represented deterministically across the 7 arena hostiles
+      const profiles = new Set<CombatantResolveProfile>();
+      for (const cfg of TARGET_CONFIGS) {
+        const res = resolveDefaultCombatantProfile(cfg.id, cfg.archetype);
+        profiles.add(res.resolveProfile);
+      }
+      expect(profiles.has('HARDENED_VETERAN')).toBe(true);
+      expect(profiles.has('FANATIC_BERSERKER')).toBe(true);
+      expect(profiles.has('GRITTY_REGULAR')).toBe(true);
+      expect(profiles.has('PANICKED_SCRAPPER')).toBe(true);
+
+      // 2. Compare wounded FANATIC_BERSERKER (charges forward at 1.0 adrenaline), PANICKED_SCRAPPER (high-cadence wide panic bursts), and HARDENED_VETERAN (composed tighter spread)
+      const shotsByTarget: Record<string, EnemyTracerFireEvent[]> = {
+        berserker: [],
+        scrapper: [],
+        veteran: [],
+      };
+      const ai = new TacticalCombatAiSystem({
+        resolveProfileOverrides: {
+          berserker: 'FANATIC_BERSERKER',
+          scrapper: 'PANICKED_SCRAPPER',
+          veteran: 'HARDENED_VETERAN',
+        },
+        onEnemyFireTracer: (ev) => shotsByTarget[ev.targetId]?.push(ev),
+      });
+
+      const berserker = createTargetHealthState('berserker', 'Berserker', { x: -3, y: 0, z: -12 }, 0, 'MILITIA_GUNNER');
+      const scrapper = createTargetHealthState('scrapper', 'Scrapper', { x: 0, y: 0, z: -12 }, 0, 'MILITIA_GUNNER');
+      const veteran = createTargetHealthState('veteran', 'Veteran', { x: 3, y: 0, z: -12 }, 0, 'MILITIA_GUNNER');
+
+      ai.registerWaveTargets([berserker, scrapper, veteran], false);
+      ai.notifyGunshotOrExplosion({ x: 0, y: 1.62, z: 0 }, 35);
+
+      for (const t of [berserker, scrapper, veteran]) {
+        t.currentHp = 48;
+        t.painShock = 0.55;
+        ai.notifyEnemyHit(t, { hitZone: 'TORSO_UPPER_THORAX', energyDepositedJ: 380 });
+      }
+
+      const startBerserkerZ = berserker.worldPosition.z;
+      for (let i = 0; i < 65; i++) {
+        ai.update(0.05, [berserker, scrapper, veteran], { x: 0, y: 1.62, z: 0 });
+      }
+
+      // Fanatic berserker surges to max adrenaline (1.0) and pushes aggressively forward (+Z toward player)
+      expect(ai.getAgent('berserker')!.adrenaline).toBeCloseTo(1.0, 3);
+      expect(berserker.worldPosition.z).toBeGreaterThan(startBerserkerZ + 1.2);
+      expect(veteran.worldPosition.z).toBeLessThan(berserker.worldPosition.z - 0.8);
+
+      // Panicked scrapper fires rapid panic bursts with wider spread than hardened veteran under identical wounds
+      expect(shotsByTarget.scrapper.length).toBeGreaterThanOrEqual(shotsByTarget.veteran.length);
+      const scrapperAim = ai.computeEnemyAimProfile(scrapper, ai.getAgent('scrapper'));
+      const veteranAim = ai.computeEnemyAimProfile(veteran, ai.getAgent('veteran'));
+      expect(scrapperAim.spreadMultiplier).toBeGreaterThan(veteranAim.spreadMultiplier * 1.25);
+
+      ai.destroy();
+    });
+
+    it('disables standard combatants on hand/arm dismemberment while hardened veterans draw an off-hand Beretta M9 and stop only when BOTH hands are lost', () => {
+      const regularShots: EnemyTracerFireEvent[] = [];
+      const veteranShots: EnemyTracerFireEvent[] = [];
+      const sniperLeftHandShots: EnemyTracerFireEvent[] = [];
+
+      const ai = new TacticalCombatAiSystem({
+        resolveProfileOverrides: {
+          std_gunner: 'GRITTY_REGULAR',
+          hardened_vet: 'HARDENED_VETERAN',
+          hardened_sniper: 'HARDENED_VETERAN',
+        },
+        hardenedSidearmOverrides: {
+          std_gunner: false,
+          hardened_vet: true,
+          hardened_sniper: true,
+        },
+        onEnemyFireTracer: (ev) => {
+          if (ev.targetId === 'std_gunner') regularShots.push(ev);
+          if (ev.targetId === 'hardened_vet') veteranShots.push(ev);
+          if (ev.targetId === 'hardened_sniper') sniperLeftHandShots.push(ev);
+        },
+      });
+
+      const stdGunner = createTargetHealthState(
+        'std_gunner',
+        'Standard Gunner',
+        { x: -2.0, y: 0, z: -8.0 },
+        0,
+        'MILITIA_GUNNER',
+        false,
+      );
+      const hardenedVet = createTargetHealthState(
+        'hardened_vet',
+        'Hardened Enforcer',
+        { x: 2.0, y: 0, z: -8.0 },
+        0,
+        'HEAVY_ENFORCER',
+        false,
+      );
+      const hardenedSniper = createTargetHealthState(
+        'hardened_sniper',
+        'Hardened Sniper',
+        { x: 0.0, y: 0, z: -10.0 },
+        0,
+        'SNIPER_OPERATIVE',
+        true,
+      );
+
+      ai.registerWaveTargets([stdGunner, hardenedVet, hardenedSniper], false);
+      ai.notifyGunshotOrExplosion({ x: 0, y: 1.62, z: 0 }, 30);
+
+      // 1. Ballistically sever HAND_LEFT on stdGunner & hardenedVet, and HAND_RIGHT on hardenedSniper!
+      for (const combatant of [stdGunner, hardenedVet]) {
+        const handPt = combatant.ragdollBones.HAND_LEFT.position;
+        const shotOrigin = add(handPt, vec3(0, 0, 0.9));
+        const aimDir = normalize(sub(handPt, shotOrigin));
+        const rep = simulateShot(
+          WEAPON_SILVER_TALON,
+          AMMO_50AE_JHP,
+          shotOrigin,
+          aimDir,
+          combatant,
+          DEFAULT_ENVIRONMENT,
+        );
+        applyShotReportToTarget(combatant, rep);
+        expect(combatant.severedZones.has('HAND_LEFT')).toBe(true);
+        expect(combatant.weaponDropped).toBe(true);
+        expect(combatant.alive).toBe(true);
+        ai.notifyEnemyHit(combatant, { hitZone: 'HAND_LEFT', energyDepositedJ: rep.totalEnergyDepositedJ });
+      }
+
+      {
+        const sniperHandPt = hardenedSniper.ragdollBones.HAND_RIGHT.position;
+        const sniperOrigin = add(sniperHandPt, vec3(0, 0, 0.9));
+        const sniperRep = simulateShot(
+          WEAPON_SILVER_TALON,
+          AMMO_50AE_JHP,
+          sniperOrigin,
+          normalize(sub(sniperHandPt, sniperOrigin)),
+          hardenedSniper,
+          DEFAULT_ENVIRONMENT,
+        );
+        applyShotReportToTarget(hardenedSniper, sniperRep);
+        expect(hardenedSniper.severedZones.has('HAND_RIGHT')).toBe(true);
+        expect(hardenedSniper.weaponDropped).toBe(true);
+        ai.notifyEnemyHit(hardenedSniper, { hitZone: 'HAND_RIGHT', energyDepositedJ: sniperRep.totalEnergyDepositedJ });
+      }
+
+      // Standard combatant is immediately disarmed and NEVER fires again!
+      const stdAgent = ai.getAgent('std_gunner')!;
+      expect(ai.computeEnemyAimProfile(stdGunner, stdAgent).canReturnFire).toBe(false);
+      expect(stdGunner.posture).toBe('DISARMED');
+
+      // Hardened veterans enter ~0.6s sidearmDrawTimerS transition on their remaining intact hand!
+      const vetAgent = ai.getAgent('hardened_vet')!;
+      const sniperAgent = ai.getAgent('hardened_sniper')!;
+      expect(vetAgent.sidearmDrawing).toBe(true);
+      expect(vetAgent.sidearmDrawTimerS).toBeCloseTo(SIDEARM_DRAW_DURATION_S, 2);
+      expect(vetAgent.activeFiringHand).toBe('RIGHT');
+      expect(sniperAgent.activeFiringHand).toBe('LEFT');
+      expect(ai.computeEnemyAimProfile(hardenedVet, vetAgent).canReturnFire).toBe(false);
+
+      // Step 0.3s (still mid-draw < 0.6s) -> zero shots yet
+      for (let i = 0; i < 6; i++) {
+        ai.update(0.05, [stdGunner, hardenedVet, hardenedSniper], { x: 0, y: 1.62, z: 0 });
+      }
+      expect(veteranShots).toHaveLength(0);
+      expect(sniperLeftHandShots).toHaveLength(0);
+      expect(regularShots).toHaveLength(0);
+
+      // Step another 2.2s -> hardened veterans complete draw, activate Beretta M9 in intact OTHER hand, and fire!
+      for (let i = 0; i < 44; i++) {
+        ai.update(0.05, [stdGunner, hardenedVet, hardenedSniper], { x: 0, y: 1.62, z: 0 });
+      }
+      expect(regularShots).toHaveLength(0);
+      expect(stdGunner.posture).toBe('DISARMED');
+
+      expect(vetAgent.sidearmActive).toBe(true);
+      expect(vetAgent.activeFiringHand).toBe('RIGHT');
+      expect(veteranShots.length).toBeGreaterThanOrEqual(2);
+      expect(sniperAgent.sidearmActive).toBe(true);
+      expect(sniperAgent.activeFiringHand).toBe('LEFT');
+      expect(sniperLeftHandShots.length).toBeGreaterThanOrEqual(2);
+
+      const m9Shot = veteranShots[0];
+      expect(m9Shot.usedBackupSidearm).toBe(true);
+      expect(m9Shot.weaponId).toBe(BACKUP_SIDEARM_WEAPON_ID);
+      expect(m9Shot.activeFiringHand).toBe('RIGHT');
+      expect(m9Shot.spreadMultiplier).toBeGreaterThanOrEqual(1.65);
+      expect(m9Shot.spreadMultiplier).toBeLessThanOrEqual(1.98);
+      expect(OFFHAND_SIDEARM_SPREAD_MULTIPLIER).toBeGreaterThanOrEqual(1.65);
+
+      const distToRightHand = distance(
+        m9Shot.muzzleOriginWorld,
+        hardenedVet.ragdollBones.HAND_RIGHT.position,
+      );
+      expect(distToRightHand).toBeLessThan(0.55);
+
+      const sniperShot = sniperLeftHandShots[0];
+      expect(sniperShot.activeFiringHand).toBe('LEFT');
+      expect(
+        distance(sniperShot.muzzleOriginWorld, hardenedSniper.ragdollBones.HAND_LEFT.position),
+      ).toBeLessThan(0.55);
+
+      // Now sever the hardened veteran's REMAINING second hand (HAND_RIGHT) -> drops backup M9 and is finally disabled!
+      const secondHandPt = hardenedVet.ragdollBones.HAND_RIGHT.position;
+      const secondOrigin = add(secondHandPt, vec3(0, 0, 0.9));
+      const secondRep = simulateShot(
+        WEAPON_SILVER_TALON,
+        AMMO_50AE_JHP,
+        secondOrigin,
+        normalize(sub(secondHandPt, secondOrigin)),
+        hardenedVet,
+        DEFAULT_ENVIRONMENT,
+      );
+      applyShotReportToTarget(hardenedVet, secondRep);
+      expect(hardenedVet.severedZones.has('HAND_RIGHT')).toBe(true);
+      ai.notifyEnemyHit(hardenedVet, { hitZone: 'HAND_RIGHT', energyDepositedJ: secondRep.totalEnergyDepositedJ });
+
+      const shotsBeforeBothLost = veteranShots.length;
+      for (let i = 0; i < 30; i++) {
+        ai.update(0.05, [hardenedVet], { x: 0, y: 1.62, z: 0 });
+      }
+      expect(vetAgent.sidearmActive).toBe(false);
+      expect(vetAgent.sidearmDropped).toBe(true);
+      expect(hardenedVet.posture).toBe('DISARMED');
+      expect(ai.computeEnemyAimProfile(hardenedVet, vetAgent).canReturnFire).toBe(false);
+      expect(veteranShots.length).toBe(shotsBeforeBothLost);
+
+      ai.destroy();
+    });
+
+    it('mounts visible 3D weapon_beretta_m9 on t.rootEntity and poses intact off-hand arm toward player in CombatDirector', () => {
+      const app = createHeadlessPlayCanvasApp();
+      const requestedWeapons: string[] = [];
+
+      const mockGlbRegistry = {
+        isLoaded: () => false,
+        instantiateWeapon: (weaponId: string) => {
+          requestedWeapons.push(weaponId);
+          const rootEntity = new pc.Entity(`MockGlb_${weaponId}`);
+          return {
+            weaponId: weaponId as never,
+            rootEntity,
+            muzzleNode: null,
+            ejectionNode: null,
+            slideOrBoltNode: null,
+            magazineNode: null,
+            animComponent: null,
+            playClip: () => false,
+            destroy: () => rootEntity.destroy(),
+          };
+        },
+        instantiateCombatant: () => {
+          throw new Error('not loaded');
+        },
+      } as unknown as GlbModelRegistry;
+
+      const materials = getOrCreateMaterials();
+      const fx = new GoreAndBallisticsFxManager(app, materials);
+      const hud = new HudController();
+      const ai = new TacticalCombatAiSystem();
+      const director = new CombatDirector(app, materials, fx, hud, undefined, {
+        tacticalAi: ai,
+        glbRegistry: mockGlbRegistry,
+      });
+
+      try {
+        director.spawnAllTargets();
+        // Pick target_5: KOSOVO HEAVY ENFORCER (HARDENED_VETERAN with backup sidearm)
+        const enforcerMannequin = director.targets.find(
+          (t) => t.healthState.targetId === 'target_5',
+        )!;
+        const hs = enforcerMannequin.healthState;
+
+        // Attach skeletal Bone_* nodes for intact off-hand arm so we verify 3D bone posing too
+        const boneUpperR = new pc.Entity('Bone_UPPER_ARM_RIGHT');
+        const boneForearmR = new pc.Entity('Bone_FOREARM_RIGHT');
+        const boneHandR = new pc.Entity('Bone_HAND_RIGHT');
+        enforcerMannequin.rootEntity.addChild(boneUpperR);
+        enforcerMannequin.rootEntity.addChild(boneForearmR);
+        enforcerMannequin.rootEntity.addChild(boneHandR);
+
+        // Sever primary left arm (`FOREARM_LEFT`) while keeping right arm/hand intact
+        hs.severedZones.add('FOREARM_LEFT');
+        hs.severedZones.add('HAND_LEFT');
+        hs.leftArmFunctional = false;
+        hs.weaponDropped = true;
+        hs.primaryArmDisarmed = true;
+        ai.notifyEnemyHit(hs, { hitZone: 'FOREARM_LEFT', energyDepositedJ: 900 });
+
+        // Step CombatDirector for 0.8s so sidearm finishes drawing and aims toward viewer at (0, 1.62, 0)
+        for (let i = 0; i < 16; i++) {
+          director.update(0.05, (i + 1) * 0.05, null, hud);
+        }
+
+        expect(requestedWeapons).toContain('weapon_beretta_m9');
+        const m9Holder = enforcerMannequin.rootEntity.findByName('OffhandBackupHandgun_M9') as pc.Entity | null;
+        expect(m9Holder).not.toBeNull();
+        expect(m9Holder!.enabled).toBe(true);
+
+        // Intact right hand should be raised to shoulder/aim height and extended forward (+Z toward viewer at z=0 from z=-14.85)
+        expect(hs.ragdollBones.HAND_RIGHT.position.z).toBeGreaterThan(
+          hs.ragdollBones.UPPER_ARM_RIGHT.position.z + 0.35,
+        );
+        expect(boneHandR.getPosition().z).toBeCloseTo(hs.ragdollBones.HAND_RIGHT.position.z, 2);
+
+        // Sever remaining right hand -> 3D Beretta M9 immediately hides/drops!
+        hs.severedZones.add('HAND_RIGHT');
+        hs.rightArmFunctional = false;
+        ai.notifyEnemyHit(hs, { hitZone: 'HAND_RIGHT', energyDepositedJ: 800 });
+        director.update(0.05, 1.0, null, hud);
+
+        expect(m9Holder!.enabled).toBe(false);
+      } finally {
+        director.destroy();
+        ai.destroy();
+        fx.clearAll();
+        app.destroy();
       }
     });
   });
