@@ -27,7 +27,7 @@ export const WEAPON_CAPACITIES: Record<string, { magCap: number; reserve: number
 
 interface BarrelSmokeWisp {
   entity: pc.Entity;
-  material: pc.StandardMaterial;
+  meshInstance: pc.MeshInstance;
   position: pc.Vec3;
   velocity: pc.Vec3;
   elapsedS: number;
@@ -129,6 +129,9 @@ function getOrCreateViewmodelFxAssets(device: pc.GraphicsDevice): ViewmodelMuzzl
   ]);
   quadMesh.setIndices([0, 1, 2, 0, 2, 3]);
   quadMesh.update(pc.PRIMITIVE_TRIANGLES);
+  // Retain permanent refCount >= 1 so Entity.destroy() on viewmodel rebuild or smoke-wisp expiry
+  // never frees the shared GPU vertex/index buffers in muzzleFxAssetCache!
+  quadMesh.incRefCount();
 
   // 1. Star-petal incandescent muzzle flash texture (64x64)
   const sSize = 64;
@@ -353,12 +356,10 @@ export class ArsenalManager {
   private readonly onWeaponSwitched?: (weapon: WeaponSpec) => void;
   private glbRegistry: GlbModelRegistry | null = null;
 
-  private muzzleLightEntity: pc.Entity | null = null;
   private muzzleFlashTimerS = 0;
   private muzzleFlashDurationS = 0.056;
-  private muzzleFlashPeakIntensity = 3.8;
   private muzzleFlashBaseScale = 1.0;
-  private muzzleFlashTimeout: ReturnType<typeof globalThis.setTimeout> | null = null;
+  private fireAnimReturnTimerS = 0;
 
   private readonly smokeWisps: BarrelSmokeWisp[] = [];
   private readonly activeViewmodelMaterials: pc.StandardMaterial[] = [];
@@ -378,33 +379,9 @@ export class ArsenalManager {
     this.onWeaponSwitched = onWeaponSwitched;
     this.glbRegistry = glbRegistry ?? null;
 
-    // Physically balanced local first-person key + cool-rim fill light rig:
-    // Tight 1.25..1.35m range prevents viewmodels from ever turning flat/black in dark corners
-    // without spilling onto or washing out world geometry.
+    // Lightweight viewmodel rig node (avoids adding always-on World-layer omni lights!)
     this.viewmodelLightRig = new pc.Entity('ViewmodelLightRig');
     cameraEntity.addChild(this.viewmodelLightRig);
-
-    const keyFillLight = new pc.Entity('ViewmodelKeyFillLight');
-    keyFillLight.addComponent('light', {
-      type: 'omni',
-      color: new pc.Color(1.0, 0.95, 0.88),
-      intensity: 0.78,
-      range: 1.35,
-      castShadows: false,
-    });
-    keyFillLight.setLocalPosition(0.36, 0.24, -0.26);
-    this.viewmodelLightRig.addChild(keyFillLight);
-
-    const rimFillLight = new pc.Entity('ViewmodelRimFillLight');
-    rimFillLight.addComponent('light', {
-      type: 'omni',
-      color: new pc.Color(0.66, 0.84, 1.0),
-      intensity: 0.54,
-      range: 1.25,
-      castShadows: false,
-    });
-    rimFillLight.setLocalPosition(-0.32, 0.18, -0.62);
-    this.viewmodelLightRig.addChild(rimFillLight);
 
     this.weaponViewmodelEntity = new pc.Entity('WeaponViewmodel');
     this.weaponViewmodelEntity.setPosition(0.24, -0.22, -0.48);
@@ -489,7 +466,7 @@ export class ArsenalManager {
     root: pc.Entity,
     device: pc.GraphicsDevice | null
   ): void {
-    const maxAniso = device ? Math.min(device.maxAnisotropy || 4, 8) : 1;
+    const maxAniso = device ? Math.min(device.maxAnisotropy || 4, 4) : 1;
     const fxAssets = device ? getOrCreateViewmodelFxAssets(device) : null;
     const clonedBySource = new Map<pc.StandardMaterial, pc.StandardMaterial>();
 
@@ -532,20 +509,9 @@ export class ArsenalManager {
       }
     };
 
-    const applyClearCoat = (
-      targetMat: pc.StandardMaterial,
-      coatAmount: number,
-      coatSmoothness: number
-    ): void => {
-      targetMat.clearCoat = coatAmount;
-      targetMat.clearCoatGloss = targetMat.clearCoatGlossInvert
-        ? 1.0 - coatSmoothness
-        : coatSmoothness;
-    };
-
     const renderComponents = root.findComponents('render') as pc.RenderComponent[];
     for (const rc of renderComponents) {
-      for (const mi of rc.meshInstances) {
+      for (const mi of renderComponents.length > 0 ? rc.meshInstances : []) {
         const srcMat = mi.material;
         if (!(srcMat instanceof pc.StandardMaterial)) continue;
         // Skip additive FX materials
@@ -561,7 +527,7 @@ export class ArsenalManager {
           mat = srcMat.clone();
           const hint = `${srcMat.name || ''} ${mi.node?.name || ''} ${this.currentWeapon.id}`.toLowerCase();
 
-          // Preserve all custom GLB textures & maximize crisp anisotropic filtering
+          // Preserve all custom GLB textures & crisp anisotropic filtering
           tuneTexture(mat.diffuseMap);
           tuneTexture(mat.normalMap);
           tuneTexture(mat.metalnessMap);
@@ -572,7 +538,6 @@ export class ArsenalManager {
 
           mat.fresnelModel = pc.FRESNEL_SCHLICK;
           mat.useMetalness = true;
-          mat.enableGGXSpecular = true;
           mat.useSkybox = true;
 
           const isOpticLens =
@@ -608,38 +573,41 @@ export class ArsenalManager {
             } else {
               mat.gloss = mat.glossInvert ? 0.05 : 0.95;
             }
-            applyClearCoat(mat, 0.92, 0.98);
           } else if (isChromeOrSilver) {
             if (!mat.metalnessMap) {
               mat.metalness = Math.max(mat.metalness || 0, 0.92);
             }
             applyMinSmoothness(mat, 0.84);
-            applyClearCoat(mat, 0.28, 0.9);
           } else if (isBrass) {
             if (!mat.metalnessMap) {
               mat.metalness = Math.max(mat.metalness || 0, 0.9);
             }
             applyMinSmoothness(mat, 0.85);
-            applyClearCoat(mat, 0.25, 0.88);
           } else if (isPolymerOrGrip) {
             if (!mat.metalnessMap) {
               mat.metalness = Math.min(mat.metalness || 0.08, 0.12);
             }
             applySmoothnessRange(mat, 0.38, 0.54, 0.46);
-            applyClearCoat(mat, 0.12, 0.58);
           } else if (isWood) {
             if (!mat.metalnessMap) {
               mat.metalness = 0.04;
             }
             applyMinSmoothness(mat, 0.62);
-            applyClearCoat(mat, 0.35, 0.78);
           } else {
             // Parkerized / anodized ordnance steel receiver, barrel, bolt & rails
             if (!mat.metalnessMap) {
               mat.metalness = Math.max(mat.metalness || 0, 0.8);
             }
             applyMinSmoothness(mat, 0.7);
-            applyClearCoat(mat, 0.22, 0.78);
+          }
+
+          // Subtle viewmodel self-fill so guns stay readable in dark corners without extra omni lights
+          if (!mat.emissiveMap && mat.emissive.r === 0 && mat.emissive.g === 0 && mat.emissive.b === 0) {
+            mat.emissive.set(
+              Math.max(0.032, mat.diffuse.r * 0.08),
+              Math.max(0.034, mat.diffuse.g * 0.08),
+              Math.max(0.038, mat.diffuse.b * 0.085)
+            );
           }
 
           if (mat.normalMap) {
@@ -744,23 +712,10 @@ export class ArsenalManager {
       flashRoot.addChild(fin);
     }
 
-    // 4. Transient orange-amber muzzle flash omni light (~56ms decay)
-    const flashLight = new pc.Entity('MuzzleFlashOmniLight');
-    flashLight.addComponent('light', {
-      type: 'omni',
-      color: new pc.Color(1.0, 0.72, 0.28),
-      intensity: 0,
-      range: 8.5,
-      castShadows: false,
-    });
-    flashLight.setLocalPosition(0, 0.02, -0.08);
-    flashLight.enabled = false;
-    flashRoot.addChild(flashLight);
-    this.muzzleLightEntity = flashLight;
-
+    // Keep flash entity permanently enabled at sub-pixel scale when idle so shaders pre-compile on Frame 0!
     flashRoot.setLocalPosition(0, 0, -0.04);
-    flashRoot.setLocalScale(caliberScale, caliberScale, caliberScale);
-    flashRoot.enabled = false;
+    flashRoot.setLocalScale(0.00001, 0.00001, 0.00001);
+    flashRoot.enabled = true;
     return flashRoot;
   }
 
@@ -778,7 +733,6 @@ export class ArsenalManager {
     if (this.smokeWisps.length >= 20) {
       const oldest = this.smokeWisps.shift();
       if (oldest) {
-        oldest.material.destroy();
         oldest.entity.destroy();
       }
     }
@@ -789,13 +743,10 @@ export class ArsenalManager {
 
     const wispCount = this.currentWeapon.role === 'SHOTGUN' ? 2 : 1;
     for (let i = 0; i < wispCount; i++) {
-      const wispMat = fxAssets.barrelSmokeTemplateMat.clone();
       const baseOpacity = this.currentWeapon.role === 'SHOTGUN' ? 0.26 : 0.19;
-      wispMat.opacity = baseOpacity;
-      wispMat.update();
-
       const wispEnt = new pc.Entity('BarrelSmokeWisp');
-      const mi = new pc.MeshInstance(fxAssets.quadMesh, wispMat);
+      const mi = new pc.MeshInstance(fxAssets.quadMesh, fxAssets.barrelSmokeTemplateMat);
+      mi.setParameter('material_opacity', 0.0);
       wispEnt.addComponent('render', {
         meshInstances: [mi],
         castShadows: false,
@@ -816,7 +767,7 @@ export class ArsenalManager {
 
       this.smokeWisps.push({
         entity: wispEnt,
-        material: wispMat,
+        meshInstance: mi,
         position: startPos,
         velocity: new pc.Vec3(
           camFwd.x * (0.55 + Math.random() * 0.35) + (Math.random() - 0.5) * 0.18,
@@ -864,11 +815,7 @@ export class ArsenalManager {
     this.currentAmmo = this.currentWeapon.availableAmmo[ammoIdx] || this.currentWeapon.defaultAmmo;
     this.reloadTimerS = 0;
     this.muzzleFlashTimerS = 0;
-
-    if (this.muzzleFlashTimeout !== null) {
-      globalThis.clearTimeout(this.muzzleFlashTimeout);
-      this.muzzleFlashTimeout = null;
-    }
+    this.fireAnimReturnTimerS = 0;
 
     this.muzzleFlashEntity = this.rebuildActiveViewmodel();
 
@@ -909,8 +856,9 @@ export class ArsenalManager {
     this.syncWeaponHud();
 
     this.activeWeaponGlb?.playFire(1.0);
+    this.fireAnimReturnTimerS = Math.max(0.24, 60 / this.currentWeapon.fireRateRpm);
 
-    // Trigger multi-layered 3D muzzle flash + 56ms dynamic orange-amber light pulse + barrel smoke wisp
+    // Trigger multi-layered 3D muzzle flash + barrel smoke wisp (world light pulse handled by MayhemDirector)
     this.shotVisualCounter++;
     const rollDeg = (this.shotVisualCounter * 67 + Math.random() * 28) % 360;
     const scaleJitter = this.muzzleFlashBaseScale * (0.9 + Math.random() * 0.24);
@@ -923,29 +871,8 @@ export class ArsenalManager {
         ? 0.062
         : 0.052;
     this.muzzleFlashTimerS = this.muzzleFlashDurationS;
-    this.muzzleFlashPeakIntensity =
-      this.currentWeapon.role === 'SHOTGUN' ? 4.4 : 3.6;
-
-    if (this.muzzleLightEntity && this.muzzleLightEntity.light) {
-      this.muzzleLightEntity.light.intensity = this.muzzleFlashPeakIntensity;
-      this.muzzleLightEntity.enabled = true;
-    }
 
     this.spawnBarrelSmokeWisp();
-
-    if (this.muzzleFlashTimeout !== null) {
-      globalThis.clearTimeout(this.muzzleFlashTimeout);
-    }
-    const timeoutMs = Math.round(this.muzzleFlashDurationS * 1000);
-    this.muzzleFlashTimeout = globalThis.setTimeout(() => {
-      if (this.muzzleFlashEntity && this.muzzleFlashTimerS <= 0.005) {
-        this.muzzleFlashEntity.enabled = false;
-      }
-      if (this.muzzleLightEntity && this.muzzleFlashTimerS <= 0.005) {
-        this.muzzleLightEntity.enabled = false;
-      }
-      this.muzzleFlashTimeout = null;
-    }, timeoutMs);
 
     if (inv.mag === 0) {
       globalThis.setTimeout(() => this.startReload(false), 220);
@@ -995,35 +922,35 @@ export class ArsenalManager {
       this.fireCooldownTimerS -= dt;
     }
 
-    // Smooth quadratic decay for 52..62ms muzzle flash & dynamic orange-amber point light
-    if (this.muzzleFlashTimerS > 0) {
-      this.muzzleFlashTimerS = Math.max(0, this.muzzleFlashTimerS - dt);
-      const rem = this.muzzleFlashTimerS / Math.max(0.01, this.muzzleFlashDurationS);
-      if (this.muzzleLightEntity && this.muzzleLightEntity.light) {
-        this.muzzleLightEntity.light.intensity = this.muzzleFlashPeakIntensity * rem * rem;
-      }
-      const shrink = this.muzzleFlashBaseScale * (0.72 + 0.36 * rem);
-      this.muzzleFlashEntity.setLocalScale(shrink, shrink, shrink * (0.85 + 0.3 * rem));
-
-      if (this.muzzleFlashTimerS <= 0) {
-        this.muzzleFlashEntity.enabled = false;
-        if (this.muzzleLightEntity) {
-          if (this.muzzleLightEntity.light) {
-            this.muzzleLightEntity.light.intensity = 0;
-          }
-          this.muzzleLightEntity.enabled = false;
+    if (this.fireAnimReturnTimerS > 0) {
+      this.fireAnimReturnTimerS -= dt;
+      if (this.fireAnimReturnTimerS <= 0) {
+        this.fireAnimReturnTimerS = 0;
+        if (this.reloadTimerS <= 0) {
+          this.activeWeaponGlb?.playIdle(0.06);
         }
       }
     }
 
-    // Animate drifting barrel gunsmoke / heat-haze wisps
+    // Smooth decay for 52..62ms muzzle flash (collapses to sub-pixel scale when finished so entity stays enabled)
+    if (this.muzzleFlashTimerS > 0) {
+      this.muzzleFlashTimerS = Math.max(0, this.muzzleFlashTimerS - dt);
+      const rem = this.muzzleFlashTimerS / Math.max(0.01, this.muzzleFlashDurationS);
+      if (this.muzzleFlashTimerS <= 0) {
+        this.muzzleFlashEntity.setLocalScale(0.00001, 0.00001, 0.00001);
+      } else {
+        const shrink = this.muzzleFlashBaseScale * (0.72 + 0.36 * rem);
+        this.muzzleFlashEntity.setLocalScale(shrink, shrink, shrink * (0.85 + 0.3 * rem));
+      }
+    }
+
+    // Animate drifting barrel gunsmoke / heat-haze wisps via per-instance uniform (zero material.update()!)
     if (this.smokeWisps.length > 0) {
       const camPos = this.cameraEntity.getPosition();
       for (let i = this.smokeWisps.length - 1; i >= 0; i--) {
         const w = this.smokeWisps[i];
         w.elapsedS += dt;
         if (w.elapsedS >= w.durationS) {
-          w.material.destroy();
           w.entity.destroy();
           this.smokeWisps.splice(i, 1);
           continue;
@@ -1044,8 +971,10 @@ export class ArsenalManager {
         const curScale = w.startScale + (w.endScale - w.startScale) * (1 - (1 - t) * (1 - t));
         w.entity.setLocalScale(curScale, curScale, 1);
         const fadeIn = Math.min(1, t * 6.0);
-        w.material.opacity = w.baseOpacity * fadeIn * (1 - t) * (1 - t);
-        w.material.update();
+        w.meshInstance.setParameter(
+          'material_opacity',
+          w.baseOpacity * fadeIn * (1 - t) * (1 - t)
+        );
       }
     }
 

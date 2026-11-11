@@ -397,6 +397,7 @@ export class DenseInstancePacker {
     this.denseRestitution[d] = Math.max(0, Math.min(0.95, floorBounceRestitution));
     this.denseAgeS[d] = 0;
     this.denseTtlS[d] = Math.max(0.05, ttlSeconds);
+    this.denseSleepingSynced[d] = 0;
 
     writeColumnMajorTrsMatrix4(
       this.matrixData,
@@ -486,6 +487,19 @@ export class DenseInstancePacker {
           continue;
         }
 
+        let shrink = 1;
+        if (ttl > 0) {
+          const fadeWindow = Math.min(0.35, ttl * 0.2);
+          const remaining = ttl - nextAge;
+          if (fadeWindow > 1e-4 && remaining < fadeWindow) {
+            shrink = Math.max(0, remaining / fadeWindow);
+          }
+        }
+
+        if (this.denseSleepingSynced[d] === 1 && shrink >= 1) {
+          continue;
+        }
+
         let vx = this.denseVelX[d];
         let vy = this.denseVelY[d] + this.denseGravityY[d] * stepDt;
         let vz = this.denseVelZ[d];
@@ -509,6 +523,7 @@ export class DenseInstancePacker {
             wy *= 0.65;
             wz *= 0.65;
           } else {
+            vy = 0;
             const groundDrag = Math.max(0, 1 - 6.0 * stepDt);
             vx *= groundDrag;
             vz *= groundDrag;
@@ -517,18 +532,6 @@ export class DenseInstancePacker {
             wz *= groundDrag;
           }
         }
-
-        this.densePosX[d] = px;
-        this.densePosY[d] = py;
-        this.densePosZ[d] = pz;
-
-        this.denseVelX[d] = vx;
-        this.denseVelY[d] = vy;
-        this.denseVelZ[d] = vz;
-
-        this.denseAngVelX[d] = wx;
-        this.denseAngVelY[d] = wy;
-        this.denseAngVelZ[d] = wz;
 
         let qx = this.denseQuatX[d];
         let qy = this.denseQuatY[d];
@@ -560,14 +563,33 @@ export class DenseInstancePacker {
           this.denseQuatW[d] = qw;
         }
 
-        let shrink = 1;
-        if (ttl > 0) {
-          const fadeWindow = Math.min(0.35, ttl * 0.2);
-          const remaining = ttl - nextAge;
-          if (fadeWindow > 1e-4 && remaining < fadeWindow) {
-            shrink = Math.max(0, remaining / fadeWindow);
-          }
+        if (
+          py <= KINEMATIC_FLOOR_Y + 1e-5 &&
+          vy === 0 &&
+          vx * vx + vz * vz < 1e-4 &&
+          spinSq < 1e-4
+        ) {
+          vx = 0;
+          vz = 0;
+          wx = 0;
+          wy = 0;
+          wz = 0;
+          this.denseSleepingSynced[d] = 1;
+        } else {
+          this.denseSleepingSynced[d] = 0;
         }
+
+        this.densePosX[d] = px;
+        this.densePosY[d] = py;
+        this.densePosZ[d] = pz;
+
+        this.denseVelX[d] = vx;
+        this.denseVelY[d] = vy;
+        this.denseVelZ[d] = vz;
+
+        this.denseAngVelX[d] = wx;
+        this.denseAngVelY[d] = wy;
+        this.denseAngVelZ[d] = wz;
 
         writeColumnMajorTrsMatrix4(
           this.matrixData,

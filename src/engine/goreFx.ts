@@ -79,7 +79,7 @@ export interface ArterialFountainStream {
 
 interface BloodMistPuff {
   entity: pc.Entity;
-  material: pc.StandardMaterial;
+  meshInstance: pc.MeshInstance | null;
   position: pc.Vec3;
   velocity: pc.Vec3;
   life: number;
@@ -156,6 +156,9 @@ function buildFloorQuadMesh(device: pc.GraphicsDevice): pc.Mesh {
   ]);
   mesh.setIndices([0, 1, 2, 0, 2, 3]);
   mesh.update(pc.PRIMITIVE_TRIANGLES);
+  // Retain permanent refCount >= 1 so clearing blood pool entities between waves never frees
+  // the shared GPU vertex/index buffers in goreSuiteCache!
+  mesh.incRefCount();
   return mesh;
 }
 
@@ -583,6 +586,7 @@ export class GoreAndBallisticsFxManager {
   private glbRegistry: GlbModelRegistry | null = null;
   private readonly goreSuite: WetGoreMaterialSuite;
   private poolDepthBiasCounter = 0;
+  private cachedPlayerCamera: pc.Entity | null = null;
 
   constructor(app: pc.AppBase, materials: EngineMaterialPalette, glbRegistry?: GlbModelRegistry | null) {
     this.app = app;
@@ -855,17 +859,15 @@ export class GoreAndBallisticsFxManager {
     driftSpeed: number,
     energyJ: number
   ): void {
-    const puffMat = this.goreSuite.wetBloodMistBaseMat.clone();
-    puffMat.opacity = 0.52;
-    puffMat.update();
-
     const puff = new pc.Entity('ArterialMistPuff');
     puff.addComponent('render', {
       type: 'plane',
-      material: puffMat,
+      material: this.goreSuite.wetBloodMistBaseMat,
       castShadows: false,
       receiveShadows: false,
     });
+    const puffMi = puff.render?.meshInstances?.[0] ?? null;
+    puffMi?.setParameter('material_opacity', 0.52);
 
     const energyScale = Math.min(1.65, 0.75 + energyJ / 650);
     const startScale = (0.16 + Math.random() * 0.08) * energyScale;
@@ -877,7 +879,7 @@ export class GoreAndBallisticsFxManager {
 
     this.mistPuffs.push({
       entity: puff,
-      material: puffMat,
+      meshInstance: puffMi,
       position: new pc.Vec3(worldPos.x, worldPos.y, worldPos.z),
       velocity: new pc.Vec3(
         dir.x * driftSpeed + (Math.random() - 0.5) * 0.85,
@@ -1231,13 +1233,21 @@ export class GoreAndBallisticsFxManager {
     }
 
     // 4. Update Backlit Arterial Blood Mist Puffs
-    const activeCam = this.app.root.findByName('PlayerCamera') as pc.Entity | null;
-    const camPos = activeCam ? activeCam.getPosition() : null;
+    if (
+      this.mistPuffs.length > 0 &&
+      (!this.cachedPlayerCamera ||
+        (this.cachedPlayerCamera as unknown as { _destroyed?: boolean })._destroyed)
+    ) {
+      this.cachedPlayerCamera = this.app.root.findByName('PlayerCamera') as pc.Entity | null;
+    }
+    const camPos =
+      this.mistPuffs.length > 0 && this.cachedPlayerCamera
+        ? this.cachedPlayerCamera.getPosition()
+        : null;
     for (let i = this.mistPuffs.length - 1; i >= 0; i--) {
       const puff = this.mistPuffs[i];
       puff.life += dt;
       if (puff.life >= puff.maxLife) {
-        puff.material.destroy();
         puff.entity.destroy();
         this.mistPuffs.splice(i, 1);
         continue;
@@ -1259,8 +1269,7 @@ export class GoreAndBallisticsFxManager {
 
       const curScale = puff.startScale + (puff.endScale - puff.startScale) * (1 - (1 - t) * (1 - t));
       puff.entity.setLocalScale(curScale, 1, curScale);
-      puff.material.opacity = 0.54 * (1 - t) * (1 - t);
-      puff.material.update();
+      puff.meshInstance?.setParameter('material_opacity', 0.54 * (1 - t) * (1 - t));
     }
 
     // 5. Update Gib Chunks & Detached Physics Props (Helmets / Weapons)
@@ -1357,7 +1366,6 @@ export class GoreAndBallisticsFxManager {
     for (const p of this.activeProjectiles) p.entity.destroy();
     for (const d of this.bloodDrops) d.entity.destroy();
     for (const m of this.mistPuffs) {
-      m.material.destroy();
       m.entity.destroy();
     }
     for (const g of this.gibChunks) g.entity.destroy();

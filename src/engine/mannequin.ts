@@ -141,6 +141,12 @@ interface GlbZoneMaterialPair {
   laceratedMat: pc.Material;
 }
 
+const sharedGlbZoneMatCache = new WeakMap<
+  pc.Material,
+  Map<string, { intactMat: pc.Material; laceratedMat: pc.Material }>
+>();
+const sharedSwatGearMatCache = new WeakMap<pc.Material, pc.StandardMaterial>();
+
 /**
  * Class GhoulMannequinEntity renders a sculpted 22-zone tactical combatant driven by
  * baked Blender 5.2 animations (right-handed ~87.5% & southpaw ~12.5%) and a 22-zone PBD
@@ -174,6 +180,12 @@ export class GhoulMannequinEntity {
   private readonly glbGearOriginalMaterials = new Map<pc.MeshInstance, pc.Material>();
   private readonly clonedGlbMaterials: pc.StandardMaterial[] = [];
   private activeGlbClipKey: string | null = null;
+  private readonly lastSyncedZoneGoreModes: Partial<Record<GhoulZoneId, string>> = {};
+  private lastMatSyncXRay: boolean | null = null;
+  private lastMatSyncHasGlb: boolean | null = null;
+  private lastMatSyncGlbExpected: boolean | null = null;
+  private lastMatSyncFractureCount = -1;
+  private lastMatSyncWoundCount = -1;
 
   private readonly tmpMat4 = new pc.Mat4();
   private readonly tmpQuat = new pc.Quat();
@@ -220,7 +232,7 @@ export class GhoulMannequinEntity {
 
     try {
       const wInst = glbRegistry.instantiateWeapon(weaponAssetId, {
-        castShadows: true,
+        castShadows: false,
         receiveShadows: true,
       });
       if (wInst.animComponent) {
@@ -239,8 +251,8 @@ export class GhoulMannequinEntity {
   }
 
   /**
-   * Clones a Blender GLB `StandardMaterial` with optional archetype diffuse multiplier & bloody laceration variant,
-   * reusing the packed Blender PBR textures without duplicating GPU texture memory.
+   * Resolves a shared Blender GLB `StandardMaterial` pair (intact + bloody laceration variant)
+   * cached per `(baseSource, archetype, garmentRole)` so all combatants share shader programs & uniforms.
    */
   private createArchetypeAndBloodyGlbMaterials(
     srcMat: pc.Material,
@@ -268,9 +280,46 @@ export class GhoulMannequinEntity {
       return { intactMat: baseSource, laceratedMat: this.materials.goreStumpMat };
     }
 
+    const isTorsoShirt = zone === 'TORSO_UPPER_THORAX' || zone === 'TORSO_LOWER_ABDOMEN';
+    const isSleeve =
+      zone === 'SHOULDER_LEFT' ||
+      zone === 'SHOULDER_RIGHT' ||
+      zone === 'UPPER_ARM_LEFT' ||
+      zone === 'UPPER_ARM_RIGHT';
+    const isForearmSkin = zone === 'FOREARM_LEFT' || zone === 'FOREARM_RIGHT';
+    const isTrousers =
+      zone === 'PELVIS_GROIN' ||
+      zone === 'THIGH_LEFT' ||
+      zone === 'THIGH_RIGHT' ||
+      zone === 'KNEE_LEFT' ||
+      zone === 'KNEE_RIGHT' ||
+      zone === 'SHIN_LEFT' ||
+      zone === 'SHIN_RIGHT';
+
+    const garmentRole =
+      primIndex !== 0
+        ? 'SECONDARY'
+        : isTorsoShirt
+          ? 'TORSO'
+          : isSleeve
+            ? 'SLEEVE'
+            : isForearmSkin
+              ? 'FOREARM'
+              : isTrousers
+                ? 'TROUSERS'
+                : 'OTHER';
+    const cacheKey = `${arch}_${garmentRole}`;
+    let byArchRole = sharedGlbZoneMatCache.get(baseSource);
+    if (!byArchRole) {
+      byArchRole = new Map();
+      sharedGlbZoneMatCache.set(baseSource, byArchRole);
+    }
+    const cachedPair = byArchRole.get(cacheKey);
+    if (cachedPair) {
+      return cachedPair;
+    }
+
     const intactClone = baseSource.clone();
-    this.clonedGlbMaterials.push(intactClone);
-    intactClone.enableGGXSpecular = true;
     intactClone.fresnelModel = pc.FRESNEL_SCHLICK;
     if (intactClone.normalMap) {
       intactClone.bumpiness = Math.max(intactClone.bumpiness || 1.0, 1.15);
@@ -278,22 +327,6 @@ export class GhoulMannequinEntity {
 
     // Apply subtle archetype uniform palette variation on primary garment primitives while preserving baked PBR maps
     if (primIndex === 0) {
-      const isTorsoShirt = zone === 'TORSO_UPPER_THORAX' || zone === 'TORSO_LOWER_ABDOMEN';
-      const isSleeve =
-        zone === 'SHOULDER_LEFT' ||
-        zone === 'SHOULDER_RIGHT' ||
-        zone === 'UPPER_ARM_LEFT' ||
-        zone === 'UPPER_ARM_RIGHT';
-      const isForearmSkin = zone === 'FOREARM_LEFT' || zone === 'FOREARM_RIGHT';
-      const isTrousers =
-        zone === 'PELVIS_GROIN' ||
-        zone === 'THIGH_LEFT' ||
-        zone === 'THIGH_RIGHT' ||
-        zone === 'KNEE_LEFT' ||
-        zone === 'KNEE_RIGHT' ||
-        zone === 'SHIN_LEFT' ||
-        zone === 'SHIN_RIGHT';
-
       if (arch === 'SKINHEAD_PUNK') {
         if (isTorsoShirt) {
           intactClone.diffuse.set(0.56, 0.56, 0.62);
@@ -320,7 +353,6 @@ export class GhoulMannequinEntity {
     intactClone.update();
 
     const bloodyClone = intactClone.clone();
-    this.clonedGlbMaterials.push(bloodyClone);
     bloodyClone.diffuse.set(0.42, 0.04, 0.05);
     bloodyClone.emissive.set(0.04, 0.004, 0.005);
     // glTF StandardMaterials set glossInvert = true (where gloss stores roughness: 0 = mirror, 1 = matte)
@@ -330,11 +362,12 @@ export class GhoulMannequinEntity {
     } else {
       bloodyClone.specular.set(0.24, 0.08, 0.08);
     }
-    bloodyClone.enableGGXSpecular = true;
     bloodyClone.fresnelModel = pc.FRESNEL_SCHLICK;
     bloodyClone.update();
 
-    return { intactMat: intactClone, laceratedMat: bloodyClone };
+    const pair = { intactMat: intactClone, laceratedMat: bloodyClone };
+    byArchRole.set(cacheKey, pair);
+    return pair;
   }
 
   /**
@@ -413,10 +446,13 @@ export class GhoulMannequinEntity {
             (gearEnt === inst.pasgtHelmet || gearEnt === inst.esapiPlateCarrier) &&
             gearMat instanceof pc.StandardMaterial
           ) {
-            const swatGear = gearMat.clone();
-            this.clonedGlbMaterials.push(swatGear);
-            swatGear.diffuse.set(0.55, 0.62, 0.72);
-            swatGear.update();
+            let swatGear = sharedSwatGearMatCache.get(gearMat);
+            if (!swatGear) {
+              swatGear = gearMat.clone();
+              swatGear.diffuse.set(0.55, 0.62, 0.72);
+              swatGear.update();
+              sharedSwatGearMatCache.set(gearMat, swatGear);
+            }
             mi.material = swatGear;
             gearMat = swatGear;
           }
@@ -1006,6 +1042,36 @@ export class GhoulMannequinEntity {
    */
   public setXRayMode(enabled: boolean): void {
     this.isXRayActive = enabled;
+    this.lastMatSyncXRay = null;
+    this.refreshZoneMaterialsAndAnatomy();
+  }
+
+  private refreshZoneMaterialsAndAnatomyIfDirty(): void {
+    const hasGlb = this.combatantGlb !== null;
+    const fracCount = this.healthState.fracturedBones.size;
+    let dirty =
+      this.lastMatSyncXRay !== this.isXRayActive ||
+      this.lastMatSyncHasGlb !== hasGlb ||
+      this.lastMatSyncGlbExpected !== this.glbExpected ||
+      this.lastMatSyncFractureCount !== fracCount ||
+      this.lastMatSyncWoundCount !== this.syncedSurfaceWoundCount;
+
+    for (let i = 0; i < ALL_GHOUL_ZONES.length; i++) {
+      const z = ALL_GHOUL_ZONES[i];
+      const gm = this.healthState.zoneGoreMode[z];
+      if (this.lastSyncedZoneGoreModes[z] !== gm) {
+        this.lastSyncedZoneGoreModes[z] = gm;
+        dirty = true;
+      }
+    }
+
+    if (!dirty) return;
+
+    this.lastMatSyncXRay = this.isXRayActive;
+    this.lastMatSyncHasGlb = hasGlb;
+    this.lastMatSyncGlbExpected = this.glbExpected;
+    this.lastMatSyncFractureCount = fracCount;
+    this.lastMatSyncWoundCount = this.syncedSurfaceWoundCount;
     this.refreshZoneMaterialsAndAnatomy();
   }
 
@@ -1615,7 +1681,7 @@ export class GhoulMannequinEntity {
 
     // 6. Sync 3D entry/exit bullet wound decals & zone material states
     this.syncSurfaceWoundDecals();
-    this.refreshZoneMaterialsAndAnatomy();
+    this.refreshZoneMaterialsAndAnatomyIfDirty();
 
     // 7. Optional X-Ray Organ Pulsation when [X] Inspector is enabled
     if (this.isXRayActive && this.healthState.alive) {

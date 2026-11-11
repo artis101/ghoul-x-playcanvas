@@ -279,16 +279,16 @@ export class ArenaBuilder {
     // 1. Ensure arena floor, jersey barriers, sandbags & gore shaders have procedural normal + gloss maps
     upgradePaletteWithProceduralPbrMaps(this.app.graphicsDevice, this.materials);
 
-    // 2. Cinematic 3-Point Tactical Lighting (Key Sun with soft PCF5 shadows + Sky Fill + Crisp Rim)
+    // 2. Cinematic 3-Point Tactical Lighting (Key Sun with soft PCF3 shadows + Sky Fill + Crisp Rim)
     const sunLight = new pc.Entity('SunLight');
     sunLight.addComponent('light', {
       type: 'directional',
       color: new pc.Color(1.0, 0.95, 0.86),
       intensity: 1.85,
       castShadows: true,
-      shadowType: pc.SHADOW_PCF5_32F,
-      shadowResolution: 2048,
-      shadowDistance: 80,
+      shadowType: pc.SHADOW_PCF3_16F,
+      shadowResolution: 1536,
+      shadowDistance: 55,
       shadowBias: 0.1,
       normalOffsetBias: 0.05,
       shadowIntensity: 0.88,

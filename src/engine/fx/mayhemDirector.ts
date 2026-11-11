@@ -1414,8 +1414,11 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
       this.app.root.addChild(this.rootContainer);
 
       this.intactMesh = buildLoftedDrumMesh(dev, INTACT_DRUM_RINGS, 20, 0);
+      this.intactMesh.incRefCount();
       this.crumpledMesh = buildLoftedDrumMesh(dev, CRUMPLED_BASE_RINGS, 16, 73);
+      this.crumpledMesh.incRefCount();
       this.scorchQuadMesh = buildUnitQuadZMesh(dev);
+      this.scorchQuadMesh.incRefCount();
 
       this.intactMat = createHazardBarrelMaterial(dev);
       this.charredMat = createCharredBarrelMaterial();
@@ -1673,6 +1676,9 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
     if (this.rootContainer) {
       this.rootContainer.destroy();
     }
+    this.intactMesh?.destroy();
+    this.crumpledMesh?.destroy();
+    this.scorchQuadMesh?.destroy();
   }
 
   private igniteBarrel(barrel: HazardBarrelInstance, fuseDurationS: number): void {
@@ -1911,7 +1917,9 @@ interface PooledDynamicOmniLight {
 
 interface TransientFireballLobe {
   entity: pc.Entity;
-  material: pc.StandardMaterial;
+  meshInstance: pc.MeshInstance | null;
+  diffuseUniform: Float32Array;
+  emissiveUniform: Float32Array;
   position: pc.Vec3;
   velocity: pc.Vec3;
   angularVelocity: pc.Vec3;
@@ -1923,7 +1931,7 @@ interface TransientFireballLobe {
 
 interface TransientBillowPlume {
   entity: pc.Entity;
-  material: pc.StandardMaterial;
+  meshInstance: pc.MeshInstance;
   position: pc.Vec3;
   velocity: pc.Vec3;
   elapsedS: number;
@@ -1964,10 +1972,15 @@ export class MayhemDirector {
   private readonly billowPlumes: TransientBillowPlume[] = [];
 
   private readonly dustPlumeTemplateMat: pc.StandardMaterial;
+  private readonly brickDustTemplateMat: pc.StandardMaterial;
+  private readonly woodDustTemplateMat: pc.StandardMaterial;
+  private readonly metalDustTemplateMat: pc.StandardMaterial;
   private readonly darkSmokeTemplateMat: pc.StandardMaterial;
   private readonly shockwaveRingTemplateMat: pc.StandardMaterial;
   private readonly flashCoreTemplateMat: pc.StandardMaterial;
+  private readonly fireballLobeTemplateMat: pc.StandardMaterial;
   private readonly unitQuadMesh: pc.Mesh;
+  private cachedCameraEntity: pc.Entity | null = null;
 
   // Pre-allocated typed-array tracker for casing floor-bounce audio callbacks (zero GC!)
   private readonly trackActive = new Uint8Array(TRACKED_CASING_CAPACITY);
@@ -1999,6 +2012,7 @@ export class MayhemDirector {
 
     const dev = this.app.graphicsDevice;
     this.unitQuadMesh = buildUnitQuadZMesh(dev);
+    this.unitQuadMesh.incRefCount();
 
     // 1. Hardware-instanced Gleaming Bottlenecked Brass Casings & Ribbed 12G Shotgun Hulls
     const casingCylinderMesh = buildLoftedDrumMesh(
@@ -2166,6 +2180,22 @@ export class MayhemDirector {
     this.dustPlumeTemplateMat.cull = pc.CULLFACE_NONE;
     this.dustPlumeTemplateMat.update();
 
+    this.brickDustTemplateMat = this.dustPlumeTemplateMat.clone();
+    this.brickDustTemplateMat.name = 'mayhemBrickDustPlumeMat';
+    this.brickDustTemplateMat.diffuse = new pc.Color(0.64, 0.44, 0.36);
+    this.brickDustTemplateMat.update();
+
+    this.woodDustTemplateMat = this.dustPlumeTemplateMat.clone();
+    this.woodDustTemplateMat.name = 'mayhemWoodDustPlumeMat';
+    this.woodDustTemplateMat.diffuse = new pc.Color(0.68, 0.56, 0.38);
+    this.woodDustTemplateMat.update();
+
+    this.metalDustTemplateMat = this.dustPlumeTemplateMat.clone();
+    this.metalDustTemplateMat.name = 'mayhemMetalDustPlumeMat';
+    this.metalDustTemplateMat.diffuse = new pc.Color(0.52, 0.54, 0.58);
+    this.metalDustTemplateMat.opacity = 0.32;
+    this.metalDustTemplateMat.update();
+
     this.darkSmokeTemplateMat = new pc.StandardMaterial();
     this.darkSmokeTemplateMat.name = 'mayhemDetonationSmokeMat';
     this.darkSmokeTemplateMat.diffuse = new pc.Color(0.11, 0.1, 0.1);
@@ -2201,18 +2231,29 @@ export class MayhemDirector {
     this.flashCoreTemplateMat.depthWrite = false;
     this.flashCoreTemplateMat.update();
 
-    // 6. Pooled Dynamic Muzzle Flash & Explosion Omni Point Lights (castShadows: false)
-    const lightPoolCount = Math.max(4, options.dynamicLightPoolSize ?? 8);
+    this.fireballLobeTemplateMat = new pc.StandardMaterial();
+    this.fireballLobeTemplateMat.name = 'mayhemFireballLobeSharedMat';
+    this.fireballLobeTemplateMat.diffuse = new pc.Color(1.0, 0.86, 0.45);
+    this.fireballLobeTemplateMat.emissive = new pc.Color(1.0, 0.72, 0.24);
+    this.fireballLobeTemplateMat.emissiveIntensity = 1.0;
+    this.fireballLobeTemplateMat.opacity = 0.94;
+    this.fireballLobeTemplateMat.blendType = pc.BLEND_NORMAL;
+    this.fireballLobeTemplateMat.depthWrite = false;
+    this.fireballLobeTemplateMat.update();
+
+    // 6. Pooled Dynamic Muzzle Flash & Explosion Omni Point Lights (permanently enabled at intensity 0 -> zero shader recompiles!)
+    const lightPoolCount = Math.max(2, options.dynamicLightPoolSize ?? 2);
     for (let i = 0; i < lightPoolCount; i++) {
       const lightEnt = new pc.Entity(`MayhemDynamicOmniLight_${i}`);
       lightEnt.addComponent('light', {
         type: 'omni',
         color: new pc.Color(1.0, 0.72, 0.3),
         intensity: 0,
-        range: 10,
+        range: 0.05,
         castShadows: false,
       });
-      lightEnt.enabled = false;
+      lightEnt.setPosition(0, -500, 0);
+      lightEnt.enabled = true;
       this.rootEntity.addChild(lightEnt);
       this.lightPool.push({
         entity: lightEnt,
@@ -2345,25 +2386,24 @@ export class MayhemDirector {
       );
     }
 
-    // 2. Pulverized concrete / masonry / wood dust plumes
+    // 2. Pulverized concrete / masonry / wood dust plumes (shared template materials + per-instance opacity!)
     if (this.billowPlumes.length < 48 && !isGlass) {
       const puffCount = isMetallic ? 1 : 2;
+      const sharedMat =
+        surfaceMaterial === 'BRICK_MASONRY'
+          ? this.brickDustTemplateMat
+          : isWood
+            ? this.woodDustTemplateMat
+            : isMetallic
+              ? this.metalDustTemplateMat
+              : this.dustPlumeTemplateMat;
+      const baseOpacity = isMetallic ? 0.32 : 0.52;
+
       for (let p = 0; p < puffCount; p++) {
         const seed = this.fxSeedCounter++;
-        const mat = this.dustPlumeTemplateMat.clone();
-        if (surfaceMaterial === 'BRICK_MASONRY') {
-          mat.diffuse = new pc.Color(0.64, 0.44, 0.36);
-        } else if (isWood) {
-          mat.diffuse = new pc.Color(0.68, 0.56, 0.38);
-        } else if (isMetallic) {
-          mat.diffuse = new pc.Color(0.52, 0.54, 0.58);
-        }
-        const baseOpacity = isMetallic ? 0.32 : 0.52;
-        mat.opacity = baseOpacity;
-        mat.update();
-
         const puffEnt = new pc.Entity('MayhemImpactDustPlume');
-        const mi = new pc.MeshInstance(this.unitQuadMesh, mat);
+        const mi = new pc.MeshInstance(this.unitQuadMesh, sharedMat);
+        mi.setParameter('material_opacity', 0.0);
         puffEnt.addComponent('render', {
           meshInstances: [mi],
           castShadows: false,
@@ -2386,7 +2426,7 @@ export class MayhemDirector {
 
         this.billowPlumes.push({
           entity: puffEnt,
-          material: mat,
+          meshInstance: mi,
           position: new pc.Vec3(origin.x, origin.y, origin.z),
           velocity: driftVel,
           elapsedS: 0,
@@ -2415,21 +2455,23 @@ export class MayhemDirector {
     const radiusScale = Math.max(0.75, Math.min(1.6, blast.radiusM / 6.0));
 
     // Stage 1: Blinding initial white-gold flash core
-    const flashMat = this.flashCoreTemplateMat.clone();
-    flashMat.update();
     const flashEnt = new pc.Entity('ExplosionFlashCore');
     flashEnt.addComponent('render', {
       type: 'sphere',
-      material: flashMat,
+      material: this.flashCoreTemplateMat,
       castShadows: false,
     });
+    const flashMi = flashEnt.render?.meshInstances?.[0] ?? null;
+    flashMi?.setParameter('material_opacity', 0.96);
     flashEnt.setPosition(center.x, center.y + 0.15, center.z);
     flashEnt.setLocalScale(0.55 * radiusScale, 0.55 * radiusScale, 0.55 * radiusScale);
     this.rootEntity.addChild(flashEnt);
 
     this.fireballLobes.push({
       entity: flashEnt,
-      material: flashMat,
+      meshInstance: flashMi,
+      diffuseUniform: new Float32Array([1.0, 0.96, 0.82]),
+      emissiveUniform: new Float32Array([5.5, 4.95, 3.41]),
       position: new pc.Vec3(center.x, center.y + 0.15, center.z),
       velocity: new pc.Vec3(0, 0.4, 0),
       angularVelocity: new pc.Vec3(0, 0, 0),
@@ -2439,27 +2481,26 @@ export class MayhemDirector {
       endScale: 3.1 * radiusScale,
     });
 
-    // Stage 2: Churning multi-lobed emissive-to-soot fireball spheres
+    // Stage 2: Churning multi-lobed emissive-to-soot fireball spheres (shared material + per-instance uniforms!)
     const lobeCount = 5;
     for (let i = 0; i < lobeCount; i++) {
       const angle = (i / lobeCount) * Math.PI * 2 + 0.37;
       const radialDist = i === 0 ? 0 : (0.28 + (i % 2) * 0.16) * radiusScale;
-      const lobeMat = new pc.StandardMaterial();
-      lobeMat.name = `mayhemFireballLobeMat_${i}`;
-      lobeMat.diffuse = new pc.Color(1.0, 0.86, 0.45);
-      lobeMat.emissive = new pc.Color(1.0, 0.72, 0.24);
-      lobeMat.emissiveIntensity = 4.2;
-      lobeMat.opacity = 0.94;
-      lobeMat.blendType = pc.BLEND_NORMAL;
-      lobeMat.depthWrite = false;
-      lobeMat.update();
 
       const lobeEnt = new pc.Entity(`ExplosionFireballLobe_${i}`);
       lobeEnt.addComponent('render', {
         type: 'sphere',
-        material: lobeMat,
+        material: this.fireballLobeTemplateMat,
         castShadows: false,
       });
+      const lobeMi = lobeEnt.render?.meshInstances?.[0] ?? null;
+      const diffU = new Float32Array([1.0, 0.86, 0.45]);
+      const emisU = new Float32Array([4.2, 3.02, 1.0]);
+      if (lobeMi) {
+        lobeMi.setParameter('material_diffuse', diffU);
+        lobeMi.setParameter('material_emissive', emisU);
+        lobeMi.setParameter('material_opacity', 0.94);
+      }
 
       const lx = center.x + Math.cos(angle) * radialDist;
       const ly = center.y + (i === 0 ? 0.28 : 0.12 + (i % 3) * 0.14);
@@ -2473,7 +2514,9 @@ export class MayhemDirector {
 
       this.fireballLobes.push({
         entity: lobeEnt,
-        material: lobeMat,
+        meshInstance: lobeMi,
+        diffuseUniform: diffU,
+        emissiveUniform: emisU,
         position: new pc.Vec3(lx, ly, lz),
         velocity: new pc.Vec3(
           Math.cos(angle) * (i === 0 ? 0 : 1.65 * radiusScale),
@@ -2489,10 +2532,9 @@ export class MayhemDirector {
     }
 
     // Stage 3: Expanding ground shockwave ring
-    const ringMat = this.shockwaveRingTemplateMat.clone();
-    ringMat.update();
     const ringEnt = new pc.Entity('ExplosionGroundShockwaveRing');
-    const ringMi = new pc.MeshInstance(this.unitQuadMesh, ringMat);
+    const ringMi = new pc.MeshInstance(this.unitQuadMesh, this.shockwaveRingTemplateMat);
+    ringMi.setParameter('material_opacity', 0.88);
     ringEnt.addComponent('render', {
       meshInstances: [ringMi],
       castShadows: false,
@@ -2506,7 +2548,7 @@ export class MayhemDirector {
 
     this.billowPlumes.push({
       entity: ringEnt,
-      material: ringMat,
+      meshInstance: ringMi,
       position: new pc.Vec3(center.x, groundY, center.z),
       velocity: new pc.Vec3(0, 0, 0),
       elapsedS: 0,
@@ -2548,11 +2590,10 @@ export class MayhemDirector {
     for (let s = 0; s < smokeCount; s++) {
       if (this.billowPlumes.length >= 60) break;
       const angle = (s / smokeCount) * Math.PI * 2 + 0.52;
-      const smokeMat = this.darkSmokeTemplateMat.clone();
-      smokeMat.update();
 
       const smokeEnt = new pc.Entity(`ExplosionDarkSmokePlume_${s}`);
-      const smokeMi = new pc.MeshInstance(this.unitQuadMesh, smokeMat);
+      const smokeMi = new pc.MeshInstance(this.unitQuadMesh, this.darkSmokeTemplateMat);
+      smokeMi.setParameter('material_opacity', 0.0);
       smokeEnt.addComponent('render', {
         meshInstances: [smokeMi],
         castShadows: false,
@@ -2571,7 +2612,7 @@ export class MayhemDirector {
 
       this.billowPlumes.push({
         entity: smokeEnt,
-        material: smokeMat,
+        meshInstance: smokeMi,
         position: new pc.Vec3(sx, sy, sz),
         velocity: new pc.Vec3(
           Math.cos(angle) * 0.85 * radiusScale,
@@ -2927,7 +2968,11 @@ export class MayhemDirector {
     this.trackActive.fill(0);
     for (const light of this.lightPool) {
       light.active = false;
-      light.entity.enabled = false;
+      light.entity.setPosition(0, -500, 0);
+      if (light.entity.light) {
+        light.entity.light.intensity = 0;
+        light.entity.light.range = 0.05;
+      }
     }
     this.clearTransientExplosionAndImpactFx();
     if (clearBloodDecals) {
@@ -2951,9 +2996,13 @@ export class MayhemDirector {
 
     this.clearTransientExplosionAndImpactFx();
     this.dustPlumeTemplateMat.destroy();
+    this.brickDustTemplateMat.destroy();
+    this.woodDustTemplateMat.destroy();
+    this.metalDustTemplateMat.destroy();
     this.darkSmokeTemplateMat.destroy();
     this.shockwaveRingTemplateMat.destroy();
     this.flashCoreTemplateMat.destroy();
+    this.fireballLobeTemplateMat.destroy();
     this.bulletTime.destroy();
     this.barrels.destroy();
     this.brassCasingPool.destroy();
@@ -2964,29 +3013,27 @@ export class MayhemDirector {
     this.impactSparkPool.destroy();
     this.bloodSplatterPool.destroy();
     this.rootEntity.destroy();
+    this.unitQuadMesh.destroy();
   }
 
   private clearTransientExplosionAndImpactFx(): void {
     for (const lobe of this.fireballLobes) {
-      lobe.material.destroy();
       lobe.entity.destroy();
     }
     this.fireballLobes.length = 0;
 
     for (const plume of this.billowPlumes) {
-      plume.material.destroy();
       plume.entity.destroy();
     }
     this.billowPlumes.length = 0;
   }
 
   private stepTransientExplosionAndImpactFx(dt: number): void {
-    // 1. Step churning emissive-to-soot fireball spheres & blinding flash cores
+    // 1. Step churning emissive-to-soot fireball spheres & blinding flash cores via per-instance uniforms
     for (let i = this.fireballLobes.length - 1; i >= 0; i--) {
       const lobe = this.fireballLobes[i];
       lobe.elapsedS += dt;
       if (lobe.elapsedS >= lobe.durationS) {
-        lobe.material.destroy();
         lobe.entity.destroy();
         this.fireballLobes.splice(i, 1);
         continue;
@@ -3010,46 +3057,51 @@ export class MayhemDirector {
       const s = lobe.startScale + (lobe.endScale - lobe.startScale) * easeOut;
       lobe.entity.setLocalScale(s, s, s);
 
-      if (lobe.durationS <= 0.12) {
-        // Blinding flash core: rapid additive decay
-        lobe.material.opacity = Math.max(0, (1 - t) * (1 - t));
-      } else {
-        // Fireball cooling curve: incandescent white-yellow -> roaring orange-red -> dark soot
-        if (t < 0.32) {
-          const k = t / 0.32;
-          lobe.material.diffuse.set(1.0, 0.9 - k * 0.42, 0.55 - k * 0.45);
-          lobe.material.emissive.set(1.0, 0.78 - k * 0.44, 0.3 - k * 0.25);
-          lobe.material.emissiveIntensity = 4.2 * (1 - k * 0.35);
-          lobe.material.opacity = 0.95;
+      const mi = lobe.meshInstance;
+      if (mi) {
+        if (lobe.durationS <= 0.12) {
+          mi.setParameter('material_opacity', Math.max(0, (1 - t) * (1 - t)));
         } else {
-          const k = (t - 0.32) / 0.68;
-          const sootLerp = Math.min(1, k * 1.35);
-          lobe.material.diffuse.set(
-            0.58 * (1 - sootLerp) + 0.09 * sootLerp,
-            0.22 * (1 - sootLerp) + 0.08 * sootLerp,
-            0.08 * (1 - sootLerp) + 0.08 * sootLerp,
-          );
-          lobe.material.emissive.set(
-            (1 - sootLerp) * 0.85,
-            (1 - sootLerp) * 0.24,
-            (1 - sootLerp) * 0.04,
-          );
-          lobe.material.emissiveIntensity = Math.max(0, (1 - sootLerp) * 2.4);
-          lobe.material.opacity = 0.92 * (1 - k * k);
+          if (t < 0.32) {
+            const k = t / 0.32;
+            const ei = 4.2 * (1 - k * 0.35);
+            lobe.diffuseUniform[0] = 1.0;
+            lobe.diffuseUniform[1] = 0.9 - k * 0.42;
+            lobe.diffuseUniform[2] = 0.55 - k * 0.45;
+            lobe.emissiveUniform[0] = 1.0 * ei;
+            lobe.emissiveUniform[1] = (0.78 - k * 0.44) * ei;
+            lobe.emissiveUniform[2] = (0.3 - k * 0.25) * ei;
+            mi.setParameter('material_diffuse', lobe.diffuseUniform);
+            mi.setParameter('material_emissive', lobe.emissiveUniform);
+            mi.setParameter('material_opacity', 0.95);
+          } else {
+            const k = (t - 0.32) / 0.68;
+            const sootLerp = Math.min(1, k * 1.35);
+            const ei = Math.max(0, (1 - sootLerp) * 2.4);
+            lobe.diffuseUniform[0] = 0.58 * (1 - sootLerp) + 0.09 * sootLerp;
+            lobe.diffuseUniform[1] = 0.22 * (1 - sootLerp) + 0.08 * sootLerp;
+            lobe.diffuseUniform[2] = 0.08 * (1 - sootLerp) + 0.08 * sootLerp;
+            lobe.emissiveUniform[0] = (1 - sootLerp) * 0.85 * ei;
+            lobe.emissiveUniform[1] = (1 - sootLerp) * 0.24 * ei;
+            lobe.emissiveUniform[2] = (1 - sootLerp) * 0.04 * ei;
+            mi.setParameter('material_diffuse', lobe.diffuseUniform);
+            mi.setParameter('material_emissive', lobe.emissiveUniform);
+            mi.setParameter('material_opacity', 0.92 * (1 - k * k));
+          }
         }
       }
-      lobe.material.update();
     }
 
     // 2. Step expanding shockwave rings, concrete impact dust plumes & lingering dark smoke plumes
-    const activeCam = this.app.root.findByName('PlayerCamera') as pc.Entity | null;
-    const camPos = activeCam ? activeCam.getPosition() : null;
+    if (!this.cachedCameraEntity || !this.cachedCameraEntity.parent) {
+      this.cachedCameraEntity = this.app.root.findByName('PlayerCamera') as pc.Entity | null;
+    }
+    const camPos = this.cachedCameraEntity ? this.cachedCameraEntity.getPosition() : null;
 
     for (let i = this.billowPlumes.length - 1; i >= 0; i--) {
       const p = this.billowPlumes[i];
       p.elapsedS += dt;
       if (p.elapsedS >= p.durationS) {
-        p.material.destroy();
         p.entity.destroy();
         this.billowPlumes.splice(i, 1);
         continue;
@@ -3062,7 +3114,7 @@ export class MayhemDirector {
       if (p.isGroundRing) {
         p.entity.setLocalEulerAngles(-90, p.elapsedS * p.spinDegPerS, 0);
         p.entity.setLocalScale(curScale, curScale, 1);
-        p.material.opacity = p.baseOpacity * (1 - t) * (1 - t);
+        p.meshInstance.setParameter('material_opacity', p.baseOpacity * (1 - t) * (1 - t));
       } else {
         const drag = Math.exp(-1.8 * dt);
         p.velocity.x *= drag;
@@ -3079,9 +3131,11 @@ export class MayhemDirector {
         }
         p.entity.setLocalScale(curScale, curScale, 1);
         const fadeIn = Math.min(1, t * 7.0);
-        p.material.opacity = p.baseOpacity * fadeIn * (1 - t) * (1 - t * 0.4);
+        p.meshInstance.setParameter(
+          'material_opacity',
+          p.baseOpacity * fadeIn * (1 - t) * (1 - t * 0.4),
+        );
       }
-      p.material.update();
     }
   }
 
@@ -3228,7 +3282,7 @@ export class MayhemDirector {
 
     chosen.entity.setPosition(pos.x, pos.y, pos.z);
     if (chosen.entity.light) {
-      chosen.entity.light.color = new pc.Color(r, g, b);
+      chosen.entity.light.color.set(r, g, b);
       chosen.entity.light.intensity = intensity;
       chosen.entity.light.range = rangeM;
     }
@@ -3241,9 +3295,11 @@ export class MayhemDirector {
       slot.elapsedS += dt;
       if (slot.elapsedS >= slot.durationS) {
         slot.active = false;
-        slot.entity.enabled = false;
+        // Keep entity enabled at intensity 0 far below floor so scene light count NEVER changes!
+        slot.entity.setPosition(0, -500, 0);
         if (slot.entity.light) {
           slot.entity.light.intensity = 0;
+          slot.entity.light.range = 0.05;
         }
         continue;
       }
@@ -3255,7 +3311,7 @@ export class MayhemDirector {
         if (slot.isExplosion) {
           // Shift color temperature from blinding white-gold flash to deep blazing orange afterglow
           const cool = Math.min(1, t * 3.2);
-          slot.entity.light.color = new pc.Color(
+          slot.entity.light.color.set(
             1.0,
             0.92 * (1 - cool) + 0.44 * cool,
             0.68 * (1 - cool) + 0.1 * cool,

@@ -2558,7 +2558,7 @@ export class GlassShardPool {
       return;
     }
 
-    const stepDt = Math.min(dt, 1 / 20);
+    const stepDt = Math.min(dt, 1 / 10);
     const halfDt = 0.5 * stepDt;
     const airDrag = Math.max(0, 1 - 0.35 * stepDt);
     const floorY = this.floorY;

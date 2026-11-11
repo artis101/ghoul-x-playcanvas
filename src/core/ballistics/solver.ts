@@ -133,107 +133,192 @@ export function computeMachDragMultiplier(mach: number): number {
 export function stepProjectileRK4(
   proj: ProjectileState,
   env: EnvironmentState,
-  dt: number
+  dt: number,
+  pelletIndexOverride?: number
 ): ProjectileState {
   if (!proj.alive || dt <= 0) return proj;
 
   const m = proj.ammo.massKg;
-  const area = Math.PI * Math.pow(proj.currentDiameterM * 0.5, 2);
+  const halfDiam = proj.currentDiameterM * 0.5;
+  const area = Math.PI * halfDiam * halfDiam;
   const baseCd = proj.ammo.dragCoefficient;
   const rho = env.airDensityKgM3;
   const vsound = env.speedOfSoundMs;
+  const gravX = env.gravity.x;
+  const gravY = env.gravity.y;
+  const gravZ = env.gravity.z;
+  const windX = env.windVelocity.x;
+  const windY = env.windVelocity.y;
+  const windZ = env.windVelocity.z;
+  const spinRadS = proj.spinRadS;
+  const distTraveled = proj.distanceTraveledM;
 
   // Parse buckshot pellet index (> 0) for downrange unbuffered soft-lead aerodynamic wake bloom
   let buckshotPelletIdx = 0;
   if (proj.ammo.type === 'BUCKSHOT_00' && proj.ammo.pelletCount > 1) {
-    const pPos = proj.id.lastIndexOf('_p');
-    if (pPos !== -1) {
-      const parsed = Number.parseInt(proj.id.slice(pPos + 2), 10);
-      if (Number.isFinite(parsed) && parsed > 0) {
-        buckshotPelletIdx = parsed;
+    if (pelletIndexOverride !== undefined) {
+      buckshotPelletIdx = pelletIndexOverride > 0 ? pelletIndexOverride : 0;
+    } else {
+      const pPos = proj.id.lastIndexOf('_p');
+      if (pPos !== -1) {
+        const parsed = Number.parseInt(proj.id.slice(pPos + 2), 10);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          buckshotPelletIdx = parsed;
+        }
       }
     }
   }
 
-  const computeAcceleration = (_pos: Vec3Like, vel: Vec3Like): Vec3Like => {
-    const vRel = sub(vel, env.windVelocity);
-    const speedRel = length(vRel);
-    if (speedRel < 1e-4) {
-      return env.gravity;
+  let accX = 0;
+  let accY = 0;
+  let accZ = 0;
+
+  const computeAccelerationScalar = (vx: number, vy: number, vz: number): void => {
+    const vRelX = vx - windX;
+    const vRelY = vy - windY;
+    const vRelZ = vz - windZ;
+    const speedRelSq = vRelX * vRelX + vRelY * vRelY + vRelZ * vRelZ;
+    if (speedRelSq < 1e-8) {
+      accX = gravX;
+      accY = gravY;
+      accZ = gravZ;
+      return;
     }
 
+    const speedRel = Math.sqrt(speedRelSq);
+    const invSpeedRel = 1 / speedRel;
     const mach = speedRel / vsound;
-    const machMult = computeMachDragMultiplier(mach);
-    const cd = baseCd * machMult;
+    const cd = baseCd * computeMachDragMultiplier(mach);
 
-    const dragMagnitude = 0.5 * rho * speedRel * speedRel * cd * area;
-    const dragAccelMag = dragMagnitude / m;
-    const dragAccel = scale(normalize(vRel), -dragAccelMag);
+    const dragAccelMag = (0.5 * rho * speedRelSq * cd * area) / m;
+    let ax = gravX - vRelX * invSpeedRel * dragAccelMag;
+    let ay = gravY - vRelY * invSpeedRel * dragAccelMag;
+    let az = gravZ - vRelZ * invSpeedRel * dragAccelMag;
 
-    let spinDriftAccel: Vec3Like = { x: 0, y: 0, z: 0 };
-    if (proj.spinRadS !== 0 && speedRel > 10) {
-      const vNorm = normalize(vel);
-      const driftDir = normalize(cross({ x: 0, y: 1, z: 0 }, vNorm));
-      const driftAccelMag = 0.00012 * proj.spinRadS * (speedRel / vsound);
-      spinDriftAccel = scale(driftDir, driftAccelMag);
+    if (spinRadS !== 0 && speedRel > 10) {
+      const vLen = Math.sqrt(vx * vx + vy * vy + vz * vz);
+      if (vLen > 1e-8) {
+        const vnx = vx / vLen;
+        const vnz = vz / vLen;
+        // cross({0, 1, 0}, vNorm) = { vnz, 0, -vnx }
+        const dLen = Math.hypot(vnz, vnx);
+        if (dLen > 1e-8) {
+          const driftAccelMag = (0.00012 * spinRadS * (speedRel / vsound)) / dLen;
+          ax += vnz * driftAccelMag;
+          az += -vnx * driftAccelMag;
+        }
+      }
     }
 
     // Past 2.8m wad-cup separation, deformed spherical buckshot pellets experience aerodynamic wake lift,
     // keeping close-quarters patterns tight while blooming wide at medium-to-long range!
-    let wakeBloomAccel: Vec3Like = { x: 0, y: 0, z: 0 };
-    if (buckshotPelletIdx > 0 && proj.distanceTraveledM > 2.8) {
-      const vNorm = normalize(vel);
-      const arbUp = Math.abs(vNorm.y) < 0.999 ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
-      const pRight = normalize(cross(arbUp, vNorm));
-      const pUp = cross(vNorm, pRight);
-      const goldenRatio = 1.618033988749895;
-      const theta = 2 * Math.PI * (buckshotPelletIdx * goldenRatio + 0.337);
-      const rNorm = Math.sqrt(buckshotPelletIdx / Math.max(1, proj.ammo.pelletCount - 1));
-      const radialDir = add(scale(pRight, Math.cos(theta)), scale(pUp, Math.sin(theta)));
-      const bloomRamp = Math.min(1.0, (proj.distanceTraveledM - 2.8) / 3.5);
-      const liftMag = dragAccelMag * 0.48 * rNorm * bloomRamp;
-      wakeBloomAccel = scale(radialDir, liftMag);
+    if (buckshotPelletIdx > 0 && distTraveled > 2.8) {
+      const vLen = Math.sqrt(vx * vx + vy * vy + vz * vz);
+      if (vLen > 1e-8) {
+        const vnx = vx / vLen;
+        const vny = vy / vLen;
+        const vnz = vz / vLen;
+        let rx: number;
+        let ry: number;
+        let rz: number;
+        if (Math.abs(vny) < 0.999) {
+          // cross({0, 1, 0}, vNorm) = { vnz, 0, -vnx }
+          rx = vnz;
+          ry = 0;
+          rz = -vnx;
+        } else {
+          // cross({1, 0, 0}, vNorm) = { 0, -vnz, vny }
+          rx = 0;
+          ry = -vnz;
+          rz = vny;
+        }
+        const rLen = Math.hypot(rx, ry, rz);
+        if (rLen > 1e-8) {
+          rx /= rLen;
+          ry /= rLen;
+          rz /= rLen;
+        }
+        const ux = vny * rz - vnz * ry;
+        const uy = vnz * rx - vnx * rz;
+        const uz = vnx * ry - vny * rx;
+
+        const goldenRatio = 1.618033988749895;
+        const theta = 2 * Math.PI * (buckshotPelletIdx * goldenRatio + 0.337);
+        const cosT = Math.cos(theta);
+        const sinT = Math.sin(theta);
+        const rNorm = Math.sqrt(buckshotPelletIdx / Math.max(1, proj.ammo.pelletCount - 1));
+        const bloomRamp = Math.min(1.0, (distTraveled - 2.8) / 3.5);
+        const liftMag = dragAccelMag * 0.48 * rNorm * bloomRamp;
+        ax += (rx * cosT + ux * sinT) * liftMag;
+        ay += (ry * cosT + uy * sinT) * liftMag;
+        az += (rz * cosT + uz * sinT) * liftMag;
+      }
     }
 
-    return add(add(add(env.gravity, dragAccel), spinDriftAccel), wakeBloomAccel);
+    accX = ax;
+    accY = ay;
+    accZ = az;
   };
 
-  const p0 = proj.position;
-  const v0 = proj.velocity;
+  const p0x = proj.position.x;
+  const p0y = proj.position.y;
+  const p0z = proj.position.z;
+  const v0x = proj.velocity.x;
+  const v0y = proj.velocity.y;
+  const v0z = proj.velocity.z;
+  const halfDt = 0.5 * dt;
+  const sixthDt = dt / 6;
 
-  const a1 = computeAcceleration(p0, v0);
-  const dp1 = v0;
+  computeAccelerationScalar(v0x, v0y, v0z);
+  const a1x = accX;
+  const a1y = accY;
+  const a1z = accZ;
 
-  const p1 = add(p0, scale(dp1, 0.5 * dt));
-  const v1 = add(v0, scale(a1, 0.5 * dt));
-  const a2 = computeAcceleration(p1, v1);
-  const dp2 = v1;
+  const v1x = v0x + a1x * halfDt;
+  const v1y = v0y + a1y * halfDt;
+  const v1z = v0z + a1z * halfDt;
+  computeAccelerationScalar(v1x, v1y, v1z);
+  const a2x = accX;
+  const a2y = accY;
+  const a2z = accZ;
 
-  const p2 = add(p0, scale(dp2, 0.5 * dt));
-  const v2 = add(v0, scale(a2, 0.5 * dt));
-  const a3 = computeAcceleration(p2, v2);
-  const dp3 = v2;
+  const v2x = v0x + a2x * halfDt;
+  const v2y = v0y + a2y * halfDt;
+  const v2z = v0z + a2z * halfDt;
+  computeAccelerationScalar(v2x, v2y, v2z);
+  const a3x = accX;
+  const a3y = accY;
+  const a3z = accZ;
 
-  const p3 = add(p0, scale(dp3, dt));
-  const v3 = add(v0, scale(a3, dt));
-  const a4 = computeAcceleration(p3, v3);
-  const dp4 = v3;
+  const v3x = v0x + a3x * dt;
+  const v3y = v0y + a3y * dt;
+  const v3z = v0z + a3z * dt;
+  computeAccelerationScalar(v3x, v3y, v3z);
+  const a4x = accX;
+  const a4y = accY;
+  const a4z = accZ;
 
-  const dpCombined = scale(add(add(dp1, scale(dp2, 2)), add(scale(dp3, 2), dp4)), dt / 6);
-  const dvCombined = scale(add(add(a1, scale(a2, 2)), add(scale(a3, 2), a4)), dt / 6);
+  const dpx = (v0x + 2 * (v1x + v2x) + v3x) * sixthDt;
+  const dpy = (v0y + 2 * (v1y + v2y) + v3y) * sixthDt;
+  const dpz = (v0z + 2 * (v1z + v2z) + v3z) * sixthDt;
 
-  const nextPos = add(p0, dpCombined);
-  const nextVel = add(v0, dvCombined);
-  const nextSpeed = length(nextVel);
-  const stepDist = length(dpCombined);
+  const dvx = (a1x + 2 * (a2x + a3x) + a4x) * sixthDt;
+  const dvy = (a1y + 2 * (a2y + a3y) + a4y) * sixthDt;
+  const dvz = (a1z + 2 * (a2z + a3z) + a4z) * sixthDt;
+
+  const nextVx = v0x + dvx;
+  const nextVy = v0y + dvy;
+  const nextVz = v0z + dvz;
+  const nextSpeedSq = nextVx * nextVx + nextVy * nextVy + nextVz * nextVz;
+  const stepDist = Math.sqrt(dpx * dpx + dpy * dpy + dpz * dpz);
 
   return {
     ...proj,
-    position: nextPos,
-    velocity: nextVel,
+    position: { x: p0x + dpx, y: p0y + dpy, z: p0z + dpz },
+    velocity: { x: nextVx, y: nextVy, z: nextVz },
     flightTimeS: proj.flightTimeS + dt,
-    distanceTraveledM: proj.distanceTraveledM + stepDist,
-    kineticEnergyJ: 0.5 * m * nextSpeed * nextSpeed,
+    distanceTraveledM: distTraveled + stepDist,
+    kineticEnergyJ: 0.5 * m * nextSpeedSq,
   };
 }
 
@@ -555,6 +640,22 @@ export function simulateShot(
   const dt = 0.0015;
   const maxRangeM = 300.0;
   const maxFlightTimeS = 2.0;
+  const boundsMaxDx = Math.max(
+    Math.abs(bounds.minX - originWorld.x),
+    Math.abs(bounds.maxX - originWorld.x)
+  );
+  const boundsMaxDy = Math.max(
+    Math.abs(bounds.minY - originWorld.y),
+    Math.abs(bounds.maxY - originWorld.y)
+  );
+  const boundsMaxDz = Math.max(
+    Math.abs(bounds.minZ - originWorld.z),
+    Math.abs(bounds.maxZ - originWorld.z)
+  );
+  const effectiveMaxRangeM = Math.min(
+    maxRangeM,
+    Math.max(4.0, Math.hypot(boundsMaxDx, boundsMaxDy, boundsMaxDz) + 2.2)
+  );
 
   for (let pIdx = 0; pIdx < pelletCount; pIdx++) {
     const pelletAimDir = deterministicConeSpread(
@@ -563,6 +664,8 @@ export function simulateShot(
       pIdx,
       pelletCount
     );
+    const shotRightRaw = cross(pelletAimDir, vec3(0, 1, 0));
+    const shotRight = lengthSq(shotRightRaw) > 1e-6 ? normalize(shotRightRaw) : vec3(1, 0, 0);
 
     let proj: ProjectileState = {
       id: `${shotId}_p${pIdx}`,
@@ -600,25 +703,30 @@ export function simulateShot(
     let pelletImpactZone: GhoulZoneId | null = null;
     let pelletEnergyDeposited = 0;
     let pelletImpulseTransferred = 0;
+    let stepIdx = 0;
 
     while (
       proj.alive &&
-      proj.distanceTraveledM < maxRangeM &&
+      proj.distanceTraveledM < effectiveMaxRangeM &&
       proj.flightTimeS < maxFlightTimeS &&
       proj.position.y > -5.0
     ) {
-      const prevPos = copyVec3(proj.position);
-      proj = stepProjectileRK4(proj, env, dt);
+      const prevPos = proj.position;
+      proj = stepProjectileRK4(proj, env, dt, pIdx);
       const currPos = proj.position;
+      stepIdx++;
 
-      if (trajectorySamples.length < 50 || trajectorySamples.length % 5 === 0) {
+      if (stepIdx < 50 || stepIdx % 5 === 0) {
         const speed = length(proj.velocity);
         const mach = speed / env.speedOfSoundMs;
-        const straightPos = add(originWorld, scale(pelletAimDir, proj.distanceTraveledM));
-        const drop = straightPos.y - currPos.y;
-        const shotRightRaw = cross(pelletAimDir, vec3(0, 1, 0));
-        const shotRight = lengthSq(shotRightRaw) > 1e-6 ? normalize(shotRightRaw) : vec3(1, 0, 0);
-        const drift = dot(sub(currPos, straightPos), shotRight);
+        const straightX = originWorld.x + pelletAimDir.x * proj.distanceTraveledM;
+        const straightY = originWorld.y + pelletAimDir.y * proj.distanceTraveledM;
+        const straightZ = originWorld.z + pelletAimDir.z * proj.distanceTraveledM;
+        const drop = straightY - currPos.y;
+        const drift =
+          (currPos.x - straightX) * shotRight.x +
+          (currPos.y - straightY) * shotRight.y +
+          (currPos.z - straightZ) * shotRight.z;
 
         trajectorySamples.push({
           timeS: proj.flightTimeS,
@@ -2541,6 +2649,32 @@ export function stepRagdollPhysics(
   const hasSeveredLimbs = target.severedZones.size > 0;
   if (!target.isRagdollActive && !hasSeveredLimbs) {
     return;
+  }
+
+  // Skip 56-pass PBD skeleton solve when a dead grounded ragdoll (& any severed limbs) has fully settled
+  if (!target.alive && target.isRagdollActive && target.posture === 'RAGDOLL_GROUNDED') {
+    let anyMoving = false;
+    for (const z of ALL_GHOUL_ZONES) {
+      const b = target.ragdollBones[z];
+      if (b.goreMode === 'CRANIAL_POP') continue;
+      if (!b.grounded || lengthSq(b.velocity) > 1e-6) {
+        anyMoving = true;
+        break;
+      }
+    }
+    if (!anyMoving) {
+      for (const aId of ALL_AUX_PARTICLES) {
+        const a = target.auxParticles[aId];
+        if (target.ragdollBones[a.parentZone].goreMode === 'CRANIAL_POP') continue;
+        if (a.position.y > floorY + a.radiusM + 0.008 || lengthSq(a.velocity) > 1e-6) {
+          anyMoving = true;
+          break;
+        }
+      }
+    }
+    if (!anyMoving) {
+      return;
+    }
   }
 
   // Advance living ground agony clock for breathing & wound-clutching active ragdoll motion

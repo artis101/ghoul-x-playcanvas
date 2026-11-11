@@ -104,6 +104,7 @@ export class DestructionManager {
   public barrelManager: ExplosiveBarrelManager | null;
   public combatAudio: CombatAudioEngine | null;
   public getListenerPos?: () => Vec3Like;
+  public breachVersion = 0;
 
   private readonly rootEntity: pc.Entity;
   private readonly staticFixtures: StaticCoverFixture[] = [];
@@ -291,6 +292,7 @@ export class DestructionManager {
         },
       });
       this.glbConcreteApplied = true;
+      this.breachVersion++;
       return true;
     } catch {
       return false;
@@ -398,6 +400,7 @@ export class DestructionManager {
 
       const energyLost = energyBefore - res.remainingEnergyJ;
       if (energyLost > 1.0 || res.stopped) {
+        this.breachVersion++;
         const audioMat: DestructibleMaterialKind =
           res.hitMaterial ?? hit.surface.material;
         const audioPt = res.impactPointWorld ?? hit.pointWorld;
@@ -418,10 +421,15 @@ export class DestructionManager {
             : 0;
 
       if (res.stopped || curEnergyJ <= 10 || curSpeedMs <= 25) {
+        const stopPt = res.impactPointWorld ?? hit.pointWorld;
+        const sdx = stopPt.x - origin.x;
+        const sdy = stopPt.y - origin.y;
+        const sdz = stopPt.z - origin.z;
         return {
           remainingEnergyJ: 0,
           remainingSpeedMs: 0,
           blocked: true,
+          stoppedDistanceM: Math.hypot(sdx, sdy, sdz),
         };
       }
     }
@@ -443,42 +451,32 @@ export class DestructionManager {
   public isLineOfSightBlocked(fromWorld: Vec3Like, toWorld: Vec3Like): boolean {
     if (this.destroyed) return false;
 
-    const delta = sub(toWorld, fromWorld);
-    const dist = length(delta);
+    const dx = toWorld.x - fromWorld.x;
+    const dy = toWorld.y - fromWorld.y;
+    const dz = toWorld.z - fromWorld.z;
+    const dist = Math.hypot(dx, dy, dz);
     if (dist <= 0.05) return false;
 
-    const dir = scale(delta, 1 / dist);
+    const invDist = 1 / dist;
+    const dir: Vec3Like = { x: dx * invDist, y: dy * invDist, z: dz * invDist };
     const maxDist = Math.max(0.01, dist - 0.02);
-    const hits = this.rapierWorld.castPenetrationRay(fromWorld, dir, maxDist);
 
-    for (let i = 0; i < hits.length; i++) {
-      const h = hits[i];
-      if (h.distanceM > maxDist) continue;
-      const mat = h.surface.material;
-
+    return this.rapierWorld.hasAnyBlockingHit(fromWorld, dir, maxDist, (surface, pointWorld) => {
+      const mat = surface.material;
       if (mat === 'GLASS_MARCHING_256' || mat === 'GLASS_VORONOI') {
-        continue;
+        return false;
       }
-
       if (mat === 'WOOD_DRYWALL') {
-        if (
-          this.isWoodWallRayInOpenHole(
-            h.surface.objectId,
-            fromWorld,
-            dir,
-            maxDist,
-            h.pointWorld,
-          )
-        ) {
-          continue;
-        }
-        return true;
+        return !this.isWoodWallRayInOpenHole(
+          surface.objectId,
+          fromWorld,
+          dir,
+          maxDist,
+          pointWorld,
+        );
       }
-
       return true;
-    }
-
-    return false;
+    });
   }
 
   /**
@@ -537,6 +535,9 @@ export class DestructionManager {
       }
     }
 
+    if (orderedObjects.length > 0) {
+      this.breachVersion++;
+    }
     let curEnergyJ = Math.max(60, kineticEnergyJ);
     let curSpeedMs = 390;
     const listenerPos = this.getListenerPos
@@ -705,6 +706,7 @@ export class DestructionManager {
     }
 
     this.blastRecursionDepth += 1;
+    this.breachVersion++;
     try {
       this.woodWalls.applyBlast(blast);
       this.glassSystem.applyBlast(blast);
@@ -782,6 +784,7 @@ export class DestructionManager {
    */
   public resetAll(): void {
     if (this.destroyed) return;
+    this.breachVersion++;
     this.woodWalls.reset();
     this.glassSystem.reset();
     this.brickWalls.reset();

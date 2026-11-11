@@ -315,7 +315,7 @@ function upgradeGlbStandardMaterial(mat: pc.Material | null | undefined, device:
   const maxAniso =
     device instanceof pc.NullGraphicsDevice
       ? 1
-      : Math.max(1, Math.min(16, device.maxAnisotropy || 1));
+      : Math.max(1, Math.min(4, device.maxAnisotropy || 1));
 
   upgradeGlbTexture(mat.diffuseMap, maxAniso);
   upgradeGlbTexture(mat.normalMap, maxAniso);
@@ -325,7 +325,6 @@ function upgradeGlbStandardMaterial(mat: pc.Material | null | undefined, device:
   upgradeGlbTexture(mat.emissiveMap, maxAniso);
   upgradeGlbTexture(mat.specularMap, maxAniso);
 
-  mat.enableGGXSpecular = true;
   mat.fresnelModel = pc.FRESNEL_SCHLICK;
   mat.useSkybox = true;
   if (mat.aoMap) {
@@ -341,7 +340,7 @@ function upgradeContainerPbrQuality(container: pc.ContainerResource, device: pc.
   const maxAniso =
     device instanceof pc.NullGraphicsDevice
       ? 1
-      : Math.max(1, Math.min(16, device.maxAnisotropy || 1));
+      : Math.max(1, Math.min(4, device.maxAnisotropy || 1));
 
   if (Array.isArray(container.textures)) {
     for (const texAsset of container.textures) {
@@ -570,6 +569,10 @@ export class GlbModelRegistry {
     for (const ent of Object.values(internalAnatomyEntities)) {
       if (ent) {
         ent.enabled = false;
+        if (ent.render) {
+          ent.render.castShadows = false;
+          ent.render.receiveShadows = false;
+        }
       }
     }
 
@@ -652,7 +655,16 @@ export class GlbModelRegistry {
           return false;
         }
         animComponent.speed = speed;
-        animComponent.baseLayer.transition(resolved, transitionSeconds);
+        animComponent.playing = true;
+        if (animComponent.baseLayer.activeState !== resolved) {
+          animComponent.baseLayer.transition(resolved, transitionSeconds);
+        } else if (
+          !resolved.startsWith('CombatReadyIdle') &&
+          !resolved.startsWith('UnsuspectingIdle')
+        ) {
+          animComponent.baseLayer.activeStateCurrentTime = 0;
+        }
+        animComponent.baseLayer.playing = true;
         return true;
       },
       setXRayVisible(visible: boolean): void {
@@ -880,7 +892,13 @@ export class GlbModelRegistry {
         return false;
       }
       animComponent.speed = speed;
-      animComponent.baseLayer.transition(clipName, transitionSeconds);
+      animComponent.playing = true;
+      if (animComponent.baseLayer.activeState === clipName) {
+        animComponent.baseLayer.activeStateCurrentTime = 0;
+      } else {
+        animComponent.baseLayer.transition(clipName, transitionSeconds);
+      }
+      animComponent.baseLayer.playing = true;
       return true;
     };
 
@@ -899,16 +917,10 @@ export class GlbModelRegistry {
       },
       playFire(speed = 1.0): boolean {
         if (!fireClipName) return false;
-        if (animComponent?.baseLayer) {
-          animComponent.baseLayer.reset();
-        }
         return playClip(fireClipName, 0.01, speed);
       },
       playReload(speed = 1.0): boolean {
         if (!reloadClipName) return false;
-        if (animComponent?.baseLayer) {
-          animComponent.baseLayer.reset();
-        }
         return playClip(reloadClipName, 0.05, speed);
       },
       destroy(): void {

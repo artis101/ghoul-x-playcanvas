@@ -51,13 +51,13 @@ export class GhoulXApplication {
         alpha: false,
       },
     });
-    this.app.graphicsDevice.maxPixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    this.app.graphicsDevice.maxPixelRatio = 1;
 
     this.app.setCanvasFillMode(pc.FILLMODE_FILL_WINDOW);
     this.app.setCanvasResolution(pc.RESOLUTION_AUTO);
     this.app.resizeCanvas();
     window.addEventListener('resize', () => {
-      this.app.graphicsDevice.maxPixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      this.app.graphicsDevice.maxPixelRatio = 1;
       this.app.resizeCanvas();
     });
 
@@ -83,6 +83,7 @@ export class GhoulXApplication {
     this.mayhemDirector = new MayhemDirector({
       app: this.app,
       rapierWorld: this.rapierWorld,
+      dynamicLightPoolSize: 2,
       bulletTimeOptions: {
         onVignetteUpdate: (state) => this.hudController.updateBulletTimeHud(state),
       },
@@ -184,6 +185,7 @@ export class GhoulXApplication {
         glbRegistry: this.glbRegistry,
         isLineOfSightBlocked: (from, to) =>
           this.destructionManager.isLineOfSightBlocked(from, to),
+        getCoverBreachVersion: () => this.destructionManager.breachVersion,
       }
     );
 
@@ -239,8 +241,9 @@ export class GhoulXApplication {
 
     const weapon = this.arsenalManager.currentWeapon;
     const ammo = this.arsenalManager.currentAmmo;
-    this.fpsController.applyRecoilKick(weapon.recoilKickDeg);
 
+    // Sync camera to latest mouse/recoil/shake pose BEFORE sampling aim ray & muzzle world origin!
+    this.fpsController.syncCameraTransform();
     const eye = this.fpsController.getEyePosition();
     const aim = this.fpsController.getAimDirection();
     const eyeVec = vec3(eye.x, eye.y, eye.z);
@@ -252,9 +255,14 @@ export class GhoulXApplication {
     this.mayhemDirector.onPlayerWeaponFired(eyeVec, aimVec, weapon, ammo, muzzleVec);
     this.tacticalAi.notifyGunshotOrExplosion(eyeVec, 40.0, 0.24);
     this.combatDirector.fireWeapon(weapon, ammo, eyeVec, aimVec);
+
+    // Apply kick AFTER firing so bullet impacts dead-center on the live crosshair!
+    this.fpsController.applyRecoilKick(weapon.recoilKickDeg);
+    this.fpsController.syncCameraTransform();
   }
 
   private handleThrowGrenade(): void {
+    this.fpsController.syncCameraTransform();
     const eye = this.fpsController.getEyePosition();
     const aim = this.fpsController.getAimDirection();
     this.combatDirector.throwFragGrenade(vec3(eye.x, eye.y, eye.z), vec3(aim.x, aim.y, aim.z));
@@ -275,7 +283,20 @@ export class GhoulXApplication {
   }
 
   private onEngineUpdate(dt: number): void {
-    const clampedDt = Math.min(0.05, dt);
+    const clampedDt = Math.min(0.1, dt);
+    const prevTimeScale = this.mayhemDirector.bulletTime.timeScale;
+
+    // 1. Step responsive player movement, camera pose, viewmodel & full-auto fire FIRST
+    const playerDt = clampedDt * (0.45 + 0.55 * prevTimeScale);
+    this.arsenalManager.update(playerDt);
+    this.fpsController.update(
+      playerDt,
+      this.arsenalManager.currentWeapon,
+      this.arsenalManager.reloadTimerS,
+      this.arsenalManager.weaponViewmodelEntity
+    );
+
+    // 2. Step bullet-time dilation, hazard barrels, tracers, sparks & casings
     const scaledDt = this.mayhemDirector.update(clampedDt);
     const timeScale = this.mayhemDirector.bulletTime.timeScale;
     this.totalElapsedTimeS += scaledDt;
@@ -289,15 +310,16 @@ export class GhoulXApplication {
     );
     this.combatAudio.update(clampedDt);
 
-    // F.E.A.R. Reflex feel: player camera & viewmodel stay responsive while world dilates to 0.22x
-    const playerDt = clampedDt * (0.45 + 0.55 * timeScale);
-    this.arsenalManager.update(playerDt);
-    this.fpsController.update(
-      playerDt,
-      this.arsenalManager.currentWeapon,
-      this.arsenalManager.reloadTimerS,
-      this.arsenalManager.weaponViewmodelEntity
+    // 3. Step grenades, AI shots, physiology & ragdolls BEFORE Rapier step so all blasts/impacts land on this frame!
+    this.combatDirector.update(
+      scaledDt,
+      this.totalElapsedTimeS,
+      this.fpsController.cameraEntity.camera,
+      this.hudController
     );
+
+    // 4. Step Rapier3D physics & upload all destructible debris / MultiDraw / instanced pools in lockstep
+    this.destructionManager.update(scaledDt);
 
     if (
       this.fpsController.isAimingDownSights &&
@@ -316,15 +338,6 @@ export class GhoulXApplication {
     this.hudController.updateContextPrompt(
       this.fpsController.isPointerLocked,
       this.combatDirector.areAllTargetsDown()
-    );
-
-    this.destructionManager.update(scaledDt);
-
-    this.combatDirector.update(
-      scaledDt,
-      this.totalElapsedTimeS,
-      this.fpsController.cameraEntity.camera,
-      this.hudController
     );
 
     this.fxManager.update(scaledDt, false);

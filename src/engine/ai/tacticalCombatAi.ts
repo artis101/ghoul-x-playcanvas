@@ -479,6 +479,31 @@ export class TacticalCombatAiSystem {
   private readonly resolveProfileOverrides = new Map<string, CombatantResolveProfile>();
   private readonly hardenedSidearmOverrides = new Map<string, boolean>();
   private readonly agents = new Map<string, EnemyAiAgentRuntime>();
+  private readonly peekPlanCache = new Map<
+    string,
+    {
+      timestampS: number;
+      isPeekingOut: boolean;
+      peekSign: -1 | 1;
+      playerX: number;
+      playerZ: number;
+      baseOffset: number;
+      jitterMode: 'NONE' | 'FINE' | 'SIDE';
+      goalZ: number;
+      anchorBlockedByCover: boolean;
+    }
+  >();
+  private readonly aimExposureCache = new Map<
+    string,
+    {
+      timestampS: number;
+      enemyX: number;
+      enemyZ: number;
+      playerX: number;
+      playerZ: number;
+      result: Vec3Like | null;
+    }
+  >();
   private elapsedClockS = 0;
   private destroyed = false;
 
@@ -609,6 +634,8 @@ export class TacticalCombatAiSystem {
     deployToCoverStations = false,
   ): void {
     this.agents.clear();
+    this.peekPlanCache.clear();
+    this.aimExposureCache.clear();
 
     for (let i = 0; i < targets.length; i++) {
       const hs = targets[i];
@@ -1611,17 +1638,69 @@ export class TacticalCombatAiSystem {
         : agent.resolveProfile === 'HARDENED_VETERAN'
           ? 0.2
           : 0.28;
+    const sinPhase = Math.sin(agent.peekCycleTimerS * 2.4);
 
     if (!hasCoverQueries) {
       return {
         targetOffset: agent.isPeekingOut
-          ? agent.peekSign *
-            (agent.peekStrideM + Math.sin(agent.peekCycleTimerS * 2.4) * jitterScale)
+          ? agent.peekSign * (agent.peekStrideM + sinPhase * jitterScale)
           : -agent.peekSign * 0.18,
         goalZ: agent.coverAnchorWorld.z + (agent.isPeekingOut ? 0.18 : -0.12),
         anchorBlockedByCover: false,
       };
     }
+
+    const cached = this.peekPlanCache.get(agent.targetId);
+    if (
+      cached &&
+      this.elapsedClockS - cached.timestampS < 0.08 &&
+      cached.isPeekingOut === agent.isPeekingOut &&
+      cached.peekSign === agent.peekSign &&
+      Math.abs(playerEyeWorldPos.x - cached.playerX) < 0.20 &&
+      Math.abs(playerEyeWorldPos.z - cached.playerZ) < 0.20
+    ) {
+      const jitterOffset =
+        cached.jitterMode === 'SIDE'
+          ? agent.peekSign * sinPhase * jitterScale
+          : cached.jitterMode === 'FINE'
+            ? sinPhase * 0.08
+            : 0;
+      return {
+        targetOffset: cached.baseOffset + jitterOffset,
+        goalZ: cached.goalZ,
+        anchorBlockedByCover: cached.anchorBlockedByCover,
+      };
+    }
+
+    const savePeekCache = (
+      baseOffset: number,
+      jitterMode: 'NONE' | 'FINE' | 'SIDE',
+      goalZ: number,
+      anchorBlockedByCover: boolean,
+    ): { targetOffset: number; goalZ: number; anchorBlockedByCover: boolean } => {
+      this.peekPlanCache.set(agent.targetId, {
+        timestampS: this.elapsedClockS,
+        isPeekingOut: agent.isPeekingOut,
+        peekSign: agent.peekSign,
+        playerX: playerEyeWorldPos.x,
+        playerZ: playerEyeWorldPos.z,
+        baseOffset,
+        jitterMode,
+        goalZ,
+        anchorBlockedByCover,
+      });
+      const jitterOffset =
+        jitterMode === 'SIDE'
+          ? agent.peekSign * sinPhase * jitterScale
+          : jitterMode === 'FINE'
+            ? sinPhase * 0.08
+            : 0;
+      return {
+        targetOffset: baseOffset + jitterOffset,
+        goalZ,
+        anchorBlockedByCover,
+      };
+    };
 
     const playerChest: Vec3Like = {
       x: playerEyeWorldPos.x,
@@ -1670,44 +1749,22 @@ export class TacticalCombatAiSystem {
             this.isSightBlockedBySolidCover(shelterCore, playerChest) &&
             this.isSightBlockedBySolidCover(shelterEye, playerEyeWorldPos)
           ) {
-            return {
-              targetOffset: sign * 0.72,
-              goalZ: agent.coverAnchorWorld.z - 0.14,
-              anchorBlockedByCover: false,
-            };
+            return savePeekCache(sign * 0.72, 'NONE', agent.coverAnchorWorld.z - 0.14, false);
           }
         }
 
-        return {
-          targetOffset: -agent.peekSign * 0.18,
-          goalZ: agent.coverAnchorWorld.z - 0.12,
-          anchorBlockedByCover: false,
-        };
+        return savePeekCache(-agent.peekSign * 0.18, 'NONE', agent.coverAnchorWorld.z - 0.12, false);
       }
 
       if (sideClear) {
-        return {
-          targetOffset:
-            sideProbeOffset +
-            agent.peekSign * Math.sin(agent.peekCycleTimerS * 2.4) * jitterScale,
-          goalZ: agent.coverAnchorWorld.z + 0.18,
-          anchorBlockedByCover: false,
-        };
+        return savePeekCache(sideProbeOffset, 'SIDE', agent.coverAnchorWorld.z + 0.18, false);
       }
 
-      return {
-        targetOffset: Math.sin(agent.peekCycleTimerS * 2.4) * 0.08,
-        goalZ: agent.coverAnchorWorld.z + 0.12,
-        anchorBlockedByCover: false,
-      };
+      return savePeekCache(0, 'FINE', agent.coverAnchorWorld.z + 0.12, false);
     }
 
     if (!agent.isPeekingOut) {
-      return {
-        targetOffset: 0,
-        goalZ: agent.coverAnchorWorld.z - 0.14,
-        anchorBlockedByCover: true,
-      };
+      return savePeekCache(0, 'NONE', agent.coverAnchorWorld.z - 0.14, true);
     }
 
     const peekZ = agent.coverAnchorWorld.z + 0.18;
@@ -1749,21 +1806,12 @@ export class TacticalCombatAiSystem {
             }
           }
 
-          return {
-            targetOffset:
-              s * chosenDist + Math.sin(agent.peekCycleTimerS * 2.4) * 0.08,
-            goalZ: peekZ,
-            anchorBlockedByCover: true,
-          };
+          return savePeekCache(s * chosenDist, 'FINE', peekZ, true);
         }
       }
     }
 
-    return {
-      targetOffset: agent.peekSign * agent.peekStrideM,
-      goalZ: peekZ,
-      anchorBlockedByCover: true,
-    };
+    return savePeekCache(agent.peekSign * agent.peekStrideM, 'NONE', peekZ, true);
   }
 
   private resolveExposedPlayerAimPoint(
@@ -1837,11 +1885,37 @@ export class TacticalCombatAiSystem {
       agent.fireCooldownTimerS = Math.max(0, agent.fireCooldownTimerS - dt);
     }
 
-    const exposedAimTarget = this.resolveExposedPlayerAimPoint(
-      hs,
-      agent,
-      playerEyeWorldPos,
-    );
+    const aboutToFireNow =
+      (agent.burstShotsRemaining <= 0 && agent.fireCooldownTimerS <= 0) ||
+      (agent.burstShotsRemaining > 0 && agent.burstInterShotTimerS - dt <= 0);
+
+    let exposedAimTarget: Vec3Like | null;
+    const cachedAim = this.aimExposureCache.get(agent.targetId);
+    if (
+      !aboutToFireNow &&
+      cachedAim &&
+      this.elapsedClockS - cachedAim.timestampS < 0.08 &&
+      Math.abs(hs.worldPosition.x - cachedAim.enemyX) < 0.15 &&
+      Math.abs(hs.worldPosition.z - cachedAim.enemyZ) < 0.15 &&
+      Math.abs(playerEyeWorldPos.x - cachedAim.playerX) < 0.20 &&
+      Math.abs(playerEyeWorldPos.z - cachedAim.playerZ) < 0.20
+    ) {
+      exposedAimTarget = cachedAim.result;
+    } else {
+      exposedAimTarget = this.resolveExposedPlayerAimPoint(
+        hs,
+        agent,
+        playerEyeWorldPos,
+      );
+      this.aimExposureCache.set(agent.targetId, {
+        timestampS: this.elapsedClockS,
+        enemyX: hs.worldPosition.x,
+        enemyZ: hs.worldPosition.z,
+        playerX: playerEyeWorldPos.x,
+        playerZ: playerEyeWorldPos.z,
+        result: exposedAimTarget,
+      });
+    }
     if (!exposedAimTarget) {
       if (agent.burstShotsRemaining > 0) {
         agent.burstShotsRemaining = 0;

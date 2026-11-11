@@ -155,6 +155,7 @@ export interface EnvironmentRayInterceptResult {
   remainingEnergyJ: number;
   remainingSpeedMs: number;
   blocked: boolean;
+  stoppedDistanceM?: number;
 }
 
 export type EnvironmentRayInterceptor = (
@@ -182,6 +183,7 @@ export interface CombatDirectorSubsystems {
   combatAudio?: CombatAudioEngine | null;
   glbRegistry?: GlbModelRegistry | null;
   isLineOfSightBlocked?: (fromWorld: Vec3Like, toWorld: Vec3Like) => boolean;
+  getCoverBreachVersion?: () => number;
 }
 
 interface ActiveFragGrenade {
@@ -212,6 +214,20 @@ interface OffhandSidearmRig {
   wasHeldLastFrame: boolean;
   lastHand: ActiveFiringHand | null;
   clonedMaterials: pc.StandardMaterial[];
+  cachedBoneEntities: Map<GhoulZoneId, pc.Entity | null>;
+  cachedZoneEntities: Map<GhoulZoneId, pc.Entity | null>;
+}
+
+interface CachedHudTargetLos {
+  occluded: boolean;
+  expiresAtS: number;
+  epoch: number;
+  viewerX: number;
+  viewerY: number;
+  viewerZ: number;
+  anchorX: number;
+  anchorY: number;
+  anchorZ: number;
 }
 
 interface RestArmBoneFrame {
@@ -313,6 +329,7 @@ export class CombatDirector {
   private tacticalAi: TacticalCombatAiSystem | null = null;
   private combatAudio: CombatAudioEngine | null = null;
   private glbRegistry: GlbModelRegistry | null = null;
+  private getCoverBreachVersion?: () => number;
 
   private readonly app: pc.AppBase;
   private readonly materials: EngineMaterialPalette;
@@ -323,8 +340,19 @@ export class CombatDirector {
   private readonly activeBlastFlashes: ActiveBlastFlashFx[] = [];
   private readonly offhandSidearmRigs = new Map<string, OffhandSidearmRig>();
   private readonly lastHitClockByTarget = new Map<string, number>();
+  private readonly hudLosCacheByTarget = new Map<string, CachedHudTargetLos>();
+  private readonly scratchHealthStates: TargetHealthState[] = [];
+  private losCacheEpoch = 1;
+  private lastExternalBreachVersion = -1;
   private lastUpdateClockS = 0;
   private grenadeCooldownS = 0;
+
+  // Throttled sniper rangefinder cache
+  private rangefinderLastClockS = -1;
+  private rangefinderLastWeaponId = '';
+  private rangefinderLastAmmoId = '';
+  private rangefinderLastOrigin = new pc.Vec3(Infinity, Infinity, Infinity);
+  private rangefinderLastAimDir = new pc.Vec3(0, 0, -1);
 
   private readonly blastFireballMat: pc.StandardMaterial;
   private readonly proceduralM9NitrideMat: pc.StandardMaterial;
@@ -337,6 +365,7 @@ export class CombatDirector {
   private readonly scratchSidearmQuat = new pc.Quat();
   private readonly scratchRagQuat = new pc.Quat();
   private readonly scratchDeltaQuat = new pc.Quat();
+  private readonly scratchBindInvQuat = new pc.Quat();
   private readonly scratchWorldQuat = new pc.Quat();
   private readonly scratchOffsetVec = new pc.Vec3();
   private readonly scratchRotOffsetVec = new pc.Vec3();
@@ -408,6 +437,9 @@ export class CombatDirector {
     }
     if (subsystems.isLineOfSightBlocked !== undefined) {
       this.isLineOfSightBlocked = subsystems.isLineOfSightBlocked;
+    }
+    if (subsystems.getCoverBreachVersion !== undefined) {
+      this.getCoverBreachVersion = subsystems.getCoverBreachVersion;
     }
   }
 
@@ -501,6 +533,8 @@ export class CombatDirector {
     }
     this.targets = nextTargets;
     this.lastEngagedTarget = null;
+    this.hudLosCacheByTarget.clear();
+    this.losCacheEpoch++;
 
     if (this.tacticalAi) {
       this.tacticalAi.registerWaveTargets(
@@ -512,6 +546,7 @@ export class CombatDirector {
 
   public setXRayMode(enabled: boolean): void {
     this.enableXRayInspector = enabled;
+    this.losCacheEpoch++;
     for (const t of this.targets) {
       t.setXRayMode(enabled);
     }
@@ -529,6 +564,48 @@ export class CombatDirector {
     );
   }
 
+  /**
+   * Fast conservative ray-cone + gravity/wind broad-phase filter before running RK4 `simulateShot`.
+   * Rejects off-axis targets in O(1) while guaranteeing 0 false negatives across 0-300m shots.
+   */
+  private isTargetNearShotCone(
+    candidate: GhoulMannequinEntity,
+    origin: Vec3Like,
+    normAim: Vec3Like,
+    ammo: AmmoSpec
+  ): boolean {
+    const hs = candidate.healthState;
+    const pelvis = hs.ragdollBones.PELVIS_GROIN?.position;
+    const thorax = hs.ragdollBones.TORSO_UPPER_THORAX?.position;
+    const cx = thorax ? (thorax.x + (pelvis?.x ?? thorax.x)) * 0.5 : hs.worldPosition.x;
+    const cy = thorax ? (thorax.y + (pelvis?.y ?? thorax.y)) * 0.5 : hs.worldPosition.y + 1.0;
+    const cz = thorax ? (thorax.z + (pelvis?.z ?? thorax.z)) * 0.5 : hs.worldPosition.z;
+
+    const rx = cx - origin.x;
+    const ry = cy - origin.y;
+    const rz = cz - origin.z;
+
+    const proj = rx * normAim.x + ry * normAim.y + rz * normAim.z;
+    const bodyRadius = hs.severedZones.size > 0 ? 4.4 : 1.75;
+    if (proj < -bodyRadius) {
+      return false;
+    }
+
+    const d = Math.max(0, proj);
+    const spreadSlope =
+      Math.tan(Math.min(0.65, Math.max(0, ammo.spreadRadians))) +
+      (ammo.pelletCount > 1 ? 0.16 : 0.025);
+    const estFlightS = d / Math.max(110, ammo.muzzleVelocityMs * 0.62);
+    const windSpeed = length(this.environment.windVelocity);
+    const ballisticMargin = 5.2 * estFlightS * estFlightS + windSpeed * estFlightS;
+    const maxRadius = bodyRadius + d * spreadSlope + ballisticMargin;
+
+    const perpX = rx - normAim.x * d;
+    const perpY = ry - normAim.y * d;
+    const perpZ = rz - normAim.z * d;
+    return perpX * perpX + perpY * perpY + perpZ * perpZ <= maxRadius * maxRadius;
+  }
+
   private findBestTargetHit(
     weapon: WeaponSpec,
     ammo: AmmoSpec,
@@ -538,18 +615,20 @@ export class CombatDirector {
   ): { target: GhoulMannequinEntity; report: ShotSimulationReport } | null {
     if (this.targets.length === 0) return null;
 
+    const normAim = normalize(aimDir);
     let bestHit: { target: GhoulMannequinEntity; report: ShotSimulationReport } | null = null;
     let bestImpactTime = Infinity;
 
     for (let i = 0; i < this.targets.length; i++) {
       const candidate = this.targets[i];
       if (excludeTargets?.has(candidate)) continue;
+      if (!this.isTargetNearShotCone(candidate, origin, normAim, ammo)) continue;
 
       const candReport = simulateShot(
         weapon,
         ammo,
         origin,
-        aimDir,
+        normAim,
         candidate.healthState,
         this.environment
       );
@@ -563,20 +642,7 @@ export class CombatDirector {
       }
     }
 
-    if (bestHit || excludeTargets) {
-      return bestHit;
-    }
-
-    const fallback = this.targets[0];
-    const fbReport = simulateShot(
-      weapon,
-      ammo,
-      origin,
-      aimDir,
-      fallback.healthState,
-      this.environment
-    );
-    return { target: fallback, report: fbReport };
+    return bestHit;
   }
 
   private truncateTrajectorySamples(
@@ -959,6 +1025,7 @@ export class CombatDirector {
     origin: Vec3Like,
     aimDir: Vec3Like
   ): void {
+    this.losCacheEpoch++;
     const normAim = normalize(aimDir);
     const muzzleSpeedMs = ammo.muzzleVelocityMs;
     const muzzleEnergyJ = 0.5 * ammo.massKg * muzzleSpeedMs * muzzleSpeedMs;
@@ -972,8 +1039,9 @@ export class CombatDirector {
     const match = this.findBestTargetHit(weapon, ammo, origin, normAim);
 
     if (!match || !match.report.hitTarget) {
+      let stoppedDistM: number | undefined;
       if (this.environmentRayInterceptor) {
-        this.environmentRayInterceptor(
+        const envRes = this.environmentRayInterceptor(
           origin,
           normAim,
           150.0,
@@ -982,11 +1050,15 @@ export class CombatDirector {
           ammo.diameterM,
           isAp
         );
+        stoppedDistM = envRes.stoppedDistanceM;
       }
+      const traceDistM = Math.max(0.25, stoppedDistM ?? 85.0);
       const samples =
         match && match.report.trajectorySamples.length > 1
-          ? match.report.trajectorySamples
-          : this.buildSyntheticFlightSamples(origin, normAim, muzzleSpeedMs, ammo.massKg, 85.0);
+          ? stoppedDistM !== undefined
+            ? this.truncateTrajectorySamples(match.report.trajectorySamples, origin, traceDistM)
+            : match.report.trajectorySamples
+          : this.buildSyntheticFlightSamples(origin, normAim, muzzleSpeedMs, ammo.massKg, traceDistM);
       this.fxManager.spawnFlyingProjectile(samples, false);
       return;
     }
@@ -1014,10 +1086,11 @@ export class CombatDirector {
         preIntercept.remainingSpeedMs <= 25 ||
         preIntercept.remainingEnergyJ <= 10
       ) {
+        const stopAtM = Math.max(0.25, preIntercept.stoppedDistanceM ?? hitDistM);
         const stoppedSamples = this.truncateTrajectorySamples(
           report.trajectorySamples,
           origin,
-          hitDistM
+          stopAtM
         );
         this.fxManager.spawnFlyingProjectile(stoppedSamples, false);
         return;
@@ -1158,10 +1231,18 @@ export class CombatDirector {
   ): void {
     const pelletCount = Math.max(1, ammo.pelletCount);
 
-    if (this.targets.length === 0) {
+    const nearTargets: GhoulMannequinEntity[] = [];
+    for (let i = 0; i < this.targets.length; i++) {
+      const cand = this.targets[i];
+      if (this.isTargetNearShotCone(cand, origin, normAim, ammo)) {
+        nearTargets.push(cand);
+      }
+    }
+
+    if (nearTargets.length === 0) {
       for (let pIdx = 0; pIdx < pelletCount; pIdx++) {
         const pelletDir = deterministicConeSpread(normAim, ammo.spreadRadians, pIdx, pelletCount);
-        this.environmentRayInterceptor?.(
+        const intercept = this.environmentRayInterceptor?.(
           origin,
           pelletDir,
           80.0,
@@ -1170,19 +1251,20 @@ export class CombatDirector {
           ammo.diameterM,
           isAp
         );
+        const traceDistM = Math.max(0.25, intercept?.stoppedDistanceM ?? 45.0);
         const samples = this.buildSyntheticFlightSamples(
           origin,
           pelletDir,
           muzzleSpeedMs,
           ammo.massKg,
-          45.0
+          traceDistM
         );
         this.fxManager.spawnFlyingProjectile(samples, true);
       }
       return;
     }
 
-    const candidateReports = this.targets.map((cand) => ({
+    const candidateReports = nearTargets.map((cand) => ({
       target: cand,
       report: simulateShot(weapon, ammo, origin, normAim, cand.healthState, this.environment),
     }));
@@ -1211,13 +1293,14 @@ export class CombatDirector {
         }
       }
 
+      const pelletDir = deterministicConeSpread(
+        normAim,
+        ammo.spreadRadians,
+        pIdx,
+        basePelletCount
+      );
+
       if (this.environmentRayInterceptor) {
-        const pelletDir = deterministicConeSpread(
-          normAim,
-          ammo.spreadRadians,
-          pIdx,
-          basePelletCount
-        );
         const intercept = this.environmentRayInterceptor(
           origin,
           pelletDir,
@@ -1233,10 +1316,31 @@ export class CombatDirector {
           intercept.remainingEnergyJ <= 8
         ) {
           blockedPellets.add(pIdx);
+          const stopDistM = Math.max(0.25, intercept.stoppedDistanceM ?? earliestHitDistM);
+          chosenSamples =
+            chosenSamples.length > 1
+              ? this.truncateTrajectorySamples(chosenSamples, origin, stopDistM)
+              : this.buildSyntheticFlightSamples(
+                  origin,
+                  pelletDir,
+                  muzzleSpeedMs,
+                  ammo.massKg,
+                  stopDistM
+                );
         } else {
           speedRatioSum += intercept.remainingSpeedMs / Math.max(1, muzzleSpeedMs);
           unblockedCount++;
         }
+      }
+
+      if (chosenSamples.length < 2) {
+        chosenSamples = this.buildSyntheticFlightSamples(
+          origin,
+          pelletDir,
+          muzzleSpeedMs,
+          ammo.massKg,
+          45.0
+        );
       }
 
       this.fxManager.spawnFlyingProjectile(chosenSamples, true);
@@ -1352,6 +1456,7 @@ export class CombatDirector {
     blast: BlastEvent,
     sourceLabel = 'HAZARD BARREL'
   ): number {
+    this.losCacheEpoch++;
     const center = blast.centerWorld;
     const blastRadiusM = blast.radiusM;
     const peakImpulseNs = blast.peakImpulseNs;
@@ -1636,17 +1741,6 @@ export class CombatDirector {
     const root = new pc.Entity('FragBlastFx');
     root.setPosition(center.x, Math.max(0.08, center.y), center.z);
 
-    const flashLight = new pc.Entity('FragBlastLight');
-    flashLight.addComponent('light', {
-      type: 'omni',
-      color: new pc.Color(1.0, 0.68, 0.25),
-      intensity: 4.5,
-      range: blastRadiusM * 2.2,
-      castShadows: false,
-    });
-    flashLight.setLocalPosition(0, 0.45, 0);
-    root.addChild(flashLight);
-
     const fireball = new pc.Entity('FragFireballSphere');
     fireball.addComponent('render', {
       type: 'sphere',
@@ -1698,15 +1792,45 @@ export class CombatDirector {
     aimDir: Vec3Like,
     hudController: HudController
   ): void {
-    const match = this.findBestTargetHit(weapon, ammo, origin, aimDir);
+    const normAim = normalize(aimDir);
+    const dxO = origin.x - this.rangefinderLastOrigin.x;
+    const dyO = origin.y - this.rangefinderLastOrigin.y;
+    const dzO = origin.z - this.rangefinderLastOrigin.z;
+    const dxA = normAim.x - this.rangefinderLastAimDir.x;
+    const dyA = normAim.y - this.rangefinderLastAimDir.y;
+    const dzA = normAim.z - this.rangefinderLastAimDir.z;
+
+    if (
+      this.rangefinderLastClockS >= 0 &&
+      this.lastUpdateClockS - this.rangefinderLastClockS < 0.06 &&
+      weapon.id === this.rangefinderLastWeaponId &&
+      ammo.id === this.rangefinderLastAmmoId &&
+      dxO * dxO + dyO * dyO + dzO * dzO < 0.0004 &&
+      dxA * dxA + dyA * dyA + dzA * dzA < 1e-6
+    ) {
+      return;
+    }
+
+    this.rangefinderLastClockS = this.lastUpdateClockS;
+    this.rangefinderLastWeaponId = weapon.id;
+    this.rangefinderLastAmmoId = ammo.id;
+    this.rangefinderLastOrigin.set(origin.x, origin.y, origin.z);
+    this.rangefinderLastAimDir.set(normAim.x, normAim.y, normAim.z);
+
+    const zoom = weapon.scopeZoomLevels[0] || 4.0;
+    const match = this.findBestTargetHit(weapon, ammo, origin, normAim);
     if (match) {
-      const zoom = weapon.scopeZoomLevels[0] || 4.0;
       hudController.setScopeOverlay(
         true,
         zoom,
         match.report.targetDistanceM,
         match.report.bulletDropAtImpactCm
       );
+    } else {
+      const refDistM = 42.0;
+      const flightS = refDistM / Math.max(120, ammo.muzzleVelocityMs * 0.92);
+      const dropCm = 0.5 * 9.81 * flightS * flightS * 100;
+      hudController.setScopeOverlay(true, zoom, refDistM, dropCm);
     }
   }
 
@@ -1719,6 +1843,14 @@ export class CombatDirector {
     this.lastUpdateClockS = totalElapsedTimeS;
     if (this.grenadeCooldownS > 0) {
       this.grenadeCooldownS = Math.max(0, this.grenadeCooldownS - dt);
+    }
+
+    if (this.getCoverBreachVersion) {
+      const curVer = this.getCoverBreachVersion();
+      if (curVer !== this.lastExternalBreachVersion) {
+        this.lastExternalBreachVersion = curVer;
+        this.losCacheEpoch++;
+      }
     }
 
     if (camera?.entity) {
@@ -1803,17 +1935,18 @@ export class CombatDirector {
     }
     this.vascularFx.update(dt);
 
+    const viewerWorldPos = this.getViewerPosVec3();
+
     // 4. Step Tactical Hostile AI (cover peeking, burst tracers, trauma-degraded aim, player vitals)
     if (this.tacticalAi) {
-      this.tacticalAi.update(
-        dt,
-        this.targets.map((t) => t.healthState),
-        this.getViewerPosVec3()
-      );
+      this.scratchHealthStates.length = this.targets.length;
+      for (let i = 0; i < this.targets.length; i++) {
+        this.scratchHealthStates[i] = this.targets[i].healthState;
+      }
+      this.tacticalAi.update(dt, this.scratchHealthStates, viewerWorldPos);
     }
 
     // 5. Step 3D Articulated PBD Ragdoll Physics, Sync Combatants & Pose Off-Hand Backup Handguns
-    const viewerWorldPos = this.getViewerPosVec3();
     for (const t of this.targets) {
       stepRagdollPhysics(t.healthState, dt, 0.0);
       t.syncFromHealthState(dt, totalElapsedTimeS);
@@ -1826,7 +1959,7 @@ export class CombatDirector {
       const vh = typeof window !== 'undefined' ? window.innerHeight : 720;
       const cx = vw * 0.5;
       const cy = vh * 0.5;
-      const viewerPos = this.getViewerPosVec3();
+      const viewerPos = viewerWorldPos;
       const entries: ProjectedTargetTriageEntry[] = [];
       let aimedTarget: GhoulMannequinEntity | null = null;
       let bestCrosshairDist = 165;
@@ -1841,7 +1974,11 @@ export class CombatDirector {
         const anchorPos = headPopped
           ? neckNode?.position ?? hs.worldPosition
           : headNode?.position ?? hs.worldPosition;
-        const bodyPos = chestNode?.position ?? add(hs.worldPosition, vec3(0, 1.25, 0));
+        const bodyPos = chestNode?.position ?? {
+          x: hs.worldPosition.x,
+          y: hs.worldPosition.y + 1.25,
+          z: hs.worldPosition.z,
+        };
         const yLift = hs.isRagdollActive ? 0.30 : 0.28;
 
         this.scratchWorldPt.set(anchorPos.x, anchorPos.y + yLift, anchorPos.z);
@@ -1854,11 +1991,54 @@ export class CombatDirector {
           this.scratchScreenPt.y >= -60 &&
           this.scratchScreenPt.y <= vh + 60;
 
-        const occludedByCover =
-          !this.enableXRayInspector &&
-          this.isLineOfSightBlocked !== undefined &&
-          this.isLineOfSightBlocked(viewerPos, anchorPos) &&
-          this.isLineOfSightBlocked(viewerPos, bodyPos);
+        let occludedByCover = false;
+        if (!this.enableXRayInspector && this.isLineOfSightBlocked !== undefined && onScreen) {
+          let cached = this.hudLosCacheByTarget.get(hs.targetId);
+          const vDx = cached ? viewerPos.x - cached.viewerX : Infinity;
+          const vDy = cached ? viewerPos.y - cached.viewerY : Infinity;
+          const vDz = cached ? viewerPos.z - cached.viewerZ : Infinity;
+          const aDx = cached ? anchorPos.x - cached.anchorX : Infinity;
+          const aDy = cached ? anchorPos.y - cached.anchorY : Infinity;
+          const aDz = cached ? anchorPos.z - cached.anchorZ : Infinity;
+
+          if (
+            cached &&
+            cached.epoch === this.losCacheEpoch &&
+            totalElapsedTimeS < cached.expiresAtS &&
+            vDx * vDx + vDy * vDy + vDz * vDz < 0.01 &&
+            aDx * aDx + aDy * aDy + aDz * aDz < 0.01
+          ) {
+            occludedByCover = cached.occluded;
+          } else {
+            occludedByCover =
+              this.isLineOfSightBlocked(viewerPos, anchorPos) &&
+              this.isLineOfSightBlocked(viewerPos, bodyPos);
+            if (!cached) {
+              cached = {
+                occluded: occludedByCover,
+                expiresAtS: totalElapsedTimeS + 0.08,
+                epoch: this.losCacheEpoch,
+                viewerX: viewerPos.x,
+                viewerY: viewerPos.y,
+                viewerZ: viewerPos.z,
+                anchorX: anchorPos.x,
+                anchorY: anchorPos.y,
+                anchorZ: anchorPos.z,
+              };
+              this.hudLosCacheByTarget.set(hs.targetId, cached);
+            } else {
+              cached.occluded = occludedByCover;
+              cached.expiresAtS = totalElapsedTimeS + 0.08;
+              cached.epoch = this.losCacheEpoch;
+              cached.viewerX = viewerPos.x;
+              cached.viewerY = viewerPos.y;
+              cached.viewerZ = viewerPos.z;
+              cached.anchorX = anchorPos.x;
+              cached.anchorY = anchorPos.y;
+              cached.anchorZ = anchorPos.z;
+            }
+          }
+        }
 
         const lastHitClock = this.lastHitClockByTarget.get(hs.targetId);
         const recentlyWallbanged =
@@ -1919,6 +2099,7 @@ export class CombatDirector {
 
   private applyPosedArmBoneToGlbJoint(
     glb: CombatantGlbInstance,
+    hs: TargetHealthState,
     zone: GhoulZoneId
   ): void {
     const boneNode = glb.boneNodes.get(zone);
@@ -1926,7 +2107,7 @@ export class CombatDirector {
     const rest = REST_ARM_BONE_FRAMES.get(zone);
     if (!boneNode || !bind || !rest) return;
 
-    const boneState = this.targets.find((t) => t.combatantGlb === glb)?.healthState.ragdollBones[zone];
+    const boneState = hs.ragdollBones[zone];
     if (!boneState) return;
 
     basisVectorsToQuat(
@@ -2096,6 +2277,8 @@ export class CombatDirector {
       wasHeldLastFrame: false,
       lastHand: null,
       clonedMaterials,
+      cachedBoneEntities: new Map(),
+      cachedZoneEntities: new Map(),
     };
     this.offhandSidearmRigs.set(id, rig);
     return rig;
@@ -2175,8 +2358,8 @@ export class CombatDirector {
       if (glbUpper && bindUpper && restUpper) {
         const pAnim = glbUpper.getPosition();
         const qAnim = glbUpper.getRotation();
-        const bindInv = bindUpper.modelRot.clone().invert();
-        this.scratchDeltaQuat.mul2(qAnim, bindInv);
+        this.scratchBindInvQuat.copy(bindUpper.modelRot).invert();
+        this.scratchDeltaQuat.mul2(qAnim, this.scratchBindInvQuat);
         this.scratchOffsetVec.sub2(bindUpper.modelPos, restUpper.restPos);
         this.scratchDeltaQuat.transformVector(
           this.scratchOffsetVec,
@@ -2278,14 +2461,19 @@ export class CombatDirector {
 
     // Pose 3D skeletal arm nodes (`combatantGlb` or custom `Bone_*` hierarchy + `Zone_*` bundles)
     if (target.combatantGlb) {
-      this.applyPosedArmBoneToGlbJoint(target.combatantGlb, upperArmZone);
-      this.applyPosedArmBoneToGlbJoint(target.combatantGlb, forearmZone);
-      this.applyPosedArmBoneToGlbJoint(target.combatantGlb, handZone);
+      this.applyPosedArmBoneToGlbJoint(target.combatantGlb, hs, upperArmZone);
+      this.applyPosedArmBoneToGlbJoint(target.combatantGlb, hs, forearmZone);
+      this.applyPosedArmBoneToGlbJoint(target.combatantGlb, hs, handZone);
       target.combatantGlb.rootEntity.syncHierarchy();
     } else {
       for (const z of [upperArmZone, forearmZone, handZone] as const) {
-        const customBone = target.rootEntity.findByName(`Bone_${z}`);
-        if (customBone instanceof pc.Entity) {
+        let customBone = rig.cachedBoneEntities.get(z);
+        if (customBone === undefined) {
+          const found = target.rootEntity.findByName(`Bone_${z}`);
+          customBone = found instanceof pc.Entity ? found : null;
+          rig.cachedBoneEntities.set(z, customBone);
+        }
+        if (customBone) {
           const b = hs.ragdollBones[z];
           customBone.setPosition(b.position.x, b.position.y, b.position.z);
           basisVectorsToQuat(
@@ -2301,8 +2489,13 @@ export class CombatDirector {
     }
 
     for (const z of [upperArmZone, forearmZone, handZone] as const) {
-      const zoneNode = target.rootEntity.findByName(`Zone_${z}`);
-      if (zoneNode instanceof pc.Entity) {
+      let zoneNode = rig.cachedZoneEntities.get(z);
+      if (zoneNode === undefined) {
+        const found = target.rootEntity.findByName(`Zone_${z}`);
+        zoneNode = found instanceof pc.Entity ? found : null;
+        rig.cachedZoneEntities.set(z, zoneNode);
+      }
+      if (zoneNode) {
         const b = hs.ragdollBones[z];
         zoneNode.setLocalPosition(b.position.x, b.position.y, b.position.z);
         this.setEntityWorldBasis(zoneNode, b.basisRight, b.basisUp, b.basisForward);

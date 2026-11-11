@@ -602,8 +602,8 @@ export class MarchingTileGlassWindow {
       seed: layoutSeed,
     });
 
-    const maxVerts = Math.min(64000, this.armoredPane.totalChunks * 220);
-    const maxIndices = this.armoredPane.totalChunks * 360;
+    const maxVerts = Math.min(16384, this.armoredPane.totalChunks * 80);
+    const maxIndices = this.armoredPane.totalChunks * 160;
     this.meshPositions = new Float32Array(maxVerts * 3);
     this.meshNormals = new Float32Array(maxVerts * 3);
     this.meshUvs = new Float32Array(maxVerts * 2);
@@ -635,6 +635,13 @@ export class MarchingTileGlassWindow {
       castShadows: false,
       receiveShadows: false,
     });
+    if (this.entity.render) {
+      const horizSpan = this.widthM * 0.5 + this.thicknessM + 0.15;
+      this.entity.render.customAabb = new pc.BoundingBox(
+        new pc.Vec3(this.centerWorld.x, this.centerWorld.y, this.centerWorld.z),
+        new pc.Vec3(horizSpan, this.heightM * 0.5 + 0.15, horizSpan),
+      );
+    }
     app.root.addChild(this.entity);
 
     this.createCollider();
@@ -839,7 +846,7 @@ export class MarchingTileGlassWindow {
     this.mesh.setUvs(0, this.meshUvs, 2, build.vertexCount);
     this.mesh.setColors(this.meshColors, 4, build.vertexCount);
     this.mesh.setIndices(this.meshIndices, build.indexCount);
-    this.mesh.update(pc.PRIMITIVE_TRIANGLES, true);
+    this.mesh.update(pc.PRIMITIVE_TRIANGLES, false);
   }
 
   private emitInstancedTriangles(
@@ -1444,8 +1451,8 @@ export class GlassSystem implements IDestructibleSubsystem {
 
     // 4. Shared Custom JS Floor-Bounce Pool + Single Dynamic Batched `pc.Mesh` for Voronoi Chunks & Plates
     this.voronoiShardPool = new GlassShardPool(maxVoronoiShards);
-    const maxBatchVerts = maxVoronoiShards * 96;
-    const maxBatchIndices = maxVoronoiShards * 180;
+    const maxBatchVerts = maxVoronoiShards * 48;
+    const maxBatchIndices = maxVoronoiShards * 96;
 
     this.batchPositions = new Float32Array(maxBatchVerts * 3);
     this.batchNormals = new Float32Array(maxBatchVerts * 3);

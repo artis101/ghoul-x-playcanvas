@@ -122,6 +122,18 @@ export class HudController {
   private hitmarkerTimeout: ReturnType<typeof globalThis.setTimeout> | null = null;
   private damageFlashAlpha = 0;
   private lastBulletTimeCss = 'none';
+  private lastAppliedVignetteCss = '';
+  private lastCrosshairHidden: boolean | null = null;
+  private lastCrosshairScaleStr = '';
+  private lastHpRounded = -1;
+  private lastArmorRounded = -1;
+  private lastHpWidthStr = '';
+  private lastArmorWidthStr = '';
+  private lastReflexText = '';
+  private lastReflexActive: boolean | null = null;
+  private lastReflexWidthStr = '';
+  private lastPromptText = '';
+  private lastPromptOpacity = '';
 
   constructor() {
     this.crosshairEl = queryEl('crosshair-standard');
@@ -209,17 +221,23 @@ export class HudController {
     const hpPct = Math.max(0, Math.min(100, (vitals.health / Math.max(1, vitals.maxHealth)) * 100));
     const armorPct = Math.max(0, Math.min(100, (vitals.armor / Math.max(1, vitals.maxArmor)) * 100));
 
-    if (this.healthValEl) {
+    if (this.healthValEl && hpRounded !== this.lastHpRounded) {
+      this.lastHpRounded = hpRounded;
       this.healthValEl.textContent = `${hpRounded}`;
     }
-    if (this.healthFillEl) {
-      this.healthFillEl.style.width = `${hpPct.toFixed(1)}%`;
+    const hpWidthStr = `${hpPct.toFixed(1)}%`;
+    if (this.healthFillEl && hpWidthStr !== this.lastHpWidthStr) {
+      this.lastHpWidthStr = hpWidthStr;
+      this.healthFillEl.style.width = hpWidthStr;
     }
-    if (this.armorValEl) {
+    if (this.armorValEl && armorRounded !== this.lastArmorRounded) {
+      this.lastArmorRounded = armorRounded;
       this.armorValEl.textContent = `${armorRounded}`;
     }
-    if (this.armorFillEl) {
-      this.armorFillEl.style.width = `${armorPct.toFixed(1)}%`;
+    const armorWidthStr = `${armorPct.toFixed(1)}%`;
+    if (this.armorFillEl && armorWidthStr !== this.lastArmorWidthStr) {
+      this.lastArmorWidthStr = armorWidthStr;
+      this.armorFillEl.style.width = armorWidthStr;
     }
 
     if (this.damageFlashAlpha > 0) {
@@ -235,38 +253,61 @@ export class HudController {
 
   public updateBulletTimeHud(state: BulletTimeVignetteState): void {
     const pct = Math.max(0, Math.min(100, state.reflexEnergyPct));
+    const isActive = state.active || state.killPunchActive;
+    const reflexText = isActive
+      ? `${state.timeScale.toFixed(2)}x`
+      : `${Math.round(pct)}%`;
     if (this.reflexValEl) {
-      this.reflexValEl.textContent =
-        state.active || state.killPunchActive
-          ? `${state.timeScale.toFixed(2)}x`
-          : `${Math.round(pct)}%`;
-      this.reflexValEl.classList.toggle('active', state.active || state.killPunchActive);
+      if (reflexText !== this.lastReflexText) {
+        this.lastReflexText = reflexText;
+        this.reflexValEl.textContent = reflexText;
+      }
+      if (isActive !== this.lastReflexActive) {
+        this.lastReflexActive = isActive;
+        this.reflexValEl.classList.toggle('active', isActive);
+      }
     }
-    if (this.reflexFillEl) {
-      this.reflexFillEl.style.width = `${pct.toFixed(1)}%`;
+    const reflexWidthStr = `${pct.toFixed(1)}%`;
+    if (this.reflexFillEl && reflexWidthStr !== this.lastReflexWidthStr) {
+      this.lastReflexWidthStr = reflexWidthStr;
+      this.reflexFillEl.style.width = reflexWidthStr;
     }
 
-    this.lastBulletTimeCss = state.cssBoxShadow;
-    this.refreshVignetteOverlay();
+    if (state.cssBoxShadow !== this.lastBulletTimeCss) {
+      this.lastBulletTimeCss = state.cssBoxShadow;
+      this.refreshVignetteOverlay();
+    }
   }
 
   private refreshVignetteOverlay(): void {
     if (!this.vignetteEl) return;
+    let targetCss: string;
     if (this.damageFlashAlpha > 0.01) {
       const dmgShadow = `inset 0 0 88px rgba(255, 42, 58, ${this.damageFlashAlpha.toFixed(3)})`;
-      this.vignetteEl.style.boxShadow =
+      targetCss =
         this.lastBulletTimeCss !== 'none'
           ? `${dmgShadow}, ${this.lastBulletTimeCss}`
           : dmgShadow;
     } else {
-      this.vignetteEl.style.boxShadow = this.lastBulletTimeCss;
+      targetCss = this.lastBulletTimeCss;
+    }
+    if (targetCss !== this.lastAppliedVignetteCss) {
+      this.lastAppliedVignetteCss = targetCss;
+      this.vignetteEl.style.boxShadow = targetCss;
     }
   }
 
   public setCrosshairBloom(scaleFactor: number, hidden = false): void {
     if (!this.crosshairEl) return;
-    this.crosshairEl.style.opacity = hidden ? '0' : '1';
-    this.crosshairEl.style.transform = `scale(${scaleFactor.toFixed(3)})`;
+    if (hidden !== this.lastCrosshairHidden) {
+      this.lastCrosshairHidden = hidden;
+      this.crosshairEl.style.opacity = hidden ? '0' : '1';
+    }
+    const scaleStr = `scale(${scaleFactor.toFixed(3)})`;
+    if (scaleStr !== this.lastCrosshairScaleStr) {
+      this.lastCrosshairScaleStr = scaleStr;
+      this.crosshairEl.style.transform = scaleStr;
+    }
   }
 
   public triggerHitmarker(mode: 'NORMAL' | 'ARMOR' | 'LETHAL' | boolean): void {
@@ -561,15 +602,26 @@ export class HudController {
   public updateContextPrompt(isPointerLocked: boolean, allHostilesDown: boolean): void {
     if (!this.promptEl) return;
 
+    let nextText: string | null = null;
+    let nextOpacity: string;
     if (!isPointerLocked) {
-      this.promptEl.textContent =
+      nextText =
         'CLICK TO ENGAGE  •  WASD MOVE  •  RMB ADS  •  1-4 WEAPON  •  B AMMO  •  G FRAG  •  Z REFLEX  •  X X-RAY  •  R RELOAD  •  T WAVE';
-      this.promptEl.style.opacity = '1';
+      nextOpacity = '1';
     } else if (allHostilesDown) {
-      this.promptEl.textContent = 'AREA CLEAR  —  PRESS [T] FOR NEXT HOSTILE SQUAD';
-      this.promptEl.style.opacity = '1';
+      nextText = 'AREA CLEAR  —  PRESS [T] FOR NEXT HOSTILE SQUAD';
+      nextOpacity = '1';
     } else {
-      this.promptEl.style.opacity = '0';
+      nextOpacity = '0';
+    }
+
+    if (nextText !== null && nextText !== this.lastPromptText) {
+      this.lastPromptText = nextText;
+      this.promptEl.textContent = nextText;
+    }
+    if (nextOpacity !== this.lastPromptOpacity) {
+      this.lastPromptOpacity = nextOpacity;
+      this.promptEl.style.opacity = nextOpacity;
     }
   }
 

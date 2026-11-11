@@ -63,6 +63,10 @@ export class FpsController {
   private shakeDurationS = 0.001;
   private shakeIntensityDeg = 0;
   private shakeClockS = 0;
+  private lastShakePitchOffset = 0;
+  private lastShakeYawOffset = 0;
+  private lastShakeRollOffset = 0;
+  private lastCamHeadBobY = 0;
 
   constructor(
     app: pc.AppBase,
@@ -199,9 +203,27 @@ export class FpsController {
     });
   }
 
+  public syncCameraTransform(): void {
+    this.cameraEntity.setPosition(
+      this.playerPos.x,
+      this.playerPos.y + this.lastCamHeadBobY,
+      this.playerPos.z
+    );
+    this.cameraEntity.setEulerAngles(
+      this.cameraPitch + this.recoilPitch + this.lastShakePitchOffset,
+      this.cameraYaw + this.recoilYaw + this.lastShakeYawOffset,
+      this.recoilCameraRoll + this.lastShakeRollOffset
+    );
+  }
+
   public getAimDirection(): pc.Vec3 {
-    const pitchRad = (this.cameraPitch * Math.PI) / 180;
-    const yawRad = (this.cameraYaw * Math.PI) / 180;
+    const effectivePitch = Math.max(
+      -89.5,
+      Math.min(89.5, this.cameraPitch + this.recoilPitch + this.lastShakePitchOffset)
+    );
+    const effectiveYaw = this.cameraYaw + this.recoilYaw + this.lastShakeYawOffset;
+    const pitchRad = (effectivePitch * Math.PI) / 180;
+    const yawRad = (effectiveYaw * Math.PI) / 180;
 
     const x = -Math.sin(yawRad) * Math.cos(pitchRad);
     const y = Math.sin(pitchRad);
@@ -211,7 +233,11 @@ export class FpsController {
   }
 
   public getEyePosition(): pc.Vec3 {
-    return this.playerPos.clone();
+    return new pc.Vec3(
+      this.playerPos.x,
+      this.playerPos.y + this.lastCamHeadBobY,
+      this.playerPos.z
+    );
   }
 
   public applyRecoilKick(recoilKickDeg: number): void {
@@ -262,11 +288,6 @@ export class FpsController {
     reloadTimerS: number,
     weaponViewmodelEntity: pc.Entity
   ): void {
-    // Full-Auto Trigger Hold for Assault Rifle
-    if (this.isTriggerHeld && currentWeapon.role === 'ASSAULT_RIFLE') {
-      this.callbacks.onTriggerPull();
-    }
-
     // Smooth ADS Blend & Dynamic FOV Transition
     const targetAds = this.isAimingDownSights ? 1.0 : 0.0;
     const adsLerp = 1 - Math.exp(-15.5 * dt);
@@ -381,16 +402,11 @@ export class FpsController {
     const camHeadBobY =
       Math.sin(this.moveBobPhase * 2.0) * 0.008 * this.moveBobBlend * (1 - this.adsBlend * 0.65);
 
-    this.cameraEntity.setPosition(
-      this.playerPos.x,
-      this.playerPos.y + camHeadBobY,
-      this.playerPos.z
-    );
-    this.cameraEntity.setEulerAngles(
-      this.cameraPitch + this.recoilPitch + shakePitchOffset,
-      this.cameraYaw + this.recoilYaw + shakeYawOffset,
-      this.recoilCameraRoll + shakeRollOffset
-    );
+    this.lastShakePitchOffset = shakePitchOffset;
+    this.lastShakeYawOffset = shakeYawOffset;
+    this.lastShakeRollOffset = shakeRollOffset;
+    this.lastCamHeadBobY = camHeadBobY;
+    this.syncCameraTransform();
 
     // Smooth hip-to-ADS cheek-weld pose + shoulder transition arc
     const baseVmX = 0.24 * (1 - this.adsBlend);
@@ -432,6 +448,11 @@ export class FpsController {
       hipCantRollDeg + bobRollDeg + this.vmRecoilRollDeg - this.swayYawOffset * 0.55 + reloadRollDeg
     );
     weaponViewmodelEntity.enabled = !this.sniperScopeVisible;
+
+    // Full-Auto Trigger Hold for Assault Rifle (runs after movement & camera/viewmodel pose sync)
+    if (this.isTriggerHeld && currentWeapon.role === 'ASSAULT_RIFLE') {
+      this.callbacks.onTriggerPull();
+    }
 
     // Dynamic Crosshair Bloom
     const bloom = 1.0 + this.recoilPitch * 0.08 + this.moveBobBlend * 0.16 * (1 - this.adsBlend * 0.5);

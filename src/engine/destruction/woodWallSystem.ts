@@ -28,8 +28,8 @@ import {
 import { HardwareInstancedPool } from '../physics/instancedPool.ts';
 import { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
 
-export const DEFAULT_WOOD_WALL_MAX_VERTICES = 24_576;
-export const DEFAULT_WOOD_WALL_MAX_INDICES = 73_728;
+export const DEFAULT_WOOD_WALL_MAX_VERTICES = 12_288;
+export const DEFAULT_WOOD_WALL_MAX_INDICES = 36_864;
 export const DEFAULT_WOOD_STUD_WIDTH_M = 0.045;
 export const DEFAULT_WOOD_STUD_DEPTH_M = 0.085;
 export const DEFAULT_WOOD_STUD_SPACING_M = 0.60;
@@ -45,7 +45,7 @@ const TIGHT_BUCKSHOT_CLUSTER_RADIUS_M = 0.22;
 const MEDIUM_BUCKSHOT_CLUSTER_RADIUS_M = 0.26;
 /** Max real-time / sim-time window for grouping synchronous or rapid multi-pellet shotgun impacts. */
 const BUCKSHOT_VOLLEY_WINDOW_S = 0.025;
-const BUCKSHOT_VOLLEY_WINDOW_MS = 25;
+const BUCKSHOT_VOLLEY_WINDOW_MS = 500;
 const MAX_PELLETS_PER_VOLLEY = 9;
 
 export interface WoodWallConfig {
@@ -1202,7 +1202,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
     );
     studFrameMesh.setUvs(0, studScratchBuffers.uvs, 2, studCounts.vertexCount);
     studFrameMesh.setIndices(studScratchBuffers.indices, studCounts.indexCount);
-    studFrameMesh.update(pc.PRIMITIVE_TRIANGLES, true);
+    studFrameMesh.update(pc.PRIMITIVE_TRIANGLES, false);
     studFrameMesh.incRefCount();
 
     const rootEntity = new pc.Entity(`WoodWall_${config.id}`);
@@ -1214,6 +1214,12 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       rotationQuat.w,
     );
 
+    const horizSpan = widthM * 0.5 + thicknessM + 0.2;
+    const wallCustomAabb = new pc.BoundingBox(
+      new pc.Vec3(centerWorld.x, centerWorld.y, centerWorld.z),
+      new pc.Vec3(horizSpan, heightM * 0.5 + 0.2, horizSpan),
+    );
+
     const panelEntity = new pc.Entity(`WoodWallPanel_${config.id}`);
     const panelMi = new pc.MeshInstance(panelMesh, this.panelMaterial);
     panelEntity.addComponent('render', {
@@ -1221,6 +1227,9 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       castShadows: true,
       receiveShadows: true,
     });
+    if (panelEntity.render) {
+      panelEntity.render.customAabb = wallCustomAabb;
+    }
     rootEntity.addChild(panelEntity);
 
     const studFrameEntity = new pc.Entity(`WoodWallStuds_${config.id}`);
@@ -1230,6 +1239,9 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       castShadows: true,
       receiveShadows: true,
     });
+    if (studFrameEntity.render) {
+      studFrameEntity.render.customAabb = wallCustomAabb;
+    }
     rootEntity.addChild(studFrameEntity);
 
     this.app.root.addChild(rootEntity);
@@ -2230,7 +2242,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
     mesh.setNormals(buf.normals, 3, counts.vertexCount);
     mesh.setUvs(0, buf.uvs, 2, counts.vertexCount);
     mesh.setIndices(buf.indices, counts.indexCount);
-    mesh.update(pc.PRIMITIVE_TRIANGLES, true);
+    mesh.update(pc.PRIMITIVE_TRIANGLES, false);
   }
 
   private damageInteriorStudSections(
@@ -2324,7 +2336,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
     mesh.setNormals(buf.normals, 3, stats.vertexCount);
     mesh.setUvs(0, buf.uvs, 2, stats.vertexCount);
     mesh.setIndices(buf.indices, stats.indexCount);
-    mesh.update(pc.PRIMITIVE_TRIANGLES, true);
+    mesh.update(pc.PRIMITIVE_TRIANGLES, false);
   }
 
   private isPointOverIntactStud(

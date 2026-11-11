@@ -88,9 +88,9 @@ const CCD_SPEED_THRESHOLD_SQ = 12 * 12;
 const SLEEP_LINEAR_SPEED_SQ = 0.08 * 0.08;
 const SLEEP_ANGULAR_SPEED_SQ = 0.18 * 0.18;
 const SLEEP_SETTLE_DURATION_S = 0.45;
-const MAX_STEP_DT = 1 / 20;
+const MAX_STEP_DT = 1 / 10;
 const TARGET_SUBSTEP_DT = 1 / 60;
-const MAX_SUBSTEPS = 4;
+const MAX_SUBSTEPS = 6;
 
 /**
  * Rapier3D WASM physics world managing arena static surfaces, dynamic debris rigid bodies,
@@ -111,6 +111,8 @@ export class RapierPhysicsWorld {
   private readonly scratchAngvel: RAPIER.Vector = { x: 0, y: 0, z: 0 };
   private readonly scratchImpulse: RAPIER.Vector = { x: 0, y: 0, z: 0 };
   private readonly scratchTorque: RAPIER.Vector = { x: 0, y: 0, z: 0 };
+  private readonly scratchHitPoint: Vec3Like = { x: 0, y: 0, z: 0 };
+  private scratchRay: RAPIER.Ray | null = null;
 
   private queryPipelineDirty = true;
   private destroyed = false;
@@ -367,10 +369,21 @@ export class RapierPhysicsWorld {
     const dy = dirNormalized.y * invLen;
     const dz = dirNormalized.z * invLen;
 
-    const ray = new RAPIER.Ray(
-      { x: origin.x, y: origin.y, z: origin.z },
-      { x: dx, y: dy, z: dz },
-    );
+    let ray = this.scratchRay;
+    if (!ray) {
+      ray = new RAPIER.Ray(
+        { x: origin.x, y: origin.y, z: origin.z },
+        { x: dx, y: dy, z: dz },
+      );
+      this.scratchRay = ray;
+    } else {
+      ray.origin.x = origin.x;
+      ray.origin.y = origin.y;
+      ray.origin.z = origin.z;
+      ray.dir.x = dx;
+      ray.dir.y = dy;
+      ray.dir.z = dz;
+    }
 
     const hits: PenetrationRayHit[] = [];
 
@@ -416,6 +429,82 @@ export class RapierPhysicsWorld {
         : a.colliderHandle - b.colliderHandle,
     );
     return hits;
+  }
+
+  /**
+   * Zero-allocation early-exit ray occlusion test: aborts BVH traversal on the first collider
+   * for which `isBlocking` returns `true`, avoiding array allocations and hit sorting for LOS checks.
+   */
+  public hasAnyBlockingHit(
+    origin: Vec3Like,
+    dirNormalized: Vec3Like,
+    maxDistM: number,
+    isBlocking: (
+      surface: ColliderSurfaceTag,
+      pointWorld: Vec3Like,
+      distanceM: number,
+    ) => boolean,
+  ): boolean {
+    if (this.destroyed || maxDistM <= 0) {
+      return false;
+    }
+
+    if (this.queryPipelineDirty) {
+      this.flushQueryPipeline();
+    }
+
+    const dirLenSq =
+      dirNormalized.x * dirNormalized.x +
+      dirNormalized.y * dirNormalized.y +
+      dirNormalized.z * dirNormalized.z;
+    if (dirLenSq < 1e-12) {
+      return false;
+    }
+
+    const invLen = 1 / Math.sqrt(dirLenSq);
+    const dx = dirNormalized.x * invLen;
+    const dy = dirNormalized.y * invLen;
+    const dz = dirNormalized.z * invLen;
+
+    let ray = this.scratchRay;
+    if (!ray) {
+      ray = new RAPIER.Ray(
+        { x: origin.x, y: origin.y, z: origin.z },
+        { x: dx, y: dy, z: dz },
+      );
+      this.scratchRay = ray;
+    } else {
+      ray.origin.x = origin.x;
+      ray.origin.y = origin.y;
+      ray.origin.z = origin.z;
+      ray.dir.x = dx;
+      ray.dir.y = dy;
+      ray.dir.z = dz;
+    }
+
+    let blocked = false;
+    const pt = this.scratchHitPoint;
+    this.world.intersectionsWithRay(ray, maxDistM, true, (intersection) => {
+      const handle = intersection.collider.handle;
+      const surface = this.surfaceTags.get(handle);
+      if (!surface) {
+        return true;
+      }
+      const toi = Math.max(0, intersection.timeOfImpact);
+      if (toi > maxDistM) {
+        return true;
+      }
+      pt.x = origin.x + dx * toi;
+      pt.y = origin.y + dy * toi;
+      pt.z = origin.z + dz * toi;
+      if (isBlocking(surface, pt, toi)) {
+        blocked = true;
+        return false;
+      }
+      return true;
+    });
+
+    return blocked;
   }
 
   public applyRadialBlastImpulse(blast: BlastEvent): number {
