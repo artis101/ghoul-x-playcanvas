@@ -1,6 +1,6 @@
 import * as pc from 'playcanvas';
 import type { Vec3Like } from '../../contracts/ballistics.ts';
-import type { BlastEvent } from '../../contracts/destruction.ts';
+import type { BlastEvent, PenetrationRayHit } from '../../contracts/destruction.ts';
 import type { GlbModelRegistry } from '../assets/glbLoader.ts';
 import type { CombatAudioEngine } from '../audio/combatAudioEngine.ts';
 import type { EnvironmentRayInterceptResult } from '../combat/combatDirector.ts';
@@ -20,6 +20,7 @@ import {
 import {
   interceptEnemyShot,
   isLineOfSightBlocked,
+  isSurfaceHitInOpenBreach,
 } from './manager/destructionCoverQueries.ts';
 import {
   type DestructionManagerOptions,
@@ -96,9 +97,31 @@ export class DestructionManager {
     this.pomDecals = new PomCraterDecalSystem(app);
     this.pomDecals.registerConcreteMaterial(this.sillConcreteMat);
 
-    this.woodWalls = new WoodWallSystem(app, rapierWorld, options.woodOptions);
+    const debrisBundle =
+      options.glbRegistry && options.glbRegistry.isLoaded('debris_pack')
+        ? options.glbRegistry.getDebrisPackBundle()
+        : null;
+    const woodOptions =
+      debrisBundle && !options.woodOptions?.splinterMeshes
+        ? { ...options.woodOptions, splinterMeshes: debrisBundle.splinterMeshes }
+        : options.woodOptions;
+    const brickOptions =
+      debrisBundle &&
+      !options.brickOptions?.variantMeshes &&
+      debrisBundle.brickMeshes.length >= 3
+        ? {
+            ...options.brickOptions,
+            variantMeshes: [
+              debrisBundle.brickMeshes[0],
+              debrisBundle.brickMeshes[1],
+              debrisBundle.brickMeshes[2],
+            ] as const,
+          }
+        : options.brickOptions;
+
+    this.woodWalls = new WoodWallSystem(app, rapierWorld, woodOptions);
     this.glassSystem = new GlassSystem(app, rapierWorld);
-    this.brickWalls = new BrickWallSystem(app, rapierWorld, options.brickOptions);
+    this.brickWalls = new BrickWallSystem(app, rapierWorld, brickOptions);
     this.concreteWalls = new ConcreteWallSystem(app, rapierWorld, {
       pomDecalSystem: this.pomDecals,
     });
@@ -155,6 +178,22 @@ export class DestructionManager {
   public isLineOfSightBlocked(fromWorld: Vec3Like, toWorld: Vec3Like): boolean {
     if (this.destroyed) return false;
     return isLineOfSightBlocked(this.getRaycastContext(), fromWorld, toWorld);
+  }
+
+  public isSurfaceOpenAtHit(
+    hit: PenetrationRayHit,
+    rayOrigin: Vec3Like,
+    unitDir: Vec3Like,
+    maxDistM: number
+  ): boolean {
+    if (this.destroyed) return true;
+    return isSurfaceHitInOpenBreach(
+      this.getRaycastContext(),
+      hit,
+      rayOrigin,
+      unitDir,
+      maxDistM
+    );
   }
 
   public interceptEnemyShot(

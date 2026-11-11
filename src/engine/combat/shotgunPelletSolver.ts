@@ -1,5 +1,5 @@
 import type { AmmoSpec, EnvironmentState, Vec3Like, WeaponSpec } from '../../contracts/ballistics.ts';
-import { distance, deterministicConeSpread } from '../../core/ballistics/vec3.ts';
+import { deterministicConeSpread, distance, normalize, sub } from '../../core/ballistics/vec3.ts';
 import { simulateShot } from '../../core/ballistics/solver.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
@@ -42,6 +42,8 @@ export function fireMultiPelletShot(
 
   const basePelletCount = candidateReports[0].report.pelletResults.length;
   const blockedPellets = new Set<number>();
+  const allowedPelletIndices = new Set<number>();
+  const pelletSpeedOverridesMs = new Map<number, number>();
   let speedRatioSum = 0;
   let unblockedCount = 0;
 
@@ -49,6 +51,7 @@ export function fireMultiPelletShot(
     let chosenSamples = candidateReports[0].report.pelletResults[pIdx].trajectorySamples;
     let earliestHitDistM = 80.0;
     let earliestHitS = Infinity;
+    let earliestImpactPoint: Vec3Like | null = null;
 
     for (const cr of candidateReports) {
       const pr = cr.report.pelletResults[pIdx];
@@ -57,14 +60,22 @@ export function fireMultiPelletShot(
         if (hitTime < earliestHitS) {
           earliestHitS = hitTime;
           chosenSamples = pr.trajectorySamples;
-          if (pr.impactPointWorld) earliestHitDistM = distance(origin, pr.impactPointWorld);
+          if (pr.impactPointWorld) {
+            earliestImpactPoint = pr.impactPointWorld;
+            earliestHitDistM = distance(origin, pr.impactPointWorld);
+          }
         }
       }
     }
 
     const pelletDir = deterministicConeSpread(normAim, ammo.spreadRadians, pIdx, basePelletCount);
+    const interceptDir =
+      earliestImpactPoint && earliestHitDistM > 1e-4
+        ? normalize(sub(earliestImpactPoint, origin))
+        : pelletDir;
+
     if (interceptor) {
-      const intercept = interceptor(origin, pelletDir, earliestHitDistM, perPelletEnergyJ, muzzleSpeedMs, ammo.diameterM, isAp);
+      const intercept = interceptor(origin, interceptDir, earliestHitDistM, perPelletEnergyJ, muzzleSpeedMs, ammo.diameterM, isAp);
       if (intercept.blocked || intercept.remainingSpeedMs <= 25 || intercept.remainingEnergyJ <= 8) {
         blockedPellets.add(pIdx);
         const stopDistM = Math.max(0.25, intercept.stoppedDistanceM ?? earliestHitDistM);
@@ -72,9 +83,15 @@ export function fireMultiPelletShot(
           ? truncateTrajectorySamples(chosenSamples, origin, stopDistM)
           : buildSyntheticFlightSamples(origin, pelletDir, muzzleSpeedMs, ammo.massKg, stopDistM, environment.speedOfSoundMs);
       } else {
+        allowedPelletIndices.add(pIdx);
+        if (intercept.remainingSpeedMs < muzzleSpeedMs * 0.98) {
+          pelletSpeedOverridesMs.set(pIdx, intercept.remainingSpeedMs);
+        }
         speedRatioSum += intercept.remainingSpeedMs / Math.max(1, muzzleSpeedMs);
         unblockedCount++;
       }
+    } else {
+      allowedPelletIndices.add(pIdx);
     }
 
     if (chosenSamples.length < 2) {
@@ -90,12 +107,22 @@ export function fireMultiPelletShot(
     if (interceptor) {
       const anyReached = cr.report.pelletResults.some((pr, idx) => pr.hitTarget && !blockedPellets.has(idx));
       if (!anyReached) continue;
-      const avgRatio = unblockedCount > 0 ? speedRatioSum / unblockedCount : 1.0;
-      if (avgRatio < 0.96) {
-        const attenAmmo: AmmoSpec = { ...ammo, muzzleVelocityMs: muzzleSpeedMs * avgRatio };
-        const attenReport = simulateShot(weapon, attenAmmo, origin, normAim, cr.target.healthState, environment);
-        if (attenReport.hitTarget) {
-          applyImpactFxAndState(cr.target, attenReport, weapon.codeName, impactCtx, attenAmmo);
+
+      if (blockedPellets.size > 0 || pelletSpeedOverridesMs.size > 0) {
+        const avgRatio = unblockedCount > 0 ? speedRatioSum / unblockedCount : 1.0;
+        const attenAmmo: AmmoSpec =
+          avgRatio < 0.98 ? { ...ammo, muzzleVelocityMs: muzzleSpeedMs * avgRatio } : ammo;
+        const filteredReport = simulateShot(
+          weapon,
+          ammo,
+          origin,
+          normAim,
+          cr.target.healthState,
+          environment,
+          { allowedPelletIndices, pelletSpeedOverridesMs }
+        );
+        if (filteredReport.hitTarget) {
+          applyImpactFxAndState(cr.target, filteredReport, weapon.codeName, impactCtx, attenAmmo);
         }
         continue;
       }

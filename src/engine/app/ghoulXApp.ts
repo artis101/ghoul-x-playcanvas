@@ -100,6 +100,7 @@ export class GhoulXApplication implements IGhoulXApp {
 
     this.destructionManager = new DestructionManager(this.app, this.rapierWorld, {
       materials: this.materials,
+      glbRegistry: this.glbRegistry,
       barrelManager: this.mayhemDirector.barrels,
       combatAudio: this.combatAudio,
       getListenerPos: () => {
@@ -108,6 +109,8 @@ export class GhoulXApplication implements IGhoulXApp {
       },
       buildDefaultArena: true,
     });
+    this.mayhemDirector.isSurfaceOpenAtHit = (hit, origin, dir, maxDistM) =>
+      this.destructionManager.isSurfaceOpenAtHit(hit, origin, dir, maxDistM);
 
     this.tacticalAi = new TacticalCombatAiSystem({
       app: this.app,

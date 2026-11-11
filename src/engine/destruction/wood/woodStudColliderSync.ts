@@ -146,11 +146,19 @@ export function isPointOverIntactStud(
   internal: WallInternalState,
   u: number,
   v: number,
+  toleranceM = 0,
 ): boolean {
-  if (u < 0 || u > wall.widthM || v < 0 || v > wall.heightM) return false;
-  const halfStudW = DEFAULT_WOOD_STUD_WIDTH_M * 0.5;
+  if (
+    u < -toleranceM ||
+    u > wall.widthM + toleranceM ||
+    v < -toleranceM ||
+    v > wall.heightM + toleranceM
+  ) {
+    return false;
+  }
+  const halfStudW = DEFAULT_WOOD_STUD_WIDTH_M * 0.5 + toleranceM;
   const plateH = internal.plateHeightM;
-  if (v <= plateH || v >= wall.heightM - plateH) return true;
+  if (v <= plateH + toleranceM || v >= wall.heightM - plateH - toleranceM) return true;
 
   for (let i = 0; i < internal.studColumns.length; i++) {
     const col = internal.studColumns[i];
@@ -158,7 +166,9 @@ export function isPointOverIntactStud(
       if (col.isBorderPost) return true;
       for (let s = 0; s < col.sections.length; s++) {
         const sec = col.sections[s];
-        if (v >= sec.vMin && v <= sec.vMax) return !sec.broken;
+        if (!sec.broken && v >= sec.vMin - toleranceM && v <= sec.vMax + toleranceM) {
+          return true;
+        }
       }
     }
   }

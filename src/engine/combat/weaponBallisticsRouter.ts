@@ -1,6 +1,6 @@
 import type { AmmoSpec, EnvironmentState, Vec3Like, WeaponSpec } from '../../contracts/ballistics.ts';
 import type { InternalBallisticsReport } from '../../contracts/physiology.ts';
-import { add, distance, normalize, scale } from '../../core/ballistics/vec3.ts';
+import { add, distance, normalize, scale, sub } from '../../core/ballistics/vec3.ts';
 import { simulateShot } from '../../core/ballistics/solver.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
@@ -45,12 +45,18 @@ export function routeWeaponFire(
     return null;
   }
 
-  let { target, report } = match;
+  const { target } = match;
+  let { report } = match;
   let effectiveAmmo: AmmoSpec = ammo;
-  const hitDistM = report.woundEvents.length > 0 ? distance(origin, report.woundEvents[0].entryPointWorld) : report.targetDistanceM;
+  const firstWound = report.woundEvents[0];
+  const hitDistM = firstWound ? distance(origin, firstWound.entryPointWorld) : report.targetDistanceM;
+  const interceptDir =
+    firstWound && hitDistM > 1e-4
+      ? normalize(sub(firstWound.entryPointWorld, origin))
+      : normAim;
 
   if (interceptor) {
-    const preIntercept = interceptor(origin, normAim, hitDistM, muzzleEnergyJ, muzzleSpeedMs, ammo.diameterM, isAp);
+    const preIntercept = interceptor(origin, interceptDir, hitDistM, muzzleEnergyJ, muzzleSpeedMs, ammo.diameterM, isAp);
     if (preIntercept.blocked || preIntercept.remainingSpeedMs <= 25 || preIntercept.remainingEnergyJ <= 10) {
       const stopAtM = Math.max(0.25, preIntercept.stoppedDistanceM ?? hitDistM);
       const stoppedSamples = truncateTrajectorySamples(report.trajectorySamples, origin, stopAtM);
@@ -60,7 +66,22 @@ export function routeWeaponFire(
 
     if (preIntercept.remainingSpeedMs < muzzleSpeedMs * 0.98) {
       effectiveAmmo = { ...ammo, muzzleVelocityMs: preIntercept.remainingSpeedMs };
-      const attenuatedReport = simulateShot(weapon, effectiveAmmo, origin, normAim, target.healthState, environment);
+      let attenuatedReport = simulateShot(weapon, effectiveAmmo, origin, normAim, target.healthState, environment);
+      if (!attenuatedReport.hitTarget && firstWound) {
+        const termDir = normalize(firstWound.impactDirectionWorld);
+        const termOrigin = sub(firstWound.entryPointWorld, scale(termDir, 0.22));
+        const terminalAmmo: AmmoSpec = { ...effectiveAmmo, spreadRadians: 0 };
+        const terminalReport = simulateShot(weapon, terminalAmmo, termOrigin, termDir, target.healthState, environment);
+        if (terminalReport.hitTarget) {
+          attenuatedReport = {
+            ...terminalReport,
+            originWorld: report.originWorld,
+            aimDirectionWorld: report.aimDirectionWorld,
+            targetDistanceM: report.targetDistanceM,
+            trajectorySamples: report.trajectorySamples,
+          };
+        }
+      }
       if (!attenuatedReport.hitTarget) {
         if (attenuatedReport.trajectorySamples.length > 1) fxManager.spawnFlyingProjectile(attenuatedReport.trajectorySamples, false);
         return null;
@@ -83,19 +104,24 @@ export function routeWeaponFire(
       const exitDir = normalize(lastWound.impactDirectionWorld);
       const exitOrigin = add(lastWound.exitPointWorld, scale(exitDir, 0.06));
       let residualSpeedMs = lastWound.exitVelocityMs;
-      let residualEnergyJ = lastWound.exitEnergyJ;
+      const residualEnergyJ = lastWound.exitEnergyJ;
 
       const baseResidualAmmo: AmmoSpec = { ...ammo, muzzleVelocityMs: residualSpeedMs, spreadRadians: 0 };
       const collateral = findBestTargetHit(weapon, baseResidualAmmo, exitOrigin, exitDir, targets, environment, excluded);
 
       if (collateral && collateral.report.hitTarget) {
-        const collatDistM = collateral.report.woundEvents.length > 0 ? distance(exitOrigin, collateral.report.woundEvents[0].entryPointWorld) : collateral.report.targetDistanceM;
+        const collatFirstWound = collateral.report.woundEvents[0];
+        const collatDistM = collatFirstWound ? distance(exitOrigin, collatFirstWound.entryPointWorld) : collateral.report.targetDistanceM;
+        const collatInterceptDir =
+          collatFirstWound && collatDistM > 1e-4
+            ? normalize(sub(collatFirstWound.entryPointWorld, exitOrigin))
+            : exitDir;
         let collatReport = collateral.report;
         let collatAmmo = baseResidualAmmo;
         let collatBlocked = false;
 
         if (interceptor) {
-          const betweenIntercept = interceptor(exitOrigin, exitDir, collatDistM, residualEnergyJ, residualSpeedMs, ammo.diameterM, isAp);
+          const betweenIntercept = interceptor(exitOrigin, collatInterceptDir, collatDistM, residualEnergyJ, residualSpeedMs, ammo.diameterM, isAp);
           if (betweenIntercept.blocked || betweenIntercept.remainingSpeedMs <= 25 || betweenIntercept.remainingEnergyJ <= 10) {
             collatBlocked = true;
           } else if (betweenIntercept.remainingSpeedMs < residualSpeedMs * 0.98) {

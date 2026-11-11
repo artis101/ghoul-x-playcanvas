@@ -29,6 +29,9 @@ export function wireCombatDirectorInterceptors(
       isAp
     );
 
+  mayhemDirector.isSurfaceOpenAtHit = (hit, origin, dir, maxDistM) =>
+    destructionManager.isSurfaceOpenAtHit(hit, origin, dir, maxDistM);
+
   combatDirector.onExplosionBlast = (center, radiusM, peakImpulseNs, peakEnergyJ) => {
     const blast: BlastEvent = { centerWorld: center, radiusM, peakImpulseNs, peakEnergyJ };
     destructionManager.applyBlast(blast);

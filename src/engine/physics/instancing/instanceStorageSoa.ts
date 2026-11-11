@@ -11,7 +11,7 @@ export class InstanceStorageSoa {
   public readonly denseToSlot: Int32Array;
 
   public readonly denseMode: Uint8Array;
-  public readonly denseBodyHandle: Int32Array;
+  public readonly denseBodyHandle: Float64Array;
   public readonly denseSleepingSynced: Uint8Array;
 
   public readonly denseScaleX: Float32Array;
@@ -57,7 +57,7 @@ export class InstanceStorageSoa {
     }
 
     this.denseMode = new Uint8Array(cap);
-    this.denseBodyHandle = new Int32Array(cap);
+    this.denseBodyHandle = new Float64Array(cap).fill(-1);
     this.denseSleepingSynced = new Uint8Array(cap);
 
     this.denseScaleX = new Float32Array(cap);

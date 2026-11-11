@@ -177,8 +177,8 @@ export class BrickWallSystem implements IDestructibleSubsystem {
       dynamicDebrisTtlS: config.dynamicDebrisTtlS ?? 0,
       variantByBrick: new Uint8Array(n),
       poolSlotByBrick: new Int32Array(n).fill(-1),
-      staticColliderHandles: new Int32Array(n).fill(-1),
-      dynamicBodyHandles: new Int32Array(n).fill(-1),
+      staticColliderHandles: new Float64Array(n).fill(-1),
+      dynamicBodyHandles: new Float64Array(n).fill(-1),
       intactBrickCount: 0,
       detachedBrickCount: 0,
     };

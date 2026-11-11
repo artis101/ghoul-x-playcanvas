@@ -108,6 +108,7 @@ export class RapierPhysicsWorld {
 
   public setSurfaceTag(colliderHandle: number, tag: ColliderSurfaceTag): void {
     this.surfaceTags.set(colliderHandle, tag);
+    this.queryPipelineDirty = true;
   }
 
   public flushQueryPipeline(): void {

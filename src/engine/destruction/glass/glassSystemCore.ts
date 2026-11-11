@@ -220,6 +220,22 @@ export class GlassSystem implements IDestructibleSubsystem {
     return this.marchingWindowMap.get(id) ?? this.voronoiWindowMap.get(id);
   }
 
+  public isGlassOpenAtWorldPoint(
+    id: string,
+    material: 'GLASS_MARCHING_256' | 'GLASS_VORONOI',
+    pointWorld: { x: number; y: number; z: number },
+  ): boolean {
+    if (this.destroyed) return true;
+    if (material === 'GLASS_MARCHING_256') {
+      const win = this.marchingWindowMap.get(id);
+      if (!win || win.survivingChunkCount === 0) return true;
+      return win.isBrokenAtWorldPoint(pointWorld);
+    }
+    const win = this.voronoiWindowMap.get(id);
+    if (!win || (win.shattered && win.survivingFangCount === 0)) return true;
+    return win.isOpenAtWorldPoint(pointWorld);
+  }
+
   public handleRaySegment(seg: BallisticSegmentImpact): BallisticPenetrationResult | null {
     if (this.destroyed) return null;
     return handleGlassRaySegment(

@@ -44,8 +44,8 @@ export interface ConcreteWallInstanceState {
   readonly intactMesh: pc.Mesh;
   readonly intactMeshInstance: pc.MeshInstance;
   readonly drawCommands: pc.DrawCommands | undefined;
-  readonly staticColliderHandles: Int32Array;
-  readonly dynamicBodyHandles: Int32Array;
+  readonly staticColliderHandles: Float64Array;
+  readonly dynamicBodyHandles: Float64Array;
   readonly dynamicDebrisTtlS: number;
   activeIntactChunkCount: number;
   detachedChunkCount: number;

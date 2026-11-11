@@ -1,9 +1,7 @@
-import * as pc from 'playcanvas';
 import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import type {
   BallisticPenetrationResult,
   BallisticSegmentImpact,
-  BlastEvent,
   DestructibleMaterialKind,
   PenetrationRayHit,
 } from '../../../contracts/destruction.ts';
@@ -13,7 +11,6 @@ import {
   isPointInOpenHole,
   stampHoleInWoodPanel,
   type SplinterSpawnDescriptor,
-  type WoodMeshBuildStats,
 } from '../../../core/destruction/woodPolygonClipper.ts';
 import type { HardwareInstancedPool } from '../../physics/instancedPool.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
@@ -24,33 +21,30 @@ import {
   tryApplyBuckshotClusterBlowout,
 } from './woodStudDamageSolver.ts';
 import {
-  spawnBlastSplinterShower,
   spawnPerimeterSplinters,
   spawnPlankChunkBurst,
 } from './woodSplinterEmitter.ts';
+import {
+  applyWoodWallRadialBlast,
+  uploadWallPanelMesh,
+} from './woodWallBlastSolver.ts';
 import {
   DEFAULT_WOOD_STUD_WIDTH_M,
   type WallInternalState,
   type WoodWallInstance,
 } from './woodWallTypes.ts';
 
-export function uploadWallPanelMesh(
-  wall: WoodWallInstance,
-  stats: WoodMeshBuildStats,
-): void {
-  wall.lastMeshStats = stats;
-  if (stats.vertexCount <= 0 || stats.indexCount <= 0) {
-    wall.panelEntity.enabled = false;
-    return;
-  }
-  wall.panelEntity.enabled = true;
-  const mesh = wall.panelMesh;
-  const buf = wall.scratchBuffers;
-  mesh.setPositions(buf.positions, 3, stats.vertexCount);
-  mesh.setNormals(buf.normals, 3, stats.vertexCount);
-  mesh.setUvs(0, buf.uvs, 2, stats.vertexCount);
-  mesh.setIndices(buf.indices, stats.indexCount);
-  mesh.update(pc.PRIMITIVE_TRIANGLES, false);
+export { applyWoodWallRadialBlast, uploadWallPanelMesh };
+
+function worldPointToWallUv(wall: WoodWallInstance, pointWorld: Vec3Like): { u: number; v: number } {
+  const rx = pointWorld.x - wall.centerWorld.x;
+  const rz = pointWorld.z - wall.centerWorld.z;
+  const localX = rx * wall.cosYaw - rz * wall.sinYaw;
+  const localY = pointWorld.y - wall.centerWorld.y;
+  return {
+    u: localX + wall.widthM * 0.5,
+    v: localY + wall.heightM * 0.5,
+  };
 }
 
 export function handleWoodWallRaySegment(
@@ -79,7 +73,7 @@ export function handleWoodWallRaySegment(
   const orderedWallIds: string[] = [];
   const wallHitGroups = new Map<
     string,
-    { wall: WoodWallInstance; primaryHit: PenetrationRayHit; hitStudCollider: boolean }
+    { wall: WoodWallInstance; primaryHit: PenetrationRayHit; studHit: PenetrationRayHit | null }
   >();
 
   for (let i = 0; i < allHits.length; i++) {
@@ -89,11 +83,15 @@ export function handleWoodWallRaySegment(
 
     let group = wallHitGroups.get(wall.id);
     if (!group) {
-      group = { wall, primaryHit: hit, hitStudCollider: hit.surface.material === 'WOOD_STUD' };
+      group = {
+        wall,
+        primaryHit: hit,
+        studHit: hit.surface.material === 'WOOD_STUD' ? hit : null,
+      };
       wallHitGroups.set(wall.id, group);
       orderedWallIds.push(wall.id);
-    } else if (hit.surface.material === 'WOOD_STUD') {
-      group.hitStudCollider = true;
+    } else if (hit.surface.material === 'WOOD_STUD' && !group.studHit) {
+      group.studHit = hit;
     }
   }
 
@@ -115,8 +113,8 @@ export function handleWoodWallRaySegment(
     if (!internal) continue;
 
     if (!firstImpactPoint) {
-      firstImpactPoint = primaryHit.pointWorld;
-      firstImpactNormal = primaryHit.normalWorld;
+      firstImpactPoint = (group.studHit ?? primaryHit).pointWorld;
+      firstImpactNormal = (group.studHit ?? primaryHit).normalWorld;
     }
 
     const relOx = seg.originWorld.x - wall.centerWorld.x;
@@ -156,8 +154,17 @@ export function handleWoodWallRaySegment(
     const exitSignZ = localDz >= 0 ? 1 : -1;
 
     const profile = inferWoodStampProfile(seg.caliberRadiusM, currentEnergyJ, seg.isArmorPiercing);
-    let hitStud = group.hitStudCollider || isPointOverIntactStud(wall, internal, u, v);
-    const rawAlreadyOpen = isPointInOpenHole(wall.panelState, u, v);
+    const midplaneOverStud = isPointOverIntactStud(wall, internal, u, v);
+    const studHitUv = group.studHit ? worldPointToWallUv(wall, group.studHit.pointWorld) : null;
+    const colliderOverStud =
+      studHitUv !== null && isPointOverIntactStud(wall, internal, studHitUv.u, studHitUv.v, 0.008);
+
+    let hitStud = midplaneOverStud || colliderOverStud;
+    let studDamageU = midplaneOverStud || !studHitUv ? u : studHitUv.u;
+    let studDamageV = midplaneOverStud || !studHitUv ? v : studHitUv.v;
+
+    const rawAlreadyOpen =
+      wall.lastMeshStats.indexCount <= 0 || isPointInOpenHole(wall.panelState, u, v);
     let alreadyOpenBeforeThisShot = rawAlreadyOpen;
 
     if (profile === 'BUCKSHOT_PELLET') {
@@ -191,7 +198,10 @@ export function handleWoodWallRaySegment(
         volley.impacts.push({ u, v, cutRadiusM: 0.052, energyJ: currentEnergyJ, dirWorld: unitDir, exitSignZ });
         tryApplyBuckshotClusterBlowout(physicsWorld, splinterPools, nextRand, uploadWallPanelMesh, wall, internal, volley, seg.caliberRadiusM);
 
-        if (hitStud && !isPointOverIntactStud(wall, internal, u, v)) {
+        if (
+          hitStud &&
+          !isPointOverIntactStud(wall, internal, studDamageU, studDamageV, 0.008)
+        ) {
           hitStud = false;
         }
       }
@@ -229,8 +239,8 @@ export function handleWoodWallRaySegment(
 
     if (alreadyOpenBeforeThisShot && hitStud) {
       const studSplinters: SplinterSpawnDescriptor[] = [];
-      const clampedU = Math.max(0, Math.min(wall.widthM, u));
-      const clampedV = Math.max(0, Math.min(wall.heightM, v));
+      const clampedU = Math.max(0, Math.min(wall.widthM, studDamageU));
+      const clampedV = Math.max(0, Math.min(wall.heightM, studDamageV));
       for (let k = 0; k < 4; k++) {
         const ang = (k / 4) * Math.PI * 2;
         studSplinters.push({
@@ -271,8 +281,8 @@ export function handleWoodWallRaySegment(
         nextRand,
         wall,
         internal,
-        u,
-        v,
+        studDamageU,
+        studDamageV,
         hitRadiusM,
         hitRadiusM,
         studDamageHp,
@@ -308,106 +318,4 @@ export function handleWoodWallRaySegment(
     impactNormalWorld: firstImpactNormal,
     hitMaterial: effectiveMaterial,
   };
-}
-
-export function applyWoodWallRadialBlast(
-  physicsWorld: RapierPhysicsWorld,
-  walls: readonly WoodWallInstance[],
-  internalByWallId: ReadonlyMap<string, WallInternalState>,
-  splinterPools: readonly HardwareInstancedPool[],
-  nextRand: () => number,
-  blast: BlastEvent,
-): void {
-  if (blast.radiusM <= 0 || blast.peakEnergyJ <= 0 || walls.length === 0) return;
-
-  for (let i = 0; i < walls.length; i++) {
-    const wall = walls[i];
-    const internal = internalByWallId.get(wall.id);
-    if (internal) {
-      internal.activeVolley = null;
-    }
-
-    const rx = blast.centerWorld.x - wall.centerWorld.x;
-    const ry = blast.centerWorld.y - wall.centerWorld.y;
-    const rz = blast.centerWorld.z - wall.centerWorld.z;
-
-    const localX = rx * wall.cosYaw - rz * wall.sinYaw;
-    const localY = ry;
-    const localZ = rx * wall.sinYaw + rz * wall.cosYaw;
-
-    const halfW = wall.widthM * 0.5;
-    const halfH = wall.heightM * 0.5;
-
-    const clampedX = Math.max(-halfW, Math.min(halfW, localX));
-    const clampedY = Math.max(-halfH, Math.min(halfH, localY));
-
-    const dx = localX - clampedX;
-    const dy = localY - clampedY;
-    const dz = localZ;
-    const distToPanel = Math.hypot(dx, dy, dz);
-
-    if (distToPanel > blast.radiusM) continue;
-
-    const proximity = Math.max(0, 1 - distToPanel / blast.radiusM);
-    const energyScale = Math.min(2.0, Math.max(0.55, Math.sqrt(blast.peakEnergyJ / 6000)));
-    const breachRadiusM = Math.max(
-      0.24,
-      Math.min(Math.max(wall.widthM, wall.heightM) * 0.65, (0.28 + 0.52 * proximity) * energyScale),
-    );
-
-    const hitU = clampedX + halfW;
-    const hitV = clampedY + halfH;
-    const awaySignZ = localZ >= 0 ? -1 : 1;
-
-    if (internal && blast.peakEnergyJ * proximity >= 1_800) {
-      const awayDir: Vec3Like = {
-        x: awaySignZ * wall.sinYaw,
-        y: 0.2,
-        z: awaySignZ * wall.cosYaw,
-      };
-      damageInteriorStudSections(
-        physicsWorld,
-        splinterPools,
-        nextRand,
-        wall,
-        internal,
-        hitU,
-        hitV,
-        breachRadiusM * 0.85,
-        breachRadiusM * 0.85,
-        1_600,
-        awayDir,
-        awaySignZ,
-        blast.peakEnergyJ,
-      );
-    }
-
-    const stamp = createJaggedHoleStamp({
-      u: hitU,
-      v: hitV,
-      caliberRadiusM: 0.04,
-      kineticEnergyJ: blast.peakEnergyJ,
-      profile: 'BLAST_BREACH',
-      seed: wall.panelState.shotCount + 101,
-      overrideRadiusM: breachRadiusM,
-    });
-
-    const subRes = stampHoleInWoodPanel(wall.panelState, stamp, wall.scratchBuffers, 6);
-    if (subRes.cutAnyWood) {
-      uploadWallPanelMesh(wall, subRes.meshStats);
-    }
-
-    spawnBlastSplinterShower(
-      splinterPools,
-      nextRand,
-      wall,
-      hitU,
-      hitV,
-      Math.min(breachRadiusM, 0.45),
-      blast.centerWorld,
-      awaySignZ,
-      30,
-      proximity,
-    );
-  }
 }

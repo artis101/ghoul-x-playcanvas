@@ -1,5 +1,5 @@
 import * as pc from 'playcanvas';
-import type { DestructibleMaterialKind } from '../../../contracts/destruction.ts';
+import type { DestructibleMaterialKind, PenetrationRayHit } from '../../../contracts/destruction.ts';
 import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import { add, cross, dot, length, normalize, scale, vec3 } from '../../../core/ballistics/vec3.ts';
 import type { HardwareInstancedPool } from '../../physics/instancedPool.ts';
@@ -16,22 +16,35 @@ export interface SurfaceImpactContext {
   billowPlumes: TransientBillowPlume[];
 }
 
+export type SurfaceOpenPredicate = (
+  hit: PenetrationRayHit,
+  rayOrigin: Vec3Like,
+  rayDirNormalized: Vec3Like,
+  maxDistM: number,
+) => boolean;
+
+export interface EnvironmentSurfaceHit {
+  pointWorld: Vec3Like;
+  normalWorld: Vec3Like;
+  distanceM: number;
+  material: DestructibleMaterialKind;
+}
+
 export function castEnvironmentImpactRay(
   rapierWorld: RapierPhysicsWorld,
   origin: Vec3Like,
   dirNormalized: Vec3Like,
   maxDistM: number,
-): { pointWorld: Vec3Like; normalWorld: Vec3Like; distanceM: number; material: DestructibleMaterialKind } | null {
+  isSurfaceOpenAtHit?: SurfaceOpenPredicate,
+): EnvironmentSurfaceHit | null {
   const wallHits = rapierWorld.castPenetrationRay(origin, dirNormalized, maxDistM);
-  let bestHit: {
-    pointWorld: Vec3Like;
-    normalWorld: Vec3Like;
-    distanceM: number;
-    material: DestructibleMaterialKind;
-  } | null = null;
+  let bestHit: EnvironmentSurfaceHit | null = null;
 
   for (const h of wallHits) {
     if (h.distanceM > 0.15 && h.distanceM <= maxDistM) {
+      if (isSurfaceOpenAtHit?.(h, origin, dirNormalized, maxDistM)) {
+        continue;
+      }
       let n = h.normalWorld;
       if (dot(n, dirNormalized) > 0) n = scale(n, -1);
       bestHit = {
@@ -61,6 +74,75 @@ export function castEnvironmentImpactRay(
   }
 
   return bestHit;
+}
+
+export function traceWeaponEnvironmentFire(
+  rapierWorld: RapierPhysicsWorld,
+  origin: Vec3Like,
+  dirNormalized: Vec3Like,
+  maxDistM: number,
+  projectileEnergyJ: number,
+  isSurfaceOpenAtHit?: SurfaceOpenPredicate,
+): { firstSurfaceHit: EnvironmentSurfaceHit | null; tracerStopDistanceM: number | null } {
+  const wallHits = rapierWorld.castPenetrationRay(origin, dirNormalized, maxDistM);
+  let firstSurfaceHit: EnvironmentSurfaceHit | null = null;
+  let tracerStopDistanceM: number | null = null;
+  let remainingEnergyJ = Math.max(0, projectileEnergyJ);
+  let lastObjectKey = '';
+  let lastObjectDistM = -Infinity;
+
+  for (const h of wallHits) {
+    if (h.distanceM <= 0.15 || h.distanceM > maxDistM) continue;
+    if (isSurfaceOpenAtHit?.(h, origin, dirNormalized, maxDistM)) continue;
+
+    let n = h.normalWorld;
+    if (dot(n, dirNormalized) > 0) n = scale(n, -1);
+
+    if (!firstSurfaceHit) {
+      firstSurfaceHit = {
+        pointWorld: h.pointWorld,
+        normalWorld: normalize(n),
+        distanceM: h.distanceM,
+        material: h.surface.material,
+      };
+    }
+
+    const objKey = `${h.surface.material}:${h.surface.objectId}`;
+    const isSameSlab = objKey === lastObjectKey && h.distanceM - lastObjectDistM <= 0.45;
+    lastObjectKey = objKey;
+    lastObjectDistM = h.distanceM;
+
+    if (!isSameSlab) {
+      remainingEnergyJ -= Math.max(0, h.surface.penetrationResistanceJ);
+      if (remainingEnergyJ <= 15) {
+        tracerStopDistanceM = h.distanceM;
+        break;
+      }
+    }
+  }
+
+  if (dirNormalized.y < -1e-4 && origin.y > 0.02) {
+    const tFloor = -origin.y / dirNormalized.y;
+    if (tFloor > 0.15 && tFloor <= maxDistM) {
+      if (!firstSurfaceHit || tFloor < firstSurfaceHit.distanceM) {
+        firstSurfaceHit = {
+          pointWorld: {
+            x: origin.x + dirNormalized.x * tFloor,
+            y: 0,
+            z: origin.z + dirNormalized.z * tFloor,
+          },
+          normalWorld: { x: 0, y: 1, z: 0 },
+          distanceM: tFloor,
+          material: 'CONCRETE_INTACT',
+        };
+      }
+      if (tracerStopDistanceM === null || tFloor < tracerStopDistanceM) {
+        tracerStopDistanceM = tFloor;
+      }
+    }
+  }
+
+  return { firstSurfaceHit, tracerStopDistanceM };
 }
 
 export function spawnSurfaceImpact(

@@ -9,7 +9,9 @@ import type {
 import {
   findDetachedChunkIndices,
   localToWorldPoint,
+  rotateVec3ByQuat,
   severEdgesFromBlast,
+  worldToLocalPoint,
 } from '../../../core/destruction/connectivityGraph.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 import type { PomCraterDecalSystem } from '../pomCraterDecals.ts';
@@ -160,6 +162,11 @@ export function applyConcreteBlast(
       continue;
     }
 
+    const localBlast = worldToLocalPoint(blast.centerWorld, wall.transform);
+    const awayLocalZ = localBlast.z >= 0 ? -1 : 1;
+    const rot = wall.transform.rotation ?? IDENTITY_QUAT;
+    const wallAwayWorld = rotateVec3ByQuat({ x: 0, y: 0, z: awayLocalZ }, rot);
+
     for (let i = 0; i < newlyDetached.length; i++) {
       const chunkIdx = newlyDetached[i];
       const chunk = wall.voronoiData.chunks[chunkIdx];
@@ -172,42 +179,56 @@ export function applyConcreteBlast(
 
       let linVel: Vec3Like;
       let angVel: Vec3Like;
+      let spawnOffset: Vec3Like;
 
       if (dist <= blast.radiusM * 1.2) {
-        const falloff = Math.max(0.1, 1 - dist / (blast.radiusM * 1.2));
+        const falloff = Math.max(0.15, 1 - dist / (blast.radiusM * 1.2));
+        const effectiveImpulseMassKg = Math.max(1.5, Math.min(chunk.massKg, 26));
         const speed = Math.min(
           14,
-          (blast.peakImpulseNs / Math.max(1.5, chunk.massKg)) * falloff
+          Math.max(3.6 * falloff, (blast.peakImpulseNs / effectiveImpulseMassKg) * falloff)
         );
         const invD = dist > 1e-4 ? 1 / dist : 0;
         const rx = dist > 1e-4 ? dx * invD : 0;
         const ry = dist > 1e-4 ? dy * invD : 1;
         const rz = dist > 1e-4 ? dz * invD : 0;
+        const outPush = 1.85 + 2.4 * falloff;
 
         linVel = {
-          x: rx * speed,
-          y: Math.max(0.75, (ry + 0.4) * speed * 0.85),
-          z: rz * speed,
+          x: rx * speed + wallAwayWorld.x * outPush,
+          y: Math.max(0.95, (ry + 0.45) * speed * 0.85),
+          z: rz * speed + wallAwayWorld.z * outPush,
         };
         angVel = {
           x: (-rz + (nextRandom() - 0.5)) * speed * 0.65,
           y: (nextRandom() - 0.5) * speed * 0.7,
           z: (rx + (nextRandom() - 0.5)) * speed * 0.65,
         };
+        spawnOffset = {
+          x: wallAwayWorld.x * 0.06,
+          y: 0.02,
+          z: wallAwayWorld.z * 0.06,
+        };
       } else {
+        const outPush = 1.45 + nextRandom() * 0.65;
         linVel = {
-          x: (nextRandom() - 0.5) * 0.35,
+          x: wallAwayWorld.x * outPush + (nextRandom() - 0.5) * 0.55,
           y: -0.25,
-          z: (nextRandom() - 0.5) * 0.35,
+          z: wallAwayWorld.z * outPush + (nextRandom() - 0.5) * 0.55,
         };
         angVel = {
-          x: (nextRandom() - 0.5) * 1.4,
-          y: (nextRandom() - 0.5) * 1.1,
-          z: (nextRandom() - 0.5) * 1.4,
+          x: (nextRandom() - 0.5) * 2.1,
+          y: (nextRandom() - 0.5) * 1.4,
+          z: (nextRandom() - 0.5) * 2.1,
+        };
+        spawnOffset = {
+          x: wallAwayWorld.x * 0.05,
+          y: 0.01,
+          z: wallAwayWorld.z * 0.05,
         };
       }
 
-      dynamicPool.detachChunkToDynamicPool(wall, chunkIdx, linVel, angVel, wallsById);
+      dynamicPool.detachChunkToDynamicPool(wall, chunkIdx, linVel, angVel, wallsById, spawnOffset);
     }
 
     rebuildWallMultiDraw(wall);

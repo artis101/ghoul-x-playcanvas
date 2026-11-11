@@ -154,7 +154,10 @@ export function interceptRaySegment(
     const groupKind = classifyHitGroup(h.surface);
     const key = `${groupKind}:${h.surface.objectId}`;
     const existingIdx = indexByKey.get(key);
-    if (existingIdx !== undefined) {
+    if (
+      existingIdx !== undefined &&
+      h.distanceM - orderedObjects[existingIdx].lastDistM <= 0.65
+    ) {
       orderedObjects[existingIdx].lastDistM = Math.max(
         orderedObjects[existingIdx].lastDistM,
         h.distanceM

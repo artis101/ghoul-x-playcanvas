@@ -4,6 +4,7 @@ import type { HardwareInstancedPool } from '../../physics/instancedPool.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 import { computeSurfaceAlignedQuadQuaternion } from '../math/surfaceAlignment.ts';
 import type { BulletTimeController } from '../bulletTime/bulletTimeController.ts';
+import type { SurfaceOpenPredicate } from '../impacts/surfaceImpactFx.ts';
 
 export interface BloodSplatterProjectionParams {
   readonly originWorld: Vec3Like;
@@ -20,6 +21,7 @@ export interface BloodSplatterContext {
   rapierWorld: RapierPhysicsWorld;
   bloodSplatterPool: HardwareInstancedPool;
   bulletTime: BulletTimeController;
+  isSurfaceOpenAtHit?: SurfaceOpenPredicate;
 }
 
 export function castWallOrFloorBloodRay(
@@ -27,6 +29,7 @@ export function castWallOrFloorBloodRay(
   origin: Vec3Like,
   dirNormalized: Vec3Like,
   maxDistM: number,
+  isSurfaceOpenAtHit?: SurfaceOpenPredicate,
 ): { pointWorld: Vec3Like; normalWorld: Vec3Like; distanceM: number } | null {
   const wallHits = rapierWorld.castPenetrationRay(origin, dirNormalized, maxDistM);
 
@@ -34,6 +37,7 @@ export function castWallOrFloorBloodRay(
   for (const h of wallHits) {
     if (h.surface.objectId.startsWith('hazard_barrel_')) continue;
     if (h.distanceM > 0.02 && h.distanceM <= maxDistM) {
+      if (isSurfaceOpenAtHit?.(h, origin, dirNormalized, maxDistM)) continue;
       let n = h.normalWorld;
       if (dot(n, dirNormalized) > 0) n = scale(n, -1);
       bestWallHit = { pointWorld: h.pointWorld, normalWorld: normalize(n), distanceM: h.distanceM };
@@ -82,7 +86,13 @@ export function projectBloodSplatter(
   let stampedCount = 0;
   for (let r = 0; r < raysToCast.length; r++) {
     const rayDir = raysToCast[r];
-    const hit = castWallOrFloorBloodRay(ctx.rapierWorld, params.originWorld, rayDir, BLOOD_RAY_MAX_DIST_M);
+    const hit = castWallOrFloorBloodRay(
+      ctx.rapierWorld,
+      params.originWorld,
+      rayDir,
+      BLOOD_RAY_MAX_DIST_M,
+      ctx.isSurfaceOpenAtHit,
+    );
     if (!hit) continue;
 
     let slotId = ctx.bloodSplatterPool.allocSlot();

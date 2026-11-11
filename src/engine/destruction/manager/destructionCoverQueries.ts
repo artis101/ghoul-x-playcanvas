@@ -18,6 +18,7 @@ export function isWoodWallRayInOpenHole(
 ): boolean {
   const wall = woodWalls.getWall(objectId);
   if (!wall) return false;
+  if (wall.lastMeshStats.indexCount <= 0) return true;
 
   const relOx = rayOrigin.x - wall.centerWorld.x;
   const relOy = rayOrigin.y - wall.centerWorld.y;
@@ -56,6 +57,28 @@ export function isWoodWallRayInOpenHole(
   return isPointInOpenHole(wall.panelState, u, v);
 }
 
+export function isSurfaceHitInOpenBreach(
+  ctx: DestructionRaycastContext,
+  hit: PenetrationRayHit,
+  rayOrigin: Vec3Like,
+  unitDir: Vec3Like,
+  maxDistM: number
+): boolean {
+  const mat = hit.surface.material;
+  const objId = hit.surface.objectId;
+
+  if (objId.startsWith('hazard_barrel_')) {
+    return ctx.barrelManager?.getBarrelByObjectId(objId)?.state === 'DETONATED';
+  }
+  if (mat === 'WOOD_DRYWALL') {
+    return isWoodWallRayInOpenHole(ctx.woodWalls, objId, rayOrigin, unitDir, maxDistM, hit.pointWorld);
+  }
+  if (mat === 'GLASS_MARCHING_256' || mat === 'GLASS_VORONOI') {
+    return ctx.glassSystem.isGlassOpenAtWorldPoint(objId, mat, hit.pointWorld);
+  }
+  return false;
+}
+
 export function isLineOfSightBlocked(
   ctx: DestructionRaycastContext,
   fromWorld: Vec3Like,
@@ -75,6 +98,9 @@ export function isLineOfSightBlocked(
     const mat = surface.material;
     if (mat === 'GLASS_MARCHING_256' || mat === 'GLASS_VORONOI') {
       return false;
+    }
+    if (surface.objectId.startsWith('hazard_barrel_')) {
+      return ctx.barrelManager?.getBarrelByObjectId(surface.objectId)?.state !== 'DETONATED';
     }
     if (mat === 'WOOD_DRYWALL') {
       return !isWoodWallRayInOpenHole(ctx.woodWalls, surface.objectId, fromWorld, dir, maxDist, pointWorld);
@@ -114,7 +140,10 @@ export function interceptEnemyShot(
     const groupKind = classifyHitGroup(h.surface);
     const key = `${groupKind}:${h.surface.objectId}`;
     const existingIdx = indexByKey.get(key);
-    if (existingIdx !== undefined) {
+    if (
+      existingIdx !== undefined &&
+      h.distanceM - orderedObjects[existingIdx].lastDistM <= 0.65
+    ) {
       orderedObjects[existingIdx].lastDistM = Math.max(
         orderedObjects[existingIdx].lastDistM,
         h.distanceM
@@ -133,9 +162,6 @@ export function interceptEnemyShot(
     }
   }
 
-  if (orderedObjects.length > 0) {
-    ctx.notifyBreach();
-  }
   let curEnergyJ = Math.max(60, kineticEnergyJ);
   let curSpeedMs = 390;
   const listenerPos = ctx.getListenerPos ? ctx.getListenerPos() : { x: 0, y: 1.62, z: 0 };
@@ -154,6 +180,28 @@ export function interceptEnemyShot(
     const segLenM = Math.max(0.08, endDistM - startDistM);
     const segOrigin = add(origin, scale(normDir, startDistM));
 
+    if (objId.startsWith('hazard_barrel_') && ctx.barrelManager) {
+      const barrelRes = ctx.barrelManager.handleRaySegment({
+        originWorld: segOrigin,
+        directionWorld: normDir,
+        maxDistanceM: segLenM,
+        kineticEnergyJ: curEnergyJ,
+        speedMs: curSpeedMs,
+        caliberRadiusM: 0.0045,
+        isArmorPiercing: false,
+      });
+      if (!barrelRes) continue;
+      ctx.notifyBreach();
+      const impactPt = barrelRes.impactPointWorld ?? hit.pointWorld;
+      ctx.combatAudio?.playMaterialImpact('STEEL', impactPt, curEnergyJ, listenerPos);
+      if (barrelRes.stopped || barrelRes.remainingEnergyJ <= 20) {
+        return { blocked: true, impactPointWorld: impactPt };
+      }
+      curEnergyJ = barrelRes.remainingEnergyJ;
+      curSpeedMs = barrelRes.remainingSpeedMs;
+      continue;
+    }
+
     if (mat === 'GLASS_MARCHING_256' || mat === 'GLASS_VORONOI') {
       const res = ctx.glassSystem.handleRaySegment({
         originWorld: segOrigin,
@@ -168,6 +216,7 @@ export function interceptEnemyShot(
 
       const energyLost = curEnergyJ - res.remainingEnergyJ;
       if (energyLost > 1.0 || res.stopped) {
+        ctx.notifyBreach();
         ctx.combatAudio?.playMaterialImpact(
           res.hitMaterial ?? mat,
           res.impactPointWorld ?? hit.pointWorld,
@@ -195,18 +244,24 @@ export function interceptEnemyShot(
         continue;
       }
 
+      const segEnergyJ = Math.min(220, curEnergyJ);
       const res = ctx.woodWalls.handleRaySegment({
         originWorld: segOrigin,
         directionWorld: normDir,
         maxDistanceM: segLenM,
-        kineticEnergyJ: Math.min(220, curEnergyJ),
+        kineticEnergyJ: segEnergyJ,
         speedMs: 310,
         caliberRadiusM: 0.0045,
         isArmorPiercing: false,
       });
-      const impactPt = res?.impactPointWorld ?? hit.pointWorld;
+      if (!res || (!res.stopped && segEnergyJ - res.remainingEnergyJ <= 1.0)) {
+        continue;
+      }
+
+      ctx.notifyBreach();
+      const impactPt = res.impactPointWorld ?? hit.pointWorld;
       ctx.combatAudio?.playMaterialImpact(
-        entry.hitStud ? 'WOOD_STUD' : 'WOOD_DRYWALL',
+        res.hitMaterial ?? (entry.hitStud ? 'WOOD_STUD' : 'WOOD_DRYWALL'),
         impactPt,
         curEnergyJ,
         listenerPos
@@ -227,13 +282,11 @@ export function interceptEnemyShot(
         caliberRadiusM: 0.0045,
         isArmorPiercing: false,
       });
-      const impactPt = res?.impactPointWorld ?? hit.pointWorld;
-      ctx.combatAudio?.playMaterialImpact(
-        'BRICK_MASONRY',
-        impactPt,
-        curEnergyJ,
-        listenerPos
-      );
+      if (!res) continue;
+
+      ctx.notifyBreach();
+      const impactPt = res.impactPointWorld ?? hit.pointWorld;
+      ctx.combatAudio?.playMaterialImpact('BRICK_MASONRY', impactPt, curEnergyJ, listenerPos);
       return {
         blocked: true,
         impactPointWorld: impactPt,
@@ -252,36 +305,23 @@ export function interceptEnemyShot(
           caliberRadiusM: 0.0045,
           isArmorPiercing: false,
         });
-        if (res?.impactPointWorld) {
+        if (!res) continue;
+        if (res.impactPointWorld) {
           impactPt = res.impactPointWorld;
         }
       } else {
-        ctx.pomDecals.spawnCraterImpact(
-          hit.pointWorld,
-          hit.normalWorld,
-          normDir,
-          curEnergyJ,
-          0.0045
-        );
+        ctx.pomDecals.spawnCraterImpact(hit.pointWorld, hit.normalWorld, normDir, curEnergyJ, 0.0045);
       }
-      ctx.combatAudio?.playMaterialImpact(
-        mat,
-        impactPt,
-        curEnergyJ,
-        listenerPos
-      );
+      ctx.notifyBreach();
+      ctx.combatAudio?.playMaterialImpact(mat, impactPt, curEnergyJ, listenerPos);
       return {
         blocked: true,
         impactPointWorld: impactPt,
       };
     }
 
-    ctx.combatAudio?.playMaterialImpact(
-      'STEEL',
-      hit.pointWorld,
-      curEnergyJ,
-      listenerPos
-    );
+    ctx.notifyBreach();
+    ctx.combatAudio?.playMaterialImpact('STEEL', hit.pointWorld, curEnergyJ, listenerPos);
     return {
       blocked: true,
       impactPointWorld: hit.pointWorld,

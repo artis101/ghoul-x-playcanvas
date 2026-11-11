@@ -72,7 +72,8 @@ export class ConcreteDynamicChunkPool {
     chunkIndex: number,
     linVel: Vec3Like,
     angVel: Vec3Like,
-    wallsById: Map<string, ConcreteWallInstanceState>
+    wallsById: Map<string, ConcreteWallInstanceState>,
+    spawnOffsetWorld?: Vec3Like
   ): void {
     const staticCol = wall.staticColliderHandles[chunkIndex];
     if (staticCol >= 0) {
@@ -103,7 +104,14 @@ export class ConcreteDynamicChunkPool {
     }
 
     const rot = wall.transform.rotation ?? IDENTITY_QUAT;
-    const worldCenter = localToWorldPoint(chunk.localCenter, wall.transform);
+    const baseWorldCenter = localToWorldPoint(chunk.localCenter, wall.transform);
+    const worldCenter: Vec3Like = spawnOffsetWorld
+      ? {
+          x: baseWorldCenter.x + spawnOffsetWorld.x,
+          y: baseWorldCenter.y + spawnOffsetWorld.y,
+          z: baseWorldCenter.z + spawnOffsetWorld.z,
+        }
+      : baseWorldCenter;
 
     const scaledHull = new Float32Array(chunk.hullVertices.length);
     for (let k = 0; k < chunk.hullVertices.length; k++) {

@@ -41,8 +41,8 @@ export interface BrickWallInstanceState {
   readonly dynamicDebrisTtlS: number;
   readonly variantByBrick: Uint8Array;
   readonly poolSlotByBrick: Int32Array;
-  readonly staticColliderHandles: Int32Array;
-  readonly dynamicBodyHandles: Int32Array;
+  readonly staticColliderHandles: Float64Array;
+  readonly dynamicBodyHandles: Float64Array;
   intactBrickCount: number;
   detachedBrickCount: number;
 }

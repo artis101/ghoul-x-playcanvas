@@ -29,7 +29,11 @@ import {
   processShotSimulationReport as processReportDecals,
   projectBloodSplatter as projectSplatterDecals,
 } from './decals/bloodSplatterSystem.ts';
-import { castEnvironmentImpactRay, spawnSurfaceImpact } from './impacts/surfaceImpactFx.ts';
+import {
+  spawnSurfaceImpact,
+  type SurfaceOpenPredicate,
+  traceWeaponEnvironmentFire,
+} from './impacts/surfaceImpactFx.ts';
 
 export interface MayhemDirectorOptions {
   app: pc.Application;
@@ -45,6 +49,7 @@ export interface MayhemDirectorOptions {
   onCasingBounce?: (event: CasingBounceEvent) => void;
   onExplosionBlast?: (blast: BlastEvent) => void;
   onBarrelIgnited?: (barrel: HazardBarrelInstance) => void;
+  isSurfaceOpenAtHit?: SurfaceOpenPredicate;
 }
 
 export class MayhemDirector {
@@ -65,6 +70,7 @@ export class MayhemDirector {
 
   public onCasingBounce?: (event: CasingBounceEvent) => void;
   public onExplosionBlast?: (blast: BlastEvent) => void;
+  public isSurfaceOpenAtHit?: SurfaceOpenPredicate;
 
   private readonly lightPool: PooledDynamicOmniLight[] = [];
   private readonly fireballLobes: TransientFireballLobe[] = [];
@@ -86,6 +92,7 @@ export class MayhemDirector {
     this.rapierWorld = options.rapierWorld;
     this.onCasingBounce = options.onCasingBounce;
     this.onExplosionBlast = options.onExplosionBlast;
+    this.isSurfaceOpenAtHit = options.isSurfaceOpenAtHit;
 
     this.rootEntity = new pc.Entity('MayhemDirectorRoot');
     this.app.root.addChild(this.rootEntity);
@@ -174,8 +181,17 @@ export class MayhemDirector {
     this.triggerMuzzleFlashLight(muzzlePos);
     this.ejectWeaponCasing(eyeWorldPos, fwd, weapon, ammo);
 
-    const envHit = castEnvironmentImpactRay(this.rapierWorld, eyeWorldPos, fwd, 72.0);
-    const maxTracerDist = envHit ? Math.max(1.2, envHit.distanceM - 0.35) : 56.0;
+    const perProjectileEnergyJ = 0.5 * ammo.massKg * ammo.muzzleVelocityMs * ammo.muzzleVelocityMs;
+    const { firstSurfaceHit, tracerStopDistanceM } = traceWeaponEnvironmentFire(
+      this.rapierWorld,
+      eyeWorldPos,
+      fwd,
+      72.0,
+      perProjectileEnergyJ,
+      this.isSurfaceOpenAtHit,
+    );
+    const maxTracerDist =
+      tracerStopDistanceM !== null ? Math.max(1.2, tracerStopDistanceM - 0.35) : 56.0;
 
     if (ammo.pelletCount > 1) {
       const visualPellets = Math.min(5, ammo.pelletCount);
@@ -193,16 +209,25 @@ export class MayhemDirector {
       this.spawnBulletTracer(muzzlePos, fwd, maxTracerDist, streakLen);
     }
 
-    if (envHit) {
-      const muzzleEnergyJ = 0.5 * ammo.massKg * ammo.muzzleVelocityMs * ammo.muzzleVelocityMs;
-      this.spawnSurfaceImpactFx(envHit.pointWorld, envHit.normalWorld, envHit.material, muzzleEnergyJ);
+    if (firstSurfaceHit) {
+      this.spawnSurfaceImpactFx(
+        firstSurfaceHit.pointWorld,
+        firstSurfaceHit.normalWorld,
+        firstSurfaceHit.material,
+        perProjectileEnergyJ,
+      );
     }
   }
 
   public projectBloodSplatter(params: BloodSplatterProjectionParams): number {
     if (this.destroyed) return 0;
     return projectSplatterDecals(
-      { rapierWorld: this.rapierWorld, bloodSplatterPool: this.bloodSplatterPool, bulletTime: this.bulletTime },
+      {
+        rapierWorld: this.rapierWorld,
+        bloodSplatterPool: this.bloodSplatterPool,
+        bulletTime: this.bulletTime,
+        isSurfaceOpenAtHit: this.isSurfaceOpenAtHit,
+      },
       params, this.splatterRecycleCursor, this.splatterSeedCounter,
     );
   }
@@ -210,7 +235,12 @@ export class MayhemDirector {
   public processShotSimulationReport(report: ShotSimulationReport): number {
     if (this.destroyed || !report.hitTarget) return 0;
     return processReportDecals(
-      { rapierWorld: this.rapierWorld, bloodSplatterPool: this.bloodSplatterPool, bulletTime: this.bulletTime },
+      {
+        rapierWorld: this.rapierWorld,
+        bloodSplatterPool: this.bloodSplatterPool,
+        bulletTime: this.bulletTime,
+        isSurfaceOpenAtHit: this.isSurfaceOpenAtHit,
+      },
       report, this.splatterRecycleCursor, this.splatterSeedCounter,
     );
   }

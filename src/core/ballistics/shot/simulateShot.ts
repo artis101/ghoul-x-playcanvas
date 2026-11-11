@@ -34,13 +34,19 @@ import { evaluateTissueCavitation } from './shotTissueCavitation.ts';
 import { evaluateJointDismemberment } from './shotJointDismemberment.ts';
 import { evaluateLethalityAndRagdollPlan } from './shotLethalityPass.ts';
 
+export interface SimulateShotOptions {
+  readonly allowedPelletIndices?: ReadonlySet<number>;
+  readonly pelletSpeedOverridesMs?: ReadonlyMap<number, number>;
+}
+
 export function simulateShot(
   weapon: WeaponSpec,
   ammo: AmmoSpec,
   originWorld: Vec3Like,
   aimDirectionWorld: Vec3Like,
   target: TargetHealthState,
-  env: EnvironmentState
+  env: EnvironmentState,
+  options?: SimulateShotOptions
 ): ShotSimulationReport {
   const shotId = `shot_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const normAimDir = normalize(aimDirectionWorld);
@@ -83,6 +89,24 @@ export function simulateShot(
 
   for (let pIdx = 0; pIdx < pelletCount; pIdx++) {
     const pelletAimDir = deterministicConeSpread(normAimDir, ammo.spreadRadians, pIdx, pelletCount);
+    if (options?.allowedPelletIndices && !options.allowedPelletIndices.has(pIdx)) {
+      pelletResults.push({
+        pelletIndex: pIdx,
+        aimDirectionWorld: pelletAimDir,
+        hitTarget: false,
+        impactTimeS: 0,
+        impactPointWorld: null,
+        impactZone: null,
+        energyDepositedJ: 0,
+        impulseNs: 0,
+        trajectorySamples: [],
+        woundEvents: [],
+      });
+      continue;
+    }
+
+    const initialPelletSpeedMs = options?.pelletSpeedOverridesMs?.get(pIdx) ?? ammo.muzzleVelocityMs;
+    const initialPelletEnergyJ = 0.5 * ammo.massKg * initialPelletSpeedMs * initialPelletSpeedMs;
     const shotRightRaw = cross(pelletAimDir, vec3(0, 1, 0));
     const shotRight = lengthSq(shotRightRaw) > 1e-6 ? normalize(shotRightRaw) : vec3(1, 0, 0);
 
@@ -90,12 +114,12 @@ export function simulateShot(
       id: `${shotId}_p${pIdx}`,
       ammo,
       position: copyVec3(originWorld),
-      velocity: scale(pelletAimDir, ammo.muzzleVelocityMs),
+      velocity: scale(pelletAimDir, initialPelletSpeedMs),
       spinRadS: weapon.role === 'SNIPER' ? 2400 : weapon.role === 'ASSAULT_RIFLE' ? 3000 : 0,
       currentDiameterM: ammo.diameterM,
       flightTimeS: 0,
       distanceTraveledM: 0,
-      kineticEnergyJ: muzzleEnergyJ,
+      kineticEnergyJ: initialPelletEnergyJ,
       penetratedLayers: 0,
       alive: true,
     };
@@ -108,9 +132,9 @@ export function simulateShot(
       timeS: 0,
       position: copyVec3(proj.position),
       velocity: copyVec3(proj.velocity),
-      speedMs: ammo.muzzleVelocityMs,
-      mach: ammo.muzzleVelocityMs / env.speedOfSoundMs,
-      kineticEnergyJ: muzzleEnergyJ,
+      speedMs: initialPelletSpeedMs,
+      mach: initialPelletSpeedMs / env.speedOfSoundMs,
+      kineticEnergyJ: initialPelletEnergyJ,
       dropM: 0,
       windDriftM: 0,
     });

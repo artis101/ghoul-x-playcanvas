@@ -1,12 +1,15 @@
+import type * as RAPIER from '@dimforge/rapier3d-compat';
 import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import type {
   BallisticPenetrationResult,
   BallisticSegmentImpact,
   BlastEvent,
+  ChunkConnectivityNode,
 } from '../../../contracts/destruction.ts';
 import {
   findDetachedChunkIndices,
   localToWorldPoint,
+  rotateVec3ByQuat,
   severEdgesAtPoint,
   severEdgesFromBlast,
   worldToLocalPoint,
@@ -17,7 +20,10 @@ import type { BrickDynamicPool } from './brickDynamicPool.ts';
 import {
   BRICK_HEAVY_PENETRATOR_THRESHOLD_J,
   type BrickWallInstanceState,
+  IDENTITY_QUAT,
 } from './brickWallTypes.ts';
+
+const LOOSE_BRICK_DEFLECTION_LOSS_J = 180;
 
 function normalizeDir(dir: Vec3Like): Vec3Like {
   const len = Math.hypot(dir.x, dir.y, dir.z);
@@ -25,6 +31,31 @@ function normalizeDir(dir: Vec3Like): Vec3Like {
     return { x: 0, y: 0, z: -1 };
   }
   return { x: dir.x / len, y: dir.y / len, z: dir.z / len };
+}
+
+function severDirectHitBrickBonds(
+  wall: BrickWallInstanceState,
+  brickIdx: number,
+  kineticEnergyJ: number
+): void {
+  const nodes = (wall.graph.nodes ?? []) as ChunkConnectivityNode[];
+  if (brickIdx < 0 || brickIdx >= nodes.length) return;
+  const node = nodes[brickIdx];
+  if (node.isAnchored && kineticEnergyJ >= 1800) {
+    node.isAnchored = false;
+  }
+  for (let e = 0; e < node.edges.length; e++) {
+    const edge = node.edges[e];
+    edge.severed = true;
+    const neighbor = nodes[edge.neighborIndex];
+    if (!neighbor) continue;
+    for (let k = 0; k < neighbor.edges.length; k++) {
+      if (neighbor.edges[k].neighborIndex === brickIdx) {
+        neighbor.edges[k].severed = true;
+        break;
+      }
+    }
+  }
 }
 
 export function handleBrickRaySegment(
@@ -62,6 +93,11 @@ export function handleBrickRaySegment(
     return null;
   }
 
+  const dirNorm = normalizeDir(seg.directionWorld);
+  const hitChunkIdx = matchedHit.surface.chunkIndex ?? -1;
+  const isAlreadyDetachedBrick =
+    hitChunkIdx >= 0 && matchedWall.graph.detached[hitChunkIdx] === 1;
+
   dynamicPool.spawnMortarChips(
     matchedHit.pointWorld,
     matchedHit.normalWorld,
@@ -70,38 +106,66 @@ export function handleBrickRaySegment(
     nextRandom
   );
 
+  if (isAlreadyDetachedBrick) {
+    const dynBodyHandle = matchedWall.dynamicBodyHandles[hitChunkIdx];
+    if (dynBodyHandle >= 0) {
+      const body = rapierWorld.world.getRigidBody(dynBodyHandle) as RAPIER.RigidBody | undefined;
+      if (body) {
+        const kickNs = Math.min(18, 2.5 + seg.kineticEnergyJ * 0.004);
+        body.applyImpulse(
+          { x: dirNorm.x * kickNs, y: dirNorm.y * kickNs + 1.2, z: dirNorm.z * kickNs },
+          true
+        );
+      }
+    }
+    const remJ = Math.max(0, seg.kineticEnergyJ - LOOSE_BRICK_DEFLECTION_LOSS_J);
+    const stopped = remJ <= 25;
+    const ratio = seg.kineticEnergyJ > 1e-6 ? remJ / seg.kineticEnergyJ : 0;
+    return {
+      remainingEnergyJ: stopped ? 0 : remJ,
+      remainingSpeedMs: stopped ? 0 : seg.speedMs * Math.sqrt(Math.max(0, ratio)),
+      stopped,
+      impactPointWorld: matchedHit.pointWorld,
+      impactNormalWorld: matchedHit.normalWorld,
+      hitMaterial: 'BRICK_MASONRY',
+    };
+  }
+
   if (seg.kineticEnergyJ > BRICK_HEAVY_PENETRATOR_THRESHOLD_J) {
     const localImpact = worldToLocalPoint(matchedHit.pointWorld, matchedWall.transform);
-    const severRadius = Math.max(matchedWall.brickW * 0.85, matchedWall.brickH * 1.75);
+    const localOrigin = worldToLocalPoint(seg.originWorld, matchedWall.transform);
+    const exitLocalZ = localOrigin.z >= 0 ? -1 : 1;
+    const rot = matchedWall.transform.rotation ?? IDENTITY_QUAT;
+    const wallExitNormal = rotateVec3ByQuat({ x: 0, y: 0, z: exitLocalZ }, rot);
+    const severRadius = Math.max(matchedWall.brickW * 0.85, matchedWall.brickH * 1.65);
 
     severEdgesAtPoint(
       matchedWall.graph,
       localImpact,
-      seg.kineticEnergyJ * 1.45,
+      seg.kineticEnergyJ * 1.25,
       severRadius
     );
+    severDirectHitBrickBonds(matchedWall, hitChunkIdx, seg.kineticEnergyJ);
 
     const newlyDetached = findDetachedChunkIndices(matchedWall.graph);
-    const dirNorm = normalizeDir(seg.directionWorld);
-    const hitChunkIdx = matchedHit.surface.chunkIndex ?? -1;
 
     for (let i = 0; i < newlyDetached.length; i++) {
       const brickIdx = newlyDetached[i];
       const isPrimaryHit = brickIdx === hitChunkIdx;
       const speedKick = isPrimaryHit
-        ? Math.min(9.5, 2.2 + (seg.kineticEnergyJ - BRICK_HEAVY_PENETRATOR_THRESHOLD_J) * 0.0022)
-        : 0.45;
+        ? Math.min(9.5, 3.0 + (seg.kineticEnergyJ - BRICK_HEAVY_PENETRATOR_THRESHOLD_J) * 0.0022)
+        : 2.4;
 
       const linVel: Vec3Like = isPrimaryHit
         ? {
-            x: dirNorm.x * speedKick + (nextRandom() - 0.5) * 1.2,
-            y: dirNorm.y * speedKick + 1.15 + nextRandom() * 0.7,
-            z: dirNorm.z * speedKick + (nextRandom() - 0.5) * 1.2,
+            x: dirNorm.x * speedKick + (nextRandom() - 0.5) * 0.9,
+            y: dirNorm.y * speedKick + 0.15 + nextRandom() * 0.25,
+            z: dirNorm.z * speedKick + (nextRandom() - 0.5) * 0.9,
           }
         : {
-            x: dirNorm.x * speedKick + (nextRandom() - 0.5) * 0.35,
-            y: -0.15,
-            z: dirNorm.z * speedKick + (nextRandom() - 0.5) * 0.35,
+            x: wallExitNormal.x * speedKick + (nextRandom() - 0.5) * 0.45,
+            y: -0.25,
+            z: wallExitNormal.z * speedKick + (nextRandom() - 0.5) * 0.45,
           };
 
       const angVel: Vec3Like = isPrimaryHit
@@ -116,13 +180,21 @@ export function handleBrickRaySegment(
             z: (nextRandom() - 0.5) * 2.2,
           };
 
+      const clearDistM = matchedWall.brickD * (isPrimaryHit ? 1.08 : 1.02);
+      const spawnOffset: Vec3Like = {
+        x: wallExitNormal.x * clearDistM,
+        y: 0,
+        z: wallExitNormal.z * clearDistM,
+      };
+
       convertBrickToDynamicBody(
         matchedWall,
         brickIdx,
         linVel,
         angVel,
         rapierWorld,
-        dynamicPool
+        dynamicPool,
+        spawnOffset
       );
     }
 
@@ -178,7 +250,12 @@ export function applyBrickBlast(
     }
 
     anyBrickDetached = true;
-    const nodes = wall.graph.nodes ?? (wall.graph as { chunks?: any[] }).chunks ?? [];
+    const localBlast = worldToLocalPoint(blast.centerWorld, wall.transform);
+    const awayLocalZ = localBlast.z >= 0 ? -1 : 1;
+    const rot = wall.transform.rotation ?? IDENTITY_QUAT;
+    const wallAwayWorld = rotateVec3ByQuat({ x: 0, y: 0, z: awayLocalZ }, rot);
+    const nodes = wall.graph.nodes ?? (wall.graph as { chunks?: ChunkConnectivityNode[] }).chunks ?? [];
+
     for (let i = 0; i < newlyDetached.length; i++) {
       const brickIdx = newlyDetached[i];
       const node = nodes[brickIdx];
@@ -191,12 +268,13 @@ export function applyBrickBlast(
 
       let linVel: Vec3Like;
       let angVel: Vec3Like;
+      const outPush = 1.6 + nextRandom() * 0.9;
 
       if (dist <= blast.radiusM * 1.15) {
-        const falloff = Math.max(0.08, 1 - dist / (blast.radiusM * 1.15));
+        const falloff = Math.max(0.12, 1 - dist / (blast.radiusM * 1.15));
         const speed = Math.min(
           18,
-          (blast.peakImpulseNs / Math.max(0.4, node.massKg)) * falloff
+          Math.max(3.2 * falloff, (blast.peakImpulseNs / Math.max(0.4, node.massKg)) * falloff)
         );
         const invD = dist > 1e-4 ? 1 / dist : 0;
         const rx = dist > 1e-4 ? dx * invD : 0;
@@ -204,9 +282,9 @@ export function applyBrickBlast(
         const rz = dist > 1e-4 ? dz * invD : 0;
 
         linVel = {
-          x: rx * speed,
-          y: Math.max(0.8, (ry + 0.45) * speed * 0.85),
-          z: rz * speed,
+          x: rx * speed + wallAwayWorld.x * outPush,
+          y: Math.max(0.85, (ry + 0.45) * speed * 0.85),
+          z: rz * speed + wallAwayWorld.z * outPush,
         };
         angVel = {
           x: (-rz + (nextRandom() - 0.5)) * speed * 0.85,
@@ -214,25 +292,32 @@ export function applyBrickBlast(
           z: (rx + (nextRandom() - 0.5)) * speed * 0.85,
         };
       } else {
+        const sideSign = i % 2 === 0 ? 1 : -1;
         linVel = {
-          x: (nextRandom() - 0.5) * 0.4,
-          y: -0.2,
-          z: (nextRandom() - 0.5) * 0.4,
+          x: wallAwayWorld.x * (1.25 * sideSign) + (nextRandom() - 0.5) * 0.6,
+          y: -0.25,
+          z: wallAwayWorld.z * (1.25 * sideSign) + (nextRandom() - 0.5) * 0.6,
         };
         angVel = {
-          x: (nextRandom() - 0.5) * 1.6,
-          y: (nextRandom() - 0.5) * 1.2,
-          z: (nextRandom() - 0.5) * 1.6,
+          x: (nextRandom() - 0.5) * 2.4,
+          y: (nextRandom() - 0.5) * 1.6,
+          z: (nextRandom() - 0.5) * 2.4,
         };
       }
 
+      const blastClearDistM = wall.brickD * 0.95;
       convertBrickToDynamicBody(
         wall,
         brickIdx,
         linVel,
         angVel,
         rapierWorld,
-        dynamicPool
+        dynamicPool,
+        {
+          x: wallAwayWorld.x * blastClearDistM,
+          y: 0,
+          z: wallAwayWorld.z * blastClearDistM,
+        }
       );
     }
 

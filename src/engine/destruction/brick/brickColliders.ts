@@ -78,7 +78,8 @@ export function convertBrickToDynamicBody(
   linVel: Vec3Like,
   angVel: Vec3Like,
   rapierWorld: RapierPhysicsWorld,
-  dynamicPool: BrickDynamicPool
+  dynamicPool: BrickDynamicPool,
+  spawnOffsetWorld?: Vec3Like
 ): void {
   const staticCol = wall.staticColliderHandles[brickIndex];
   if (staticCol >= 0) {
@@ -100,7 +101,14 @@ export function convertBrickToDynamicBody(
     z: wall.brickD * 0.5,
   };
   const rot = wall.transform.rotation ?? IDENTITY_QUAT;
-  const worldPos = localToWorldPoint(node.localCenter, wall.transform);
+  const baseWorldPos = localToWorldPoint(node.localCenter, wall.transform);
+  const worldPos: Vec3Like = spawnOffsetWorld
+    ? {
+        x: baseWorldPos.x + spawnOffsetWorld.x,
+        y: baseWorldPos.y + spawnOffsetWorld.y,
+        z: baseWorldPos.z + spawnOffsetWorld.z,
+      }
+    : baseWorldPos;
 
   const dynamicTag: ColliderSurfaceTag = {
     material: 'BRICK_MASONRY',
