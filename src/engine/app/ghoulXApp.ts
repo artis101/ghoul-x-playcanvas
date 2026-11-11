@@ -26,6 +26,12 @@ import {
   spawnFreshWave,
 } from './playerActionHandlers.ts';
 
+export interface GhoulXAppOptions {
+  readonly materials?: EngineMaterialPalette;
+  readonly combatAudio?: CombatAudioEngine;
+  readonly autoStart?: boolean;
+}
+
 export class GhoulXApplication implements IGhoulXApp {
   public readonly canvas: HTMLCanvasElement;
   public readonly app: pc.Application;
@@ -44,11 +50,13 @@ export class GhoulXApplication implements IGhoulXApp {
   public readonly combatDirector: CombatDirector;
 
   public totalElapsedTimeS = 0;
+  private started = false;
 
   constructor(
     canvas?: HTMLCanvasElement,
     app?: pc.Application,
-    glbRegistry?: GlbModelRegistry
+    glbRegistry?: GlbModelRegistry,
+    options?: GhoulXAppOptions
   ) {
     if (canvas) {
       this.canvas = canvas;
@@ -62,7 +70,7 @@ export class GhoulXApplication implements IGhoulXApp {
 
     this.app = app ?? createPlayCanvasApp(this.canvas);
     this.rapierWorld = new RapierPhysicsWorld();
-    this.materials = getOrCreateMaterials();
+    this.materials = options?.materials ?? getOrCreateMaterials();
     applyRetroEnvironmentTextures(
       this.app.graphicsDevice,
       this.materials.floorGridMat,
@@ -70,7 +78,7 @@ export class GhoulXApplication implements IGhoulXApp {
     );
 
     this.hudController = new HudController();
-    this.combatAudio = new CombatAudioEngine();
+    this.combatAudio = options?.combatAudio ?? new CombatAudioEngine();
     this.glbRegistry = glbRegistry ?? new GlbModelRegistry(this.app);
     this.fxManager = new GoreAndBallisticsFxManager(this.app, this.materials, this.glbRegistry);
 
@@ -245,6 +253,18 @@ export class GhoulXApplication implements IGhoulXApp {
     this.combatDirector.spawnAllTargets();
     this.hudController.updatePlayerVitals(this.tacticalAi.playerVitals, 0);
 
+    if (options?.autoStart !== false) {
+      this.start();
+    }
+  }
+
+  public get isStarted(): boolean {
+    return this.started;
+  }
+
+  public start(): void {
+    if (this.started) return;
+    this.started = true;
     this.app.start();
     this.app.on('update', (dt: number) => onEngineUpdate(this, dt));
   }

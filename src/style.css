@@ -1,3 +1,5 @@
+@import './preloader.css';
+
 :root {
   --hud-amber: #f5b642;
   --hud-emerald: #46e891;
@@ -67,42 +69,11 @@ body,
   box-shadow: 0 0 3px rgba(0, 0, 0, 0.95);
 }
 
-.ch-top {
-  width: 2px;
-  height: 8px;
-  left: 17px;
-  top: 2px;
-}
-
-.ch-bottom {
-  width: 2px;
-  height: 8px;
-  left: 17px;
-  bottom: 2px;
-}
-
-.ch-left {
-  height: 2px;
-  width: 8px;
-  top: 17px;
-  left: 2px;
-}
-
-.ch-right {
-  height: 2px;
-  width: 8px;
-  top: 17px;
-  right: 2px;
-}
-
-.ch-dot {
-  position: absolute;
-  width: 2px;
-  height: 2px;
-  left: 17px;
-  top: 17px;
-  background: rgba(255, 255, 255, 0.85);
-}
+.ch-top { width: 2px; height: 8px; left: 17px; top: 2px; }
+.ch-bottom { width: 2px; height: 8px; left: 17px; bottom: 2px; }
+.ch-left { height: 2px; width: 8px; top: 17px; left: 2px; }
+.ch-right { height: 2px; width: 8px; top: 17px; right: 2px; }
+.ch-dot { position: absolute; width: 2px; height: 2px; left: 17px; top: 17px; background: rgba(255, 255, 255, 0.85); }
 
 .shotgun-spread-ring {
   position: absolute;
@@ -120,20 +91,9 @@ body,
   transition: opacity 0.08s ease-out, transform 0.08s ease-out;
 }
 
-.hitmarker.active {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.hitmarker.armor .hm-tick {
-  background: var(--hud-cyan);
-  box-shadow: 0 0 5px var(--hud-cyan);
-}
-
-.hitmarker.lethal .hm-tick {
-  background: var(--hud-crimson);
-  box-shadow: 0 0 6px var(--hud-crimson);
-}
+.hitmarker.active { opacity: 1; transform: scale(1); }
+.hitmarker.armor .hm-tick { background: var(--hud-cyan); box-shadow: 0 0 5px var(--hud-cyan); }
+.hitmarker.lethal .hm-tick { background: var(--hud-crimson); box-shadow: 0 0 6px var(--hud-crimson); }
 
 .hm-tick {
   position: absolute;
@@ -143,29 +103,10 @@ body,
   box-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
 }
 
-.hm-tl {
-  top: 9px;
-  left: 6px;
-  transform: rotate(45deg);
-}
-
-.hm-tr {
-  top: 9px;
-  right: 6px;
-  transform: rotate(-45deg);
-}
-
-.hm-bl {
-  bottom: 9px;
-  left: 6px;
-  transform: rotate(-45deg);
-}
-
-.hm-br {
-  bottom: 9px;
-  right: 6px;
-  transform: rotate(45deg);
-}
+.hm-tl { top: 9px; left: 6px; transform: rotate(45deg); }
+.hm-tr { top: 9px; right: 6px; transform: rotate(-45deg); }
+.hm-bl { bottom: 9px; left: 6px; transform: rotate(-45deg); }
+.hm-br { bottom: 9px; right: 6px; transform: rotate(45deg); }
 
 /* SNIPER OPTIC OVERLAY */
 .sniper-scope-mask {
@@ -177,19 +118,8 @@ body,
   justify-content: center;
 }
 
-.scope-mil-dots-h {
-  position: absolute;
-  width: 60%;
-  height: 1px;
-  background: rgba(70, 232, 145, 0.65);
-}
-
-.scope-mil-dots-v {
-  position: absolute;
-  height: 60%;
-  width: 1px;
-  background: rgba(70, 232, 145, 0.65);
-}
+.scope-mil-dots-h { position: absolute; width: 60%; height: 1px; background: rgba(70, 232, 145, 0.65); }
+.scope-mil-dots-v { position: absolute; height: 60%; width: 1px; background: rgba(70, 232, 145, 0.65); }
 
 .scope-telemetry-readout {
   position: absolute;
@@ -227,19 +157,9 @@ body,
   transition: opacity 0.35s ease;
 }
 
-.killfeed-item.lethal {
-  border-right-color: var(--hud-crimson);
-  color: #ffd6da;
-}
-
-.killfeed-item .kf-tag {
-  color: var(--hud-amber);
-  margin: 0 5px;
-}
-
-.killfeed-item.lethal .kf-tag {
-  color: var(--hud-crimson);
-}
+.killfeed-item.lethal { border-right-color: var(--hud-crimson); color: #ffd6da; }
+.killfeed-item .kf-tag { color: var(--hud-amber); margin: 0 5px; }
+.killfeed-item.lethal .kf-tag { color: var(--hud-crimson); }
 
 /* SUBTLE CONTEXT PROMPT */
 .hud-prompt {
@@ -260,45 +180,13 @@ body,
 }
 
 /* DIEGETIC CORNER CLUSTERS */
-.hud-corner {
-  position: absolute;
-  bottom: 24px;
-  display: flex;
-  text-shadow: var(--hud-shadow);
-}
-
-.hud-bottom-left {
-  left: 28px;
-  align-items: flex-end;
-  gap: 26px;
-}
-
-.vital-block {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.vital-icon {
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.vital-cross {
-  color: var(--hud-emerald);
-}
-
-.vital-shield {
-  color: var(--hud-cyan);
-  font-size: 19px;
-}
-
-.vital-data {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
+.hud-corner { position: absolute; bottom: 24px; display: flex; text-shadow: var(--hud-shadow); }
+.hud-bottom-left { left: 28px; align-items: flex-end; gap: 26px; }
+.vital-block { display: flex; align-items: center; gap: 8px; }
+.vital-icon { font-size: 22px; font-weight: 700; line-height: 1; }
+.vital-cross { color: var(--hud-emerald); }
+.vital-shield { color: var(--hud-cyan); font-size: 19px; }
+.vital-data { display: flex; flex-direction: column; gap: 3px; }
 
 .vital-num {
   font-family: var(--font-display);
@@ -309,74 +197,20 @@ body,
   color: var(--hud-text);
 }
 
-.armor-num {
-  color: #d6f4ff;
-}
-
-.vital-bar {
-  width: 64px;
-  height: 4px;
-  background: rgba(255, 255, 255, 0.16);
-}
-
-.vital-bar-fill {
-  display: block;
-  height: 100%;
-  width: 100%;
-}
-
-.health-fill {
-  background: var(--hud-emerald);
-}
-
-.armor-fill {
-  background: var(--hud-cyan);
-  transition: width 0.08s linear;
-}
-
-.health-fill {
-  transition: width 0.08s linear;
-}
-
-.vital-reflex {
-  color: #7ee8ff;
-  font-size: 18px;
-}
-
-.reflex-num {
-  font-size: 20px;
-  color: #aef2ff;
-}
-
-.reflex-num.active {
-  color: var(--hud-amber);
-}
-
-.reflex-fill {
-  background: linear-gradient(90deg, #3ecbff, #9df5ff);
-  transition: width 0.06s linear;
-}
-
-.bullet-time-vignette {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
+.armor-num { color: #d6f4ff; }
+.vital-bar { width: 64px; height: 4px; background: rgba(255, 255, 255, 0.16); }
+.vital-bar-fill { display: block; height: 100%; width: 100%; }
+.health-fill { background: var(--hud-emerald); transition: width 0.08s linear; }
+.armor-fill { background: var(--hud-cyan); transition: width 0.08s linear; }
+.vital-reflex { color: #7ee8ff; font-size: 18px; }
+.reflex-num { font-size: 20px; color: #aef2ff; }
+.reflex-num.active { color: var(--hud-amber); }
+.reflex-fill { background: linear-gradient(90deg, #3ecbff, #9df5ff); transition: width 0.06s linear; }
+.bullet-time-vignette { position: absolute; inset: 0; pointer-events: none; }
 
 /* BOTTOM-RIGHT AMMO & WEAPON */
-.hud-bottom-right {
-  right: 28px;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 3px;
-}
-
-.ammo-counter-row {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  line-height: 0.95;
-}
+.hud-bottom-right { right: 28px; flex-direction: column; align-items: flex-end; gap: 3px; }
+.ammo-counter-row { display: flex; align-items: baseline; gap: 6px; line-height: 0.95; }
 
 .ammo-mag {
   font-family: var(--font-display);
@@ -386,45 +220,13 @@ body,
   letter-spacing: 0.03em;
 }
 
-.ammo-mag.low {
-  color: var(--hud-crimson);
-}
-
-.ammo-sep {
-  font-size: 20px;
-  color: var(--hud-dim);
-}
-
-.ammo-reserve {
-  font-family: var(--font-mono);
-  font-size: 18px;
-  font-weight: 700;
-  color: rgba(242, 245, 248, 0.78);
-}
-
-.weapon-meta-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-}
-
-.weapon-name {
-  color: var(--hud-text);
-  font-weight: 700;
-}
-
-.ammo-caliber {
-  color: var(--hud-amber);
-}
-
-.weapon-slots {
-  display: flex;
-  gap: 5px;
-  margin-top: 3px;
-}
+.ammo-mag.low { color: var(--hud-crimson); }
+.ammo-sep { font-size: 20px; color: var(--hud-dim); }
+.ammo-reserve { font-family: var(--font-mono); font-size: 18px; font-weight: 700; color: rgba(242, 245, 248, 0.78); }
+.weapon-meta-row { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; }
+.weapon-name { color: var(--hud-text); font-weight: 700; }
+.ammo-caliber { color: var(--hud-amber); }
+.weapon-slots { display: flex; gap: 5px; margin-top: 3px; }
 
 .slot-pip {
   font-family: var(--font-mono);
@@ -438,18 +240,10 @@ body,
   border-bottom: 2px solid rgba(255, 255, 255, 0.18);
 }
 
-.slot-pip.active {
-  color: var(--hud-amber);
-  border-bottom-color: var(--hud-amber);
-}
+.slot-pip.active { color: var(--hud-amber); border-bottom-color: var(--hud-amber); }
 
 /* FLOATING 3D WORLD HEALTH BAR & TRIAGE PLATES */
-.hud-world-triage-layer {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
+.hud-world-triage-layer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 
 .world-triage-plate {
   position: absolute;
@@ -466,63 +260,14 @@ body,
   transition: opacity 0.14s ease;
 }
 
-.world-triage-plate.is-dead {
-  opacity: 0.62;
-  border-color: rgba(255, 59, 78, 0.28);
-}
-
-.wtp-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-  margin-bottom: 3px;
-}
-
-.wtp-triage {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  line-height: 1.1;
-  white-space: nowrap;
-}
-
-.wtp-hp-num {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 700;
-  color: rgba(242, 245, 248, 0.78);
-  line-height: 1.1;
-}
-
-.wtp-hp-track {
-  width: 100%;
-  height: 4px;
-  background: rgba(255, 255, 255, 0.14);
-  overflow: hidden;
-}
-
-.wtp-hp-fill {
-  height: 100%;
-  width: 100%;
-  transition: width 0.08s linear;
-}
-
-.wtp-armor-track {
-  width: 100%;
-  height: 2px;
-  margin-top: 2px;
-  background: rgba(92, 225, 255, 0.16);
-  overflow: hidden;
-}
-
-.wtp-armor-fill {
-  height: 100%;
-  width: 100%;
-  background: var(--hud-cyan);
-  transition: width 0.08s linear;
-}
+.world-triage-plate.is-dead { opacity: 0.62; border-color: rgba(255, 59, 78, 0.28); }
+.wtp-top { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 3px; }
+.wtp-triage { font-family: var(--font-mono); font-size: 9px; font-weight: 700; letter-spacing: 0.05em; line-height: 1.1; white-space: nowrap; }
+.wtp-hp-num { font-family: var(--font-mono); font-size: 9px; font-weight: 700; color: rgba(242, 245, 248, 0.78); line-height: 1.1; }
+.wtp-hp-track { width: 100%; height: 4px; background: rgba(255, 255, 255, 0.14); overflow: hidden; }
+.wtp-hp-fill { height: 100%; width: 100%; transition: width 0.08s linear; }
+.wtp-armor-track { width: 100%; height: 2px; margin-top: 2px; background: rgba(92, 225, 255, 0.16); overflow: hidden; }
+.wtp-armor-fill { height: 100%; width: 100%; background: var(--hud-cyan); transition: width 0.08s linear; }
 
 /* TOP-CENTER FOCUSED TARGET HEALTH BAR & TRIAGE CARD */
 .hud-target-triage-card {
@@ -539,91 +284,20 @@ body,
   pointer-events: none;
 }
 
-.hud-target-triage-card.card-healthy {
-  border-top-color: var(--hud-emerald);
-}
+.hud-target-triage-card.card-healthy { border-top-color: var(--hud-emerald); }
+.hud-target-triage-card.card-wounded { border-top-color: var(--hud-amber); }
+.hud-target-triage-card.card-mortally-wounded { border-top-color: #ff5e36; }
+.hud-target-triage-card.card-dead { border-top-color: var(--hud-crimson); }
 
-.hud-target-triage-card.card-wounded {
-  border-top-color: var(--hud-amber);
-}
-
-.hud-target-triage-card.card-mortally-wounded {
-  border-top-color: #ff5e36;
-}
-
-.hud-target-triage-card.card-dead {
-  border-top-color: var(--hud-crimson);
-}
-
-.ttc-top-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 5px;
-}
-
-.ttc-name {
-  font-family: var(--font-display);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--hud-text);
-  text-shadow: var(--hud-shadow);
-}
-
-.ttc-badge {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  padding: 1px 6px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.ttc-hp-row {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.ttc-hp-track {
-  flex: 1;
-  height: 6px;
-  background: rgba(255, 255, 255, 0.15);
-  overflow: hidden;
-}
-
-.ttc-hp-fill {
-  height: 100%;
-  width: 100%;
-  transition: width 0.08s linear;
-}
-
-.ttc-hp-text {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 700;
-  color: rgba(242, 245, 248, 0.88);
-  min-width: 62px;
-  text-align: right;
-}
-
-.ttc-armor-track {
-  width: 100%;
-  height: 2px;
-  margin-top: 3px;
-  background: rgba(92, 225, 255, 0.16);
-  overflow: hidden;
-}
-
-.ttc-armor-fill {
-  height: 100%;
-  width: 100%;
-  background: var(--hud-cyan);
-  transition: width 0.08s linear;
-}
+.ttc-top-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
+.ttc-name { font-family: var(--font-display); font-size: 12px; font-weight: 700; letter-spacing: 0.06em; color: var(--hud-text); text-shadow: var(--hud-shadow); }
+.ttc-badge { font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; padding: 1px 6px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); }
+.ttc-hp-row { display: flex; align-items: center; gap: 9px; }
+.ttc-hp-track { flex: 1; height: 6px; background: rgba(255, 255, 255, 0.15); overflow: hidden; }
+.ttc-hp-fill { height: 100%; width: 100%; transition: width 0.08s linear; }
+.ttc-hp-text { font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; color: rgba(242, 245, 248, 0.88); min-width: 62px; text-align: right; }
+.ttc-armor-track { width: 100%; height: 2px; margin-top: 3px; background: rgba(92, 225, 255, 0.16); overflow: hidden; }
+.ttc-armor-fill { height: 100%; width: 100%; background: var(--hud-cyan); transition: width 0.08s linear; }
 
 .ttc-physio-row {
   display: flex;
@@ -639,56 +313,22 @@ body,
   color: rgba(214, 244, 255, 0.86);
 }
 
-.ttc-physio-trauma {
-  color: var(--hud-amber);
-  font-weight: 700;
-}
-
-.ttc-physio-trauma.critical {
-  color: var(--hud-crimson);
-}
+.ttc-physio-trauma { color: var(--hud-amber); font-weight: 700; }
+.ttc-physio-trauma.critical { color: var(--hud-crimson); }
 
 /* SHARED TRIAGE COLOR PALETTE */
-.triage-healthy {
-  color: var(--hud-emerald);
-}
-.wtp-hp-fill.triage-healthy,
-.ttc-hp-fill.triage-healthy {
-  background: var(--hud-emerald);
-}
-
-.triage-wounded {
-  color: var(--hud-amber);
-}
-.wtp-hp-fill.triage-wounded,
-.ttc-hp-fill.triage-wounded {
-  background: var(--hud-amber);
-}
-
-.triage-mortally-wounded {
-  color: #ff6238;
-  animation: triagePulse 0.95s ease-in-out infinite alternate;
-}
-.wtp-hp-fill.triage-mortally-wounded,
-.ttc-hp-fill.triage-mortally-wounded {
-  background: linear-gradient(90deg, #ff3b4e, #ff7b38);
-}
-
-.triage-dead {
-  color: var(--hud-crimson);
-}
-.wtp-hp-fill.triage-dead,
-.ttc-hp-fill.triage-dead {
-  background: rgba(255, 59, 78, 0.45);
-}
+.triage-healthy { color: var(--hud-emerald); }
+.wtp-hp-fill.triage-healthy, .ttc-hp-fill.triage-healthy { background: var(--hud-emerald); }
+.triage-wounded { color: var(--hud-amber); }
+.wtp-hp-fill.triage-wounded, .ttc-hp-fill.triage-wounded { background: var(--hud-amber); }
+.triage-mortally-wounded { color: #ff6238; animation: triagePulse 0.95s ease-in-out infinite alternate; }
+.wtp-hp-fill.triage-mortally-wounded, .ttc-hp-fill.triage-mortally-wounded { background: linear-gradient(90deg, #ff3b4e, #ff7b38); }
+.triage-dead { color: var(--hud-crimson); }
+.wtp-hp-fill.triage-dead, .ttc-hp-fill.triage-dead { background: rgba(255, 59, 78, 0.45); }
 
 @keyframes triagePulse {
-  0% {
-    opacity: 0.72;
-  }
-  100% {
-    opacity: 1;
-  }
+  0% { opacity: 0.72; }
+  100% { opacity: 1; }
 }
 
 .hidden {

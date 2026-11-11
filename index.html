@@ -11,10 +11,113 @@
       href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@500;700&display=swap"
       rel="stylesheet"
     />
+    <link rel="stylesheet" href="/src/preloader.css" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <div id="app-root">
+      <!-- TACTICAL ASSET, TEXTURE & SHADER PRELOADER OVERLAY (COVERS VIEWPORT ON INITIAL PAINT) -->
+      <div
+        id="preloader-overlay"
+        class="preloader-overlay"
+        style="position:fixed;inset:0;z-index:9999;background-color:#06090e;"
+      >
+        <div class="preloader-frame">
+          <div class="preloader-header">
+            <div>
+              <div class="preloader-title-row">
+                <h1 id="preloader-title" class="preloader-title">GHOUL-X</h1>
+                <span class="preloader-build-tag">SYS.BOOT // v2.4</span>
+              </div>
+              <div id="preloader-subtitle" class="preloader-subtitle">
+                ANATOMICAL BALLISTICS &amp; DESTRUCTION ENGINE
+              </div>
+            </div>
+            <span id="preloader-status-badge" class="preloader-status-badge">INITIALIZING</span>
+          </div>
+
+          <div class="preloader-stages-grid">
+            <div id="preloader-stage-WASM_PHYSICS" class="preloader-stage-pill active" data-stage="WASM_PHYSICS">
+              <div class="preloader-stage-left">
+                <span class="preloader-stage-index">01</span>
+                <span class="preloader-stage-name">WASM PHYSICS</span>
+              </div>
+              <span id="preloader-stage-state-WASM_PHYSICS" class="preloader-stage-state">EXEC</span>
+            </div>
+
+            <div id="preloader-stage-MODELS_AND_GRAPHS" class="preloader-stage-pill pending" data-stage="MODELS_AND_GRAPHS">
+              <div class="preloader-stage-left">
+                <span class="preloader-stage-index">02</span>
+                <span class="preloader-stage-name">3D ARSENAL &amp; ANATOMY</span>
+              </div>
+              <span id="preloader-stage-state-MODELS_AND_GRAPHS" class="preloader-stage-state">WAIT</span>
+            </div>
+
+            <div id="preloader-stage-PROCEDURAL_TEXTURES" class="preloader-stage-pill pending" data-stage="PROCEDURAL_TEXTURES">
+              <div class="preloader-stage-left">
+                <span class="preloader-stage-index">03</span>
+                <span class="preloader-stage-name">PBR &amp; IBL TEXTURES</span>
+              </div>
+              <span id="preloader-stage-state-PROCEDURAL_TEXTURES" class="preloader-stage-state">WAIT</span>
+            </div>
+
+            <div id="preloader-stage-AUDIO_DSP" class="preloader-stage-pill pending" data-stage="AUDIO_DSP">
+              <div class="preloader-stage-left">
+                <span class="preloader-stage-index">04</span>
+                <span class="preloader-stage-name">AUDIO DSP MATRIX</span>
+              </div>
+              <span id="preloader-stage-state-AUDIO_DSP" class="preloader-stage-state">WAIT</span>
+            </div>
+
+            <div id="preloader-stage-WORLD_COMPOSITION" class="preloader-stage-pill pending" data-stage="WORLD_COMPOSITION">
+              <div class="preloader-stage-left">
+                <span class="preloader-stage-index">05</span>
+                <span class="preloader-stage-name">ARENA &amp; AI SYSTEMS</span>
+              </div>
+              <span id="preloader-stage-state-WORLD_COMPOSITION" class="preloader-stage-state">WAIT</span>
+            </div>
+
+            <div id="preloader-stage-SHADER_COMPILATION" class="preloader-stage-pill pending" data-stage="SHADER_COMPILATION">
+              <div class="preloader-stage-left">
+                <span class="preloader-stage-index">06</span>
+                <span class="preloader-stage-name">GPU SHADER PIPELINES</span>
+              </div>
+              <span id="preloader-stage-state-SHADER_COMPILATION" class="preloader-stage-state">WAIT</span>
+            </div>
+          </div>
+
+          <div class="preloader-progress-section">
+            <div id="preloader-progress-track" class="preloader-progress-track">
+              <div id="preloader-progress-fill" class="preloader-progress-fill"></div>
+            </div>
+            <div class="preloader-subprogress-track">
+              <div id="preloader-subprogress-fill" class="preloader-subprogress-fill"></div>
+            </div>
+          </div>
+
+          <div class="preloader-telemetry-row">
+            <div class="preloader-telemetry-primary">
+              <span id="preloader-percent" class="preloader-percent">000%</span>
+              <div class="preloader-ticker-stack">
+                <span id="preloader-phase-label" class="preloader-phase-label">WASM PHYSICS &amp; DOM RUNTIME</span>
+                <span id="preloader-item-ticker" class="preloader-item-ticker">Initializing Rapier3D WASM Solver...</span>
+              </div>
+            </div>
+            <div class="preloader-telemetry-metrics">
+              <span id="preloader-step-counter" class="preloader-step-counter">00 / --</span>
+              <span id="preloader-elapsed" class="preloader-elapsed">0.00s</span>
+            </div>
+          </div>
+
+          <div id="preloader-error-banner" class="preloader-error-banner hidden">
+            <span id="preloader-error-message" class="preloader-error-message"></span>
+            <button id="preloader-retry-btn" class="preloader-retry-btn" type="button">
+              RETRY INITIALIZATION
+            </button>
+          </div>
+        </div>
+      </div>
+
       <canvas id="playcanvas-viewport"></canvas>
 
       <!-- IN-GAME FPS HUD LAYER (100% NON-BLOCKING) -->

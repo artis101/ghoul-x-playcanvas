@@ -87,6 +87,18 @@ export class CombatAudioEngine {
     };
   }
 
+  public prewarmDspGraph(): boolean {
+    if (this.destroyed) return false;
+    if (!this.graph) {
+      try {
+        this.graph = this.contextFactory();
+      } catch {
+        this.graph = null;
+      }
+    }
+    return this.graph !== null;
+  }
+
   public async unlock(): Promise<boolean> {
     if (this.destroyed) return false;
     if (!this.graph) this.graph = this.contextFactory();

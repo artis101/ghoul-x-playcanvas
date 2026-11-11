@@ -1,32 +1,26 @@
-import { initRapierPhysics } from './engine/physics/rapierWorld.ts';
-import { GlbModelRegistry } from './engine/assets/glbLoader.ts';
-import { createPlayCanvasApp } from './engine/app/appSetup.ts';
 import { GhoulXApplication } from './engine/app/ghoulXApp.ts';
+import {
+  PreloaderScreen,
+  runGamePreloader,
+  type GamePreloaderOptions,
+} from './engine/preloader/index.ts';
 
-export { GhoulXApplication };
+export { GhoulXApplication, PreloaderScreen, runGamePreloader, type GamePreloaderOptions };
 
-export async function bootstrap(): Promise<GhoulXApplication> {
-  await initRapierPhysics();
-
-  const canvasEl = document.getElementById('playcanvas-viewport');
-  if (!(canvasEl instanceof HTMLCanvasElement)) {
-    throw new Error('Canvas #playcanvas-viewport not found in document!');
-  }
-
-  const app = createPlayCanvasApp(canvasEl);
-  const glbRegistry = new GlbModelRegistry(app);
-
-  try {
-    await glbRegistry.preloadAll();
-  } catch (err: unknown) {
-    console.warn('GLB asset preloading encountered an error, falling back:', err);
-  }
-
-  return new GhoulXApplication(canvasEl, app, glbRegistry);
+export async function bootstrap(
+  options: GamePreloaderOptions = {}
+): Promise<GhoulXApplication> {
+  const preloaderScreen = options.preloaderScreen ?? new PreloaderScreen();
+  return runGamePreloader({
+    ...options,
+    preloaderScreen,
+  });
 }
 
 if (typeof window !== 'undefined') {
   window.addEventListener('DOMContentLoaded', () => {
-    void bootstrap();
+    void bootstrap().catch((err: unknown) => {
+      console.error('GHOUL-X bootstrap failed:', err);
+    });
   });
 }

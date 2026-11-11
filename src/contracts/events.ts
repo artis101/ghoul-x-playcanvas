@@ -8,14 +8,24 @@ import type {
   PlayerNearMissGrazePayload,
 } from './ai/aiContracts.ts';
 import type { BlastEvent } from './destruction.ts';
+import type {
+  AssetLoadProgressEvent,
+  PreloadPhaseId,
+  PreloadProgressCallback,
+  PreloadProgressSnapshot,
+} from './preloader.ts';
 
 export type {
   AiBarkCategory,
   AiBarkPayload,
+  AssetLoadProgressEvent,
   EnemyFireMode,
   PlayerCombatVitals,
   PlayerNearMissGrazeKind,
   PlayerNearMissGrazePayload,
+  PreloadPhaseId,
+  PreloadProgressCallback,
+  PreloadProgressSnapshot,
 };
 
 export interface WeaponFiredPayload {
@@ -138,4 +148,7 @@ export interface AppEventMap {
   'hud:killfeed': HudKillfeedPayload;
   'hud:vitals_updated': { vitals: PlayerCombatVitals };
   'hud:scope_overlay': HudScopeOverlayPayload;
+  'preloader:progress': PreloadProgressSnapshot;
+  'preloader:complete': { totalElapsedMs: number; compiledShaders: number; loadedAssets: number };
+  'preloader:error': { phase: PreloadPhaseId; message: string };
 }
