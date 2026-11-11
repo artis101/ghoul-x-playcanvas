@@ -809,13 +809,10 @@ describe('Headless Blender 5.2.1 LTS GLB & Voronoi Fracture Asset Pipeline', () 
         expect(m.combatantGlb!.rootEntity.enabled, `${phaseLabel}: GLB rootEntity MUST stay enabled`).toBe(true);
         for (const zone of ALL_GHOUL_ZONES) {
           const legacyFlesh = m.rootEntity.findByName(`Flesh_${zone}`) as pc.Entity | null;
-          expect(legacyFlesh, `${phaseLabel}: Flesh_${zone} node exists`).not.toBeNull();
-          expect(legacyFlesh!.enabled, `${phaseLabel}: Legacy Flesh_${zone} MUST remain disabled!`).toBe(false);
+          expect(legacyFlesh, `${phaseLabel}: Flesh_${zone} node must be null`).toBeNull();
         }
         const legacyHeadgear = m.rootEntity.findByName('Headgear_HEAVY_ENFORCER') as pc.Entity | null;
-        if (legacyHeadgear) {
-          expect(legacyHeadgear.enabled, `${phaseLabel}: Legacy headgear MUST remain disabled!`).toBe(false);
-        }
+        expect(legacyHeadgear, `${phaseLabel}: Legacy headgear must be null`).toBeNull();
       };
 
       // Verify Southpaw sniper selects *_Southpaw animation & Spetsnaz beret

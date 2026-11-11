@@ -1,0 +1,85 @@
+import type { BlastEvent } from '../../contracts/destruction.ts';
+import type { Vec3Like } from '../../contracts/ballistics.ts';
+import { add, distance, length, normalize, sub, vec3 } from '../../core/ballistics/vec3.ts';
+import { ALL_GHOUL_ZONES } from '../../core/ghoul/anatomy.ts';
+import type { GhoulMannequinEntity } from '../mannequin.ts';
+import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
+import type { CombatAudioEngine } from '../audio/combatAudioEngine.ts';
+import type { MayhemDirector } from '../fx/mayhemDirector.ts';
+import type { TacticalCombatAiSystem } from '../ai/tacticalCombatAi.ts';
+import type { CameraShakeCallback } from './combatTypes.ts';
+import { SYNTHETIC_SHRAPNEL_AMMO } from './combatTargetConfigs.ts';
+import { buildFragBlastReportForTarget } from './fragBlastCalculator.ts';
+import { applyImpactFxAndState, type ImpactDispatcherContext } from './impactDamageDispatcher.ts';
+
+export function routeExternalExplosionTrauma(
+  blast: BlastEvent,
+  sourceLabel: string,
+  targets: GhoulMannequinEntity[],
+  fxManager: GoreAndBallisticsFxManager,
+  combatAudio: CombatAudioEngine | null,
+  mayhemDirector: MayhemDirector | null,
+  tacticalAi: TacticalCombatAiSystem | null,
+  onCameraShake: CameraShakeCallback | undefined,
+  getViewerPosVec3: () => Vec3Like,
+  spawnBlastFx: (center: Vec3Like, radius: number) => void,
+  impactCtx: ImpactDispatcherContext
+): number {
+  const center = blast.centerWorld;
+  const blastRadiusM = blast.radiusM;
+  const peakImpulseNs = blast.peakImpulseNs;
+  const peakEnergyJ = blast.peakEnergyJ;
+
+  spawnBlastFx(center, blastRadiusM);
+  fxManager.spawnArmorImpactSparks(add(center, vec3(0, 0.12, 0)), vec3(0, 1, 0));
+  fxManager.spawnBoneShatterSparks(add(center, vec3(0, 0.18, 0)), vec3(0, 1, 0));
+
+  if (combatAudio) {
+    const intensity = Math.min(2.0, Math.max(0.75, peakEnergyJ / 6000));
+    combatAudio.playExplosion(center, getViewerPosVec3(), intensity);
+  }
+
+  if (onCameraShake) {
+    const viewerDist = distance(center, getViewerPosVec3());
+    if (viewerDist < 34.0) {
+      const proximity = Math.max(0.12, 1 - viewerDist / 34.0);
+      onCameraShake(4.2 * proximity * proximity + 0.55, 0.44);
+    }
+  }
+
+  let newlyKilledCount = 0;
+  for (const target of targets) {
+    const hs = target.healthState;
+    const wasAlive = hs.alive;
+    const pelvisPos = hs.ragdollBones.PELVIS_GROIN.position;
+    const distM = distance(center, pelvisPos);
+    if (distM > blastRadiusM) continue;
+
+    const blastReport = buildFragBlastReportForTarget(hs, center, distM, blastRadiusM, peakImpulseNs, peakEnergyJ);
+    applyImpactFxAndState(target, blastReport, sourceLabel, impactCtx, SYNTHETIC_SHRAPNEL_AMMO);
+
+    if (wasAlive && !hs.alive) newlyKilledCount++;
+
+    if (distM < 4.5 && hs.isRagdollActive) {
+      const closeLift = (1 - distM / 4.5) * 2.55;
+      const rawOut = sub(pelvisPos, center);
+      const horizOut = vec3(rawOut.x, 0, rawOut.z);
+      const outDir = length(horizOut) > 1e-3 ? normalize(horizOut) : vec3(0, 0, -1);
+      for (const z of ALL_GHOUL_ZONES) {
+        const b = hs.ragdollBones[z];
+        if (b.componentId === 'BODY') {
+          b.velocity.x += outDir.x * closeLift * 1.15;
+          b.velocity.y += closeLift;
+          b.velocity.z += outDir.z * closeLift * 1.15;
+        }
+      }
+    }
+  }
+
+  if (newlyKilledCount >= 2) {
+    tacticalAi?.grantBrutalKillReward('MULTI_KILL_BLAST');
+    mayhemDirector?.bulletTime.triggerKillPunch(0.35, 0.16, 'MULTI_KILL_BLAST');
+  }
+
+  return newlyKilledCount;
+}

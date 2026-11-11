@@ -1372,26 +1372,15 @@ def set_weapon_bone_pose_pc(
     offset_pc: Tuple[float, float, float] = (0.0, 0.0, 0.0),
     euler_deg_pc: Tuple[float, float, float] = (0.0, 0.0, 0.0),
 ) -> None:
-    bpy.context.view_layer.update()
     pb = arm_obj.pose.bones[bone_name]
-    rest_mat = pb.bone.matrix_local.copy()
-
-    delta_t = pc_vec_to_bl(offset_pc)
-    delta_r = Euler(
-        (
-            math.radians(euler_deg_pc[0]),
-            math.radians(-euler_deg_pc[2]),
-            math.radians(euler_deg_pc[1]),
-        ),
-        "XYZ",
-    ).to_matrix().to_4x4()
-
-    pivot = rest_mat.translation.copy()
-    t_to_origin = Matrix.Translation(-pivot)
-    t_back = Matrix.Translation(pivot + delta_t)
-
-    pb.matrix = t_back @ delta_r @ t_to_origin @ rest_mat
-    bpy.context.view_layer.update()
+    # Convert the requested model-space delta into the bone's rest axes.
+    # Writing the local pose lets animated children inherit the parent's recoil.
+    rest_rotation = pb.bone.matrix_local.to_3x3()
+    model_to_blender = Matrix(((1, 0, 0), (0, 0, -1), (0, 1, 0)))
+    model_to_bone = rest_rotation.transposed() @ model_to_blender
+    delta_rotation = Euler(tuple(math.radians(a) for a in euler_deg_pc), "XYZ").to_matrix()
+    pb.location = model_to_bone @ Vector(offset_pc)
+    pb.rotation_quaternion = (model_to_bone @ delta_rotation @ model_to_bone.transposed()).to_quaternion()
 
 
 def reset_weapon_pose(arm_obj: bpy.types.Object) -> None:
@@ -1406,6 +1395,7 @@ def keyframe_weapon_bones(arm_obj: bpy.types.Object, frame: int) -> None:
     for pb in arm_obj.pose.bones:
         pb.keyframe_insert(data_path="location", frame=frame)
         pb.keyframe_insert(data_path="rotation_quaternion", frame=frame)
+        pb.keyframe_insert(data_path="scale", frame=frame)
 
 
 def push_weapon_nla(arm_obj: bpy.types.Object, action: bpy.types.Action, name: str) -> None:
@@ -1484,7 +1474,8 @@ def build_m590_shotgun(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
     # Left wall & top bridge spanning past the open right-side ejection port (`z = -0.035..-0.125`)
     add_box_pc(bm, (-0.0145, 0.010, -0.082), (0.0065, 0.032, 0.052), bevel=0.002, mat_idx=1)
     add_box_pc(bm, (0.0, 0.036, -0.082), (0.0185, 0.007, 0.052), bevel=0.002, mat_idx=1)
-    add_box_pc(bm, (0.0, -0.016, -0.082), (0.0195, 0.008, 0.052), bevel=0.002, mat_idx=1)
+    for sx in (-1.0, 1.0):
+        add_box_pc(bm, (sx * 0.016, -0.016, -0.082), (0.004, 0.008, 0.052), bevel=0.001, mat_idx=1)
     # Dark interior receiver chamber recess behind bolt carrier
     add_box_pc(bm, (0.003, 0.013, -0.082), (0.011, 0.017, 0.044), bevel=0.001, mat_idx=5)
     # Front receiver face & barrel boss (`z = -0.125..-0.185`)
@@ -1497,11 +1488,12 @@ def build_m590_shotgun(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
         mat_idx=1,
     )
     # Ambidextrous top-tang safety slider (signature Mossberg 590 detail!) + receiver trigger pins
-    add_box_pc(bm, (0.0, 0.041, 0.034), (0.0075, 0.0035, 0.013), bevel=0.001, mat_idx=0, pitch_deg=-12.0)
+    add_box_pc(bm, (0.0, 0.039, 0.034), (0.0075, 0.0045, 0.013), bevel=0.001, mat_idx=0, pitch_deg=-12.0)
     for pin_z in (-0.005, 0.018):
         add_cylinder_axis_pc(bm, (-0.0218, -0.006, pin_z), (0.0218, -0.006, pin_z), 0.0022, sides=12, mat_idx=0)
 
     # Top MIL-STD-1913 toothed Picatinny rail + Winged Ghost-Ring Rear Aperture Sight!
+    add_box_pc(bm, (0.0, 0.040, -0.0725), (0.0105, 0.0035, 0.0925), bevel=0.0006, mat_idx=1)
     add_picatinny_rail_pc(bm, 0.0, 0.043, 0.020, -0.165, direction="+Y", mat_idx=1, tooth_pitch=0.010)
     # Ghost-ring base clamp, protective steel side ears, windage drum & toroidal aperture ring
     add_box_pc(bm, (0.0, 0.050, 0.005), (0.0125, 0.0045, 0.015), bevel=0.0012, mat_idx=0)
@@ -1525,7 +1517,7 @@ def build_m590_shotgun(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
         sides=28,
         outer_mat_idx=0,
         bore_mat_idx=5,
-        rifling_lands=2,  # Smoothbore cylinder choke sheen
+        rifling_lands=0,
     )
 
     # Perforated / Ventilated Steel Barrel Heatshield (`z = -0.195 .. -0.525`) with slotted cooling ports!
@@ -1597,13 +1589,6 @@ def build_m590_shotgun(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
         corner_segs=3,
         cap_bevel_start=0.0045,
         cap_bevel_end=0.0040,
-    )
-    # Contoured tactical pistol grip under wrist (20-deg rake, finger-groove frontstrap, palm swell, rounded heel!)
-    add_contoured_grip_pc(
-        bm,
-        y_top=-0.012, z_top=0.020, length_y=0.094, rake_deg=20.5,
-        half_w=0.0155, half_depth=0.0205, mat_idx=2,
-        groove_amp=0.0028, palm_swell=0.0052, heel_flare=1.10,
     )
     # Thick rounded black rubber recoil buttpad (`z = 0.276 .. 0.304`)
     add_profile_loft_pc(
@@ -1694,49 +1679,56 @@ def build_m590_shotgun(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
     arm.animation_data_create()
     bpy.context.scene.render.fps = 24
 
+    def keyframe_pose(frame: int, shell_visible: bool = False) -> None:
+        scale = 1.0 if shell_visible else 0.001
+        arm.pose.bones["Bone_Shell"].scale = (scale,) * 3
+        keyframe_weapon_bones(arm, frame)
+
     act = bpy.data.actions.new("Idle")
     arm.animation_data.action = act
     for f, dy, pitch in [(1, 0.0, 0.0), (25, 0.003, 0.35), (49, 0.0, 0.0)]:
         reset_weapon_pose(arm)
         set_weapon_bone_pose_pc(arm, "Bone_Root", (0.0, dy, 0.0), (pitch, 0.0, 0.0))
-        keyframe_weapon_bones(arm, f)
+        keyframe_pose(f)
     push_weapon_nla(arm, act, "Idle")
 
     act = bpy.data.actions.new("FirePump")
     arm.animation_data.action = act
     reset_weapon_pose(arm)
-    keyframe_weapon_bones(arm, 1)
+    keyframe_pose(1)
     reset_weapon_pose(arm)
     set_weapon_bone_pose_pc(arm, "Bone_Root", (0.0, 0.018, 0.065), (9.5, 0.0, -1.5))
-    keyframe_weapon_bones(arm, 3)
+    keyframe_pose(3)
     reset_weapon_pose(arm)
     set_weapon_bone_pose_pc(arm, "Bone_Root", (0.0, -0.008, 0.022), (3.0, 2.0, -4.0))
-    set_weapon_bone_pose_pc(arm, "Bone_Pump", (0.0, 0.0, 0.105))
+    set_weapon_bone_pose_pc(arm, "Bone_Pump", (0.0, 0.0, 0.068))
     set_weapon_bone_pose_pc(arm, "Bone_Bolt", (0.0, 0.0, 0.068))
-    keyframe_weapon_bones(arm, 10)
+    keyframe_pose(10)
     reset_weapon_pose(arm)
     set_weapon_bone_pose_pc(arm, "Bone_Root", (0.0, 0.004, -0.010), (-1.2, 0.0, 0.0))
     set_weapon_bone_pose_pc(arm, "Bone_Pump", (0.0, 0.0, 0.0))
     set_weapon_bone_pose_pc(arm, "Bone_Bolt", (0.0, 0.0, 0.0))
-    keyframe_weapon_bones(arm, 16)
+    keyframe_pose(16)
     reset_weapon_pose(arm)
-    keyframe_weapon_bones(arm, 21)
+    keyframe_pose(21)
     push_weapon_nla(arm, act, "FirePump")
 
     act = bpy.data.actions.new("ReloadShell")
     arm.animation_data.action = act
     reset_weapon_pose(arm)
-    keyframe_weapon_bones(arm, 1)
+    keyframe_pose(1)
     reset_weapon_pose(arm)
     set_weapon_bone_pose_pc(arm, "Bone_Root", (-0.025, 0.025, 0.02), (12.0, 8.0, 26.0))
     set_weapon_bone_pose_pc(arm, "Bone_Shell", (0.01, -0.095, 0.04), (-22.0, 0.0, 0.0))
-    keyframe_weapon_bones(arm, 7)
+    keyframe_pose(7, shell_visible=True)
     reset_weapon_pose(arm)
     set_weapon_bone_pose_pc(arm, "Bone_Root", (-0.022, 0.032, 0.012), (13.5, 8.0, 28.0))
-    set_weapon_bone_pose_pc(arm, "Bone_Shell", (0.0, 0.012, -0.065), (0.0, 0.0, 0.0))
-    keyframe_weapon_bones(arm, 14)
+    set_weapon_bone_pose_pc(arm, "Bone_Shell", (0.0, 0.0, -0.018))
+    keyframe_pose(14, shell_visible=True)
+    set_weapon_bone_pose_pc(arm, "Bone_Shell", (0.0, 0.016, -0.132))
+    keyframe_pose(18)
     reset_weapon_pose(arm)
-    keyframe_weapon_bones(arm, 22)
+    keyframe_pose(22)
     push_weapon_nla(arm, act, "ReloadShell")
 
     reset_weapon_pose(arm)
@@ -1823,10 +1815,6 @@ def build_silver_talon_50ae(mats: Dict[str, bpy.types.Material], scene_col: bpy.
         bore_mat_idx=4,
         rifling_lands=6,
     )
-    # Signature deep machined lightening flutes: one on the 44-deg triangular slope + one on the lower vertical flank!
-    for sx in (-1.0, 1.0):
-        add_box_pc(bm, (sx * 0.0128, 0.0402, -0.190), (0.0014, 0.0036, 0.072), bevel=0.0006, mat_idx=1, roll_deg=sx * 32.0)
-        add_box_pc(bm, (sx * 0.0184, 0.0235, -0.190), (0.0014, 0.0030, 0.072), bevel=0.0006, mat_idx=1)
     # Integral Weaver/Picatinny barrel scope slots strictly within the narrow 12mm top rib (leaving triangular slopes exposed!)
     add_picatinny_rail_pc(
         bm, 0.0, 0.0510, -0.105, -0.252, direction="+Y", mat_idx=0,
@@ -1975,7 +1963,6 @@ def build_silver_talon_50ae(mats: Dict[str, bpy.types.Material], scene_col: bpy.
     keyframe_weapon_bones(arm, 3)
     reset_weapon_pose(arm)
     set_weapon_bone_pose_pc(arm, "Bone_Root", (0.0, 0.010, 0.018), (6.5, 0.0, 0.0))
-    set_weapon_bone_pose_pc(arm, "Bone_Slide", (0.0, 0.0, 0.0))
     keyframe_weapon_bones(arm, 7)
     reset_weapon_pose(arm)
     keyframe_weapon_bones(arm, 14)
@@ -1988,12 +1975,14 @@ def build_silver_talon_50ae(mats: Dict[str, bpy.types.Material], scene_col: bpy.
     reset_weapon_pose(arm)
     set_weapon_bone_pose_pc(arm, "Bone_Root", (-0.02, 0.02, 0.01), (8.0, 12.0, 24.0))
     set_weapon_bone_pose_pc(arm, "Bone_Slide", (0.0, 0.0, 0.048))
-    set_weapon_bone_pose_pc(arm, "Bone_Mag", (0.0, -0.22, 0.06))
+    set_weapon_bone_pose_pc(arm, "Bone_Mag", (0.0, -0.22, 0.074))
     keyframe_weapon_bones(arm, 7)
     reset_weapon_pose(arm)
     set_weapon_bone_pose_pc(arm, "Bone_Root", (-0.015, 0.032, 0.005), (10.0, 8.0, 18.0))
     set_weapon_bone_pose_pc(arm, "Bone_Slide", (0.0, 0.0, 0.048))
-    set_weapon_bone_pose_pc(arm, "Bone_Mag", (0.0, 0.0, 0.0))
+    set_weapon_bone_pose_pc(arm, "Bone_Mag", (0.0, -0.075, 0.025))
+    keyframe_weapon_bones(arm, 12)
+    set_weapon_bone_pose_pc(arm, "Bone_Mag")
     keyframe_weapon_bones(arm, 15)
     reset_weapon_pose(arm)
     set_weapon_bone_pose_pc(arm, "Bone_Root", (0.0, 0.004, -0.012), (-2.0, 0.0, 0.0))
@@ -2079,20 +2068,6 @@ def build_msg90_sniper(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
         half_w=0.0168, half_depth=0.0220, mat_idx=2,
         groove_amp=0.0028, palm_swell=0.0058, heel_flare=1.08,
     )
-    # Adjustable wide contoured FDE palm shelf + steel locking dial at grip base
-    add_swept_loft_yz_pc(
-        bm,
-        [
-            (0.0, -0.115, 0.046, 0.0255, 0.0240, 0.0280, 0.42),
-            (0.0, -0.124, 0.049, 0.0225, 0.0210, 0.0260, 0.44),
-        ],
-        mat_idx=3,
-        corner_segs=3,
-        cap_bevel_start=0.0025,
-        cap_bevel_end=0.0030,
-    )
-    add_cylinder_z_pc(bm, 0.0, -0.130, 0.044, 0.056, 0.0075, 0.0075, sides=16, mat_idx=0)
-
     # Precision Adjustable MSG90 Buttstock (16-pt rounded oval cross-section + beveled ends!)
     add_profile_loft_pc(
         bm,
@@ -2196,7 +2171,9 @@ def build_msg90_sniper(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
             cz = -0.448 + c_i * 0.0105
             add_torus_pc(bm, (bx * 0.88, sy_spr, cz), axis="Z", major_r=0.0038, minor_r=0.0010, major_segs=12, minor_segs=6, mat_idx=0)
 
-    # HK STANAG Claw Mount + Hensoldt ZF 10x42 Telescopic Sniper Scope + Sunshade + Knurled Turrets + Coated Lenses!
+    # Receiver-mounted scope rail + Hensoldt ZF 10x42 Telescopic Sniper Scope + Sunshade + Knurled Turrets + Coated Lenses!
+    for rz in (0.002, -0.153):
+        add_box_pc(bm, (0.0, 0.037, rz), (0.011, 0.005, 0.013), bevel=0.001, mat_idx=1)
     add_picatinny_rail_pc(bm, 0.0, 0.041, 0.025, -0.175, direction="+Y", mat_idx=1, tooth_pitch=0.011)
     for rz in (-0.018, -0.142):
         add_box_pc(bm, (0.0, 0.056, rz), (0.0155, 0.012, 0.012), bevel=0.002, mat_idx=1)
@@ -2307,23 +2284,21 @@ def build_msg90_sniper(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
     arm.animation_data.action = act
     reset_weapon_pose(arm)
     keyframe_weapon_bones(arm, 1)
-    reset_weapon_pose(arm)
+
     set_weapon_bone_pose_pc(arm, "Bone_Root", (-0.015, 0.015, 0.02), (6.0, 6.0, 16.0))
-    set_weapon_bone_pose_pc(arm, "Bone_ChargingHandle", (0.0, 0.012, 0.085), (0.0, 0.0, -35.0))
     keyframe_weapon_bones(arm, 6)
-    reset_weapon_pose(arm)
-    set_weapon_bone_pose_pc(arm, "Bone_Root", (-0.02, 0.02, 0.02), (8.0, 8.0, 20.0))
-    set_weapon_bone_pose_pc(arm, "Bone_ChargingHandle", (0.0, 0.012, 0.085), (0.0, 0.0, -35.0))
     set_weapon_bone_pose_pc(arm, "Bone_Mag", (0.0, -0.24, 0.02))
     keyframe_weapon_bones(arm, 13)
-    reset_weapon_pose(arm)
+
     set_weapon_bone_pose_pc(arm, "Bone_Root", (-0.015, 0.028, 0.015), (9.0, 6.0, 16.0))
-    set_weapon_bone_pose_pc(arm, "Bone_ChargingHandle", (0.0, 0.012, 0.085), (0.0, 0.0, -35.0))
-    set_weapon_bone_pose_pc(arm, "Bone_Mag", (0.0, 0.0, 0.0))
+    set_weapon_bone_pose_pc(arm, "Bone_Mag")
     keyframe_weapon_bones(arm, 21)
-    reset_weapon_pose(arm)
-    set_weapon_bone_pose_pc(arm, "Bone_Root", (0.005, -0.006, -0.010), (-1.5, 0.0, -3.0))
-    keyframe_weapon_bones(arm, 26)
+    set_weapon_bone_pose_pc(arm, "Bone_ChargingHandle", (0.0, 0.0, 0.065))
+    set_weapon_bone_pose_pc(arm, "Bone_Bolt", (0.0, 0.0, 0.065))
+    keyframe_weapon_bones(arm, 25)
+    set_weapon_bone_pose_pc(arm, "Bone_ChargingHandle")
+    set_weapon_bone_pose_pc(arm, "Bone_Bolt")
+    keyframe_weapon_bones(arm, 27)
     reset_weapon_pose(arm)
     keyframe_weapon_bones(arm, 32)
     push_weapon_nla(arm, act, "ReloadMag")
@@ -2454,8 +2429,12 @@ def build_m4a1_carbine(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
         cap_bevel_end=0.0055,
     )
 
-    # Full Top Receiver Picatinny Rail + RIS II Free-Float Quad-Rail Handguard (`z = -0.175 .. -0.382`)!
-    add_picatinny_rail_pc(bm, 0.0, 0.039, 0.045, -0.380, direction="+Y", mat_idx=1, tooth_pitch=0.010)
+    # The receiver and handguard have separate top rails at the same height.
+    # Fill the shoulders under the rails so neither spine floats above its housing.
+    add_box_pc(bm, (0.0, 0.036, -0.0605), (0.0105, 0.0035, 0.1085), bevel=0.0006, mat_idx=1)
+    add_box_pc(bm, (0.0, 0.0375, -0.282), (0.0105, 0.002, 0.098), bevel=0.0006, mat_idx=1)
+    add_picatinny_rail_pc(bm, 0.0, 0.039, 0.045, -0.168, direction="+Y", mat_idx=1, tooth_pitch=0.010)
+    add_picatinny_rail_pc(bm, 0.0, 0.039, -0.184, -0.380, direction="+Y", mat_idx=1, tooth_pitch=0.010)
     # Delta ring / RIS II bolt-up barrel nut collar
     add_lathe_z_pc(bm, 0.0, 0.016, [(-0.165, 0.0235), (-0.184, 0.0225)], sides=24, mat_idx=1)
     # Ventilated octagonal RIS quad-rail chassis + dark inner barrel shroud + individual 3/6/9 o'clock Picatinny rails!
@@ -2479,6 +2458,9 @@ def build_m4a1_carbine(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
     # Ribbed FDE Tactical Polymer Rail Panels (left & right) + Stubby Tango/KAC Vertical Foregrip!
     for sx in (-1.0, 1.0):
         add_box_pc(bm, (sx * 0.0258, 0.016, -0.275), (0.0028, 0.0125, 0.064), bevel=0.0024, bevel_segs=2, mat_idx=3)
+        for rib in range(10):
+            z = -0.329 + rib * 0.012
+            add_box_pc(bm, (sx * 0.0285, 0.016, z), (0.0011, 0.0095, 0.0025), bevel=0.0007, mat_idx=3)
     add_box_pc(bm, (0.0, -0.016, -0.272), (0.0145, 0.0065, 0.018), bevel=0.0022, bevel_segs=2, mat_idx=2)  # Foregrip rail clamp
     add_cylinder_axis_pc(bm, (0.0, -0.018, -0.272), (0.0, -0.088, -0.272), 0.0148, 0.0135, sides=24, mat_idx=2)
     add_cylinder_axis_pc(bm, (0.0, -0.088, -0.272), (0.0, -0.095, -0.272), 0.0155, 0.0142, sides=24, mat_idx=3)
@@ -2526,6 +2508,11 @@ def build_m4a1_carbine(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
 
     # EOTech EXPS3 Holographic Weapon Sight (`z = -0.058`) with Rounded Protective Hood, Battery Tube & Glowing Reticle!
     add_box_pc(bm, (0.0, 0.048, -0.058), (0.0185, 0.0055, 0.046), bevel=0.0020, bevel_segs=2, mat_idx=1)  # QD rail base
+    # EXPS-style side controls and quick-detach lever below the hood.
+    add_box_pc(bm, (-0.018, 0.058, -0.033), (0.0034, 0.005, 0.016), bevel=0.0012, mat_idx=1)
+    for z in (-0.023, -0.033, -0.043):
+        add_box_pc(bm, (-0.0215, 0.058, z), (0.001, 0.0024, 0.003), bevel=0.0006, mat_idx=2)
+    add_box_pc(bm, (0.019, 0.048, -0.069), (0.0038, 0.0025, 0.014), bevel=0.0012, mat_idx=1)
     add_cylinder_axis_pc(bm, (0.012, 0.054, -0.092), (0.023, 0.054, -0.092), 0.0082, sides=18, mat_idx=3)  # Transverse CR123 battery cap
     # Open protective aluminum hood: left wall, right wall, arched roof (hollow sight window!)
     for sx in (-1.0, 1.0):
@@ -2655,7 +2642,6 @@ def build_m4a1_carbine(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
     keyframe_weapon_bones(arm, 15)
     reset_weapon_pose(arm)
     set_weapon_bone_pose_pc(arm, "Bone_Root", (0.0, 0.008, 0.024), (3.0, 0.0, 4.0))
-    set_weapon_bone_pose_pc(arm, "Bone_ChargingHandle", (0.0, 0.0, 0.058))
     keyframe_weapon_bones(arm, 20)
     reset_weapon_pose(arm)
     keyframe_weapon_bones(arm, 26)
@@ -2684,11 +2670,10 @@ def build_frag_grenade(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
         col,
     )
 
-    # High-Segment Cast-Steel Baseball Sphere + Rolled Equatorial Crimp Seam + Detailed M213 Zinc Fuze Head!
+    # Olive-drab spherical body with a subtle equatorial seam.
     bm = bmesh.new()
     add_uv_sphere_pc(bm, (0.0, 0.0, 0.0), (0.0332, 0.0338, 0.0332), segments=32, rings=24, mat_idx=0)
-    # Rolled equatorial sheet-steel crimp band (`y = 0`)
-    add_torus_pc(bm, (0.0, 0.0, 0.0), axis="Y", major_r=0.0326, minor_r=0.0022, major_segs=32, minor_segs=10, mat_idx=0)
+    add_torus_pc(bm, (0.0, 0.0, 0.0), axis="Y", major_r=0.0330, minor_r=0.00055, major_segs=32, minor_segs=8, mat_idx=0)
     # Threaded Hexagonal M213 Zinc Fuze Collar + Stamped Striker Housing & Pin Boss Ears (`+Y` top)
     add_cylinder_axis_pc(bm, (0.0, 0.030, 0.0), (0.0, 0.040, 0.0), 0.0115, 0.0115, sides=6, mat_idx=1)
     add_cylinder_axis_pc(bm, (0.0, 0.040, 0.0), (0.0, 0.049, 0.0), 0.0098, 0.0095, sides=20, mat_idx=1)
@@ -2761,10 +2746,14 @@ def build_frag_grenade(mats: Dict[str, bpy.types.Material], scene_col: bpy.types
     reset_weapon_pose(arm)
     set_weapon_bone_pose_pc(arm, "Bone_PinRing", (-0.065, -0.015, 0.02), (0.0, 0.0, 35.0))
     keyframe_weapon_bones(arm, 6)
-    reset_weapon_pose(arm)
     set_weapon_bone_pose_pc(arm, "Bone_PinRing", (-0.12, -0.06, 0.04), (0.0, 0.0, 65.0))
+    arm.pose.bones["Bone_PinRing"].scale = (0.001,) * 3
+    keyframe_weapon_bones(arm, 9)
     set_weapon_bone_pose_pc(arm, "Bone_Spoon", (0.02, 0.08, 0.06), (-115.0, 20.0, 0.0))
     keyframe_weapon_bones(arm, 14)
+    set_weapon_bone_pose_pc(arm, "Bone_Spoon", (0.04, 0.13, 0.11), (-150.0, 20.0, 0.0))
+    arm.pose.bones["Bone_Spoon"].scale = (0.001,) * 3
+    keyframe_weapon_bones(arm, 17)
     push_weapon_nla(arm, act, "FirePinPull")
 
     act = bpy.data.actions.new("ReloadReady")

@@ -1,5 +1,7 @@
 import { Vec3Like } from '../../contracts/ballistics.ts';
 
+export type { Vec3Like };
+
 export function vec3(x = 0, y = 0, z = 0): Vec3Like {
   return { x, y, z };
 }
