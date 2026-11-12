@@ -5,6 +5,17 @@ export type InputCaptureState =
   | { readonly kind: 'UNLOCKED' }
   | { readonly kind: 'POINTER_LOCKED' };
 
+/** Where aim input goes: hold on the right mouse button, toggle on Shift. */
+export interface AimInputSink {
+  setHeld(held: boolean): void;
+  toggle(): void;
+  release(): void;
+  /** Look-speed multiplier for the current zoom. */
+  getLookScale(): number;
+}
+
+const BASE_LOOK_DEG_PER_COUNT = 0.15;
+
 export class PlayerInputManager {
   public captureState: InputCaptureState = { kind: 'UNLOCKED' };
   public isTriggerHeld = false;
@@ -14,8 +25,7 @@ export class PlayerInputManager {
   private readonly callbacks: FpsInputCallbacks;
   private readonly getCurrentWeapon: () => WeaponSpec;
   private readonly onLook: (deltaYaw: number, deltaPitch: number) => void;
-  private readonly onToggleAds: (active: boolean) => void;
-  private readonly getIsAimingDownSights: () => boolean;
+  private readonly aim: AimInputSink;
   private readonly eventCleanups: Array<() => void> = [];
 
   constructor(
@@ -23,15 +33,13 @@ export class PlayerInputManager {
     callbacks: FpsInputCallbacks,
     getCurrentWeapon: () => WeaponSpec,
     onLook: (deltaYaw: number, deltaPitch: number) => void,
-    onToggleAds: (active: boolean) => void,
-    getIsAimingDownSights: () => boolean = () => false
+    aim: AimInputSink
   ) {
     this.canvas = canvas;
     this.callbacks = callbacks;
     this.getCurrentWeapon = getCurrentWeapon;
     this.onLook = onLook;
-    this.onToggleAds = onToggleAds;
-    this.getIsAimingDownSights = getIsAimingDownSights;
+    this.aim = aim;
     this.bind();
   }
 
@@ -41,10 +49,6 @@ export class PlayerInputManager {
 
   public set isPointerLocked(locked: boolean) {
     this.transitionCaptureState(locked ? 'POINTER_LOCKED' : 'UNLOCKED');
-  }
-
-  public setAdsState(_ads: boolean): void {
-    // Kept as a no-op for legacy callers; ADS state is read authoritatively via getIsAimingDownSights().
   }
 
   public transitionCaptureState(nextKind: InputCaptureState['kind']): void {
@@ -58,9 +62,7 @@ export class PlayerInputManager {
       for (const key of Object.keys(this.keysPressed)) {
         delete this.keysPressed[key];
       }
-      if (this.getIsAimingDownSights()) {
-        this.onToggleAds(false);
-      }
+      this.aim.release();
     }
   }
 
@@ -72,7 +74,7 @@ export class PlayerInputManager {
       };
       const onMouseMove = (e: MouseEvent): void => {
         if (this.captureState.kind !== 'POINTER_LOCKED') return;
-        const sensitivity = this.getIsAimingDownSights() ? 0.075 : 0.15;
+        const sensitivity = BASE_LOOK_DEG_PER_COUNT * this.aim.getLookScale();
         this.onLook(e.movementX * sensitivity, e.movementY * sensitivity);
       };
       document.addEventListener('pointerlockchange', onPointerLockChange);
@@ -97,7 +99,7 @@ export class PlayerInputManager {
           this.callbacks.onThrowGrenade();
         } else if (e.button === 2) {
           e.preventDefault();
-          this.onToggleAds(!this.getIsAimingDownSights());
+          this.aim.setHeld(true);
         }
       };
 
@@ -125,6 +127,7 @@ export class PlayerInputManager {
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
       const onMouseUp = (e: MouseEvent): void => {
         if (e.button === 0) this.isTriggerHeld = false;
+        else if (e.button === 2) this.aim.setHeld(false);
       };
 
       const onKeyDown = (e: KeyboardEvent): void => {
@@ -141,8 +144,8 @@ export class PlayerInputManager {
           this.callbacks.onSpawnWave();
         } else if (e.code === 'KeyF') this.callbacks.onTriggerPull();
         else if (e.code === 'KeyG') this.callbacks.onThrowGrenade();
-        else if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
-          this.onToggleAds(!this.getIsAimingDownSights());
+        else if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) {
+          this.aim.toggle();
         } else if (e.code === 'KeyX') this.callbacks.onToggleXRay();
         else if (e.code === 'KeyZ' && !e.repeat) this.callbacks.onToggleBulletTime?.();
       };

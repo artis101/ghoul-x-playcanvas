@@ -2,8 +2,10 @@ import * as pc from 'playcanvas';
 import type { WeaponSpec } from '../../contracts/ballistics.ts';
 import type { HudController } from '../hudController.ts';
 import type { FpsInputCallbacks } from './fpsTypes.ts';
-import { PlayerCameraRig, type PlayerSightState } from './playerCameraRig.ts';
+import { PlayerCameraRig, type PlayerSightState, type ViewmodelHandsState } from './playerCameraRig.ts';
 import { PlayerInputManager } from './playerInput.ts';
+import { HIP_FOV_DEG } from './playerSightController.ts';
+import { deflectWithinCone } from '../../core/ballistics/aim/aimDownSights.ts';
 import { PlayerMovementSolver } from './playerMovement.ts';
 
 export * from './fpsTypes.ts';
@@ -39,14 +41,18 @@ export class FpsController {
       callbacks,
       getCurrentWeapon,
       (dy, dp) => this.rig.onLook(dy, dp),
-      (active) => this.setAimDownSights(active, this.getCurrentWeapon()),
-      () => this.rig.isAimingDownSights
+      {
+        setHeld: (held) => this.rig.sight.setHeld(held),
+        toggle: () => this.rig.sight.toggle(),
+        release: () => this.rig.sight.release(),
+        getLookScale: () => this.rig.sight.lookScale,
+      }
     );
 
     this.cameraEntity = new pc.Entity('PlayerCamera');
     this.cameraEntity.addComponent('camera', {
       clearColor: new pc.Color(0.05, 0.07, 0.1),
-      fov: 68,
+      fov: HIP_FOV_DEG,
       nearClip: 0.05,
       farClip: 400,
       toneMapping: pc.TONEMAP_ACES,
@@ -63,6 +69,7 @@ export class FpsController {
   public set cameraYaw(val: number) { this.rig.cameraYaw = val; }
   public get isPointerLocked(): boolean { return this.input.isPointerLocked; }
   public get isAimingDownSights(): boolean { return this.rig.isAimingDownSights; }
+  public get adsBlend(): number { return this.rig.adsBlend; }
   public get isScopeOpticActive(): boolean { return this.rig.isScopeOpticActive; }
   public get sightState(): PlayerSightState { return this.rig.sightState; }
   public get isTriggerHeld(): boolean { return this.input.isTriggerHeld; }
@@ -101,6 +108,18 @@ export class FpsController {
     return new pc.Vec3(x, y, z).normalize();
   }
 
+  /**
+   * Where the next round leaves: the sight line when fully aimed, and somewhere inside the
+   * hip-fire cone otherwise.
+   */
+  public getFireDirection(): pc.Vec3 {
+    const aim = this.getAimDirection();
+    const spreadRad = this.rig.currentAimSpreadRad;
+    if (spreadRad <= 0) return aim;
+    const fired = deflectWithinCone(aim, spreadRad, Math.random(), Math.random());
+    return aim.set(fired.x, fired.y, fired.z);
+  }
+
   public getEyePosition(): pc.Vec3 {
     return new pc.Vec3(this.playerPos.x, this.playerPos.y + this.rig.lastCamHeadBobY, this.playerPos.z);
   }
@@ -113,22 +132,31 @@ export class FpsController {
     this.rig.applyCameraShake(intensityDeg, durationS);
   }
 
-  public setAimDownSights(active: boolean, weapon: WeaponSpec): void {
-    this.rig.setAimDownSights(active, weapon, this.hudController);
+  /** Call after the active weapon changes: the new weapon comes up from the hip. */
+  public onWeaponSwitched(): void {
+    this.rig.sight.resetForWeaponSwitch(this.hudController);
   }
 
-  public update(dt: number, currentWeapon: WeaponSpec, reloadTimerS: number, weaponViewmodelEntity: pc.Entity): void {
+  public update(
+    dt: number,
+    currentWeapon: WeaponSpec,
+    reloadTimerS: number,
+    weaponViewmodelEntity: pc.Entity,
+    hands: ViewmodelHandsState = { aimBlocked: reloadTimerS > 0, firing: false, weaponGlb: null }
+  ): void {
+    const aimedSpeedScale = 1 + (this.rig.sight.profile.moveSpeedScale - 1) * this.rig.adsBlend;
     const { moving, strafeSign } = this.movement.updateMovement(
       dt,
       this.rig.cameraYaw,
       this.input.keysPressed,
-      this.rig.isAimingDownSights
+      aimedSpeedScale
     );
 
     this.rig.updateRig(
       dt,
       currentWeapon,
       reloadTimerS,
+      hands,
       moving,
       strafeSign,
       this.cameraEntity.camera,

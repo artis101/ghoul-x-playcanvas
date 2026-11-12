@@ -104,6 +104,12 @@ export function upgradeViewmodelMaterials(
           if (!mat.metalnessMap) mat.metalness = Math.min(mat.metalness || 0.1, 0.15);
           if (mat.glossMap) mat.gloss = 1.0;
           else mat.gloss = mat.glossInvert ? 0.05 : 0.95;
+          // The holographic sight is aimed through, so its combiner glass must be see-through.
+          if (weaponId === 'm4a1_carbine' && !hint.includes('reticle')) {
+            mat.opacity = 0.1;
+            mat.blendType = pc.BLEND_NORMAL;
+            mat.depthWrite = false;
+          }
         } else if (isChromeOrSilver) {
           if (!mat.metalnessMap) mat.metalness = Math.max(mat.metalness || 0, 0.92);
           applyMinSmoothness(mat, 0.84);

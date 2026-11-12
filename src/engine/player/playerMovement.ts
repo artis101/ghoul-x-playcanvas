@@ -10,10 +10,10 @@ export class PlayerMovementSolver {
     dt: number,
     cameraYaw: number,
     keysPressed: Record<string, boolean>,
-    isAimingDownSights: boolean
+    speedScale = 1
   ): { moving: boolean; strafeSign: number } {
     this.scratchPrevPos.copy(this.playerPos);
-    const moveSpeed = (isAimingDownSights ? 3.4 : 5.0) * dt;
+    const moveSpeed = 5.0 * speedScale * dt;
     const yawRad = (cameraYaw * Math.PI) / 180;
     const fwdX = -Math.sin(yawRad);
     const fwdZ = -Math.cos(yawRad);

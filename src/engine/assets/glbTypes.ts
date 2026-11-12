@@ -137,6 +137,8 @@ export interface WeaponGlbInstance {
   animComponent: pc.AnimComponent | null;
   muzzleNode: pc.GraphNode;
   boneNodes: Map<string, pc.GraphNode>;
+  /** Root bone transform before any clip plays; lets the viewmodel cancel clip motion while aimed. */
+  rootBoneRest?: { readonly position: pc.Vec3; readonly rotation: pc.Quat };
   availableClips: ReadonlySet<string>;
   fireClipName: string | null;
   reloadClipName: string | null;

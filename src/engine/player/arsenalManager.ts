@@ -84,6 +84,11 @@ export class ArsenalManager {
     }
   }
 
+  /** True while the hands cannot hold a sight picture (reloading or throwing a grenade). */
+  public get isHandsBusy(): boolean {
+    return this.actionState.kind === 'RELOADING' || this.actionState.kind === 'THROWING_GRENADE';
+  }
+
   public get fireCooldownTimerS(): number {
     return getFireCooldownRemainingS(this.actionState);
   }

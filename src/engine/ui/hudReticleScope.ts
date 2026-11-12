@@ -11,9 +11,16 @@ export class HudReticleScope {
   private hitmarkerTimeout: ReturnType<typeof globalThis.setTimeout> | null = null;
   private lastCrosshairHidden: boolean | null = null;
   private lastCrosshairScaleStr = '';
+  private lastCrosshairLineOpacityStr = '';
 
-  public setCrosshairBloom(scaleFactor: number, hidden = false): void {
+  /** `lineOpacity` fades the crosshair lines as the sights come up; hitmarkers stay visible. */
+  public setCrosshairBloom(scaleFactor: number, hidden = false, lineOpacity = 1): void {
     if (!this.crosshairEl) return;
+    const lineOpacityStr = lineOpacity.toFixed(2);
+    if (lineOpacityStr !== this.lastCrosshairLineOpacityStr) {
+      this.lastCrosshairLineOpacityStr = lineOpacityStr;
+      this.crosshairEl.style.setProperty('--ch-line-opacity', lineOpacityStr);
+    }
     if (hidden !== this.lastCrosshairHidden) {
       this.lastCrosshairHidden = hidden;
       this.crosshairEl.style.opacity = hidden ? '0' : '1';

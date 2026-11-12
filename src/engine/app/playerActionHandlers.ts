@@ -12,6 +12,8 @@ export function handleTriggerPull(app: IGhoulXApp): void {
   const aim = app.fpsController.getAimDirection();
   const eyeVec = vec3(eye.x, eye.y, eye.z);
   const aimVec = vec3(aim.x, aim.y, aim.z);
+  const fired = app.fpsController.getFireDirection();
+  const firedVec = vec3(fired.x, fired.y, fired.z);
   const muzzleWorld = app.arsenalManager.muzzleFlashEntity.getPosition();
   const muzzleVec = vec3(muzzleWorld.x, muzzleWorld.y, muzzleWorld.z);
 
@@ -21,9 +23,9 @@ export function handleTriggerPull(app: IGhoulXApp): void {
     app.fpsController.cameraPitch
   );
   app.combatAudio.playWeaponFire(weapon.id, ammo.type, app.fpsController.isAimingDownSights);
-  app.mayhemDirector.onPlayerWeaponFired(eyeVec, aimVec, weapon, ammo, muzzleVec);
+  app.mayhemDirector.onPlayerWeaponFired(eyeVec, firedVec, weapon, ammo, muzzleVec);
   app.tacticalAi.notifyGunshotOrExplosion(eyeVec, 40.0, 0.24);
-  app.combatDirector.fireWeapon(weapon, ammo, eyeVec, aimVec);
+  app.combatDirector.fireWeapon(weapon, ammo, eyeVec, firedVec);
 
   // The weapon GLB's animated root moves the gun and its attached viewmodel hands.
   app.fpsController.applyRecoilKick(weapon.recoilKickDeg, !app.arsenalManager.lastShotPlayedViewmodelClip);

@@ -12,7 +12,12 @@ export function onEngineUpdate(app: IGhoulXApp, dt: number): void {
     playerDt,
     app.arsenalManager.currentWeapon,
     app.arsenalManager.reloadTimerS,
-    app.arsenalManager.weaponViewmodelEntity
+    app.arsenalManager.weaponViewmodelEntity,
+    {
+      aimBlocked: app.arsenalManager.isHandsBusy,
+      firing: app.arsenalManager.actionState.kind === 'FIRING',
+      weaponGlb: app.arsenalManager.activeWeaponGlb,
+    }
   );
 
   // 2. Step bullet-time dilation, hazard barrels, tracers, sparks & casings

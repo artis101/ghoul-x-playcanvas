@@ -225,11 +225,7 @@ export class GhoulXApplication implements IGhoulXApp {
       this.fpsController.cameraEntity,
       this.materials,
       this.hudController,
-      (switchedWeapon) => {
-        if (this.fpsController.isAimingDownSights) {
-          this.fpsController.setAimDownSights(false, switchedWeapon);
-        }
-      },
+      () => this.fpsController.onWeaponSwitched(),
       this.glbRegistry
     );
 

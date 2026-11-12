@@ -44,8 +44,8 @@ export class HudController {
     this.vitals.updateBulletTimeHud(state);
   }
 
-  public setCrosshairBloom(scaleFactor: number, hidden = false): void {
-    this.reticle.setCrosshairBloom(scaleFactor, hidden);
+  public setCrosshairBloom(scaleFactor: number, hidden = false, lineOpacity = 1): void {
+    this.reticle.setCrosshairBloom(scaleFactor, hidden, lineOpacity);
   }
 
   public triggerHitmarker(mode: 'NORMAL' | 'ARMOR' | 'LETHAL' | boolean): void {

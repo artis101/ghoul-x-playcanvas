@@ -69,6 +69,12 @@ body,
   box-shadow: 0 0 3px rgba(0, 0, 0, 0.95);
 }
 
+.ch-line,
+.ch-dot,
+.shotgun-spread-ring {
+  opacity: var(--ch-line-opacity, 1);
+}
+
 .ch-top { width: 2px; height: 8px; left: 17px; top: 2px; }
 .ch-bottom { width: 2px; height: 8px; left: 17px; bottom: 2px; }
 .ch-left { height: 2px; width: 8px; top: 17px; left: 2px; }

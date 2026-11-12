@@ -41,6 +41,10 @@ export function instantiateWeaponGlb(
 
   const boneNodes = new Map<string, pc.GraphNode>();
   collectBoneNodes(rootEntity, boneNodes);
+  const rootBone = boneNodes.get('Bone_Root');
+  const rootBoneRest = rootBone
+    ? { position: rootBone.getLocalPosition().clone(), rotation: rootBone.getLocalRotation().clone() }
+    : undefined;
 
   let muzzleNode = rootEntity.findByName('Bone_Muzzle') ?? rootEntity.findByName('MuzzleSocket');
   if (!muzzleNode) {
@@ -94,6 +98,7 @@ export function instantiateWeaponGlb(
     animComponent,
     muzzleNode,
     boneNodes,
+    rootBoneRest,
     availableClips,
     fireClipName,
     reloadClipName,
