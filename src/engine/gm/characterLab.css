@@ -175,3 +175,10 @@
     height: min(43dvh, 500px);
   }
 }
+
+#gm-wound-readout {
+  display: block;
+  min-height: 1.4em;
+  font: 500 11px 'JetBrains Mono', monospace;
+  color: var(--gm-accent);
+}

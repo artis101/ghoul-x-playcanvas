@@ -1,4 +1,5 @@
 import * as pc from 'playcanvas';
+import type { Vec3Like } from '../../contracts/ballistics.ts';
 
 export interface PreviewFraming {
   center: pc.Vec3;
@@ -11,6 +12,7 @@ export function createPreviewStage(
   app: pc.Application,
   canvas: HTMLCanvasElement,
   framing?: PreviewFraming,
+  follow?: () => Vec3Like | null,
 ): () => void {
   const camera = new pc.Entity('Preview Camera');
   camera.addComponent('camera', {
@@ -104,6 +106,26 @@ export function createPreviewStage(
     moveCamera();
   }, options);
   moveCamera();
+  const rest = aim.clone();
+  let following = false;
+  if (follow) {
+    app.on('update', (dt: number) => {
+      const focus = follow();
+      if (!focus) {
+        if (!following) return;
+        following = false;
+        aim.copy(rest);
+      } else {
+        if (!following) rest.copy(aim);
+        following = true;
+        const ease = 1 - Math.exp(-6 * dt);
+        aim.x += (focus.x - aim.x) * ease;
+        aim.y += (focus.y - aim.y) * ease;
+        aim.z += (focus.z - aim.z) * ease;
+      }
+      moveCamera();
+    });
+  }
   return () => {
     controller.abort();
     resize.disconnect();

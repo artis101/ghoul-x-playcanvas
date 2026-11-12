@@ -17,8 +17,9 @@ import bpy
 import numpy as np
 from mathutils import Vector
 
+from combatant_skin_atlas import ChainMap, rect_uv
+
 Sculpt = Callable[[np.ndarray, float, float], float]
-MaterialPick = Callable[[str, np.ndarray], int]
 
 
 def pc_to_bl(p) -> Vector:
@@ -94,14 +95,13 @@ def build_chain(
     side: float = 1.0,
     spacing: float = 0.026,
     sculpt: Optional[Sculpt] = None,
-    uv_tile: float = 0.45,
-    material: Optional[MaterialPick] = None,
-) -> Dict[str, ZoneMesh]:
-    """Lofts the chain and cuts it into zones.
+    rect: str = "TORSO",
+) -> Tuple[Dict[str, ZoneMesh], ChainMap]:
+    """Lofts the chain and cuts it into zones. UVs unwrap the whole chain into the atlas
+    rectangle `rect`: U runs around from the back seam, V along the chain.
 
     `blends[zone]` is the distance range past the zone's first ring over which the skin weight
     moves from the parent bone to the zone's own bone. None keeps the whole zone on its own bone.
-    `material(zone, ring_centre)` picks the material slot of the band that starts at that ring.
     """
     rows, key_ring = _resample(stations, side, spacing)
     centers = np.array([row[:3] for row, _ in rows])
@@ -150,16 +150,14 @@ def build_chain(
                 ring.append(vert)
             rings.append(ring)
         for r in range(len(rings) - 1):
-            v0, v1 = travel[first + r] / uv_tile, travel[first + r + 1] / uv_tile
+            v0, v1 = travel[first + r] / travel[-1], travel[first + r + 1] / travel[-1]
             for s in range(sides):
                 sn = (s + 1) % sides
                 face = mesh.bm.faces.new((rings[r][s], rings[r][sn], rings[r + 1][sn], rings[r + 1][s]))
                 face.smooth = True
-                if material is not None:
-                    face.material_index = material(zone, centers[first + r])
                 for loop, uv in zip(face.loops, ((s / sides, v0), ((s + 1) / sides, v0),
                                                  ((s + 1) / sides, v1), (s / sides, v1))):
-                    loop[uv_layer].uv = uv
+                    loop[uv_layer].uv = rect_uv(rect, *uv)
         # Flat caps sit inside the neighbouring zone and only show once that zone is hidden.
         for ring, r in ((rings[0], first), (rings[-1], last)):
             hub = mesh.bm.verts.new(pc_to_bl(centers[r]))
@@ -167,9 +165,11 @@ def build_chain(
             for s in range(sides):
                 face = mesh.bm.faces.new((hub, ring[s], ring[(s + 1) % sides]))
                 for loop in face.loops:
-                    loop[uv_layer].uv = (0.5, travel[r] / uv_tile)
+                    loop[uv_layer].uv = rect_uv(rect, 0.5, travel[r] / travel[-1])
         zones[zone] = mesh
-    return zones
+    radius = np.array([float(np.mean(row[3:6])) for row, _ in rows])
+    marks = {zone: float(travel[first]) for zone, first in starts}
+    return zones, ChainMap(travel, centers, radius, marks)
 
 
 def finalize_zone(

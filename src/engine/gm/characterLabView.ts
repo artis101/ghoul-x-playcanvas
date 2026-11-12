@@ -30,6 +30,20 @@ export function createCharacterLabView(root: HTMLElement) {
               <label class="gm-check"><input id="gm-headgear" type="checkbox" checked> Show headgear</label>
               <label class="gm-check"><input id="gm-armor" type="checkbox" checked> Show body armor</label>
             </div>
+            <div class="gm-control-group" id="gm-wounds">
+              <h2>Wounds</h2>
+              <label class="gm-check"><input type="checkbox" data-wound="downed"> Downed</label>
+              <label class="gm-check"><input type="checkbox" data-wound="ARM_LEFT"> Lost left arm</label>
+              <label class="gm-check"><input type="checkbox" data-wound="ARM_RIGHT"> Lost right arm</label>
+              <label class="gm-check"><input type="checkbox" data-wound="LEG_LEFT"> Lost left leg</label>
+              <label class="gm-check"><input type="checkbox" data-wound="LEG_RIGHT"> Lost right leg</label>
+              <label class="gm-check"><input type="checkbox" data-wound="sidearm" checked> Carries backup sidearm</label>
+              <label class="gm-check"><input type="checkbox" data-wound="bleeding"> Bleeds out</label>
+              <label>Consciousness
+                <input id="gm-consciousness" type="range" min="0.2" max="1" step="0.05" value="0.45">
+              </label>
+              <output id="gm-wound-readout"></output>
+            </div>
             <div class="gm-control-group">
               <h2>Held item</h2>
               <label>Item <select id="gm-item"></select></label>
@@ -72,6 +86,9 @@ export function createCharacterLabView(root: HTMLElement) {
     status: element<HTMLParagraphElement>('status'),
     controls: element<HTMLFieldSetElement>('controls'),
     model: element<HTMLSelectElement>('model'),
+    wounds: element<HTMLDivElement>('wounds'),
+    consciousness: element<HTMLInputElement>('consciousness'),
+    woundReadout: element<HTMLOutputElement>('wound-readout'),
     characterClip: element<HTMLSelectElement>('character-clip'),
     characterTime: element<HTMLInputElement>('character-time'),
     characterReadout: element<HTMLOutputElement>('character-readout'),

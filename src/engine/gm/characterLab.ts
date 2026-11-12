@@ -8,6 +8,7 @@ import { CombatantCrawlOverlay } from '../mannequin/combatantCrawlOverlay.ts';
 import { CombatantDismemberment } from '../mannequin/combatantDismemberment.ts';
 import { setupCombatantGlbInstance } from '../mannequin/combatantGlbSetup.ts';
 import { CombatantWeaponMount } from '../mannequin/combatantWeaponMount.ts';
+import { WoundPreview, type LostLimb } from './woundPreview.ts';
 import { createCharacterLabView } from './characterLabView.ts';
 import { createPreviewStage } from './previewStage.ts';
 import { PreviewTimeline } from './previewTimeline.ts';
@@ -67,7 +68,8 @@ export async function openCharacterLab(): Promise<void> {
 
   try {
     await Promise.all(['ghoul_combatant' as const, ...WEAPON_ASSET_IDS].map((id) => registry.loadContainer(id)));
-    cleanupStage = createPreviewStage(app, view.canvas);
+    let downed: WoundPreview | null = null;
+    cleanupStage = createPreviewStage(app, view.canvas, undefined, () => downed?.focus ?? null);
     const characterTimeline = new PreviewTimeline(view.characterTime, view.characterReadout);
     const itemTimeline = new PreviewTimeline(view.itemTime, view.itemReadout);
     const dismemberment = new CombatantDismemberment();
@@ -76,6 +78,29 @@ export async function openCharacterLab(): Promise<void> {
     let character = createCharacter();
     let playing = true;
     let speed = 1;
+    const camera = app.root.findByName('Preview Camera');
+
+    function selectWounds(): void {
+      downed?.destroy();
+      downed = null;
+      const checked = new Set(Array.from(
+        view.wounds.querySelectorAll<HTMLInputElement>('input:checked'), (input) => input.dataset.wound,
+      ));
+      const lostLimbs = (['ARM_LEFT', 'ARM_RIGHT', 'LEG_LEFT', 'LEG_RIGHT'] as const)
+        .filter((limb: LostLimb) => checked.has(limb));
+      const wounded = checked.has('downed') || lostLimbs.length > 0;
+      character.rootEntity.enabled = !wounded;
+      if (mount.heldWeaponNode) mount.heldWeaponNode.enabled = !wounded;
+      view.woundReadout.value = '';
+      if (!wounded) {
+        syncGrip();
+        return;
+      }
+      downed = new WoundPreview(app, registry, view.model.value as EnemyArchetypeId, {
+        downed: checked.has('downed'), lostLimbs, backupSidearm: checked.has('sidearm'), bleeding: checked.has('bleeding'),
+      }, camera);
+      setPlaying(true);
+    }
 
     function newHealth(archetype: EnemyArchetypeId) {
       return createTargetHealthState('gm-preview', characters[archetype], { x: 0, y: 0, z: 0 }, 0, archetype);
@@ -148,7 +173,9 @@ export async function openCharacterLab(): Promise<void> {
       setClipOptions(view.characterClip, character.availableClips, 'No clips');
       selectCharacterClip();
       syncGear();
+      selectWounds();
     }, options);
+    view.wounds.addEventListener('change', selectWounds, options);
     view.headgear.addEventListener('change', syncGear, options);
     view.armor.addEventListener('change', syncGear, options);
     view.characterClip.addEventListener('change', selectCharacterClip, options);
@@ -179,10 +206,16 @@ export async function openCharacterLab(): Promise<void> {
       if (!playing && !characterTimeline.canAdvance && !itemTimeline.canAdvance) rewind();
       setPlaying(!playing);
     }, options);
-    view.restart.addEventListener('click', rewind, options);
+    view.restart.addEventListener('click', () => (downed ? selectWounds() : rewind()), options);
     app.on('update', (dt: number) => {
       if (!playing) return;
       const elapsed = dt * speed;
+      if (downed) {
+        downed.consciousness = view.consciousness.valueAsNumber;
+        downed.update(elapsed);
+        view.woundReadout.value = downed.statusLine;
+        return;
+      }
       const loop = view.loop.checked;
       // One-shot clips hold their last frame, as they do in the game.
       const characterAdvanced = characterTimeline.advance(elapsed, loop && isLoopingClip(view.characterClip.value));
@@ -191,6 +224,8 @@ export async function openCharacterLab(): Promise<void> {
       if (!characterTimeline.canAdvance && !itemTimeline.canAdvance) setPlaying(false);
     });
 
+    // Console handle for inspecting the wounded combatant's live health state.
+    Object.assign(window, { gmLab: { get wound() { return downed; } } });
     app.start();
     view.status.hidden = true;
     view.controls.disabled = false;

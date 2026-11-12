@@ -21,8 +21,8 @@ export class OffhandSidearmSync {
     target: GhoulMannequinEntity,
     viewerWorldPos: Vec3Like,
     rig: OffhandSidearmRig,
-    tacticalAi: TacticalCombatAiSystem | null,
-    fxManager: GoreAndBallisticsFxManager
+    tacticalAi: Pick<TacticalCombatAiSystem, 'getSidearmVisualState'> | null,
+    fxManager?: GoreAndBallisticsFxManager
   ): boolean {
     const hs = target.healthState;
     const alive = hs.alive && hs.currentHp > 0;
@@ -61,7 +61,7 @@ export class OffhandSidearmSync {
       const dropHand = transition.dropHand ?? rig.lastHand;
       const dropZone: GhoulZoneId = dropHand === 'LEFT' ? 'HAND_LEFT' : 'HAND_RIGHT';
       const handBone = hs.ragdollBones[dropZone];
-      if (rig.glbInstance) {
+      if (rig.glbInstance && fxManager) {
         fxManager.spawnDroppedWeaponProp(
           'SKINHEAD_PUNK',
           rig.holderEntity.getPosition(),
