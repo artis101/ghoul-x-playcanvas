@@ -11,9 +11,9 @@ export const TIER2_VASCULAR_SPLINES: readonly VascularSpline[] = [
     ghoulZone: 'TORSO_UPPER_THORAX',
     vesselKind: 'ARTERIAL',
     controlPoints: [
-      vec3(-0.015, 1.34, 0.012),
+      vec3(0.015, 1.34, 0.012),
       vec3(0.0, 1.43, 0.005),
-      vec3(-0.012, 1.38, -0.018),
+      vec3(0.012, 1.38, -0.018),
       vec3(0.0, 1.24, -0.020),
       vec3(0.0, 1.09, -0.016),
       vec3(0.0, 0.97, -0.010),
@@ -22,8 +22,8 @@ export const TIER2_VASCULAR_SPLINES: readonly VascularSpline[] = [
     mlPerSec: 105,
   },
   {
-    id: 'CAROTID_LEFT',
-    label: 'Left Common & Internal Carotid Artery',
+    id: 'CAROTID_RIGHT',
+    label: 'Right Common & Internal Carotid Artery',
     ghoulZone: 'NECK_CERVICAL',
     vesselKind: 'ARTERIAL',
     controlPoints: [
@@ -36,8 +36,8 @@ export const TIER2_VASCULAR_SPLINES: readonly VascularSpline[] = [
     mlPerSec: 65,
   },
   {
-    id: 'CAROTID_RIGHT',
-    label: 'Right Common & Internal Carotid Artery',
+    id: 'CAROTID_LEFT',
+    label: 'Left Common & Internal Carotid Artery',
     ghoulZone: 'NECK_CERVICAL',
     vesselKind: 'ARTERIAL',
     controlPoints: [
@@ -50,9 +50,9 @@ export const TIER2_VASCULAR_SPLINES: readonly VascularSpline[] = [
     mlPerSec: 65,
   },
   {
-    id: 'SUBCLAVIAN_LEFT',
-    label: 'Left Subclavian & Axillary Artery',
-    ghoulZone: 'SHOULDER_LEFT',
+    id: 'SUBCLAVIAN_RIGHT',
+    label: 'Right Subclavian & Axillary Artery',
+    ghoulZone: 'SHOULDER_RIGHT',
     vesselKind: 'ARTERIAL',
     controlPoints: [
       vec3(-0.018, 1.43, 0.005),
@@ -65,9 +65,9 @@ export const TIER2_VASCULAR_SPLINES: readonly VascularSpline[] = [
     mlPerSec: 54,
   },
   {
-    id: 'SUBCLAVIAN_RIGHT',
-    label: 'Right Subclavian & Axillary Artery',
-    ghoulZone: 'SHOULDER_RIGHT',
+    id: 'SUBCLAVIAN_LEFT',
+    label: 'Left Subclavian & Axillary Artery',
+    ghoulZone: 'SHOULDER_LEFT',
     vesselKind: 'ARTERIAL',
     controlPoints: [
       vec3(0.018, 1.43, 0.005),
@@ -80,9 +80,9 @@ export const TIER2_VASCULAR_SPLINES: readonly VascularSpline[] = [
     mlPerSec: 54,
   },
   {
-    id: 'FEMORAL_LEFT',
-    label: 'Left Iliac-Femoral Arterial Trunk',
-    ghoulZone: 'THIGH_LEFT',
+    id: 'FEMORAL_RIGHT',
+    label: 'Right Iliac-Femoral Arterial Trunk',
+    ghoulZone: 'THIGH_RIGHT',
     vesselKind: 'ARTERIAL',
     controlPoints: [
       vec3(0.0, 0.97, -0.010),
@@ -95,9 +95,9 @@ export const TIER2_VASCULAR_SPLINES: readonly VascularSpline[] = [
     mlPerSec: 52,
   },
   {
-    id: 'FEMORAL_RIGHT',
-    label: 'Right Iliac-Femoral Arterial Trunk',
-    ghoulZone: 'THIGH_RIGHT',
+    id: 'FEMORAL_LEFT',
+    label: 'Left Iliac-Femoral Arterial Trunk',
+    ghoulZone: 'THIGH_LEFT',
     vesselKind: 'ARTERIAL',
     controlPoints: [
       vec3(0.0, 0.97, -0.010),
@@ -115,19 +115,19 @@ export const TIER2_VASCULAR_SPLINES: readonly VascularSpline[] = [
     ghoulZone: 'TORSO_UPPER_THORAX',
     vesselKind: 'VENOUS',
     controlPoints: [
-      vec3(0.038, 1.60, 0.012),
-      vec3(0.032, 1.46, 0.012),
-      vec3(0.026, 1.34, 0.008),
-      vec3(0.022, 1.18, -0.004),
-      vec3(0.018, 0.98, -0.008),
-      vec3(0.092, 0.80, 0.008),
+      vec3(-0.038, 1.60, 0.012),
+      vec3(-0.032, 1.46, 0.012),
+      vec3(-0.026, 1.34, 0.008),
+      vec3(-0.022, 1.18, -0.004),
+      vec3(-0.018, 0.98, -0.008),
+      vec3(-0.092, 0.80, 0.008),
     ],
     lumenRadiusM: 0.012,
     mlPerSec: 16,
   },
   {
-    id: 'JUGULAR_VENOUS_LEFT',
-    label: 'Left Internal Jugular Vein',
+    id: 'JUGULAR_VENOUS_RIGHT',
+    label: 'Right Internal Jugular Vein',
     ghoulZone: 'NECK_CERVICAL',
     vesselKind: 'VENOUS',
     controlPoints: [
@@ -139,8 +139,8 @@ export const TIER2_VASCULAR_SPLINES: readonly VascularSpline[] = [
     mlPerSec: 12,
   },
   {
-    id: 'JUGULAR_VENOUS_RIGHT',
-    label: 'Right Internal Jugular Vein',
+    id: 'JUGULAR_VENOUS_LEFT',
+    label: 'Left Internal Jugular Vein',
     ghoulZone: 'NECK_CERVICAL',
     vesselKind: 'VENOUS',
     controlPoints: [
@@ -152,9 +152,9 @@ export const TIER2_VASCULAR_SPLINES: readonly VascularSpline[] = [
     mlPerSec: 12,
   },
   {
-    id: 'FEMORAL_VENOUS_LEFT',
-    label: 'Left Femoral & Great Saphenous Vein',
-    ghoulZone: 'THIGH_LEFT',
+    id: 'FEMORAL_VENOUS_RIGHT',
+    label: 'Right Femoral & Great Saphenous Vein',
+    ghoulZone: 'THIGH_RIGHT',
     vesselKind: 'VENOUS',
     controlPoints: [
       vec3(-0.070, 0.90, 0.004),
@@ -165,9 +165,9 @@ export const TIER2_VASCULAR_SPLINES: readonly VascularSpline[] = [
     mlPerSec: 11,
   },
   {
-    id: 'FEMORAL_VENOUS_RIGHT',
-    label: 'Right Femoral & Great Saphenous Vein',
-    ghoulZone: 'THIGH_RIGHT',
+    id: 'FEMORAL_VENOUS_LEFT',
+    label: 'Left Femoral & Great Saphenous Vein',
+    ghoulZone: 'THIGH_LEFT',
     vesselKind: 'VENOUS',
     controlPoints: [
       vec3(0.070, 0.90, 0.004),

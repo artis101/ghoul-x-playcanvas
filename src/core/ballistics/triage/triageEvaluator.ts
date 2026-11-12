@@ -16,14 +16,14 @@ export function computeCombatantTriageStatus(target: TargetHealthState): Combata
 
   const hpRatio = target.currentHp / Math.max(1, target.maxHp);
   const hasMajorAmputation =
-    target.severedZones.has('THIGH_LEFT') ||
     target.severedZones.has('THIGH_RIGHT') ||
-    target.severedZones.has('KNEE_LEFT') ||
+    target.severedZones.has('THIGH_LEFT') ||
     target.severedZones.has('KNEE_RIGHT') ||
-    target.severedZones.has('SHIN_LEFT') ||
+    target.severedZones.has('KNEE_LEFT') ||
     target.severedZones.has('SHIN_RIGHT') ||
-    target.severedZones.has('UPPER_ARM_LEFT') ||
-    target.severedZones.has('UPPER_ARM_RIGHT');
+    target.severedZones.has('SHIN_LEFT') ||
+    target.severedZones.has('UPPER_ARM_RIGHT') ||
+    target.severedZones.has('UPPER_ARM_LEFT');
 
   if (
     hpRatio <= 0.32 ||
@@ -40,10 +40,10 @@ export function computeCombatantTriageStatus(target: TargetHealthState): Combata
     target.bloodLossRateMlPerSec > 0.5 ||
     target.severedZones.size > 0 ||
     target.fracturedBones.size > 0 ||
-    !target.leftLegFunctional ||
     !target.rightLegFunctional ||
-    !target.leftArmFunctional ||
+    !target.leftLegFunctional ||
     !target.rightArmFunctional ||
+    !target.leftArmFunctional ||
     target.surfaceWounds.some((sw) => !sw.armorDent);
 
   return isAnyWound ? 'WOUNDED' : 'HEALTHY';

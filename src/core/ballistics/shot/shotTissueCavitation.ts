@@ -1,3 +1,4 @@
+import { triggerSide } from '../../ghoul/anatomy/handedness.ts';
 import {
   AmmoSpec,
   ProjectileState,
@@ -95,7 +96,7 @@ export function evaluateTissueCavitation(
   } else if (arterialSevered) {
     physEffect = `${col.label} Transected — Pulsing Arterial Hemorrhage`;
   } else if (
-    (col.layerType === 'ORGAN_LUNG_LEFT' || col.layerType === 'ORGAN_LUNG_RIGHT') &&
+    (col.layerType === 'ORGAN_LUNG_RIGHT' || col.layerType === 'ORGAN_LUNG_LEFT') &&
     organRuptured
   ) {
     physEffect = `${col.label} Perforation — Tension Pneumothorax`;
@@ -106,18 +107,18 @@ export function evaluateTissueCavitation(
     physEffect = `${col.label} Hydrostatic Rupture — Visceral Shock`;
   } else if (boneFractured) {
     const isLeg =
-      col.ghoulZone === 'THIGH_LEFT' ||
-      col.ghoulZone === 'KNEE_LEFT' ||
-      col.ghoulZone === 'SHIN_LEFT' ||
       col.ghoulZone === 'THIGH_RIGHT' ||
       col.ghoulZone === 'KNEE_RIGHT' ||
       col.ghoulZone === 'SHIN_RIGHT' ||
+      col.ghoulZone === 'THIGH_LEFT' ||
+      col.ghoulZone === 'KNEE_LEFT' ||
+      col.ghoulZone === 'SHIN_LEFT' ||
       col.ghoulZone === 'PELVIS_GROIN';
     const isArm =
-      col.ghoulZone === 'UPPER_ARM_LEFT' ||
-      col.ghoulZone === 'FOREARM_LEFT' ||
       col.ghoulZone === 'UPPER_ARM_RIGHT' ||
-      col.ghoulZone === 'FOREARM_RIGHT';
+      col.ghoulZone === 'FOREARM_RIGHT' ||
+      col.ghoulZone === 'UPPER_ARM_LEFT' ||
+      col.ghoulZone === 'FOREARM_LEFT';
     if (isLeg) {
       physEffect = `${col.label} Fractured — Structural Leg Collapse`;
     } else if (isArm) {
@@ -128,13 +129,11 @@ export function evaluateTissueCavitation(
     }
   }
 
-  const isTriggerArmZone = target.isLeftHanded
-    ? col.ghoulZone === 'HAND_RIGHT' ||
-      col.ghoulZone === 'FOREARM_RIGHT' ||
-      col.ghoulZone === 'UPPER_ARM_RIGHT'
-    : col.ghoulZone === 'HAND_LEFT' ||
-      col.ghoulZone === 'FOREARM_LEFT' ||
-      col.ghoulZone === 'UPPER_ARM_LEFT';
+  const trigger = triggerSide(target.isLeftHanded);
+  const isTriggerArmZone =
+    col.ghoulZone === `HAND_${trigger}` ||
+    col.ghoulZone === `FOREARM_${trigger}` ||
+    col.ghoulZone === `UPPER_ARM_${trigger}`;
 
   if (isTriggerArmZone && energyDeposited >= 65) {
     weaponDisarmed = true;

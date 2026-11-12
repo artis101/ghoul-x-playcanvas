@@ -9,7 +9,7 @@ Generates:
 Coordinate Convention:
   - PlayCanvas / glTF 2.0 (+Y Up):
       Feet grounded at y = 0.00m, Crown at y = 1.80m, Character facing +Z
-      (-X = Anatomical Left, +X = Anatomical Right per GHOUL_ZONE_HIERARCHY).
+      (+X = the character's own left, -X = their own right, per GHOUL_ZONE_HIERARCHY).
   - Blender 5.2 (+Z Up, -Y Forward):
       pc_to_bl(x, y, z) = Vector((x, -z, y))
       When exported with `export_yup=True`, Blender (x, -z, y) maps 1:1 to glTF (x, y, z).
@@ -1045,29 +1045,29 @@ GHOUL_BONE_SPECS: List[Tuple[str, Optional[str], Tuple[float, float, float], Tup
     ("Bone_HEAD_CRANIUM", "Bone_NECK_CERVICAL", (0.0, 1.60, 0.0), (0.0, 1.80, 0.0)),
     ("Bone_HEAD_FACE_JAW", "Bone_HEAD_CRANIUM", (0.0, 1.63, 0.02), (0.0, 1.575, 0.10)),
 
-    # Left Arm (-X) — natural athletic A-pose
-    ("Bone_SHOULDER_LEFT", "Bone_TORSO_UPPER_THORAX", (-0.13, 1.45, 0.0), (-0.215, 1.43, 0.0)),
-    ("Bone_UPPER_ARM_LEFT", "Bone_SHOULDER_LEFT", (-0.215, 1.43, 0.0), (-0.325, 1.18, 0.01)),
-    ("Bone_FOREARM_LEFT", "Bone_UPPER_ARM_LEFT", (-0.325, 1.18, 0.01), (-0.405, 0.95, 0.08)),
-    ("Bone_HAND_LEFT", "Bone_FOREARM_LEFT", (-0.405, 0.95, 0.08), (-0.44, 0.85, 0.125)),
+    # Right Arm (-X) — natural athletic A-pose
+    ("Bone_SHOULDER_RIGHT", "Bone_TORSO_UPPER_THORAX", (-0.13, 1.45, 0.0), (-0.215, 1.43, 0.0)),
+    ("Bone_UPPER_ARM_RIGHT", "Bone_SHOULDER_RIGHT", (-0.215, 1.43, 0.0), (-0.325, 1.18, 0.01)),
+    ("Bone_FOREARM_RIGHT", "Bone_UPPER_ARM_RIGHT", (-0.325, 1.18, 0.01), (-0.405, 0.95, 0.08)),
+    ("Bone_HAND_RIGHT", "Bone_FOREARM_RIGHT", (-0.405, 0.95, 0.08), (-0.44, 0.85, 0.125)),
 
-    # Right Arm (+X)
-    ("Bone_SHOULDER_RIGHT", "Bone_TORSO_UPPER_THORAX", (0.13, 1.45, 0.0), (0.215, 1.43, 0.0)),
-    ("Bone_UPPER_ARM_RIGHT", "Bone_SHOULDER_RIGHT", (0.215, 1.43, 0.0), (0.325, 1.18, 0.01)),
-    ("Bone_FOREARM_RIGHT", "Bone_UPPER_ARM_RIGHT", (0.325, 1.18, 0.01), (0.405, 0.95, 0.08)),
-    ("Bone_HAND_RIGHT", "Bone_FOREARM_RIGHT", (0.405, 0.95, 0.08), (0.44, 0.85, 0.125)),
+    # Left Arm (+X)
+    ("Bone_SHOULDER_LEFT", "Bone_TORSO_UPPER_THORAX", (0.13, 1.45, 0.0), (0.215, 1.43, 0.0)),
+    ("Bone_UPPER_ARM_LEFT", "Bone_SHOULDER_LEFT", (0.215, 1.43, 0.0), (0.325, 1.18, 0.01)),
+    ("Bone_FOREARM_LEFT", "Bone_UPPER_ARM_LEFT", (0.325, 1.18, 0.01), (0.405, 0.95, 0.08)),
+    ("Bone_HAND_LEFT", "Bone_FOREARM_LEFT", (0.405, 0.95, 0.08), (0.44, 0.85, 0.125)),
 
-    # Left Leg (-X)
-    ("Bone_THIGH_LEFT", "Bone_PELVIS_GROIN", (-0.108, 0.89, 0.0), (-0.115, 0.50, 0.01)),
-    ("Bone_KNEE_LEFT", "Bone_THIGH_LEFT", (-0.115, 0.50, 0.01), (-0.115, 0.41, 0.012)),
-    ("Bone_SHIN_LEFT", "Bone_KNEE_LEFT", (-0.115, 0.41, 0.012), (-0.115, 0.085, 0.0)),
-    ("Bone_FOOT_LEFT", "Bone_SHIN_LEFT", (-0.115, 0.085, 0.0), (-0.115, 0.03, 0.17)),
+    # Right Leg (-X)
+    ("Bone_THIGH_RIGHT", "Bone_PELVIS_GROIN", (-0.108, 0.89, 0.0), (-0.115, 0.50, 0.01)),
+    ("Bone_KNEE_RIGHT", "Bone_THIGH_RIGHT", (-0.115, 0.50, 0.01), (-0.115, 0.41, 0.012)),
+    ("Bone_SHIN_RIGHT", "Bone_KNEE_RIGHT", (-0.115, 0.41, 0.012), (-0.115, 0.085, 0.0)),
+    ("Bone_FOOT_RIGHT", "Bone_SHIN_RIGHT", (-0.115, 0.085, 0.0), (-0.115, 0.03, 0.17)),
 
-    # Right Leg (+X)
-    ("Bone_THIGH_RIGHT", "Bone_PELVIS_GROIN", (0.108, 0.89, 0.0), (0.115, 0.50, 0.01)),
-    ("Bone_KNEE_RIGHT", "Bone_THIGH_RIGHT", (0.115, 0.50, 0.01), (0.115, 0.41, 0.012)),
-    ("Bone_SHIN_RIGHT", "Bone_KNEE_RIGHT", (0.115, 0.41, 0.012), (0.115, 0.085, 0.0)),
-    ("Bone_FOOT_RIGHT", "Bone_SHIN_RIGHT", (0.115, 0.085, 0.0), (0.115, 0.03, 0.17)),
+    # Left Leg (+X)
+    ("Bone_THIGH_LEFT", "Bone_PELVIS_GROIN", (0.108, 0.89, 0.0), (0.115, 0.50, 0.01)),
+    ("Bone_KNEE_LEFT", "Bone_THIGH_LEFT", (0.115, 0.50, 0.01), (0.115, 0.41, 0.012)),
+    ("Bone_SHIN_LEFT", "Bone_KNEE_LEFT", (0.115, 0.41, 0.012), (0.115, 0.085, 0.0)),
+    ("Bone_FOOT_LEFT", "Bone_SHIN_LEFT", (0.115, 0.085, 0.0), (0.115, 0.03, 0.17)),
 ]
 
 
@@ -1387,9 +1387,9 @@ def build_tactical_glove(bm: bmesh.types.BMesh, sx: float) -> None:
     """
     Articulated 5-finger Mechanix/Oakley-style tactical glove built in the hand bone's rest frame.
     Material slots: 0 = synthetic leather glove, 1 = molded carbon knuckle guards, 2 = velcro/polymer strap.
-    Palm faces the body at rest (bone local -X for LEFT, +X for RIGHT); thumb points forward (+Z).
+    Palm faces the body at rest (bone local -X for RIGHT, +X for LEFT); thumb points forward (+Z).
     """
-    H, Tl = _bone_spec("Bone_HAND_LEFT" if sx < 0 else "Bone_HAND_RIGHT")
+    H, Tl = _bone_spec("Bone_HAND_RIGHT" if sx < 0 else "Bone_HAND_LEFT")
     Y = (Tl - H).normalized()
     Z0 = Vector((0.0, 0.0, 1.0))
     Z = (Z0 - Y * Z0.dot(Y)).normalized()
@@ -1818,7 +1818,7 @@ def build_all_combatant_submeshes(
     objs.extend(build_head_zone_meshes(arm_obj, pal, collection))
 
     # Hands and boots are rigid caps over the ends of the arm and leg surfaces.
-    for side_label, sx in (("LEFT", -1.0), ("RIGHT", 1.0)):
+    for side_label, sx in (("RIGHT", -1.0), ("LEFT", 1.0)):
         # Hand — articulated 5-finger Mechanix/Oakley tactical glove (carbon knuckles, velcro wrist strap)
         bm = bmesh.new()
         build_tactical_glove(bm, sx)
@@ -1917,7 +1917,7 @@ def build_all_combatant_submeshes(
     # 30. Organ_Heart — Conical myocardium + aortic arch tucked inside ribcage
     bm = bmesh.new()
     add_sculpted_loft(
-        bm, (-0.028, 1.295, 0.022), (-0.008, 1.385, 0.006),
+        bm, (0.028, 1.295, 0.022), (0.008, 1.385, 0.006),
         [
             (0.00, 0.020, 0.020, 0.0, 0.0),
             (0.45, 0.040, 0.038, 0.0, 0.0),
@@ -1927,7 +1927,7 @@ def build_all_combatant_submeshes(
         sides=12, mat_index=0, end_dome_scale=0.40,
     )
     add_sculpted_loft(
-        bm, (-0.008, 1.375, 0.006), (0.004, 1.432, -0.010),
+        bm, (0.008, 1.375, 0.006), (-0.004, 1.432, -0.010),
         [(0.0, 0.013, 0.013, 0.0, 0.0), (1.0, 0.011, 0.011, 0.0, 0.0)],
         sides=10, mat_index=0,
     )
@@ -1957,7 +1957,7 @@ def build_all_combatant_submeshes(
     # 32. Organ_Liver — Wedge-shaped Right-Hypochondrium Parenchyma
     bm = bmesh.new()
     add_sculpted_loft(
-        bm, (-0.020, 1.195, 0.020), (0.092, 1.165, 0.012),
+        bm, (0.020, 1.195, 0.020), (-0.092, 1.165, 0.012),
         [
             (0.00, 0.024, 0.032, 0.0, 0.0),
             (0.45, 0.046, 0.054, 0.0, 0.0),
@@ -2191,17 +2191,14 @@ def side_bone(prefix: str, anatomical_side: str, southpaw: bool) -> str:
     """
     Maps anatomical side ('TRIGGER' vs 'SUPPORT') to GHOUL bone names.
     Note on coordinate frame: the combatant stands at (0,0,0) facing +Z (towards viewer).
-    Therefore -X (`Bone_*_LEFT`) is the character's own ANATOMICAL RIGHT side, and
-    +X (`Bone_*_RIGHT`) is the character's own ANATOMICAL LEFT side!
-    - Right-handed (`southpaw=False`, default ~88%): TRIGGER = `Bone_*_LEFT` (-X, anatomical right),
-      SUPPORT = `Bone_*_RIGHT` (+X, anatomical left).
-    - Left-handed (`southpaw=True`, ~12%): TRIGGER = `Bone_*_RIGHT` (+X, anatomical left),
-      SUPPORT = `Bone_*_LEFT` (-X, anatomical right).
+    Bone suffixes name the character's own sides: `Bone_*_RIGHT` is at -X, `Bone_*_LEFT` at +X.
+    - Right-handed (`southpaw=False`, default ~88%): TRIGGER = `Bone_*_RIGHT`, SUPPORT = `Bone_*_LEFT`.
+    - Left-handed (`southpaw=True`, ~12%): TRIGGER = `Bone_*_LEFT`, SUPPORT = `Bone_*_RIGHT`.
     """
     is_neg_x = (anatomical_side == "TRIGGER" and not southpaw) or (
         anatomical_side == "SUPPORT" and southpaw
     )
-    suffix = "LEFT" if is_neg_x else "RIGHT"
+    suffix = "RIGHT" if is_neg_x else "LEFT"
     return f"Bone_{prefix}_{suffix}"
 
 

@@ -106,7 +106,7 @@ export function stepSingleEnemyAgent(
     }
   }
 
-  const legCrippled = !hs.leftLegFunctional || !hs.rightLegFunctional;
+  const legCrippled = !hs.rightLegFunctional || !hs.leftLegFunctional;
   if (legCrippled && agent.state !== 'DOWNED_CRAWLING') {
     if (agent.state === 'PATROL_GUARD') agent.adrenaline = Math.max(agent.adrenaline, 0.85);
     if (!hs.isRagdollActive) hs.posture = 'LEG_BUCKLED';
@@ -178,7 +178,7 @@ export function stepSingleEnemyAgent(
 
     case 'DOWNED_CRAWLING': {
       if (!hs.isRagdollActive) hs.posture = aimProfile.clutchingWound ? 'DISARMED' : 'LEG_BUCKLED';
-      if (!hs.isRagdollActive && (hs.leftArmFunctional || hs.rightArmFunctional)) {
+      if (!hs.isRagdollActive && (hs.rightArmFunctional || hs.leftArmFunctional)) {
         const crawlTargetX = agent.coverAnchorWorld.x + agent.peekSign * 0.35;
         const crawlTargetZ =
           agent.resolveProfile === 'FANATIC_BERSERKER'

@@ -8,8 +8,8 @@ import { GhoulZoneId, Vec3Like } from '../ballistics.ts';
 export type ArmorPlateId =
   | 'FRONT_ESAPI_PLATE'
   | 'BACK_ESAPI_PLATE'
-  | 'SIDE_SAPI_LEFT'
   | 'SIDE_SAPI_RIGHT'
+  | 'SIDE_SAPI_LEFT'
   | 'HELMET_BALLISTIC_SHELL';
 
 export type ArmorMaterialKind =
@@ -25,19 +25,19 @@ export type OuterShellPartId =
   | 'HEAD_SCALP_SHELL'
   | 'NECK_SHELL'
   | 'THORAX_SKIN_MUSCLE'
-  | 'AXILLARY_GAP_LEFT'
   | 'AXILLARY_GAP_RIGHT'
+  | 'AXILLARY_GAP_LEFT'
   | 'SUPRACLAVICULAR_COLLAR_SHELL'
   | 'ABDOMEN_SKIN_MUSCLE'
   | 'PELVIS_SKIN_MUSCLE'
-  | 'UPPER_ARM_LEFT_SHELL'
   | 'UPPER_ARM_RIGHT_SHELL'
-  | 'FOREARM_LEFT_SHELL'
+  | 'UPPER_ARM_LEFT_SHELL'
   | 'FOREARM_RIGHT_SHELL'
-  | 'THIGH_LEFT_SHELL'
+  | 'FOREARM_LEFT_SHELL'
   | 'THIGH_RIGHT_SHELL'
-  | 'CALF_LEFT_SHELL'
-  | 'CALF_RIGHT_SHELL';
+  | 'THIGH_LEFT_SHELL'
+  | 'CALF_RIGHT_SHELL'
+  | 'CALF_LEFT_SHELL';
 
 export type BvhPrimitiveShape = 'AABB' | 'OBB' | 'CAPSULE' | 'SPHERE';
 

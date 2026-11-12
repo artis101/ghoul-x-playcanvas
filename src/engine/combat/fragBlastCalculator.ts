@@ -33,12 +33,12 @@ export function buildFragBlastReportForTarget(
   const exposedZones: GhoulZoneId[] = [
     'TORSO_LOWER_ABDOMEN',
     'TORSO_UPPER_THORAX',
-    'THIGH_LEFT',
     'THIGH_RIGHT',
-    'SHIN_LEFT',
+    'THIGH_LEFT',
     'SHIN_RIGHT',
-    'KNEE_LEFT',
+    'SHIN_LEFT',
     'KNEE_RIGHT',
+    'KNEE_LEFT',
   ];
   const woundEvents: WoundChannelEvent[] = [];
   const zoneImpulses: Partial<Record<GhoulZoneId, Vec3Like>> = {};
@@ -93,7 +93,7 @@ export function buildFragBlastReportForTarget(
   const newlySeveredZones: GhoulZoneId[] = [];
 
   if (distM < 3.4) {
-    const candidateLimbs: GhoulZoneId[] = distM < 2.2 ? ['KNEE_LEFT', 'SHIN_RIGHT', 'FOREARM_LEFT'] : ['SHIN_LEFT', 'SHIN_RIGHT'];
+    const candidateLimbs: GhoulZoneId[] = distM < 2.2 ? ['KNEE_RIGHT', 'SHIN_LEFT', 'FOREARM_RIGHT'] : ['SHIN_RIGHT', 'SHIN_LEFT'];
     const maxSevers = distM < 2.2 ? 2 : 1;
 
     for (const limbZone of candidateLimbs) {

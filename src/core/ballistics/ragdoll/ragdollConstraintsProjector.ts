@@ -105,7 +105,7 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
     const cranium = target.ragdollBones.HEAD_CRANIUM;
     const jaw = target.ragdollBones.HEAD_FACE_JAW;
     if (cranium.componentId === 'BODY' && jaw.componentId === 'BODY' && cranium.goreMode !== 'CRANIAL_POP' && shL.componentId === 'BODY' && shR.componentId === 'BODY') {
-      const shRight = normalize(sub(shR.position, shL.position));
+      const shRight = normalize(sub(shL.position, shR.position));
       const spUp = normalize(sub(thorax.position, abdomen.position));
       const thoraxFwd = normalize(cross(shRight, spUp));
       if (length(thoraxFwd) > 0.5) {
@@ -129,14 +129,14 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
 
     // 2. Gentle Elbow Anti-Hyperextension + Forearm/Hand vs Torso Self-Collision Pushout
     if (pelvis.componentId === 'BODY' && thorax.componentId === 'BODY') {
-      const shRight = normalize(sub(shR.position, shL.position));
+      const shRight = normalize(sub(shL.position, shR.position));
       const spUp = normalize(sub(thorax.position, pelvis.position));
       const chestFwd = normalize(cross(shRight, spUp));
       if (length(chestFwd) > 0.5) {
-        for (const side of ['LEFT', 'RIGHT'] as const) {
-          const upper = target.ragdollBones[side === 'LEFT' ? 'UPPER_ARM_LEFT' : 'UPPER_ARM_RIGHT'];
-          const forearm = target.ragdollBones[side === 'LEFT' ? 'FOREARM_LEFT' : 'FOREARM_RIGHT'];
-          const hand = target.ragdollBones[side === 'LEFT' ? 'HAND_LEFT' : 'HAND_RIGHT'];
+        for (const side of ['RIGHT', 'LEFT'] as const) {
+          const upper = target.ragdollBones[side === 'RIGHT' ? 'UPPER_ARM_RIGHT' : 'UPPER_ARM_LEFT'];
+          const forearm = target.ragdollBones[side === 'RIGHT' ? 'FOREARM_RIGHT' : 'FOREARM_LEFT'];
+          const hand = target.ragdollBones[side === 'RIGHT' ? 'HAND_RIGHT' : 'HAND_LEFT'];
           if (upper.componentId === 'BODY' && forearm.componentId === 'BODY' && hand.componentId === 'BODY') {
             const midArm = scale(add(upper.position, hand.position), 0.5);
             const elbowOff = sub(forearm.position, midArm);
@@ -154,7 +154,7 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
       const seg = sub(thorax.position, pelvis.position);
       const segLenSq = lengthSq(seg);
       if (segLenSq > 1e-4) {
-        const armZones: GhoulZoneId[] = ['FOREARM_LEFT', 'HAND_LEFT', 'FOREARM_RIGHT', 'HAND_RIGHT'];
+        const armZones: GhoulZoneId[] = ['FOREARM_RIGHT', 'HAND_RIGHT', 'FOREARM_LEFT', 'HAND_LEFT'];
         const minChestClearanceM = 0.145;
         for (const az of armZones) {
           const armBone = target.ragdollBones[az];

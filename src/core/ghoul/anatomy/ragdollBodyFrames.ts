@@ -1,7 +1,10 @@
 import type { TargetHealthState } from '../../../contracts/ballistics/targetHealthContracts';
 import { Vec3Like, cross, dot, length, normalize, scale, sub } from '../../ballistics/vec3';
 
-/** Orthonormal body-segment frame in world space, with forward = right × up. */
+/**
+ * Orthonormal body-segment frame in world space, with forward = right × up.
+ * `right` is the frame's +X axis: on an upright body it points to the character's own left.
+ */
 export interface BodyFrame {
   right: Vec3Like;
   up: Vec3Like;
@@ -30,7 +33,7 @@ export function computeChestFrame(target: TargetHealthState): BodyFrame | null {
     neck.componentId === thorax.componentId
       ? sub(neck.position, thorax.position)
       : sub(thorax.position, bones.TORSO_LOWER_ABDOMEN.position);
-  return frameFrom(sub(bones.SHOULDER_RIGHT.position, bones.SHOULDER_LEFT.position), up);
+  return frameFrom(sub(bones.SHOULDER_LEFT.position, bones.SHOULDER_RIGHT.position), up);
 }
 
 /**
@@ -45,16 +48,16 @@ export function computePelvisFrame(target: TargetHealthState): BodyFrame | null 
     abdomen.componentId === pelvis.componentId
       ? normalize(sub(abdomen.position, pelvis.position))
       : normalize(pelvis.basisUp);
-  const hasLeft = bones.THIGH_LEFT.componentId === pelvis.componentId;
   const hasRight = bones.THIGH_RIGHT.componentId === pelvis.componentId;
+  const hasLeft = bones.THIGH_LEFT.componentId === pelvis.componentId;
 
   let rightHint: Vec3Like;
-  if (hasLeft && hasRight) {
-    rightHint = sub(bones.THIGH_RIGHT.position, bones.THIGH_LEFT.position);
-  } else if (hasRight) {
-    rightHint = rejectFromAxis(sub(bones.THIGH_RIGHT.position, pelvis.position), up);
+  if (hasRight && hasLeft) {
+    rightHint = sub(bones.THIGH_LEFT.position, bones.THIGH_RIGHT.position);
   } else if (hasLeft) {
-    rightHint = rejectFromAxis(sub(pelvis.position, bones.THIGH_LEFT.position), up);
+    rightHint = rejectFromAxis(sub(bones.THIGH_LEFT.position, pelvis.position), up);
+  } else if (hasRight) {
+    rightHint = rejectFromAxis(sub(pelvis.position, bones.THIGH_RIGHT.position), up);
   } else {
     rightHint = computeChestFrame(target)?.right ?? pelvis.basisRight;
   }

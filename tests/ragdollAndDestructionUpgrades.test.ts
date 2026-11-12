@@ -182,9 +182,9 @@ describe('Wave 1, Wave 2 & Wave 3 — Ragdoll Stability, Trauma IK, Destruction 
       armorDent: false,
     });
 
-    const shoulders = { LEFT: vec3(-0.28, -3.62, -5.0), RIGHT: vec3(0.28, -3.62, -5.0) };
-    const elbows = { LEFT: vec3(-0.31, -3.87, -4.95), RIGHT: vec3(0.31, -3.87, -4.95) };
-    const wrists = { LEFT: vec3(-0.14, -3.85, -4.76), RIGHT: vec3(0.14, -3.85, -4.76) };
+    const shoulders = { RIGHT: vec3(-0.28, -3.62, -5.0), LEFT: vec3(0.28, -3.62, -5.0) };
+    const elbows = { RIGHT: vec3(-0.31, -3.87, -4.95), LEFT: vec3(0.31, -3.87, -4.95) };
+    const wrists = { RIGHT: vec3(-0.14, -3.85, -4.76), LEFT: vec3(0.14, -3.85, -4.76) };
 
     let lastOut = stepProceduralTraumaIk(target, tracker, 1 / 60, shoulders, elbows, wrists);
     for (let i = 0; i < 15; i++) {
@@ -194,18 +194,18 @@ describe('Wave 1, Wave 2 & Wave 3 — Ragdoll Stability, Trauma IK, Destruction 
     expect(lastOut.clutchSide).toBe('LEFT');
     expect(lastOut.hasJoltOrPropUp).toBe(true);
 
-    // Disable left arm while attached -> dead-limb Verlet pendulum swings under gravity
-    target.leftArmFunctional = false;
-    target.fracturedBones.add('humerus_left');
-    expect(isArmDeadButAttached(target, 'LEFT')).toBe(true);
+    // Disable right arm while attached -> dead-limb Verlet pendulum swings under gravity
+    target.rightArmFunctional = false;
+    target.fracturedBones.add('humerus_right');
+    expect(isArmDeadButAttached(target, 'RIGHT')).toBe(true);
     for (let i = 0; i < 20; i++) {
-      const stepped = stepPinnedDeadArmVerlet(target, tracker, 'LEFT', vec3(-0.28, 1.38, -5.0), 1 / 60);
+      const stepped = stepPinnedDeadArmVerlet(target, tracker, 'RIGHT', vec3(-0.28, 1.38, -5.0), 1 / 60);
       expect(stepped).toBe(true);
     }
-    expect(target.ragdollBones.HAND_LEFT.position.y).toBeLessThan(1.0);
+    expect(target.ragdollBones.HAND_RIGHT.position.y).toBeLessThan(1.0);
 
-    // Disable left leg while weapon is still held -> downed torso prop-up activates
-    target.leftLegFunctional = false;
+    // Disable right leg while weapon is still held -> downed torso prop-up activates
+    target.rightLegFunctional = false;
     target.posture = 'LEG_BUCKLED';
     for (let i = 0; i < 20; i++) {
       lastOut = stepProceduralTraumaIk(target, tracker, 1 / 60, shoulders, elbows, wrists);

@@ -34,7 +34,7 @@ const SHOULDER_MAX_SWING = 110 * DEG;
 const TORSO_MAX_TWIST = 40 * DEG;
 const TORSO_MAX_TWIST_ONE_HIP = 12 * DEG;
 
-const SIDES = ['LEFT', 'RIGHT'] as const;
+const SIDES = ['RIGHT', 'LEFT'] as const;
 
 function attached(...particles: { componentId: string }[]): boolean {
   return particles.every((p) => p.componentId === 'BODY');
@@ -200,8 +200,8 @@ function limitTorsoTwist(
   const excess = Math.abs(twist) - (hips.length === 2 ? TORSO_MAX_TWIST : TORSO_MAX_TWIST_ONE_HIP);
   if (excess <= 0) return;
   const unwind = -Math.sign(twist) * excess;
-  const shoulderMid = scale(add(b.SHOULDER_LEFT.position, b.SHOULDER_RIGHT.position), 0.5);
-  for (const shoulder of [b.SHOULDER_LEFT, b.SHOULDER_RIGHT]) {
+  const shoulderMid = scale(add(b.SHOULDER_RIGHT.position, b.SHOULDER_LEFT.position), 0.5);
+  for (const shoulder of [b.SHOULDER_RIGHT, b.SHOULDER_LEFT]) {
     driveParticleBy(shoulder, turnAbout(shoulder.position, shoulderMid, spine, unwind * 0.6), effort);
   }
   for (const thigh of hips) {

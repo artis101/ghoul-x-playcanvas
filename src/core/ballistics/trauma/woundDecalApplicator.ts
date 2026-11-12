@@ -8,7 +8,7 @@ import { copyVec3, vec3 } from '../vec3.ts';
 export function applyWoundsAndDecals(
   target: TargetHealthState,
   report: ShotSimulationReport
-): { leftLegShotEnergyJ: number; rightLegShotEnergyJ: number } {
+): { rightLegShotEnergyJ: number; leftLegShotEnergyJ: number } {
   target.currentHp = Math.max(0, target.currentHp - report.totalDamageHp);
   if (report.isLethalKill || target.currentHp <= 0) {
     transitionTargetLifecycle(target, { kind: 'LETHAL_DEATH' });
@@ -24,15 +24,15 @@ export function applyWoundsAndDecals(
   for (const b of report.shatteredBones) target.fracturedBones.add(b);
   for (const o of report.rupturedOrgans) target.rupturedOrgans.add(o);
 
-  let leftLegShotEnergyJ = 0;
   let rightLegShotEnergyJ = 0;
+  let leftLegShotEnergyJ = 0;
 
   for (const w of report.woundEvents) {
     if (!w.armorStopped) {
-      const isLL = w.ghoulZone === 'THIGH_LEFT' || w.ghoulZone === 'KNEE_LEFT' || w.ghoulZone === 'SHIN_LEFT' || w.ghoulZone === 'FOOT_LEFT';
       const isRL = w.ghoulZone === 'THIGH_RIGHT' || w.ghoulZone === 'KNEE_RIGHT' || w.ghoulZone === 'SHIN_RIGHT' || w.ghoulZone === 'FOOT_RIGHT';
-      if (isLL) leftLegShotEnergyJ += w.energyDepositedJ;
-      else if (isRL) rightLegShotEnergyJ += w.energyDepositedJ;
+      const isLL = w.ghoulZone === 'THIGH_LEFT' || w.ghoulZone === 'KNEE_LEFT' || w.ghoulZone === 'SHIN_LEFT' || w.ghoulZone === 'FOOT_LEFT';
+      if (isRL) rightLegShotEnergyJ += w.energyDepositedJ;
+      else if (isLL) leftLegShotEnergyJ += w.energyDepositedJ;
     }
 
     if (w.armorStopped) {
@@ -62,24 +62,24 @@ export function applyWoundsAndDecals(
       target.heartRateBpm = 0;
       target.systolicBpMmHg = 25;
     }
-    if ((w.layerType === 'ORGAN_LUNG_LEFT' || w.layerType === 'ORGAN_LUNG_RIGHT') && w.organRuptured) {
+    if ((w.layerType === 'ORGAN_LUNG_RIGHT' || w.layerType === 'ORGAN_LUNG_LEFT') && w.organRuptured) {
       target.oxygenSaturationPct = Math.max(40, target.oxygenSaturationPct - 28);
       target.bloodLossRateMlPerSec += 26;
     }
 
     if (w.boneFractured) {
-      if (w.ghoulZone === 'THIGH_LEFT' || w.ghoulZone === 'KNEE_LEFT' || w.ghoulZone === 'SHIN_LEFT') target.leftLegFunctional = false;
       if (w.ghoulZone === 'THIGH_RIGHT' || w.ghoulZone === 'KNEE_RIGHT' || w.ghoulZone === 'SHIN_RIGHT') target.rightLegFunctional = false;
+      if (w.ghoulZone === 'THIGH_LEFT' || w.ghoulZone === 'KNEE_LEFT' || w.ghoulZone === 'SHIN_LEFT') target.leftLegFunctional = false;
       if (w.ghoulZone === 'PELVIS_GROIN') {
-        target.leftLegFunctional = false;
         target.rightLegFunctional = false;
-      }
-      if (w.ghoulZone === 'UPPER_ARM_LEFT' || w.ghoulZone === 'FOREARM_LEFT') {
-        target.leftArmFunctional = false;
-        transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
+        target.leftLegFunctional = false;
       }
       if (w.ghoulZone === 'UPPER_ARM_RIGHT' || w.ghoulZone === 'FOREARM_RIGHT') {
         target.rightArmFunctional = false;
+        transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
+      }
+      if (w.ghoulZone === 'UPPER_ARM_LEFT' || w.ghoulZone === 'FOREARM_LEFT') {
+        target.leftArmFunctional = false;
         transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
       }
     }
@@ -109,5 +109,5 @@ export function applyWoundsAndDecals(
     }
   }
 
-  return { leftLegShotEnergyJ, rightLegShotEnergyJ };
+  return { rightLegShotEnergyJ, leftLegShotEnergyJ };
 }

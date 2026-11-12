@@ -44,8 +44,8 @@ export const TIER1_ARMOR_PLATES: readonly Tier1ArmorPlateVolume[] = [
     degradationPerKilojoule: 0.22,
   },
   {
-    id: 'SIDE_SAPI_LEFT',
-    label: 'Left Cummerbund 6x6 Side SAPI Plate (Lower Flank)',
+    id: 'SIDE_SAPI_RIGHT',
+    label: 'Right Cummerbund 6x6 Side SAPI Plate (Lower Flank)',
     ghoulZone: 'TORSO_UPPER_THORAX',
     material: 'UHMWPE_III_PLUS',
     shape: 'OBB',
@@ -61,8 +61,8 @@ export const TIER1_ARMOR_PLATES: readonly Tier1ArmorPlateVolume[] = [
     degradationPerKilojoule: 0.28,
   },
   {
-    id: 'SIDE_SAPI_RIGHT',
-    label: 'Right Cummerbund 6x6 Side SAPI Plate (Lower Flank)',
+    id: 'SIDE_SAPI_LEFT',
+    label: 'Left Cummerbund 6x6 Side SAPI Plate (Lower Flank)',
     ghoulZone: 'TORSO_UPPER_THORAX',
     material: 'UHMWPE_III_PLUS',
     shape: 'OBB',

@@ -88,10 +88,10 @@ export function syncPhysiologyToHealthState(
     }
   }
 
-  if (!physio.leftLegFunctional) hs.leftLegFunctional = false;
   if (!physio.rightLegFunctional) hs.rightLegFunctional = false;
-  if (!physio.leftArmFunctional) hs.leftArmFunctional = false;
+  if (!physio.leftLegFunctional) hs.leftLegFunctional = false;
   if (!physio.rightArmFunctional) hs.rightArmFunctional = false;
+  if (!physio.leftArmFunctional) hs.leftArmFunctional = false;
   if (physio.weaponDropped) {
     hs.weaponDropped = true;
     hs.primaryArmDisarmed = true;

@@ -4,7 +4,7 @@ import { evaluateCrawlCondition } from '../src/core/ghoul/anatomy/crawlCondition
 
 function downed() {
   const state = createTargetHealthState('crawler', 'Crawler', { x: 0, y: 0, z: 0 }, 0, 'MILITIA_GUNNER');
-  state.leftLegFunctional = false;
+  state.rightLegFunctional = false;
   return state;
 }
 
@@ -26,9 +26,9 @@ function sample(state: ReturnType<typeof downed>) {
 describe('wounded crawl', () => {
   it('drags only the crippled leg, and not one that has been severed', () => {
     const state = downed();
-    expect(evaluateCrawlCondition(state, 0)).toMatchObject({ dragLeftLeg: true, dragRightLeg: false });
-    state.severedZones.add('THIGH_LEFT');
-    expect(evaluateCrawlCondition(state, 0).dragLeftLeg).toBe(false);
+    expect(evaluateCrawlCondition(state, 0)).toMatchObject({ dragRightLeg: true, dragLeftLeg: false });
+    state.severedZones.add('THIGH_RIGHT');
+    expect(evaluateCrawlCondition(state, 0).dragRightLeg).toBe(false);
   });
 
   it('slows down, rests longer and lets the head hang as wounds mount', () => {
@@ -36,7 +36,7 @@ describe('wounded crawl', () => {
     const dying = downed();
     dying.currentHp = dying.maxHp * 0.15;
     dying.painShock = 0.8;
-    dying.rightArmFunctional = false;
+    dying.leftArmFunctional = false;
     const strong = sample(fresh);
     const weak = sample(dying);
     expect(weak.effort).toBeLessThan(strong.effort * 0.5);
@@ -46,8 +46,8 @@ describe('wounded crawl', () => {
 
   it('cannot move at all without a working arm', () => {
     const state = downed();
-    state.leftArmFunctional = false;
     state.rightArmFunctional = false;
+    state.leftArmFunctional = false;
     expect(sample(state).effort).toBe(0);
     expect(evaluateCrawlCondition(state, 3).effort).toBe(0);
   });

@@ -35,18 +35,18 @@ export function recomputeLimbAndFootBases(target: TargetHealthState): void {
     refZone: GhoulZoneId;
     isArm: boolean;
   }> = [
-    { zone: 'UPPER_ARM_LEFT', distal: 'FOREARM_LEFT', nextDistal: 'HAND_LEFT', refZone: 'TORSO_UPPER_THORAX', isArm: true },
-    { zone: 'FOREARM_LEFT', distal: 'HAND_LEFT', nextDistal: 'HAND_TIP_LEFT', refZone: 'UPPER_ARM_LEFT', isArm: true },
-    { zone: 'HAND_LEFT', distal: 'HAND_TIP_LEFT', refZone: 'FOREARM_LEFT', isArm: true },
     { zone: 'UPPER_ARM_RIGHT', distal: 'FOREARM_RIGHT', nextDistal: 'HAND_RIGHT', refZone: 'TORSO_UPPER_THORAX', isArm: true },
     { zone: 'FOREARM_RIGHT', distal: 'HAND_RIGHT', nextDistal: 'HAND_TIP_RIGHT', refZone: 'UPPER_ARM_RIGHT', isArm: true },
     { zone: 'HAND_RIGHT', distal: 'HAND_TIP_RIGHT', refZone: 'FOREARM_RIGHT', isArm: true },
-    { zone: 'THIGH_LEFT', distal: 'KNEE_LEFT', nextDistal: 'SHIN_LEFT', refZone: 'PELVIS_GROIN', isArm: false },
-    { zone: 'KNEE_LEFT', distal: 'SHIN_LEFT', nextDistal: 'FOOT_LEFT', refZone: 'THIGH_LEFT', isArm: false },
-    { zone: 'SHIN_LEFT', distal: 'FOOT_LEFT', refZone: 'KNEE_LEFT', isArm: false },
+    { zone: 'UPPER_ARM_LEFT', distal: 'FOREARM_LEFT', nextDistal: 'HAND_LEFT', refZone: 'TORSO_UPPER_THORAX', isArm: true },
+    { zone: 'FOREARM_LEFT', distal: 'HAND_LEFT', nextDistal: 'HAND_TIP_LEFT', refZone: 'UPPER_ARM_LEFT', isArm: true },
+    { zone: 'HAND_LEFT', distal: 'HAND_TIP_LEFT', refZone: 'FOREARM_LEFT', isArm: true },
     { zone: 'THIGH_RIGHT', distal: 'KNEE_RIGHT', nextDistal: 'SHIN_RIGHT', refZone: 'PELVIS_GROIN', isArm: false },
     { zone: 'KNEE_RIGHT', distal: 'SHIN_RIGHT', nextDistal: 'FOOT_RIGHT', refZone: 'THIGH_RIGHT', isArm: false },
     { zone: 'SHIN_RIGHT', distal: 'FOOT_RIGHT', refZone: 'KNEE_RIGHT', isArm: false },
+    { zone: 'THIGH_LEFT', distal: 'KNEE_LEFT', nextDistal: 'SHIN_LEFT', refZone: 'PELVIS_GROIN', isArm: false },
+    { zone: 'KNEE_LEFT', distal: 'SHIN_LEFT', nextDistal: 'FOOT_LEFT', refZone: 'THIGH_LEFT', isArm: false },
+    { zone: 'SHIN_LEFT', distal: 'FOOT_LEFT', refZone: 'KNEE_LEFT', isArm: false },
   ];
 
   for (const item of limbPairs) {
@@ -93,10 +93,10 @@ export function recomputeLimbAndFootBases(target: TargetHealthState): void {
     bone.basisForward = lBasis.forward;
   }
 
-  for (const side of ['LEFT', 'RIGHT'] as const) {
-    const footZone: GhoulZoneId = side === 'LEFT' ? 'FOOT_LEFT' : 'FOOT_RIGHT';
-    const shinZone: GhoulZoneId = side === 'LEFT' ? 'SHIN_LEFT' : 'SHIN_RIGHT';
-    const toeId: AuxParticleId = side === 'LEFT' ? 'FOOT_TOE_LEFT' : 'FOOT_TOE_RIGHT';
+  for (const side of ['RIGHT', 'LEFT'] as const) {
+    const footZone: GhoulZoneId = side === 'RIGHT' ? 'FOOT_RIGHT' : 'FOOT_LEFT';
+    const shinZone: GhoulZoneId = side === 'RIGHT' ? 'SHIN_RIGHT' : 'SHIN_LEFT';
+    const toeId: AuxParticleId = side === 'RIGHT' ? 'FOOT_TOE_RIGHT' : 'FOOT_TOE_LEFT';
 
     const foot = target.ragdollBones[footZone];
     const shin = target.ragdollBones[shinZone];

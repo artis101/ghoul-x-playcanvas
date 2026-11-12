@@ -24,9 +24,9 @@ def attach_reference_prop(arm, path, rest):
         position = pose.translation + pose.to_quaternion() @ axis
         return BLENDER_TO_GLTF @ position
 
-    trigger = palm("Bone_HAND_LEFT", 0.052)
-    support = palm("Bone_HAND_RIGHT", 0.05)
-    hand_axis = (trigger - palm("Bone_HAND_LEFT", 0)) / 0.052
+    trigger = palm("Bone_HAND_RIGHT", 0.052)
+    support = palm("Bone_HAND_LEFT", 0.05)
+    hand_axis = (trigger - palm("Bone_HAND_RIGHT", 0)) / 0.052
     hand_axis.y *= 0.35
     forward = (hand_axis * 0.32 + Vector((0, 0, 0.68))).normalized()
     span = support - trigger - Vector((0, 0.032, 0))
@@ -41,7 +41,7 @@ def attach_reference_prop(arm, path, rest):
     transform = Matrix.Translation(to_blender @ prop_position) @ rotation.to_matrix().to_4x4()
     holder.parent = arm
     holder.parent_type = "BONE"
-    holder.parent_bone = "Bone_HAND_LEFT"
+    holder.parent_bone = "Bone_HAND_RIGHT"
     bpy.context.view_layer.update()
     holder.matrix_world = transform
 

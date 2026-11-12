@@ -86,7 +86,7 @@ export async function openCharacterLab(): Promise<void> {
       const checked = new Set(Array.from(
         view.wounds.querySelectorAll<HTMLInputElement>('input:checked'), (input) => input.dataset.wound,
       ));
-      const lostLimbs = (['ARM_LEFT', 'ARM_RIGHT', 'LEG_LEFT', 'LEG_RIGHT'] as const)
+      const lostLimbs = (['ARM_RIGHT', 'ARM_LEFT', 'LEG_RIGHT', 'LEG_LEFT'] as const)
         .filter((limb: LostLimb) => checked.has(limb));
       const wounded = checked.has('downed') || lostLimbs.length > 0;
       character.rootEntity.enabled = !wounded;

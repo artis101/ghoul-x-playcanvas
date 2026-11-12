@@ -158,7 +158,7 @@ def build_body_zones(
 ) -> Tuple[List[bpy.types.Object], Dict[str, ChainMap]]:
     """Builds the sixteen body zone meshes, all on the one skin material.
 
-    Also returns each chain's map (TORSO, ARM_LEFT, ARM_RIGHT, LEG_LEFT, LEG_RIGHT) for the skin painters.
+    Also returns each chain's map (TORSO, ARM_RIGHT, ARM_LEFT, LEG_RIGHT, LEG_LEFT) for the skin painters.
     """
     objects: List[bpy.types.Object] = []
     chains: Dict[str, ChainMap] = {}
@@ -179,7 +179,7 @@ def build_body_zones(
     for zone, mesh in torso.items():
         finish(zone, mesh)
 
-    for label, sx in (("_LEFT", -1.0), ("_RIGHT", 1.0)):
+    for label, sx in (("_RIGHT", -1.0), ("_LEFT", 1.0)):
         stations = _arm_stations(sx)
         arm, arm_map = build_chain(
             stations, sides=8, side=sx, spacing=0.062, sculpt=_arm_sculpt, rect=f"ARM{label}",

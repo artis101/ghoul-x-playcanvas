@@ -15,16 +15,16 @@ const MAGNETISM_PRIORITY_ZONES: readonly {
   { zone: 'HEAD_FACE_JAW', coreRadiusM: 0.075, priorityWeight: 0.85 },
   { zone: 'NECK_CERVICAL', coreRadiusM: 0.068, priorityWeight: 0.86 },
   { zone: 'TORSO_UPPER_THORAX', coreRadiusM: 0.16, priorityWeight: 1.0 },
-  { zone: 'SHOULDER_LEFT', coreRadiusM: 0.075, priorityWeight: 0.92 },
   { zone: 'SHOULDER_RIGHT', coreRadiusM: 0.075, priorityWeight: 0.92 },
-  { zone: 'UPPER_ARM_LEFT', coreRadiusM: 0.06, priorityWeight: 0.9 },
+  { zone: 'SHOULDER_LEFT', coreRadiusM: 0.075, priorityWeight: 0.92 },
   { zone: 'UPPER_ARM_RIGHT', coreRadiusM: 0.06, priorityWeight: 0.9 },
-  { zone: 'FOREARM_LEFT', coreRadiusM: 0.052, priorityWeight: 0.92 },
+  { zone: 'UPPER_ARM_LEFT', coreRadiusM: 0.06, priorityWeight: 0.9 },
   { zone: 'FOREARM_RIGHT', coreRadiusM: 0.052, priorityWeight: 0.92 },
-  { zone: 'THIGH_LEFT', coreRadiusM: 0.085, priorityWeight: 0.95 },
+  { zone: 'FOREARM_LEFT', coreRadiusM: 0.052, priorityWeight: 0.92 },
   { zone: 'THIGH_RIGHT', coreRadiusM: 0.085, priorityWeight: 0.95 },
-  { zone: 'KNEE_LEFT', coreRadiusM: 0.065, priorityWeight: 0.92 },
+  { zone: 'THIGH_LEFT', coreRadiusM: 0.085, priorityWeight: 0.95 },
   { zone: 'KNEE_RIGHT', coreRadiusM: 0.065, priorityWeight: 0.92 },
+  { zone: 'KNEE_LEFT', coreRadiusM: 0.065, priorityWeight: 0.92 },
 ];
 
 /**

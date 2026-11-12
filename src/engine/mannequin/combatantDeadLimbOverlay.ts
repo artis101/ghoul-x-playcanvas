@@ -21,16 +21,16 @@ export class CombatantDeadLimbOverlay {
   private readonly tmpWristGoal = new pc.Vec3();
 
   private readonly shoulderPos: Record<ArmSide, Vec3Like> = {
-    LEFT: { x: 0, y: 0, z: 0 },
     RIGHT: { x: 0, y: 0, z: 0 },
+    LEFT: { x: 0, y: 0, z: 0 },
   };
   private readonly elbowPos: Record<ArmSide, Vec3Like> = {
-    LEFT: { x: 0, y: 0, z: 0 },
     RIGHT: { x: 0, y: 0, z: 0 },
+    LEFT: { x: 0, y: 0, z: 0 },
   };
   private readonly wristPos: Record<ArmSide, Vec3Like> = {
-    LEFT: { x: 0, y: 0, z: 0 },
     RIGHT: { x: 0, y: 0, z: 0 },
+    LEFT: { x: 0, y: 0, z: 0 },
   };
 
   public sync(
@@ -42,7 +42,7 @@ export class CombatantDeadLimbOverlay {
     if (!healthState.alive || healthState.isRagdollActive) return;
 
     // 1. Sample current animated arm joint world positions before applying overlays
-    for (const side of ['LEFT', 'RIGHT'] as const) {
+    for (const side of ['RIGHT', 'LEFT'] as const) {
       const upper = glb.boneNodes.get(`UPPER_ARM_${side}`);
       const forearm = glb.boneNodes.get(`FOREARM_${side}`);
       const hand = glb.boneNodes.get(`HAND_${side}`);
@@ -133,7 +133,7 @@ export class CombatantDeadLimbOverlay {
 
     // 4. Step pinned dead-limb Verlet pendulum on any arm disabled by brachial plexus or bone shatter
     let anyDeadLimbApplied = false;
-    for (const side of ['LEFT', 'RIGHT'] as const) {
+    for (const side of ['RIGHT', 'LEFT'] as const) {
       const upperNode = glb.boneNodes.get(`UPPER_ARM_${side}`);
       if (upperNode) {
         const p = upperNode.getPosition();

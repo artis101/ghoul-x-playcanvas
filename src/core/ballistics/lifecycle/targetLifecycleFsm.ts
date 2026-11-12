@@ -22,7 +22,7 @@ const STANDING_POSTURES: ReadonlySet<string> = new Set<StandingCombatPosture>([
 export function resolveStandingPostureAfterReaction(
   target: TargetHealthState
 ): StandingCombatPosture {
-  if (!target.leftLegFunctional || !target.rightLegFunctional) {
+  if (!target.rightLegFunctional || !target.leftLegFunctional) {
     return 'LEG_BUCKLED';
   }
   if (target.weaponDropped && target.combatantStatusTag !== 'SIDEARM_DRAWN') {
@@ -265,7 +265,7 @@ export function stepLivingTargetVitalsAndFall(
 
   if (
     target.alive &&
-    (!target.leftLegFunctional || !target.rightLegFunctional) &&
+    (!target.rightLegFunctional || !target.leftLegFunctional) &&
     !target.isRagdollActive &&
     target.activeReaction.type === 'NONE'
   ) {
@@ -277,7 +277,7 @@ export function stepLivingTargetVitalsAndFall(
 
     const cosY = Math.cos(target.yawRad);
     const sinY = Math.sin(target.yawRad);
-    const sideSign = !target.leftLegFunctional ? -1.0 : 1.0;
+    const sideSign = !target.rightLegFunctional ? -1.0 : 1.0;
     const sideWorld = vec3(cosY * sideSign, 0, -sinY * sideSign);
     const fwdWorld = vec3(sinY, 0, cosY);
     const dropVel = add(

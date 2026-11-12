@@ -71,8 +71,8 @@ describe('Blender combatant and weapon assets', () => {
         zone !== 'PELVIS_GROIN' &&
         zone !== 'TORSO_LOWER_ABDOMEN' &&
         zone !== 'TORSO_UPPER_THORAX' &&
-        zone !== 'SHOULDER_LEFT' &&
-        zone !== 'SHOULDER_RIGHT';
+        zone !== 'SHOULDER_RIGHT' &&
+        zone !== 'SHOULDER_LEFT';
       let totalVertsInZone = 0;
 
       for (const prim of mesh!.primitives) {

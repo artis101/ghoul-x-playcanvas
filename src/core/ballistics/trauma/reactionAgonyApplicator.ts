@@ -11,8 +11,8 @@ import { add, copyVec3, length, normalize, scale, vec3 } from '../vec3.ts';
 export function applySurvivingReaction(
   target: TargetHealthState,
   report: ShotSimulationReport,
-  newlySeveredLeftLeg: boolean,
-  newlySeveredRightLeg: boolean
+  newlySeveredRightLeg: boolean,
+  newlySeveredLeftLeg: boolean
 ): void {
   const hitZone = report.ragdollPlan.primaryHitZone;
   if (report.ragdollPlan.willEnableRagdoll || !target.alive || !hitZone) return;
@@ -45,9 +45,9 @@ export function applySurvivingReaction(
   let rxDurationS = 0.65;
   let postureOverride: StandingCombatPosture | undefined;
 
-  if (!target.leftLegFunctional || !target.rightLegFunctional) {
-    rxType = !target.leftLegFunctional ? 'LEG_BUCKLE_LEFT' : 'LEG_BUCKLE_RIGHT';
-    rxDurationS = newlySeveredLeftLeg || newlySeveredRightLeg ? 0.68 : 0.46;
+  if (!target.rightLegFunctional || !target.leftLegFunctional) {
+    rxType = !target.rightLegFunctional ? 'LEG_BUCKLE_RIGHT' : 'LEG_BUCKLE_LEFT';
+    rxDurationS = newlySeveredRightLeg || newlySeveredLeftLeg ? 0.68 : 0.46;
     postureOverride = 'LEG_BUCKLED';
   } else if (hitZone === 'NECK_CERVICAL') {
     rxType = 'THROAT_CLUTCH';
@@ -58,11 +58,11 @@ export function applySurvivingReaction(
   } else if (hitZone === 'HEAD_CRANIUM' || hitZone === 'HEAD_FACE_JAW') {
     rxType = 'HEAD_SNAP';
     postureOverride = 'STAGGERED';
-  } else if (hitZone === 'SHOULDER_LEFT' || hitZone === 'UPPER_ARM_LEFT' || hitZone === 'FOREARM_LEFT' || hitZone === 'HAND_LEFT') {
-    rxType = 'ARM_WRENCH_LEFT';
-    if (target.weaponDropped) postureOverride = 'DISARMED';
   } else if (hitZone === 'SHOULDER_RIGHT' || hitZone === 'UPPER_ARM_RIGHT' || hitZone === 'FOREARM_RIGHT' || hitZone === 'HAND_RIGHT') {
     rxType = 'ARM_WRENCH_RIGHT';
+    if (target.weaponDropped) postureOverride = 'DISARMED';
+  } else if (hitZone === 'SHOULDER_LEFT' || hitZone === 'UPPER_ARM_LEFT' || hitZone === 'FOREARM_LEFT' || hitZone === 'HAND_LEFT') {
+    rxType = 'ARM_WRENCH_LEFT';
     if (target.weaponDropped) postureOverride = 'DISARMED';
   }
 

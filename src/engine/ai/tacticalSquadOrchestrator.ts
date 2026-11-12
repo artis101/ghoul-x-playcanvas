@@ -146,7 +146,7 @@ export function triggerHitTraumaBark(
 ): void {
   if (!target.alive || target.currentHp <= 0) return;
   const vocalCue: VocalTraumaCue =
-    target.rupturedOrgans.has('LUNG_LEFT') || target.rupturedOrgans.has('LUNG_RIGHT')
+    target.rupturedOrgans.has('LUNG_RIGHT') || target.rupturedOrgans.has('LUNG_LEFT')
       ? 'WET_HEMOTHORAX_COUGH'
       : target.oxygenSaturationPct < 75
         ? 'AGUNAL_WHEEZE'

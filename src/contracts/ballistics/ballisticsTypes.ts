@@ -28,10 +28,10 @@ export type PainReactionType =
   | 'THROAT_CLUTCH'
   | 'CHEST_STAGGER'
   | 'GUT_FOLD'
-  | 'ARM_WRENCH_LEFT'
   | 'ARM_WRENCH_RIGHT'
-  | 'LEG_BUCKLE_LEFT'
-  | 'LEG_BUCKLE_RIGHT';
+  | 'ARM_WRENCH_LEFT'
+  | 'LEG_BUCKLE_RIGHT'
+  | 'LEG_BUCKLE_LEFT';
 
 export interface AmmoSpec {
   id: string;

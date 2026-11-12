@@ -1,3 +1,4 @@
+import { oppositeSide } from '../../core/ghoul/anatomy/handedness.ts';
 import * as pc from 'playcanvas';
 import type { Vec3Like } from '../../contracts/ballistics.ts';
 import {
@@ -82,7 +83,7 @@ export class CombatantWeaponHold {
     dt?: number,
   ): pc.Vec3 | null {
     const authored = WEAPON_HOLD_PROFILES[weaponId];
-    const supportHand = triggerHand === 'LEFT' ? 'RIGHT' : 'LEFT';
+    const supportHand = oppositeSide(triggerHand);
     const triggerArm = glb.boneNodes.get(`UPPER_ARM_${triggerHand}`);
     const supportArm = glb.boneNodes.get(`UPPER_ARM_${supportHand}`);
     const supportForearm = glb.boneNodes.get(`FOREARM_${supportHand}`);

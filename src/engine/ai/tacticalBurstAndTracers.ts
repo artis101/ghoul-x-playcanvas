@@ -152,7 +152,7 @@ export function emitEnemyTracerShot(
   const tuning = ARCHETYPE_TUNING[hs.archetype];
   const usingSidearm = aimProfile.usingBackupSidearm;
   const firingHand: ActiveFiringHand = aimProfile.activeFiringHand ?? agent.activeFiringHand;
-  const firingHandZone: GhoulZoneId = firingHand === 'LEFT' ? 'HAND_LEFT' : 'HAND_RIGHT';
+  const firingHandZone: GhoulZoneId = firingHand === 'RIGHT' ? 'HAND_RIGHT' : 'HAND_LEFT';
 
   const handBone = hs.ragdollBones[firingHandZone];
   const handPos = handBone && !handBone.severed ? handBone.position : undefined;

@@ -16,8 +16,8 @@ export function createInitialPlateIntegrityMap(
   const map: Record<ArmorPlateId, number> = {
     FRONT_ESAPI_PLATE: 1.0,
     BACK_ESAPI_PLATE: 1.0,
-    SIDE_SAPI_LEFT: 1.0,
     SIDE_SAPI_RIGHT: 1.0,
+    SIDE_SAPI_LEFT: 1.0,
     HELMET_BALLISTIC_SHELL: 1.0,
   };
   if (overrides) {

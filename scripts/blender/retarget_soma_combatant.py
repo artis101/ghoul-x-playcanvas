@@ -103,9 +103,9 @@ class CombatantRetarget:
         if zone in MIDLINE:
             return MIDLINE[zone], self.model_rest[name]
         limb, side = zone.rsplit("_", 1)
+        # GHOUL and SOMA both name the character's own sides; a mirrored take crosses them.
         source_side = side.title()
-        # GHOUL's suffixes name model sides. SOMA names anatomical sides.
-        if not mirror:
+        if mirror:
             source_side = "Left" if side == "RIGHT" else "Right"
         joint, tip = (source_side + key for key in LIMBS[limb])
         source_dir = (self.rest_position(tip) - self.rest_position(joint)).normalized()

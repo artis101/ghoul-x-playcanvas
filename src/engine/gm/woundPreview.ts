@@ -24,7 +24,7 @@ import type { OffhandSidearmRig } from '../combat/offhandSidearmTypes.ts';
 import { GhoulMannequinEntity } from '../mannequin.ts';
 import { getOrCreateMaterials } from '../materials.ts';
 
-export type LostLimb = 'ARM_LEFT' | 'ARM_RIGHT' | 'LEG_LEFT' | 'LEG_RIGHT';
+export type LostLimb = 'ARM_RIGHT' | 'ARM_LEFT' | 'LEG_RIGHT' | 'LEG_LEFT';
 
 export interface WoundSpec {
   /** Knocked into the living ragdoll. */
@@ -35,13 +35,11 @@ export interface WoundSpec {
   readonly bleeding: boolean;
 }
 
-// LostLimb names the character's own left and right. Zone ids are named the other way round:
-// the body faces +z with its `_LEFT` zones at -x, which is the character's right-hand side.
 const SEVER_ZONE: Record<LostLimb, GhoulZoneId> = {
-  ARM_LEFT: 'UPPER_ARM_RIGHT',
-  ARM_RIGHT: 'UPPER_ARM_LEFT',
-  LEG_LEFT: 'THIGH_RIGHT',
-  LEG_RIGHT: 'THIGH_LEFT',
+  ARM_LEFT: 'UPPER_ARM_LEFT',
+  ARM_RIGHT: 'UPPER_ARM_RIGHT',
+  LEG_LEFT: 'THIGH_LEFT',
+  LEG_RIGHT: 'THIGH_RIGHT',
 };
 const STAND_BEFORE_WOUND_S = 0.6;
 const MAX_STEP_S = 1 / 30;
@@ -119,7 +117,7 @@ export class WoundPreview {
         stumpWorldPosition: hs.ragdollBones[zone].position,
         arterialSprayDirection: vec3(0, 1, 0),
         // Thrown outward, away from the side of the body it came off.
-        severedLimbVelocity: vec3(zone.endsWith('LEFT') ? -1.6 : 1.6, 1.8, -0.6),
+        severedLimbVelocity: vec3(zone.endsWith('RIGHT') ? -1.6 : 1.6, 1.8, -0.6),
         severedLimbAngularVelocity: vec3(3, 2, -4),
         gibCount: 0,
       };
@@ -140,8 +138,8 @@ export class WoundPreview {
     const result = stepEnemyArmamentState(reconcileEnemyArmamentState(this.armament), {
       dt,
       alive: hs.alive && hs.currentHp > 0,
-      leftArmIntact: isArmChainIntactAndFunctional(hs, 'LEFT'),
       rightArmIntact: isArmChainIntactAndFunctional(hs, 'RIGHT'),
+      leftArmIntact: isArmChainIntactAndFunctional(hs, 'LEFT'),
       preferredPrimaryHand: preferred,
       intactHand: selectIntactFiringHand(hs, preferred),
       weaponDropped: hs.weaponDropped,

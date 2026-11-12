@@ -210,12 +210,12 @@ export class GhoulMannequinEntity {
     const glb = this.combatantGlb;
     this.driveState = resolveMannequinDriveState(state);
     const animated = glb !== null && this.driveState.mode !== 'FULL_RAGDOLL';
-    const leftArmDead = this.driveState.leftArmDeadAttached;
     const rightArmDead = this.driveState.rightArmDeadAttached;
+    const leftArmDead = this.driveState.leftArmDeadAttached;
     for (const [zone, bundle] of this.zoneBundles) {
       const skipRead =
-        (leftArmDead && (zone === 'UPPER_ARM_LEFT' || zone === 'FOREARM_LEFT' || zone === 'HAND_LEFT')) ||
-        (rightArmDead && (zone === 'UPPER_ARM_RIGHT' || zone === 'FOREARM_RIGHT' || zone === 'HAND_RIGHT'));
+        (rightArmDead && (zone === 'UPPER_ARM_RIGHT' || zone === 'FOREARM_RIGHT' || zone === 'HAND_RIGHT')) ||
+        (leftArmDead && (zone === 'UPPER_ARM_LEFT' || zone === 'FOREARM_LEFT' || zone === 'HAND_LEFT'));
       if (animated && !skipRead) this.boneSync.readAnimatedBone(glb, zone, state);
       const bone = state.ragdollBones[zone];
       bundle.zoneNode.setPosition(bone.position.x, bone.position.y, bone.position.z);

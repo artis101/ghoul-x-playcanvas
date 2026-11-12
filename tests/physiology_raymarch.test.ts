@@ -85,8 +85,8 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
       );
       expect(armpitReport.stoppedByArmorPlate).toBeNull();
       expect(armpitReport.armorPlatesIntersected).toHaveLength(0);
-      expect(armpitReport.organTrauma.some((o) => o.organId === 'LUNG_RIGHT')).toBe(true);
-      expect(armpitReport.vascularWounds.some((v) => v.vesselId === 'SUBCLAVIAN_RIGHT')).toBe(true);
+      expect(armpitReport.organTrauma.some((o) => o.organId === 'LUNG_LEFT')).toBe(true);
+      expect(armpitReport.vascularWounds.some((v) => v.vesselId === 'SUBCLAVIAN_LEFT')).toBe(true);
 
       // D. Supraclavicular / Collarbone gap shot at y = 1.49 (above ESAPI top edge y = 1.46!)
       const collarReport = marchInternalBallistics(
@@ -100,8 +100,8 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
         bvh
       );
       expect(collarReport.stoppedByArmorPlate).toBeNull();
-      expect(collarReport.organTrauma.some((o) => o.organId === 'LUNG_RIGHT')).toBe(true);
-      expect(collarReport.vascularWounds.some((v) => v.vesselId === 'SUBCLAVIAN_RIGHT')).toBe(true);
+      expect(collarReport.organTrauma.some((o) => o.organId === 'LUNG_LEFT')).toBe(true);
+      expect(collarReport.vascularWounds.some((v) => v.vesselId === 'SUBCLAVIAN_LEFT')).toBe(true);
     });
   });
 
@@ -172,11 +172,11 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
       ecs.registerEntity({
         entityId: 'rifleman_femur',
         alertnessState: 'COMBAT_ALERT',
-        dominantHand: 'RIGHT',
+        dominantHand: 'LEFT',
         enableArmorPlates: true,
       });
 
-      // Strike right femur shaft directly (local x = 0.119, y = 0.70)
+      // Strike left femur shaft directly (local x = 0.119, y = 0.70)
       const femurReport = marchInternalBallistics({
         ammo: AMMO_762_NATO_M118LR,
         rayOriginWorld: vec3(0.119, 0.70, 0.9),
@@ -184,13 +184,13 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
         impactVelocityMs: 790,
       });
 
-      const femurRecord = femurReport.boneTrauma.find((b) => b.boneId === 'FEMUR_RIGHT');
+      const femurRecord = femurReport.boneTrauma.find((b) => b.boneId === 'FEMUR_LEFT');
       expect(femurRecord).toBeDefined();
       expect(femurRecord!.fractured).toBe(true);
       expect(femurRecord!.deflectionAngleDeg).toBeGreaterThan(0);
 
       const boneShards = femurReport.secondaryFragments.filter(
-        (f) => f.kind === 'CORTICAL_BONE_SHARD' && f.sourceBoneId === 'FEMUR_RIGHT'
+        (f) => f.kind === 'CORTICAL_BONE_SHARD' && f.sourceBoneId === 'FEMUR_LEFT'
       );
       expect(boneShards.length).toBeGreaterThanOrEqual(1);
       expect(boneShards.length).toBeLessThanOrEqual(3);
@@ -201,10 +201,10 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
 
       const state = ecs.applyBallisticTrauma('rifleman_femur', femurReport);
       expect(state.canStand).toBe(false);
-      expect(state.rightLegFunctional).toBe(false);
+      expect(state.leftLegFunctional).toBe(false);
       expect(state.locomotionMode).toBe('PRONE_CRAWL');
-      expect(state.rightArmFunctional).toBe(true);
       expect(state.leftArmFunctional).toBe(true);
+      expect(state.rightArmFunctional).toBe(true);
       expect(state.canPullTrigger).toBe(true);
       expect(state.readability.immediatePostureReaction).toBe('LEG_COLLAPSE_PRONE');
     });
@@ -214,11 +214,11 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
       ecs.registerEntity({
         entityId: 'gunner_brachial',
         alertnessState: 'COMBAT_ALERT',
-        dominantHand: 'RIGHT',
+        dominantHand: 'LEFT',
         enableArmorPlates: false,
       });
 
-      // Right brachial plexus lateral axillary cord (x = 0.185, y = 1.425 — outside right lung)
+      // Left brachial plexus lateral axillary cord (x = 0.185, y = 1.425 — outside left lung)
       const brachialReport = marchInternalBallistics({
         ammo: AMMO_556_NATO_M855,
         rayOriginWorld: vec3(0.185, 1.425, 0.8),
@@ -226,21 +226,21 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
         impactVelocityMs: 850,
         config: { enableArmorPlates: false },
       });
-      expect(brachialReport.nervesSevered).toContain('BRACHIAL_PLEXUS_RIGHT');
+      expect(brachialReport.nervesSevered).toContain('BRACHIAL_PLEXUS_LEFT');
 
       const brachialState = ecs.applyBallisticTrauma('gunner_brachial', brachialReport);
       expect(brachialState.weaponDropped).toBe(true);
-      expect(brachialState.rightArmFunctional).toBe(false);
+      expect(brachialState.leftArmFunctional).toBe(false);
       expect(brachialState.canPullTrigger).toBe(false);
       expect(brachialState.aimSwayMultiplier).toBeGreaterThanOrEqual(3.5);
       expect(brachialState.aimSwayMultiplier).toBeLessThanOrEqual(6.0);
       expect(brachialState.readability.immediatePostureReaction).toBe('WEAPON_WRENCH_DROP');
 
-      // Left (support-arm) radius-ulna hit spikes aimSwayMultiplier into 3.5x–6.0x while right hand holds weapon
+      // Right (support-arm) radius-ulna hit spikes aimSwayMultiplier into 3.5x–6.0x while left hand holds weapon
       ecs.registerEntity({
-        entityId: 'gunner_forearm_left',
+        entityId: 'gunner_forearm_right',
         alertnessState: 'COMBAT_ALERT',
-        dominantHand: 'RIGHT',
+        dominantHand: 'LEFT',
       });
       const forearmReport = marchInternalBallistics({
         ammo: AMMO_50AE_JHP,
@@ -249,11 +249,11 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
         impactVelocityMs: 430,
       });
       expect(
-        forearmReport.boneTrauma.some((b) => b.boneId === 'RADIUS_ULNA_LEFT' && b.fractured)
+        forearmReport.boneTrauma.some((b) => b.boneId === 'RADIUS_ULNA_RIGHT' && b.fractured)
       ).toBe(true);
 
-      const forearmState = ecs.applyBallisticTrauma('gunner_forearm_left', forearmReport);
-      expect(forearmState.leftArmFunctional).toBe(false);
+      const forearmState = ecs.applyBallisticTrauma('gunner_forearm_right', forearmReport);
+      expect(forearmState.rightArmFunctional).toBe(false);
       expect(forearmState.weaponDropped).toBe(false);
       expect(forearmState.aimSwayMultiplier).toBeGreaterThanOrEqual(3.5);
       expect(forearmState.aimSwayMultiplier).toBeLessThanOrEqual(6.0);
@@ -262,7 +262,7 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
 
   describe('4. Dual Cavitation: >600 m/s Stretch vs <450 m/s Pistol Crush-Only & Inelastic Liver/Brain Rupture', () => {
     it('applies stretch cavitation to off-axis elastic vessels above 600 m/s while <450 m/s pistol produces crush-only channel in elastic muscle', () => {
-      // Left femoral artery at y = 0.72 runs near x = -0.109, z = 0.012 (lumen ~6.5mm).
+      // Right femoral artery at y = 0.72 runs near x = -0.109, z = 0.012 (lumen ~6.5mm).
       // Pass 2.1 cm medial to the artery wall (x = -0.080, y = 0.72): outside permanent crush radius, inside rifle stretch cavity!
       const offAxisOrigin = vec3(-0.080, 0.72, 0.6);
       const offAxisDir = vec3(0, 0, -1);
@@ -275,7 +275,7 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
         config: { enableArmorPlates: false },
       });
       expect(pistolElastic.steps.every((s) => s.stretchCavitationActive === false)).toBe(true);
-      expect(pistolElastic.vascularWounds.some((v) => v.vesselId === 'FEMORAL_LEFT')).toBe(false);
+      expect(pistolElastic.vascularWounds.some((v) => v.vesselId === 'FEMORAL_RIGHT')).toBe(false);
 
       const rifleStretch = marchInternalBallistics({
         ammo: AMMO_762_NATO_M118LR,
@@ -285,14 +285,14 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
         config: { enableArmorPlates: false },
       });
       expect(rifleStretch.steps.some((s) => s.stretchCavitationActive === true)).toBe(true);
-      expect(rifleStretch.vascularWounds.some((v) => v.vesselId === 'FEMORAL_LEFT')).toBe(true);
+      expect(rifleStretch.vascularWounds.some((v) => v.vesselId === 'FEMORAL_RIGHT')).toBe(true);
     });
 
     it('ruptures inelastic LIVER and BRAIN parenchyma under temporary stretch energy even below 600 m/s', () => {
-      // Sub-450 m/s .50 AE JHP (435 m/s) into right upper quadrant LIVER (localCenter: 0.065, 1.155, 0.015)
+      // Sub-450 m/s .50 AE JHP (435 m/s) into right upper quadrant LIVER (localCenter: -0.065, 1.155, 0.015)
       const liverHit = marchInternalBallistics({
         ammo: AMMO_50AE_JHP,
-        rayOriginWorld: vec3(0.085, 1.155, 0.7),
+        rayOriginWorld: vec3(-0.085, 1.155, 0.7),
         rayDirectionWorld: vec3(0, 0, -1),
         impactVelocityMs: 435,
         config: { enableArmorPlates: false },
@@ -334,7 +334,7 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
         impactVelocityMs: 880,
         config: { enableArmorPlates: false },
       });
-      expect(femoralShot.vascularWounds.some((v) => v.vesselId === 'FEMORAL_RIGHT')).toBe(true);
+      expect(femoralShot.vascularWounds.some((v) => v.vesselId === 'FEMORAL_LEFT')).toBe(true);
       ecs.applyBallisticTrauma('bleed_subject', femoralShot);
 
       const initialBleedRate = state.effectiveBleedRateMlPerSec;
@@ -387,7 +387,7 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
         enableArmorPlates: false,
       });
 
-      // Clean isolated gunshot perforation of left lung (x = -0.135, y = 1.35) without cardiac/aortic hit
+      // Clean isolated gunshot perforation of right lung (x = -0.135, y = 1.35) without cardiac/aortic hit
       const lungShot = marchInternalBallistics({
         ammo: PISTOL_9MM_FMJ,
         rayOriginWorld: vec3(-0.135, 1.35, 0.7),
@@ -395,7 +395,7 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
         impactVelocityMs: 365,
         config: { enableArmorPlates: false },
       });
-      expect(lungShot.organTrauma.some((o) => o.organId === 'LUNG_LEFT')).toBe(true);
+      expect(lungShot.organTrauma.some((o) => o.organId === 'LUNG_RIGHT')).toBe(true);
 
       ecs.applyBallisticTrauma('pneumo_untreated', lungShot);
       ecs.applyBallisticTrauma('pneumo_treated', lungShot);
@@ -448,7 +448,7 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
       // Liver / diaphragm torso shot
       const liverReport = marchInternalBallistics({
         ammo: AMMO_50AE_JHP,
-        rayOriginWorld: vec3(0.065, 1.18, 0.8),
+        rayOriginWorld: vec3(-0.065, 1.18, 0.8),
         rayDirectionWorld: vec3(0, 0, -1),
         impactVelocityMs: 435,
         config: { enableArmorPlates: false },
@@ -470,7 +470,7 @@ describe('4-Stage Anatomical BVH Ray-Marching & Decoupled 8Hz Physiological ECS 
       expect(alertedLiver.readability.bleedVisualProfile.kind).toBe('VENOUS_DARK_OOZE');
       expect(alertedLiver.readability.bleedVisualProfile.rgbColor).toEqual([0.32, 0.01, 0.03]);
 
-      // Subclavian + right lung axillary shot on alerted target -> bright pulsing arterial jet + chest stagger + wet cough
+      // Subclavian + left lung axillary shot on alerted target -> bright pulsing arterial jet + chest stagger + wet cough
       const subclavianLungReport = marchInternalBallistics({
         ammo: AMMO_556_NATO_M855,
         rayOriginWorld: vec3(0.08, 1.49, 0.8),

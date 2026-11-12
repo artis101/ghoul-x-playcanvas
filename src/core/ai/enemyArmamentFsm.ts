@@ -19,8 +19,8 @@ export type ArmamentTransitionEvent = 'SIDEARM_DRAW_START' | 'ALERT';
 export interface EnemyArmamentTransitionInput {
   readonly dt: number;
   readonly alive: boolean;
-  readonly leftArmIntact: boolean;
   readonly rightArmIntact: boolean;
+  readonly leftArmIntact: boolean;
   readonly preferredPrimaryHand: ActiveFiringHand;
   readonly intactHand: ActiveFiringHand | null;
   readonly weaponDropped: boolean;
@@ -137,7 +137,7 @@ export function stepEnemyArmamentState(
     };
   }
 
-  const bothArmsLost = (!input.leftArmIntact && !input.rightArmIntact) || input.intactHand === null;
+  const bothArmsLost = (!input.rightArmIntact && !input.leftArmIntact) || input.intactHand === null;
   if (bothArmsLost) {
     return {
       state: { kind: 'DISARMED', sidearmDropped: hadSidearm },
@@ -168,7 +168,7 @@ export function stepEnemyArmamentState(
     };
   }
 
-  const anyArmLost = !input.leftArmIntact || !input.rightArmIntact;
+  const anyArmLost = !input.rightArmIntact || !input.leftArmIntact;
   const primaryDisarmed =
     anyArmLost || input.primaryArmDisarmed || (!input.isRagdollActive && input.weaponDropped);
 

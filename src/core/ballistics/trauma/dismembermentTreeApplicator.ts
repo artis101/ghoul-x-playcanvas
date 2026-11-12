@@ -9,9 +9,9 @@ import { add, copyVec3, cross, scale, sub } from '../vec3.ts';
 export function applyDismembermentTree(
   target: TargetHealthState,
   report: ShotSimulationReport
-): { newlySeveredLeftLeg: boolean; newlySeveredRightLeg: boolean } {
-  let newlySeveredLeftLeg = false;
+): { newlySeveredRightLeg: boolean; newlySeveredLeftLeg: boolean } {
   let newlySeveredRightLeg = false;
+  let newlySeveredLeftLeg = false;
 
   for (const dism of report.dismembermentEvents) {
     target.zoneGoreMode[dism.zone] = dism.goreMode;
@@ -32,17 +32,17 @@ export function applyDismembermentTree(
       dism.goreMode === 'CRANIAL_POP' ? 'OBLITERATED_HIDDEN' : 'DETACHED_LIMB';
     target.severedZones.add(dism.zone);
 
-    if (dism.zone === 'HAND_LEFT' || dism.zone === 'HAND_RIGHT' || dism.zone === 'FOOT_LEFT' || dism.zone === 'FOOT_RIGHT') {
+    if (dism.zone === 'HAND_RIGHT' || dism.zone === 'HAND_LEFT' || dism.zone === 'FOOT_RIGHT' || dism.zone === 'FOOT_LEFT') {
       target.bloodLossRateMlPerSec += 16;
     } else if (
-      dism.zone === 'FOREARM_LEFT' || dism.zone === 'FOREARM_RIGHT' ||
-      dism.zone === 'KNEE_LEFT' || dism.zone === 'KNEE_RIGHT' ||
-      dism.zone === 'SHIN_LEFT' || dism.zone === 'SHIN_RIGHT'
+      dism.zone === 'FOREARM_RIGHT' || dism.zone === 'FOREARM_LEFT' ||
+      dism.zone === 'KNEE_RIGHT' || dism.zone === 'KNEE_LEFT' ||
+      dism.zone === 'SHIN_RIGHT' || dism.zone === 'SHIN_LEFT'
     ) {
       target.bloodLossRateMlPerSec += 26;
-    } else if (dism.zone === 'UPPER_ARM_LEFT' || dism.zone === 'UPPER_ARM_RIGHT') {
+    } else if (dism.zone === 'UPPER_ARM_RIGHT' || dism.zone === 'UPPER_ARM_LEFT') {
       target.bloodLossRateMlPerSec += 38;
-    } else if (dism.zone === 'THIGH_LEFT' || dism.zone === 'THIGH_RIGHT') {
+    } else if (dism.zone === 'THIGH_RIGHT' || dism.zone === 'THIGH_LEFT') {
       target.bloodLossRateMlPerSec += 58;
     }
 
@@ -83,23 +83,23 @@ export function applyDismembermentTree(
       }
     }
 
-    if (dism.zone === 'THIGH_LEFT' || dism.zone === 'KNEE_LEFT' || dism.zone === 'SHIN_LEFT' || dism.zone === 'FOOT_LEFT') {
-      target.leftLegFunctional = false;
-      newlySeveredLeftLeg = true;
-    }
     if (dism.zone === 'THIGH_RIGHT' || dism.zone === 'KNEE_RIGHT' || dism.zone === 'SHIN_RIGHT' || dism.zone === 'FOOT_RIGHT') {
       target.rightLegFunctional = false;
       newlySeveredRightLeg = true;
     }
-    if (dism.zone === 'UPPER_ARM_LEFT' || dism.zone === 'FOREARM_LEFT' || dism.zone === 'HAND_LEFT') {
-      target.leftArmFunctional = false;
-      transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
+    if (dism.zone === 'THIGH_LEFT' || dism.zone === 'KNEE_LEFT' || dism.zone === 'SHIN_LEFT' || dism.zone === 'FOOT_LEFT') {
+      target.leftLegFunctional = false;
+      newlySeveredLeftLeg = true;
     }
     if (dism.zone === 'UPPER_ARM_RIGHT' || dism.zone === 'FOREARM_RIGHT' || dism.zone === 'HAND_RIGHT') {
       target.rightArmFunctional = false;
       transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
     }
+    if (dism.zone === 'UPPER_ARM_LEFT' || dism.zone === 'FOREARM_LEFT' || dism.zone === 'HAND_LEFT') {
+      target.leftArmFunctional = false;
+      transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
+    }
   }
 
-  return { newlySeveredLeftLeg, newlySeveredRightLeg };
+  return { newlySeveredRightLeg, newlySeveredLeftLeg };
 }

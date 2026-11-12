@@ -13,8 +13,8 @@ export function createDefaultArmorIntegrity(
   return {
     FRONT_ESAPI_PLATE: enableArmorPlates ? 1.0 : 0.0,
     BACK_ESAPI_PLATE: enableArmorPlates ? 1.0 : 0.0,
-    SIDE_SAPI_LEFT: enableArmorPlates ? 1.0 : 0.0,
     SIDE_SAPI_RIGHT: enableArmorPlates ? 1.0 : 0.0,
+    SIDE_SAPI_LEFT: enableArmorPlates ? 1.0 : 0.0,
     HELMET_BALLISTIC_SHELL: enableHelmet ? 1.0 : 0.0,
   };
 }
@@ -71,10 +71,10 @@ export function createPhysiologicalEntityState(
 
     canStand: true,
     canPullTrigger: true,
-    leftLegFunctional: true,
     rightLegFunctional: true,
-    leftArmFunctional: true,
+    leftLegFunctional: true,
     rightArmFunctional: true,
+    leftArmFunctional: true,
     weaponDropped: false,
     dominantHand: config.dominantHand ?? 'RIGHT',
     aimSwayMultiplier: 1.0,

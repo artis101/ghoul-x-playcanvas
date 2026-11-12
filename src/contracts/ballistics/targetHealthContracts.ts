@@ -95,6 +95,10 @@ export interface RagdollBoneState {
   angularVelocity: Vec3Like;
   rotationEuler: Vec3Like;
   /** Orthonormal right (+X), up (+Y), forward (+Z) vectors in world space */
+  /**
+   * The basis's +X axis, with forward = right × up. On an upright body facing +Z this axis
+   * points to the character's own LEFT; the name is the basis-triple convention, not a body side.
+   */
   basisRight: Vec3Like;
   basisUp: Vec3Like;
   basisForward: Vec3Like;
@@ -113,10 +117,10 @@ export interface RagdollBoneState {
 
 export type AuxParticleId =
   | 'HEAD_TOP'
-  | 'HAND_TIP_LEFT'
   | 'HAND_TIP_RIGHT'
-  | 'FOOT_TOE_LEFT'
-  | 'FOOT_TOE_RIGHT';
+  | 'HAND_TIP_LEFT'
+  | 'FOOT_TOE_RIGHT'
+  | 'FOOT_TOE_LEFT';
 
 export interface AuxRagdollParticle {
   id: AuxParticleId;
@@ -168,12 +172,12 @@ export interface TargetHealthState {
   consciousness: number;
   painShock: number;
   posture: CombatantPostureState;
-  /** True (~12.5% southpaw chance) when combatant shoulders & triggers weapon on anatomical left (+X); false (~87.5%) for standard right-handed (-X) */
+  /** True (~12.5% southpaw chance) when the combatant triggers the weapon with their own left hand (+X); false for a right-hander (-X). See core `handedness.ts`. */
   isLeftHanded: boolean;
-  leftLegFunctional: boolean;
   rightLegFunctional: boolean;
-  leftArmFunctional: boolean;
+  leftLegFunctional: boolean;
   rightArmFunctional: boolean;
+  leftArmFunctional: boolean;
   headgearIntact: boolean;
   weaponDropped: boolean;
   /** True when the primary weapon was dropped due to direct arm/hand trauma or disarm rather than leg knockdown */

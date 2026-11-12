@@ -8,8 +8,8 @@ import { BvhPrimitiveShape } from './armorShellTypes.ts';
 export type InternalOrganId =
   | 'BRAIN'
   | 'HEART'
-  | 'LUNG_LEFT'
   | 'LUNG_RIGHT'
+  | 'LUNG_LEFT'
   | 'DIAPHRAGM'
   | 'LIVER'
   | 'GI_TRACT';
@@ -24,19 +24,19 @@ export type SkeletalStructureId =
   | 'SPINE_LUMBAR'
   | 'RIB_CAGE'
   | 'PELVIS'
-  | 'FEMUR_LEFT'
   | 'FEMUR_RIGHT'
-  | 'HUMERUS_LEFT'
+  | 'FEMUR_LEFT'
   | 'HUMERUS_RIGHT'
-  | 'RADIUS_ULNA_LEFT'
-  | 'RADIUS_ULNA_RIGHT';
+  | 'HUMERUS_LEFT'
+  | 'RADIUS_ULNA_RIGHT'
+  | 'RADIUS_ULNA_LEFT';
 
 /**
  * Tier-2 Major Peripheral Neural Plexus Identifiers.
  */
 export type NeuralPlexusId =
-  | 'BRACHIAL_PLEXUS_LEFT'
-  | 'BRACHIAL_PLEXUS_RIGHT';
+  | 'BRACHIAL_PLEXUS_RIGHT'
+  | 'BRACHIAL_PLEXUS_LEFT';
 
 export type NerveSegmentId = NeuralPlexusId;
 
@@ -44,18 +44,18 @@ export type NerveSegmentId = NeuralPlexusId;
  * Tier-2 Major Vascular 3D Spline Identifiers.
  */
 export type VascularVesselId =
-  | 'CAROTID_LEFT'
   | 'CAROTID_RIGHT'
-  | 'SUBCLAVIAN_LEFT'
+  | 'CAROTID_LEFT'
   | 'SUBCLAVIAN_RIGHT'
+  | 'SUBCLAVIAN_LEFT'
   | 'AORTA_THORACIC_ABDOMINAL'
-  | 'FEMORAL_LEFT'
   | 'FEMORAL_RIGHT'
+  | 'FEMORAL_LEFT'
   | 'VENA_CAVA_JUGULAR_FEMORAL'
-  | 'JUGULAR_VENOUS_LEFT'
   | 'JUGULAR_VENOUS_RIGHT'
-  | 'FEMORAL_VENOUS_LEFT'
-  | 'FEMORAL_VENOUS_RIGHT';
+  | 'JUGULAR_VENOUS_LEFT'
+  | 'FEMORAL_VENOUS_RIGHT'
+  | 'FEMORAL_VENOUS_LEFT';
 
 export type VesselKind = 'ARTERIAL' | 'VENOUS';
 
@@ -99,7 +99,7 @@ export interface NeuralPlexusVolume {
   readonly id: NeuralPlexusId;
   readonly label: string;
   readonly ghoulZone: GhoulZoneId;
-  readonly side: 'LEFT' | 'RIGHT';
+  readonly side: 'RIGHT' | 'LEFT';
   readonly capsuleStart: Vec3Like;
   readonly capsuleEnd: Vec3Like;
   readonly capsuleRadiusM: number;

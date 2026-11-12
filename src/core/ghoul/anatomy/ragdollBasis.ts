@@ -52,7 +52,7 @@ export function recomputeRagdollBasisVectors(target: TargetHealthState): void {
       : sub(thorax.position, abdomen.position);
   const shRight =
     shL.componentId === thorax.componentId && shR.componentId === thorax.componentId
-      ? sub(shR.position, shL.position)
+      ? sub(shL.position, shR.position)
       : pelvis.basisRight;
   const tBasis = basisFromRightAndUp(shRight, thoraxUp, pelvis.basisForward);
   thorax.basisRight = tBasis.right;
@@ -105,9 +105,9 @@ export function recomputeRagdollBasisVectors(target: TargetHealthState): void {
   jaw.distalPosition = copyVec3(head.position);
 
   // 5. Shoulders
-  for (const side of ['LEFT', 'RIGHT'] as const) {
-    const shZone: GhoulZoneId = side === 'LEFT' ? 'SHOULDER_LEFT' : 'SHOULDER_RIGHT';
-    const uaZone: GhoulZoneId = side === 'LEFT' ? 'UPPER_ARM_LEFT' : 'UPPER_ARM_RIGHT';
+  for (const side of ['RIGHT', 'LEFT'] as const) {
+    const shZone: GhoulZoneId = side === 'RIGHT' ? 'SHOULDER_RIGHT' : 'SHOULDER_LEFT';
+    const uaZone: GhoulZoneId = side === 'RIGHT' ? 'UPPER_ARM_RIGHT' : 'UPPER_ARM_LEFT';
     const sh = target.ragdollBones[shZone];
     const ua = target.ragdollBones[uaZone];
     sh.basisRight = copyVec3(thorax.basisRight);

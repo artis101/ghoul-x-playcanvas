@@ -79,7 +79,7 @@ export function handleEnemyHit(
     hit.isTorsoHit === true || (hit.hitZone !== undefined && TORSO_ZONES.has(hit.hitZone));
   const wasUnsuspecting = agent.state === 'PATROL_GUARD' && agent.adrenaline < 0.35;
 
-  if (!target.leftLegFunctional || !target.rightLegFunctional) {
+  if (!target.rightLegFunctional || !target.leftLegFunctional) {
     if (wasUnsuspecting && hitTorso) {
       enterNeurogenicShock(agent, 1.65);
       target.painShock = Math.max(target.painShock, 0.85);

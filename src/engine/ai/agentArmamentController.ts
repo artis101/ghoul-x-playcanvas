@@ -55,8 +55,8 @@ export function evaluateTargetArmamentState(
   agent?: EnemyAiAgentRuntime
 ): EnemyArmamentState {
   const preferredHand = getPreferredPrimaryHand(hs);
-  const leftIntact = isArmChainIntactAndFunctional(hs, 'LEFT');
   const rightIntact = isArmChainIntactAndFunctional(hs, 'RIGHT');
+  const leftIntact = isArmChainIntactAndFunctional(hs, 'LEFT');
   const intactHand = selectIntactFiringHand(hs, agent?.activeFiringHand ?? preferredHand);
   const current = agent ? reconcileEnemyArmamentState(agent) : createPrimaryArmedState(preferredHand);
   const sidearmEngaged = current.kind === 'SIDEARM_ACTIVE' || current.kind === 'SIDEARM_DRAWING';
@@ -64,8 +64,8 @@ export function evaluateTargetArmamentState(
   return stepEnemyArmamentState(current, {
     dt: 0,
     alive: hs.alive && hs.currentHp > 0,
-    leftArmIntact: leftIntact,
     rightArmIntact: rightIntact,
+    leftArmIntact: leftIntact,
     preferredPrimaryHand: preferredHand,
     intactHand,
     weaponDropped: hs.weaponDropped,
@@ -89,8 +89,8 @@ export function syncAgentArmamentAndSidearm(
   hs.resolveProfile = agent.resolveProfile;
 
   const preferredHand = getPreferredPrimaryHand(hs);
-  const leftIntact = isArmChainIntactAndFunctional(hs, 'LEFT');
   const rightIntact = isArmChainIntactAndFunctional(hs, 'RIGHT');
+  const leftIntact = isArmChainIntactAndFunctional(hs, 'LEFT');
   const intactHand = selectIntactFiringHand(hs, preferredHand);
   const isLastStandVital =
     agent.triageStatus === 'MORTALLY_WOUNDED' || hs.currentHp <= hs.maxHp * 0.32;
@@ -99,8 +99,8 @@ export function syncAgentArmamentAndSidearm(
   const result = stepEnemyArmamentState(current, {
     dt,
     alive: hs.alive && hs.currentHp > 0,
-    leftArmIntact: leftIntact,
     rightArmIntact: rightIntact,
+    leftArmIntact: leftIntact,
     preferredPrimaryHand: preferredHand,
     intactHand,
     weaponDropped: hs.weaponDropped,

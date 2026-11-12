@@ -3,26 +3,26 @@ import { isArmDeadButAttached } from '../../core/ghoul/anatomy/proceduralTraumaI
 
 export type PropAttachmentKind = 'ATTACHED' | 'HIDDEN_TEMP' | 'DETACHED_DROPPED';
 
-export type PropAttachmentState<THand extends string = 'LEFT' | 'RIGHT'> =
+export type PropAttachmentState<THand extends string = 'RIGHT' | 'LEFT'> =
   | { readonly kind: 'ATTACHED'; readonly hand?: THand }
   | { readonly kind: 'HIDDEN_TEMP'; readonly hand?: THand }
   | { readonly kind: 'DETACHED_DROPPED'; readonly lastHand?: THand };
 
-export interface PropAttachmentTransitionInput<THand extends string = 'LEFT' | 'RIGHT'> {
+export interface PropAttachmentTransitionInput<THand extends string = 'RIGHT' | 'LEFT'> {
   readonly shouldBeAttached: boolean;
   readonly temporarilyHidden?: boolean;
   readonly hand?: THand;
   readonly allowReattachAfterDrop?: boolean;
 }
 
-export interface PropAttachmentTransitionResult<THand extends string = 'LEFT' | 'RIGHT'> {
+export interface PropAttachmentTransitionResult<THand extends string = 'RIGHT' | 'LEFT'> {
   readonly state: PropAttachmentState<THand>;
   readonly isVisible: boolean;
   readonly shouldSpawnDroppedProp: boolean;
   readonly dropHand: THand | undefined;
 }
 
-export function createPropAttachmentState<THand extends string = 'LEFT' | 'RIGHT'>(
+export function createPropAttachmentState<THand extends string = 'RIGHT' | 'LEFT'>(
   initialKind: PropAttachmentKind = 'ATTACHED',
   hand?: THand
 ): PropAttachmentState<THand> {
@@ -35,7 +35,7 @@ export function createPropAttachmentState<THand extends string = 'LEFT' | 'RIGHT
   return { kind: 'DETACHED_DROPPED', lastHand: hand };
 }
 
-export function transitionPropAttachment<THand extends string = 'LEFT' | 'RIGHT'>(
+export function transitionPropAttachment<THand extends string = 'RIGHT' | 'LEFT'>(
   prev: PropAttachmentState<THand>,
   input: PropAttachmentTransitionInput<THand>
 ): PropAttachmentTransitionResult<THand> {
@@ -94,16 +94,16 @@ export type MannequinDriveMode =
 
 export interface MannequinDriveState {
   readonly mode: MannequinDriveMode;
-  readonly leftArmDeadAttached: boolean;
   readonly rightArmDeadAttached: boolean;
+  readonly leftArmDeadAttached: boolean;
 }
 
 export function resolveMannequinDriveState(healthState: TargetHealthState): MannequinDriveState {
   if (healthState.isRagdollActive || !healthState.alive || healthState.currentHp <= 0) {
     return {
       mode: 'FULL_RAGDOLL',
-      leftArmDeadAttached: false,
       rightArmDeadAttached: false,
+      leftArmDeadAttached: false,
     };
   }
 
@@ -113,7 +113,7 @@ export function resolveMannequinDriveState(healthState: TargetHealthState): Mann
 
   return {
     mode: isStandingPosture ? 'ANIM_STANDING' : 'ANIM_WOUNDED_POSTURE',
-    leftArmDeadAttached: isArmDeadButAttached(healthState, 'LEFT'),
     rightArmDeadAttached: isArmDeadButAttached(healthState, 'RIGHT'),
+    leftArmDeadAttached: isArmDeadButAttached(healthState, 'LEFT'),
   };
 }

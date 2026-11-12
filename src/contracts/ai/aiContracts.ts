@@ -1,7 +1,7 @@
 import type { Vec3Like } from '../ballistics.ts';
 import type { VocalTraumaCue } from '../physiology/entityStateTypes.ts';
 
-export type ActiveFiringHand = 'LEFT' | 'RIGHT';
+export type ActiveFiringHand = 'RIGHT' | 'LEFT';
 
 export type EnemyFireMode = 'AGGRESSIVE_LETHAL' | 'CINEMATIC_SUPPRESSION';
 
@@ -55,7 +55,7 @@ export type PlayerNearMissGrazeKind =
 
 export interface PlayerNearMissGrazePayload {
   readonly kind: PlayerNearMissGrazeKind;
-  readonly side: 'LEFT' | 'RIGHT';
+  readonly side: 'RIGHT' | 'LEFT';
   readonly attackerId: string;
   readonly hitPointWorld: Vec3Like;
   readonly tinnitusIntensity: number;

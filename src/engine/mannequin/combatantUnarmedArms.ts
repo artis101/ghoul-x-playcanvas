@@ -1,3 +1,4 @@
+import { oppositeSide } from '../../core/ghoul/anatomy/handedness.ts';
 import * as pc from 'playcanvas';
 import type { TargetHealthState } from '../../contracts/ballistics.ts';
 import { isArmChainIntactAndFunctional } from '../ai/combatantArmEvaluation.ts';
@@ -8,7 +9,7 @@ import { CombatantSupportGrip } from './combatantSupportGrip.ts';
 const RELAXED_CLIPS = new Set([
   'CombatReadyIdle', 'UnsuspectingIdle', 'Walk', 'Run', 'WalkBackward', 'StrafeLeft', 'StrafeRight', 'LongGunAim',
 ]);
-const SIDES = ['LEFT', 'RIGHT'] as const;
+const SIDES = ['RIGHT', 'LEFT'] as const;
 const EASE_RATE = 7;
 
 /**
@@ -57,7 +58,7 @@ export class CombatantUnarmedArms {
       if (onlySide && side !== onlySide) continue;
       const upper = glb.boneNodes.get(`UPPER_ARM_${side}`);
       const hand = glb.boneNodes.get(`HAND_${side}`);
-      const oppositeFoot = glb.boneNodes.get(`FOOT_${side === 'LEFT' ? 'RIGHT' : 'LEFT'}`);
+      const oppositeFoot = glb.boneNodes.get(`FOOT_${oppositeSide(side)}`);
       if (!upper || !hand || !isArmChainIntactAndFunctional(healthState, side)) continue;
       this.toCharacter.transformPoint(upper.getPosition(), this.shoulder);
       const out = Math.sign(this.shoulder.x - this.hips.x) || 1;
@@ -87,6 +88,6 @@ export class CombatantUnarmedArms {
       if (!hand || !forearm) return new pc.Quat();
       return new pc.Quat().copy(forearm.modelRot).invert().mul(hand.modelRot);
     };
-    return { LEFT: local('LEFT'), RIGHT: local('RIGHT') };
+    return { RIGHT: local('RIGHT'), LEFT: local('LEFT') };
   }
 }

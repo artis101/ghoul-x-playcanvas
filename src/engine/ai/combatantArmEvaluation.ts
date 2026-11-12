@@ -1,3 +1,4 @@
+import { triggerSide } from '../../core/ghoul/anatomy/handedness.ts';
 import type { EnemyArchetypeId, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
 import type { ActiveFiringHand, CombatantResolveProfile } from './tacticalAiTypes.ts';
 
@@ -14,38 +15,38 @@ export function isArmChainIntactAndFunctional(
   hs: TargetHealthState,
   hand: ActiveFiringHand
 ): boolean {
-  if (hand === 'LEFT') {
+  if (hand === 'RIGHT') {
     return (
-      hs.leftArmFunctional &&
-      !hs.severedZones.has('HAND_LEFT') &&
-      !hs.severedZones.has('FOREARM_LEFT') &&
-      !hs.severedZones.has('UPPER_ARM_LEFT') &&
-      !hs.severedZones.has('SHOULDER_LEFT')
+      hs.rightArmFunctional &&
+      !hs.severedZones.has('HAND_RIGHT') &&
+      !hs.severedZones.has('FOREARM_RIGHT') &&
+      !hs.severedZones.has('UPPER_ARM_RIGHT') &&
+      !hs.severedZones.has('SHOULDER_RIGHT')
     );
   }
   return (
-    hs.rightArmFunctional &&
-    !hs.severedZones.has('HAND_RIGHT') &&
-    !hs.severedZones.has('FOREARM_RIGHT') &&
-    !hs.severedZones.has('UPPER_ARM_RIGHT') &&
-    !hs.severedZones.has('SHOULDER_RIGHT')
+    hs.leftArmFunctional &&
+    !hs.severedZones.has('HAND_LEFT') &&
+    !hs.severedZones.has('FOREARM_LEFT') &&
+    !hs.severedZones.has('UPPER_ARM_LEFT') &&
+    !hs.severedZones.has('SHOULDER_LEFT')
   );
 }
 
 export function getPreferredPrimaryHand(hs: TargetHealthState): ActiveFiringHand {
-  return hs.isLeftHanded ? 'RIGHT' : 'LEFT';
+  return triggerSide(hs.isLeftHanded);
 }
 
 export function selectIntactFiringHand(
   hs: TargetHealthState,
   preferred: ActiveFiringHand
 ): ActiveFiringHand | null {
-  const leftIntact = isArmChainIntactAndFunctional(hs, 'LEFT');
   const rightIntact = isArmChainIntactAndFunctional(hs, 'RIGHT');
-  if (preferred === 'LEFT' && leftIntact) return 'LEFT';
+  const leftIntact = isArmChainIntactAndFunctional(hs, 'LEFT');
   if (preferred === 'RIGHT' && rightIntact) return 'RIGHT';
-  if (leftIntact) return 'LEFT';
+  if (preferred === 'LEFT' && leftIntact) return 'LEFT';
   if (rightIntact) return 'RIGHT';
+  if (leftIntact) return 'LEFT';
   return null;
 }
 

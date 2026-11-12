@@ -47,7 +47,7 @@ blender -b --python-exit-code 1 --python scripts/blender/bake_kimodo_combatant.p
   --blend "$work/combatant.blend" --m4a1-reference public/models/m4a1_carbine.glb
 ```
 
-Open `combatant.blend`, select `GhoulArmature`, and pick the action in Blender's Action Editor. Edit and keyframe bone rotations in Pose Mode. The M4A1 reference is attached to the anatomical right hand (`Bone_HAND_LEFT` in this rig). Hide it when editing the left-handed action and use Character Lab to check the live two-hand grip.
+Open `combatant.blend`, select `GhoulArmature`, and pick the action in Blender's Action Editor. Edit and keyframe bone rotations in Pose Mode. The M4A1 reference is attached to the character's right hand (`Bone_HAND_RIGHT`). Hide it when editing the left-handed action and use Character Lab to check the live two-hand grip.
 
 Keep the action name and frame range. To export only the changed bone rotations, use the corresponding clip and bone names:
 
@@ -55,7 +55,7 @@ Keep the action name and frame range. To export only the changed bone rotations,
 blender -b "$work/combatant.blend" --python-exit-code 1 \
   --python scripts/blender/export_combatant_rotations.py -- \
   "$work/ghoul_combatant.glb" "$work/ghoul_combatant-edited.glb" \
-  --clip CombatReadyIdle --bones Bone_UPPER_ARM_LEFT Bone_FOREARM_LEFT Bone_HAND_LEFT
+  --clip CombatReadyIdle --bones Bone_UPPER_ARM_RIGHT Bone_FOREARM_RIGHT Bone_HAND_RIGHT
 ```
 
 Copy the edited GLB to `public/models/ghoul_combatant.glb`, reload Character Lab, and scrub the edited section. The exporter samples each frame inside the clip's range. Use `bake_kimodo_combatant.py` to change a clip's source take or timing.

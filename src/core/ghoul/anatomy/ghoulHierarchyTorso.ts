@@ -12,7 +12,7 @@ export const GHOUL_HEAD_TORSO_HIERARCHY: Record<
   GhoulZoneNode
 > = {
   PELVIS_GROIN: {
-    children: ['TORSO_LOWER_ABDOMEN', 'THIGH_LEFT', 'THIGH_RIGHT'],
+    children: ['TORSO_LOWER_ABDOMEN', 'THIGH_RIGHT', 'THIGH_LEFT'],
     distalTarget: 'TORSO_LOWER_ABDOMEN',
     jointLocalPos: vec3(0, 0.95, 0),
     defaultMassKg: 14.0,
@@ -30,7 +30,7 @@ export const GHOUL_HEAD_TORSO_HIERARCHY: Record<
   },
   TORSO_UPPER_THORAX: {
     parent: 'TORSO_LOWER_ABDOMEN',
-    children: ['NECK_CERVICAL', 'SHOULDER_LEFT', 'SHOULDER_RIGHT'],
+    children: ['NECK_CERVICAL', 'SHOULDER_RIGHT', 'SHOULDER_LEFT'],
     distalTarget: 'NECK_CERVICAL',
     jointLocalPos: vec3(0, 1.30, 0),
     defaultMassKg: 19.0,

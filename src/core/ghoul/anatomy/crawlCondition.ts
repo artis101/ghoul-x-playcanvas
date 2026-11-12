@@ -6,8 +6,8 @@ export interface CrawlCondition {
   readonly effort: number;
   /** True while the combatant has stopped to gather strength. */
   readonly resting: boolean;
-  readonly dragLeftLeg: boolean;
   readonly dragRightLeg: boolean;
+  readonly dragLeftLeg: boolean;
   /** 0 with the head held up, 1 with it hanging. */
   readonly headDroop: number;
 }
@@ -27,12 +27,12 @@ function clamp01(value: number): number {
  * pauses between bursts of movement.
  */
 export function evaluateCrawlCondition(state: TargetHealthState, clockS: number): CrawlCondition {
-  const dragLeftLeg = !state.leftLegFunctional && !state.severedZones.has('THIGH_LEFT');
   const dragRightLeg = !state.rightLegFunctional && !state.severedZones.has('THIGH_RIGHT');
+  const dragLeftLeg = !state.leftLegFunctional && !state.severedZones.has('THIGH_LEFT');
   const health = clamp01(state.maxHp > 0 ? state.currentHp / state.maxHp : 0);
   const pain = clamp01(state.painShock);
-  const workingArms = Number(state.leftArmFunctional) + Number(state.rightArmFunctional);
-  const bothLegsLost = !state.leftLegFunctional && !state.rightLegFunctional;
+  const workingArms = Number(state.rightArmFunctional) + Number(state.leftArmFunctional);
+  const bothLegsLost = !state.rightLegFunctional && !state.leftLegFunctional;
 
   let strength = 0.45 + 0.55 * health;
   strength *= 1 - 0.4 * pain;
@@ -49,8 +49,8 @@ export function evaluateCrawlCondition(state: TargetHealthState, clockS: number)
   return {
     effort: resting ? 0 : strength,
     resting,
-    dragLeftLeg,
     dragRightLeg,
+    dragLeftLeg,
     headDroop: clamp01(0.15 + 0.75 * (1 - health) + 0.3 * pain + (resting ? 0.35 : 0)),
   };
 }

@@ -71,11 +71,11 @@ function createIdlePose(clip: string) {
 }
 
 function expectM4Grip(
-  holder: pc.Entity, hand: pc.GraphNode, side: 'LEFT' | 'RIGHT', trigger: boolean, time: number,
+  holder: pc.Entity, hand: pc.GraphNode, side: 'RIGHT' | 'LEFT', trigger: boolean, time: number,
 ): void {
   const inverse = new pc.Mat4().invert(holder.getWorldTransform());
   const palm = hand.up.clone().mulScalar(trigger ? 0.052 : 0.05).add(hand.getPosition());
-  const expectedPalm = new pc.Vec3(side === 'LEFT' ? 0.027 : -0.027, trigger ? -0.05 : -0.054, trigger ? 0.023 : -0.272);
+  const expectedPalm = new pc.Vec3(side === 'RIGHT' ? 0.027 : -0.027, trigger ? -0.05 : -0.054, trigger ? 0.023 : -0.272);
   const thumb = inverse.transformVector(hand.getRotation().transformVector(pc.Vec3.BACK)).normalize();
   const expectedThumb = trigger ? new pc.Vec3(0, 0.94, -0.342) : pc.Vec3.UP;
   const actualPalm = inverse.transformPoint(palm);
@@ -109,8 +109,8 @@ describe('Combat Ready Idle held prop', () => {
           }),
         } as unknown as GlbModelRegistry;
         mount.attachGlbWeaponIfReady(registry, state, app.root, weaponId);
-        const supportSide = state.isLeftHanded ? 'LEFT' : 'RIGHT';
-        const triggerSide = state.isLeftHanded ? 'RIGHT' : 'LEFT';
+        const supportSide = state.isLeftHanded ? 'RIGHT' : 'LEFT';
+        const triggerSide = state.isLeftHanded ? 'LEFT' : 'RIGHT';
         const chest = pose.glb.boneNodes.get('TORSO_UPPER_THORAX')!;
         const elbow = pose.glb.boneNodes.get(`FOREARM_${supportSide}`)!;
         const supportHand = pose.glb.boneNodes.get(`HAND_${supportSide}`)!;

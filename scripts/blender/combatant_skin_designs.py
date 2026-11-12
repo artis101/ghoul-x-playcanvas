@@ -77,10 +77,10 @@ def paint_page(look: Look, chains: Dict[str, ChainMap], head_base: Callable, hea
     """Returns the 512 px atlas page, rows bottom-up."""
     page = np.zeros((ATLAS, ATLAS, 3))
     paste(page, "TORSO", paint_torso(chain_region("TORSO", chains["TORSO"]), look))
-    for label, side in (("LEFT", -1.0), ("RIGHT", 1.0)):
+    for label, side in (("RIGHT", -1.0), ("LEFT", 1.0)):
         paste(page, f"ARM_{label}", paint_arm(chain_region(f"ARM_{label}", chains[f"ARM_{label}"], side), look))
         leg = chain_region(f"LEG_{label}", chains[f"LEG_{label}"], side)
-        paste(page, f"LEG_{label}", paint_leg(leg, look, look.holster and label == "RIGHT"))
+        paste(page, f"LEG_{label}", paint_leg(leg, look, look.holster and label == "LEFT"))
         paste(page, f"HAND_{label}", paint_hand(f"HAND_{label}", look))
         paste(page, f"FOOT_{label}", paint_boot(f"FOOT_{label}"))
     paste(page, "HEAD", paint_head("HEAD", look, head_base, head_theta, head_keys))

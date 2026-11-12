@@ -52,15 +52,15 @@ describe('Blender combatant runtime', () => {
     updateStandingCombatPose(rhTarget, 1.0);
     updateStandingCombatPose(lhTarget, 1.0);
 
-    // Facing +Z: right-handed holds gun in HAND_LEFT (-X, anatomical right) and clutches throat with HAND_RIGHT (+X, anatomical left);
-    // southpaw holds gun in HAND_RIGHT (+X, anatomical left) and clutches throat with HAND_LEFT (-X, anatomical right)!
-    expect(rhTarget.ragdollBones.HAND_RIGHT.position.y).toBeGreaterThan(1.48);
-    expect(rhTarget.ragdollBones.HAND_LEFT.position.y).toBeLessThan(1.38);
-    expect(lhTarget.ragdollBones.HAND_LEFT.position.y).toBeGreaterThan(1.48);
-    expect(lhTarget.ragdollBones.HAND_RIGHT.position.y).toBeLessThan(1.38);
+    // Facing +Z: a right-hander holds the gun in HAND_RIGHT (-X) and clutches the throat with HAND_LEFT (+X);
+    // a southpaw holds the gun in HAND_LEFT (+X) and clutches the throat with HAND_RIGHT (-X).
+    expect(rhTarget.ragdollBones.HAND_LEFT.position.y).toBeGreaterThan(1.48);
+    expect(rhTarget.ragdollBones.HAND_RIGHT.position.y).toBeLessThan(1.38);
+    expect(lhTarget.ragdollBones.HAND_RIGHT.position.y).toBeGreaterThan(1.48);
+    expect(lhTarget.ragdollBones.HAND_LEFT.position.y).toBeLessThan(1.38);
 
-    // Trigger-hand disarm: moderate ~190 J pistol round into HAND_LEFT disarms right-handed (trigger hand)
-    // without severing, leaving southpaw (whose trigger hand is HAND_RIGHT) still holding their weapon!
+    // Trigger-hand disarm: moderate ~190 J pistol round into HAND_RIGHT disarms right-handed (trigger hand)
+    // without severing, leaving southpaw (whose trigger hand is HAND_LEFT) still holding their weapon!
     const lightPistolAmmo: AmmoSpec = {
       ...AMMO_556_NATO_M855,
       id: '9mm_subsonic_test',
@@ -73,15 +73,15 @@ describe('Blender combatant runtime', () => {
     const rhDisarmTest = createTargetHealthState('rh_disarm', 'RH', vec3(0, 0, -4), 0, 'SKINHEAD_PUNK', false);
     const lhDisarmTest = createTargetHealthState('lh_disarm', 'LH', vec3(0, 0, -4), 0, 'SKINHEAD_PUNK', true);
 
-    const handLeftTargetPt = rhDisarmTest.ragdollBones.HAND_LEFT.position;
-    const muzzleLeftOrigin = add(handLeftTargetPt, vec3(0, 0, 1.2));
-    const aimToHandLeft = normalize(sub(handLeftTargetPt, muzzleLeftOrigin));
+    const handRightTargetPt = rhDisarmTest.ragdollBones.HAND_RIGHT.position;
+    const muzzleRightOrigin = add(handRightTargetPt, vec3(0, 0, 1.2));
+    const aimToHandRight = normalize(sub(handRightTargetPt, muzzleRightOrigin));
 
     const rhReport = simulateShot(
       WEAPON_M4A1,
       lightPistolAmmo,
-      muzzleLeftOrigin,
-      aimToHandLeft,
+      muzzleRightOrigin,
+      aimToHandRight,
       rhDisarmTest,
       DEFAULT_ENVIRONMENT
     );
@@ -90,8 +90,8 @@ describe('Blender combatant runtime', () => {
     const lhOffhandReport = simulateShot(
       WEAPON_M4A1,
       lightPistolAmmo,
-      muzzleLeftOrigin,
-      aimToHandLeft,
+      muzzleRightOrigin,
+      aimToHandRight,
       lhDisarmTest,
       DEFAULT_ENVIRONMENT
     );
@@ -102,15 +102,15 @@ describe('Blender combatant runtime', () => {
     expect(rhDisarmTest.weaponDropped).toBe(true);
     expect(lhDisarmTest.weaponDropped).toBe(false);
 
-    // Hitting HAND_RIGHT disarms the southpaw combatant!
-    const handRightTargetPt = lhDisarmTest.ragdollBones.HAND_RIGHT.position;
-    const muzzleRightOrigin = add(handRightTargetPt, vec3(0, 0, 1.2));
-    const aimToHandRight = normalize(sub(handRightTargetPt, muzzleRightOrigin));
+    // Hitting HAND_LEFT disarms the southpaw combatant!
+    const handLeftTargetPt = lhDisarmTest.ragdollBones.HAND_LEFT.position;
+    const muzzleLeftOrigin = add(handLeftTargetPt, vec3(0, 0, 1.2));
+    const aimToHandLeft = normalize(sub(handLeftTargetPt, muzzleLeftOrigin));
     const lhTriggerReport = simulateShot(
       WEAPON_M4A1,
       lightPistolAmmo,
-      muzzleRightOrigin,
-      aimToHandRight,
+      muzzleLeftOrigin,
+      aimToHandLeft,
       lhDisarmTest,
       DEFAULT_ENVIRONMENT
     );
@@ -134,22 +134,22 @@ describe('Blender combatant runtime', () => {
         NECK_CERVICAL: 'TORSO_UPPER_THORAX',
         HEAD_CRANIUM: 'NECK_CERVICAL',
         HEAD_FACE_JAW: 'HEAD_CRANIUM',
-        SHOULDER_LEFT: 'TORSO_UPPER_THORAX',
-        UPPER_ARM_LEFT: 'SHOULDER_LEFT',
-        FOREARM_LEFT: 'UPPER_ARM_LEFT',
-        HAND_LEFT: 'FOREARM_LEFT',
         SHOULDER_RIGHT: 'TORSO_UPPER_THORAX',
         UPPER_ARM_RIGHT: 'SHOULDER_RIGHT',
         FOREARM_RIGHT: 'UPPER_ARM_RIGHT',
         HAND_RIGHT: 'FOREARM_RIGHT',
-        THIGH_LEFT: 'PELVIS_GROIN',
-        KNEE_LEFT: 'THIGH_LEFT',
-        SHIN_LEFT: 'KNEE_LEFT',
-        FOOT_LEFT: 'SHIN_LEFT',
+        SHOULDER_LEFT: 'TORSO_UPPER_THORAX',
+        UPPER_ARM_LEFT: 'SHOULDER_LEFT',
+        FOREARM_LEFT: 'UPPER_ARM_LEFT',
+        HAND_LEFT: 'FOREARM_LEFT',
         THIGH_RIGHT: 'PELVIS_GROIN',
         KNEE_RIGHT: 'THIGH_RIGHT',
         SHIN_RIGHT: 'KNEE_RIGHT',
         FOOT_RIGHT: 'SHIN_RIGHT',
+        THIGH_LEFT: 'PELVIS_GROIN',
+        KNEE_LEFT: 'THIGH_LEFT',
+        SHIN_LEFT: 'KNEE_LEFT',
+        FOOT_LEFT: 'SHIN_LEFT',
       };
 
       const unitBoxMesh = pc.Mesh.fromGeometry(device, new pc.BoxGeometry());
@@ -325,7 +325,7 @@ describe('Blender combatant runtime', () => {
       assertZeroLegacyFleshEnabled(mannequin, '2. Lacerated & Eviscerated');
 
       // Phase 3: LIVING DISMEMBERMENT — sever entire right trigger arm (.50 AE blowoff) while target is STILL ALIVE!
-      const upperArmPos = enforcerState.ragdollBones.UPPER_ARM_LEFT.position;
+      const upperArmPos = enforcerState.ragdollBones.UPPER_ARM_RIGHT.position;
       const armOrigin = add(upperArmPos, vec3(0.0, 0.0, 0.8));
       const armAimDir = normalize(sub(add(upperArmPos, vec3(-0.08, 0, -0.2)), armOrigin));
       const severArmAmmo: AmmoSpec = {
@@ -342,31 +342,31 @@ describe('Blender combatant runtime', () => {
         DEFAULT_ENVIRONMENT
       );
       applyShotReportToTarget(enforcerState, armReport);
-      expect(enforcerState.severedZones.has('UPPER_ARM_LEFT')).toBe(true);
+      expect(enforcerState.severedZones.has('UPPER_ARM_RIGHT')).toBe(true);
       expect(enforcerState.alive).toBe(true);
 
       // Move detached arm component 2.4m away across the arena floor
-      for (const z of ['UPPER_ARM_LEFT', 'FOREARM_LEFT', 'HAND_LEFT'] as const) {
+      for (const z of ['UPPER_ARM_RIGHT', 'FOREARM_RIGHT', 'HAND_RIGHT'] as const) {
         enforcerState.ragdollBones[z].position.x -= 2.4;
         enforcerState.ragdollBones[z].position.y = 0.08;
       }
       mannequin.syncFromHealthState(0.016, 1.0);
 
       // Living amputee MUST still render sculpted GLB (zero swap to old skin!), keep AnimComponent playing for BODY,
-      // move Bone_UPPER_ARM_LEFT in world space to match the severed ragdoll limb, and spawn GLB dropped weapon prop!
+      // move Bone_UPPER_ARM_RIGHT in world space to match the severed ragdoll limb, and spawn GLB dropped weapon prop!
       assertZeroLegacyFleshEnabled(mannequin, '3. Living Limb Dismemberment');
       expect(mannequin.combatantGlb!.animComponent!.playing).toBe(true);
-      const glbSeveredArmPos = mannequin.combatantGlb!.boneNodes.get('UPPER_ARM_LEFT')!.getPosition();
-      expect(glbSeveredArmPos.x).toBeCloseTo(enforcerState.ragdollBones.UPPER_ARM_LEFT.position.x, 2);
+      const glbSeveredArmPos = mannequin.combatantGlb!.boneNodes.get('UPPER_ARM_RIGHT')!.getPosition();
+      expect(glbSeveredArmPos.x).toBeCloseTo(enforcerState.ragdollBones.UPPER_ARM_RIGHT.position.x, 2);
       expect(glbSeveredArmPos.y).toBeCloseTo(0.08, 2);
       expect(fxManager.fxRoot.findByName('M590_GLB_Receiver')).not.toBeNull();
 
       // Phase 4: CRANIAL_POP + Headgear Shoot-Off + Lethal KIA Full Ragdoll + Severed Leg!
       enforcerState.headgearIntact = false;
       enforcerState.zoneGoreMode.HEAD_CRANIUM = 'CRANIAL_POP';
-      enforcerState.severedZones.add('THIGH_LEFT');
-      enforcerState.ragdollBones.THIGH_LEFT.componentId = 'LIMB_LEG';
-      enforcerState.ragdollBones.THIGH_LEFT.position = vec3(-3.2, 0.12, -8.5);
+      enforcerState.severedZones.add('THIGH_RIGHT');
+      enforcerState.ragdollBones.THIGH_RIGHT.componentId = 'LIMB_LEG';
+      enforcerState.ragdollBones.THIGH_RIGHT.position = vec3(-3.2, 0.12, -8.5);
       enforcerState.alive = false;
       enforcerState.isRagdollActive = true;
       enforcerState.ragdollBones.PELVIS_GROIN.position = vec3(-1.5, 0.14, -8.9);
@@ -383,7 +383,7 @@ describe('Blender combatant runtime', () => {
 
       const glbPelvisPos = mannequin.combatantGlb!.boneNodes.get('PELVIS_GROIN')!.getPosition();
       expect(glbPelvisPos.y).toBeCloseTo(0.14, 2);
-      const glbSeveredThighPos = mannequin.combatantGlb!.boneNodes.get('THIGH_LEFT')!.getPosition();
+      const glbSeveredThighPos = mannequin.combatantGlb!.boneNodes.get('THIGH_RIGHT')!.getPosition();
       expect(glbSeveredThighPos.x).toBeCloseTo(-3.2, 2);
 
       southpawMannequin.destroy();

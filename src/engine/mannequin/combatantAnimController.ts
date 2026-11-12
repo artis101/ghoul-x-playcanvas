@@ -9,7 +9,7 @@ const CRAWL_NOMINAL_SPEED = 0.47;
 
 export interface CombatantAimPose {
   readonly clip: 'LongGunAim' | 'PistolAim';
-  readonly hand?: 'LEFT' | 'RIGHT';
+  readonly hand?: 'RIGHT' | 'LEFT';
 }
 
 export type AnimClipState =
@@ -86,7 +86,7 @@ export class CombatantAnimController {
       ? 'Crawl'
       : locomotion?.clip ?? (canAim ? aim?.clip : undefined) ?? baseClip;
     const aimHand = desiredClip === 'PistolAim' ? aim?.hand : undefined;
-    const isSouthpaw = aimHand ? aimHand === 'RIGHT' : healthState.isLeftHanded;
+    const isSouthpaw = aimHand ? aimHand === 'LEFT' : healthState.isLeftHanded;
     const clipKey = `${desiredClip}_${isSouthpaw ? 'L' : 'R'}`;
 
     const reaction = healthState.activeReaction;

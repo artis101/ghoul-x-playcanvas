@@ -98,7 +98,7 @@ export interface ReadabilityFeedbackState {
 export interface PhysiologicalEntityConfig {
   readonly entityId: string;
   readonly alertnessState?: CombatAlertnessState;
-  readonly dominantHand?: 'RIGHT' | 'LEFT';
+  readonly dominantHand?: 'LEFT' | 'RIGHT';
   readonly enableArmorPlates?: boolean;
   readonly enableHelmet?: boolean;
   /** Time in seconds over which combat adrenaline decays (default 60s, within 30–90s envelope) */
@@ -136,12 +136,12 @@ export interface PhysiologicalEntityState {
   // Biomechanical & Motor Control
   canStand: boolean;
   canPullTrigger: boolean;
-  leftLegFunctional: boolean;
   rightLegFunctional: boolean;
-  leftArmFunctional: boolean;
+  leftLegFunctional: boolean;
   rightArmFunctional: boolean;
+  leftArmFunctional: boolean;
   weaponDropped: boolean;
-  dominantHand: 'RIGHT' | 'LEFT';
+  dominantHand: 'LEFT' | 'RIGHT';
   aimSwayMultiplier: number;
   locomotionMode: LocomotionMode;
 

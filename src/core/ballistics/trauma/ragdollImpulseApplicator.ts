@@ -83,9 +83,9 @@ export function applyRagdollActivationAndImpulses(
     if (bone.componentId !== 'BODY') continue;
 
     const isExtremity =
-      z === 'HAND_LEFT' || z === 'HAND_RIGHT' ||
-      z === 'FOOT_LEFT' || z === 'FOOT_RIGHT' ||
-      z === 'SHIN_LEFT' || z === 'SHIN_RIGHT';
+      z === 'HAND_RIGHT' || z === 'HAND_LEFT' ||
+      z === 'FOOT_RIGHT' || z === 'FOOT_LEFT' ||
+      z === 'SHIN_RIGHT' || z === 'SHIN_LEFT';
     const isMidsection =
       z === 'TORSO_LOWER_ABDOMEN' || z === 'PELVIS_GROIN' || z === 'TORSO_UPPER_THORAX';
 
@@ -110,7 +110,7 @@ export function applyRagdollActivationAndImpulses(
       ? add(scale(baseVel, weight), localKick)
       : add(bone.velocity, add(scale(baseVel, weight * (isOverkillCorpseHit ? 0.22 : 0.4)), localKick));
 
-    if (isLowImpulseCollapse && (z === 'KNEE_LEFT' || z === 'KNEE_RIGHT')) {
+    if (isLowImpulseCollapse && (z === 'KNEE_RIGHT' || z === 'KNEE_LEFT')) {
       nextVel = add(nextVel, add(scale(facingFwd, 0.85), vec3(0, -0.35, 0)));
     } else if (isLowImpulseCollapse && z === 'PELVIS_GROIN') {
       nextVel = add(nextVel, vec3(0, -0.45, 0));

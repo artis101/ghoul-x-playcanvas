@@ -108,7 +108,7 @@ export function transitionVitalState(
     case 'RECOVER_CONSCIOUS': {
       state.conscious = true;
       state.neurogenicShockCollapsed = false;
-      if (state.leftLegFunctional && state.rightLegFunctional) {
+      if (state.rightLegFunctional && state.leftLegFunctional) {
         state.canStand = true;
       }
       state.locomotionMode = evaluateLocomotionMode(state);
@@ -199,7 +199,7 @@ export function evaluateLocomotionMode(state: PhysiologicalEntityState): Locomot
   ) {
     return 'PARALYZED';
   }
-  if (!state.canStand || !state.leftLegFunctional || !state.rightLegFunctional) {
+  if (!state.canStand || !state.rightLegFunctional || !state.leftLegFunctional) {
     return state.locomotionMode === 'PARALYZED' ? 'PARALYZED' : 'PRONE_CRAWL';
   }
   if (state.diaphragmIntegrity < 0.72 || state.liverIntegrity < 0.68) {

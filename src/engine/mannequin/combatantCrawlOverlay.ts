@@ -6,7 +6,7 @@ import type { CombatantGlbInstance } from '../assets/glbLoader.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
 
 const LEG_ZONES = ['THIGH', 'KNEE', 'SHIN', 'FOOT'] as const;
-const SIDES = ['LEFT', 'RIGHT'] as const;
+const SIDES = ['RIGHT', 'LEFT'] as const;
 const EASE_RATE = 3.5;
 const MAX_HEAD_DROOP_DEG = 26;
 const SMEAR_SPACING_M = 0.3;
@@ -14,15 +14,15 @@ const SMEAR_SPACING_M = 0.3;
 /** Lays wound behaviour over the crawl cycle: dragged legs, a sagging head and a blood trail. */
 export class CombatantCrawlOverlay {
   private limpRotations: Map<GhoulZoneId, pc.Quat> | null = null;
-  private readonly drag: Record<(typeof SIDES)[number], number> = { LEFT: 0, RIGHT: 0 };
+  private readonly drag: Record<(typeof SIDES)[number], number> = { RIGHT: 0, LEFT: 0 };
   private droop = 0;
   private readonly rotation = new pc.Quat();
   private readonly nod = new pc.Quat();
   private readonly lastSmear = new pc.Vec3(Number.NaN, 0, 0);
 
   public reset(): void {
-    this.drag.LEFT = 0;
     this.drag.RIGHT = 0;
+    this.drag.LEFT = 0;
     this.droop = 0;
     this.lastSmear.x = Number.NaN;
   }
@@ -37,8 +37,8 @@ export class CombatantCrawlOverlay {
   ): void {
     const condition = crawling ? evaluateCrawlCondition(healthState, clockS) : null;
     const ease = dt > 0 ? 1 - Math.exp(-EASE_RATE * dt) : 1;
-    this.drag.LEFT += ((condition?.dragLeftLeg ? 1 : 0) - this.drag.LEFT) * ease;
     this.drag.RIGHT += ((condition?.dragRightLeg ? 1 : 0) - this.drag.RIGHT) * ease;
+    this.drag.LEFT += ((condition?.dragLeftLeg ? 1 : 0) - this.drag.LEFT) * ease;
     this.droop += ((condition?.headDroop ?? 0) - this.droop) * ease;
 
     const limp = this.limpRotations ??= this.buildLimpRotations(glb);

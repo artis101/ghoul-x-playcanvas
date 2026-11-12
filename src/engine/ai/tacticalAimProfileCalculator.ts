@@ -76,7 +76,7 @@ export function computeEnemyAimProfile(
       effectiveSpreadRad: SIDEARM_M9_TUNING.baseSpreadRad * OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
       aimAccuracyMultiplier: 1.0 / OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
       canReturnFire: false,
-      isOneHandedDownedFire: !target.leftLegFunctional || !target.rightLegFunctional,
+      isOneHandedDownedFire: !target.rightLegFunctional || !target.leftLegFunctional,
       clutchingWound: false,
       usingBackupSidearm: false,
       sidearmDrawing: true,
@@ -86,8 +86,8 @@ export function computeEnemyAimProfile(
 
   const sidearmActive = armament.kind === 'SIDEARM_ACTIVE';
   const anyArmLost =
-    !isArmChainIntactAndFunctional(target, 'LEFT') ||
-    !isArmChainIntactAndFunctional(target, 'RIGHT');
+    !isArmChainIntactAndFunctional(target, 'RIGHT') ||
+    !isArmChainIntactAndFunctional(target, 'LEFT');
 
   const inNeurogenicOrStagger =
     agent !== undefined &&
@@ -100,8 +100,8 @@ export function computeEnemyAimProfile(
   const triage = computeCombatantTriageStatus(target);
 
   const legCrippled =
-    !target.leftLegFunctional ||
     !target.rightLegFunctional ||
+    !target.leftLegFunctional ||
     target.isRagdollActive ||
     agent?.state === 'DOWNED_CRAWLING';
 

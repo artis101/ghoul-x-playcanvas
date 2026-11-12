@@ -1,3 +1,4 @@
+import { oppositeSide } from '../../core/ghoul/anatomy/handedness.ts';
 import type * as pc from 'playcanvas';
 import type {
   GhoulZoneId,
@@ -43,7 +44,7 @@ function smoothGripWeight(value: number, minimum: number, fullWeight: number): n
 export class CombatantWeaponMount {
   public heldWeaponNode: pc.Entity | null = null;
   public heldWeaponGlb: WeaponGlbInstance | null = null;
-  public attachmentState: PropAttachmentState<'LEFT' | 'RIGHT'> = createPropAttachmentState('ATTACHED');
+  public attachmentState: PropAttachmentState<'RIGHT' | 'LEFT'> = createPropAttachmentState('ATTACHED');
   private hands: CombatantWeaponHands | null = null;
   private readonly grip = new CombatantWeaponGrip();
   private readonly hold = new CombatantWeaponHold();
@@ -99,7 +100,7 @@ export class CombatantWeaponMount {
     sidearmDrawn = false
   ): void {
     const triggerHand = getPreferredPrimaryHand(healthState);
-    const supportHand = triggerHand === 'LEFT' ? 'RIGHT' : 'LEFT';
+    const supportHand = oppositeSide(triggerHand);
     const triggerHandZone: GhoulZoneId = `HAND_${triggerHand}`;
     const supportHandZone: GhoulZoneId = `HAND_${supportHand}`;
 
@@ -194,7 +195,7 @@ export class CombatantWeaponMount {
         if (canUseSupport && weaponId !== 'silver_talon_50ae' && glbSuppNode) {
           if (twoHandReadyIdle) {
             // Keep the forend within reach across the body when the authored palms are close.
-            const across = supportHand === 'RIGHT' ? 0.9 : -0.9;
+            const across = supportHand === 'LEFT' ? 0.9 : -0.9;
             gunFwd = normalize(add(gunFwd, vec3(charFwd.z * across, 0.12, -charFwd.x * across)));
           }
           const pS = glbSuppNode.getPosition();
@@ -214,7 +215,7 @@ export class CombatantWeaponMount {
       }
 
       const triggerOffset = weaponId === 'm4a1_carbine' && canUseSupport
-        ? (triggerHand === 'LEFT' ? M4A1_PALM_OFFSET_X : -M4A1_PALM_OFFSET_X)
+        ? (triggerHand === 'RIGHT' ? M4A1_PALM_OFFSET_X : -M4A1_PALM_OFFSET_X)
         : 0;
       this.grip.align(this.heldWeaponNode, this.heldWeaponNode, weaponId, palmTrig, gunFwd, triggerOffset);
       if (glb) this.hands?.sync(glb, triggerHand, canUseSupport, twoHandReadyIdle);

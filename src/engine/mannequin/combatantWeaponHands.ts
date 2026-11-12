@@ -1,3 +1,4 @@
+import { oppositeSide } from '../../core/ghoul/anatomy/handedness.ts';
 import * as pc from 'playcanvas';
 import type { ActiveFiringHand } from '../ai/tacticalAiTypes.ts';
 import type { CombatantGlbInstance, WeaponAssetId, WeaponGlbInstance } from '../assets/glbLoader.ts';
@@ -55,19 +56,19 @@ export class CombatantWeaponHands {
     const useM4Grips = weaponId === 'm4a1_carbine' && useSupport;
     const fire = this.weapon.animComponent?.baseLayer?.activeState === this.weapon.fireClipName;
     if (useM4Grips) {
-      const offset = triggerHand === 'LEFT' ? M4A1_PALM_OFFSET_X : -M4A1_PALM_OFFSET_X;
+      const offset = triggerHand === 'RIGHT' ? M4A1_PALM_OFFSET_X : -M4A1_PALM_OFFSET_X;
       this.syncHand(glb, triggerHand, this.trigger, TRIGGER_GRIPS[weaponId], 0.052, offset, undefined, M4A1_TRIGGER_ROTATION);
     } else if (fire) {
       this.syncHand(glb, triggerHand, this.trigger, TRIGGER_GRIPS[weaponId], 0.052);
     }
     const supportGrip = SUPPORT_GRIPS[weaponId];
     if (useSupport && supportGrip) {
-      const hand = triggerHand === 'LEFT' ? 'RIGHT' : 'LEFT';
+      const hand = oppositeSide(triggerHand);
       const palmOffset = useM4Grips ? M4A1_PALM_OFFSET_X : weaponId === 'silver_talon_50ae' ? 0.022 : 0;
-      const lateralOffset = hand === 'LEFT' ? palmOffset : -palmOffset;
+      const lateralOffset = hand === 'RIGHT' ? palmOffset : -palmOffset;
       if (twoHandReadyIdle) {
         // Keep the support elbow down and in front of the vest when reaching across the chest.
-        this.supportBend.set(hand === 'LEFT' ? -0.4 : 0.4, -1, 1.6);
+        this.supportBend.set(hand === 'RIGHT' ? -0.4 : 0.4, -1, 1.6);
         glb.rootEntity.getRotation().transformVector(this.supportBend, this.supportBend);
       }
       this.syncHand(
@@ -82,7 +83,7 @@ export class CombatantWeaponHands {
     glb: CombatantGlbInstance, triggerHand: ActiveFiringHand, supportGrip: pc.Vec3, oneHanded = false,
   ): void {
     const weaponId = this.weapon.weaponId;
-    const side = triggerHand === 'LEFT' ? -1 : 1;
+    const side = triggerHand === 'RIGHT' ? -1 : 1;
     const palm = weaponId === 'silver_talon_50ae' ? HANDGUN_PALM_OFFSET_X : M4A1_PALM_OFFSET_X;
     const yaw = glb.rootEntity.getRotation();
     // Trigger elbow hangs down and out. Support elbow hangs under the forend.
@@ -96,7 +97,7 @@ export class CombatantWeaponHands {
     );
     if (oneHanded) return;
     this.syncHand(
-      glb, triggerHand === 'LEFT' ? 'RIGHT' : 'LEFT', this.support, supportGrip, 0.05,
+      glb, oppositeSide(triggerHand), this.support, supportGrip, 0.05,
       side * (handgun ? HANDGUN_SUPPORT_OFFSET_X : palm),
       this.supportBend, handgun ? HANDGUN_SUPPORT_ROTATION : SUPPORT_ROTATION,
     );

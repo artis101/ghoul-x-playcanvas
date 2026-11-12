@@ -214,7 +214,7 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
     it('femur fracture disables leg support and weapon-arm shot disarms enemy without instant death', () => {
       const target = createTargetHealthState('target_limb', 'Militia', vec3(0, 0, -6), 0);
 
-      const rArmPos = target.ragdollBones.UPPER_ARM_RIGHT.position;
+      const rArmPos = target.ragdollBones.UPPER_ARM_LEFT.position;
       const origin = vec3(rArmPos.x, rArmPos.y - 0.1, 0);
       const armDir = normalize(sub(vec3(rArmPos.x, rArmPos.y - 0.1, rArmPos.z), origin));
       const armReport = simulateShot(
@@ -230,7 +230,7 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       expect(target.alive).toBe(true);
       expect(target.weaponDropped).toBe(true);
 
-      const lThighPos = target.ragdollBones.THIGH_LEFT.position;
+      const lThighPos = target.ragdollBones.THIGH_RIGHT.position;
       const legOrigin = vec3(lThighPos.x, lThighPos.y - 0.14, 0);
       const legDir = normalize(sub(vec3(lThighPos.x, lThighPos.y - 0.14, lThighPos.z), legOrigin));
       const legReport = simulateShot(
@@ -243,7 +243,7 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       );
       expect(legReport.hitTarget).toBe(true);
       applyShotReportToTarget(target, legReport);
-      expect(target.leftLegFunctional).toBe(false);
+      expect(target.rightLegFunctional).toBe(false);
     });
   });
 
@@ -273,9 +273,9 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
         }
       }
 
-      const restLeftTibiaSpan = distance(
-        target.ragdollBones.KNEE_LEFT.position,
-        target.ragdollBones.FOOT_LEFT.position
+      const restRightTibiaSpan = distance(
+        target.ragdollBones.KNEE_RIGHT.position,
+        target.ragdollBones.FOOT_RIGHT.position
       );
 
       const shooterPos = vec3(0, 1.13, 0);
@@ -318,11 +318,11 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       }
 
       // Tibia stays straight and rigid (colinear KNEE -> SHIN -> FOOT)
-      const finalLeftTibiaSpan = distance(
-        target.ragdollBones.KNEE_LEFT.position,
-        target.ragdollBones.FOOT_LEFT.position
+      const finalRightTibiaSpan = distance(
+        target.ragdollBones.KNEE_RIGHT.position,
+        target.ragdollBones.FOOT_RIGHT.position
       );
-      expect(Math.abs(finalLeftTibiaSpan - restLeftTibiaSpan)).toBeLessThan(0.02);
+      expect(Math.abs(finalRightTibiaSpan - restRightTibiaSpan)).toBeLessThan(0.02);
 
       const backwardMoveM = initialPelvisZ - target.ragdollBones.PELVIS_GROIN.position.z;
       expect(backwardMoveM).toBeGreaterThan(1.4);
@@ -438,13 +438,13 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       applyShotReportToTarget(target, report);
       expect(target.zoneGoreMode.HEAD_CRANIUM).toBe('CRANIAL_POP');
       expect(target.ragdollBones.TORSO_UPPER_THORAX.componentId).toBe('BODY');
-      expect(target.ragdollBones.THIGH_LEFT.componentId).toBe('BODY');
-      expect(target.ragdollBones.UPPER_ARM_LEFT.componentId).toBe('BODY');
+      expect(target.ragdollBones.THIGH_RIGHT.componentId).toBe('BODY');
+      expect(target.ragdollBones.UPPER_ARM_RIGHT.componentId).toBe('BODY');
     });
 
-    it('Close-range 12G blast to UPPER_ARM_LEFT triggers CLEAN_SEVER detaching arm subtree as one connected limb', () => {
-      const armSubtree = getSubtreeZones('UPPER_ARM_LEFT');
-      expect(armSubtree).toEqual(['UPPER_ARM_LEFT', 'FOREARM_LEFT', 'HAND_LEFT']);
+    it('Close-range 12G blast to UPPER_ARM_RIGHT triggers CLEAN_SEVER detaching arm subtree as one connected limb', () => {
+      const armSubtree = getSubtreeZones('UPPER_ARM_RIGHT');
+      expect(armSubtree).toEqual(['UPPER_ARM_RIGHT', 'FOREARM_RIGHT', 'HAND_RIGHT']);
 
       const target = createTargetHealthState('target_arm', 'Rifleman', vec3(0, 0, 2.5), 0);
       const armWorldPos = vec3(-0.29, 1.28, 2.5);
@@ -461,28 +461,28 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       );
 
       expect(report.hitTarget).toBe(true);
-      const armSever = report.dismembermentEvents.find((d) => d.zone === 'UPPER_ARM_LEFT');
+      const armSever = report.dismembermentEvents.find((d) => d.zone === 'UPPER_ARM_RIGHT');
       expect(armSever).toBeDefined();
       expect(armSever!.goreMode).toBe('CLEAN_SEVER');
-      expect(armSever!.detachedSubtree).toEqual(['UPPER_ARM_LEFT', 'FOREARM_LEFT', 'HAND_LEFT']);
+      expect(armSever!.detachedSubtree).toEqual(['UPPER_ARM_RIGHT', 'FOREARM_RIGHT', 'HAND_RIGHT']);
 
       const restForearmLen = distance(
-        target.ragdollBones.UPPER_ARM_LEFT.position,
-        target.ragdollBones.FOREARM_LEFT.position
+        target.ragdollBones.UPPER_ARM_RIGHT.position,
+        target.ragdollBones.FOREARM_RIGHT.position
       );
 
       applyShotReportToTarget(target, report);
-      expect(target.ragdollBones.UPPER_ARM_LEFT.componentId).toBe('SEVERED_UPPER_ARM_LEFT');
-      expect(target.ragdollBones.FOREARM_LEFT.componentId).toBe('SEVERED_UPPER_ARM_LEFT');
-      expect(target.ragdollBones.HAND_LEFT.componentId).toBe('SEVERED_UPPER_ARM_LEFT');
-      expect(target.ragdollBones.SHOULDER_LEFT.componentId).toBe('BODY');
+      expect(target.ragdollBones.UPPER_ARM_RIGHT.componentId).toBe('SEVERED_UPPER_ARM_RIGHT');
+      expect(target.ragdollBones.FOREARM_RIGHT.componentId).toBe('SEVERED_UPPER_ARM_RIGHT');
+      expect(target.ragdollBones.HAND_RIGHT.componentId).toBe('SEVERED_UPPER_ARM_RIGHT');
+      expect(target.ragdollBones.SHOULDER_RIGHT.componentId).toBe('BODY');
 
       for (let i = 0; i < 40; i++) {
         stepRagdollPhysics(target, 0.01, 0.0);
       }
       const postForearmLen = distance(
-        target.ragdollBones.UPPER_ARM_LEFT.position,
-        target.ragdollBones.FOREARM_LEFT.position
+        target.ragdollBones.UPPER_ARM_RIGHT.position,
+        target.ragdollBones.FOREARM_RIGHT.position
       );
       expect(Math.abs(postForearmLen - restForearmLen)).toBeLessThan(0.02);
     });
@@ -492,7 +492,7 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
     it('rewards deliberate large-caliber joint shots with CLEAN_SEVER while 5.56mm and off-joint mid-shaft hits do NOT amputate', () => {
       // 1) 5.56mm M4A1 shot directly at knee joint does NOT sever leg
       const m4Target = createTargetHealthState('m4_knee', 'Militia', vec3(0, 0, -6), 0);
-      const kneePos = m4Target.ragdollBones.KNEE_LEFT.position;
+      const kneePos = m4Target.ragdollBones.KNEE_RIGHT.position;
       const m4Origin = vec3(kneePos.x, kneePos.y, 0);
       const m4Dir = normalize(sub(kneePos, m4Origin));
       const m4Rep = simulateShot(
@@ -521,9 +521,9 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       expect(midRep.hitTarget).toBe(true);
       expect(midRep.dismembermentEvents.length).toBe(0);
 
-      // 3) Deliberate 7.62 NATO shot directly into KNEE_LEFT joint severs lower leg cleanly AND keeps enemy ALIVE!
+      // 3) Deliberate 7.62 NATO shot directly into KNEE_RIGHT joint severs lower leg cleanly AND keeps enemy ALIVE!
       const jointTarget = createTargetHealthState('joint_knee', 'Militia', vec3(0, 0, -6), 0);
-      const jointKneePt = jointTarget.ragdollBones.KNEE_LEFT.position;
+      const jointKneePt = jointTarget.ragdollBones.KNEE_RIGHT.position;
       const jointOrigin = vec3(jointKneePt.x, jointKneePt.y, 0);
       const jointRep = simulateShot(
         WEAPON_MSG90,
@@ -535,14 +535,14 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       );
       expect(jointRep.hitTarget).toBe(true);
       expect(jointRep.isLethalKill).toBe(false);
-      expect(jointRep.dismembermentEvents.some((d) => d.zone === 'KNEE_LEFT' && d.goreMode === 'CLEAN_SEVER')).toBe(true);
+      expect(jointRep.dismembermentEvents.some((d) => d.zone === 'KNEE_RIGHT' && d.goreMode === 'CLEAN_SEVER')).toBe(true);
 
       applyShotReportToTarget(jointTarget, jointRep);
       expect(jointTarget.alive).toBe(true);
 
-      // 4) Deliberate .50 AE shot at wrist/hand severs HAND_LEFT while keeping enemy standing & alive!
+      // 4) Deliberate .50 AE shot at wrist/hand severs HAND_RIGHT while keeping enemy standing & alive!
       const handTarget = createTargetHealthState('joint_hand', 'Punk', vec3(0, 0, -5), 0);
-      const handPt = handTarget.ragdollBones.HAND_LEFT.position;
+      const handPt = handTarget.ragdollBones.HAND_RIGHT.position;
       const handOrigin = vec3(handPt.x, handPt.y, 0);
       const handRep = simulateShot(
         WEAPON_SILVER_TALON,
@@ -554,18 +554,18 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       );
       expect(handRep.hitTarget).toBe(true);
       expect(handRep.isLethalKill).toBe(false);
-      expect(handRep.dismembermentEvents.some((d) => d.zone === 'HAND_LEFT')).toBe(true);
+      expect(handRep.dismembermentEvents.some((d) => d.zone === 'HAND_RIGHT')).toBe(true);
       applyShotReportToTarget(handTarget, handRep);
       expect(handTarget.alive).toBe(true);
-      expect(handTarget.leftLegFunctional).toBe(true);
       expect(handTarget.rightLegFunctional).toBe(true);
+      expect(handTarget.leftLegFunctional).toBe(true);
     });
 
     it('leg-shot enemy staggers then goes down ALIVE (propped up by muscle tone, not a sandbag) and transitions across all 4 Triage states', () => {
       const target = createTargetHealthState('leg_triage', 'Balkan Militia', vec3(0, 0, -7), 0, 'MILITIA_GUNNER');
       expect(computeCombatantTriageStatus(target)).toBe('HEALTHY');
 
-      // Shoot left thigh with 5.56 JHP — enemy must survive, become WOUNDED, stumble briefly, then go down onto ground ALIVE
+      // Shoot right thigh with 5.56 JHP — enemy must survive, become WOUNDED, stumble briefly, then go down onto ground ALIVE
       const thighPt = vec3(-0.12, 0.70, -7);
       const origin = vec3(-0.12, 0.70, 0);
       const legRep = simulateShot(
@@ -581,7 +581,7 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       applyShotReportToTarget(target, legRep);
 
       expect(target.alive).toBe(true);
-      expect(target.leftLegFunctional).toBe(false);
+      expect(target.rightLegFunctional).toBe(false);
       expect(computeCombatantTriageStatus(target)).toBe('WOUNDED');
 
       // During brief stumble (t = 0.15s), still upright in LEG_BUCKLE before hitting the ground

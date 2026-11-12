@@ -19,7 +19,7 @@ describe('NPC animation and weapon grips', () => {
     expect(controller.resolveDesiredClip(state)).toBe('HitStaggerChest');
     state.activeReaction.type = 'GUT_FOLD';
     expect(controller.resolveDesiredClip(state)).toBe('DiaphragmDropKneel');
-    state.activeReaction.type = 'LEG_BUCKLE_LEFT';
+    state.activeReaction.type = 'LEG_BUCKLE_RIGHT';
     expect(controller.resolveDesiredClip(state)).toBe('LegCollapseCrawl');
   });
 
@@ -58,7 +58,7 @@ describe('NPC animation and weapon grips', () => {
     state.isLeftHanded = false;
     controller.syncAnimation(glb, state, false, undefined, { clip: 'LongGunAim' });
     expect(playClip).toHaveBeenLastCalledWith('LongGunAim', 0.12, 1, false);
-    controller.syncAnimation(glb, state, false, undefined, { clip: 'PistolAim', hand: 'RIGHT' });
+    controller.syncAnimation(glb, state, false, undefined, { clip: 'PistolAim', hand: 'LEFT' });
     expect(playClip).toHaveBeenLastCalledWith('PistolAim', 0.12, 1, true);
     controller.syncAnimation(glb, state, true, undefined, { clip: 'LongGunAim' });
     expect(playClip).toHaveBeenLastCalledWith('UnsuspectingIdle', 0.12, 1, false);

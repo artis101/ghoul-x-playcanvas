@@ -79,8 +79,8 @@ export function applyOrganTrauma(
         organParenchymalBleedMlPerSec -= organBleed;
         break;
 
-      case 'LUNG_LEFT':
       case 'LUNG_RIGHT':
+      case 'LUNG_LEFT':
         transitionPneumothorax(state, { kind: 'LUNG_HIT', severity: ot.severity });
         if (reaction === 'NONE' || (reaction === 'WEAPON_WRENCH_DROP' && ot.directCrushLacerated)) {
           reaction = escalatePostureReaction(reaction, 'VIOLENT_CHEST_STAGGER');

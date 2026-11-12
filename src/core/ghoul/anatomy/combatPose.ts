@@ -1,3 +1,4 @@
+import { sideSignX, supportSide } from './handedness.ts';
 import { GhoulZoneId } from '../../../contracts/ballistics/ghoulZoneContracts';
 import { ALL_GHOUL_ZONES } from './ghoulHierarchyTypes';
 import { TargetHealthState } from '../../../contracts/ballistics/targetHealthContracts';
@@ -29,32 +30,32 @@ export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS
       ? Math.sin(Math.min(1, rx.timerS / rx.durationS) * Math.PI) * rx.intensity
       : 0;
 
-  const leftLegSevered =
-    target.severedZones.has('THIGH_LEFT') ||
-    target.severedZones.has('KNEE_LEFT') ||
-    target.severedZones.has('SHIN_LEFT') ||
-    target.severedZones.has('FOOT_LEFT');
   const rightLegSevered =
     target.severedZones.has('THIGH_RIGHT') ||
     target.severedZones.has('KNEE_RIGHT') ||
     target.severedZones.has('SHIN_RIGHT') ||
     target.severedZones.has('FOOT_RIGHT');
-  const hasSeveredLeg = leftLegSevered || rightLegSevered;
+  const leftLegSevered =
+    target.severedZones.has('THIGH_LEFT') ||
+    target.severedZones.has('KNEE_LEFT') ||
+    target.severedZones.has('SHIN_LEFT') ||
+    target.severedZones.has('FOOT_LEFT');
+  const hasSeveredLeg = rightLegSevered || leftLegSevered;
 
   const staggerProg =
     hasSeveredLeg && rx.durationS > 0 ? Math.min(1, rx.timerS / rx.durationS) : 0;
   const kneeBuckleDrop = hasSeveredLeg
     ? 0.10 + staggerProg * 0.24
-    : !target.leftLegFunctional || !target.rightLegFunctional
+    : !target.rightLegFunctional || !target.leftLegFunctional
       ? 0.28
       : 0;
-  const legStaggerX = leftLegSevered
+  const legStaggerX = rightLegSevered
     ? -(0.08 + staggerProg * 0.16)
-    : rightLegSevered
+    : leftLegSevered
       ? 0.08 + staggerProg * 0.16
-      : rx.type === 'LEG_BUCKLE_LEFT'
+      : rx.type === 'LEG_BUCKLE_RIGHT'
         ? -0.09 * rxWeight
-        : rx.type === 'LEG_BUCKLE_RIGHT'
+        : rx.type === 'LEG_BUCKLE_LEFT'
           ? 0.09 * rxWeight
           : 0;
   const gutFoldZ = rx.type === 'GUT_FOLD' ? 0.14 * rxWeight : 0;
@@ -72,20 +73,20 @@ export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS
     let lz = base.z;
 
     if (
-      zone !== 'SHIN_LEFT' &&
-      zone !== 'FOOT_LEFT' &&
       zone !== 'SHIN_RIGHT' &&
-      zone !== 'FOOT_RIGHT'
+      zone !== 'FOOT_RIGHT' &&
+      zone !== 'SHIN_LEFT' &&
+      zone !== 'FOOT_LEFT'
     ) {
       ly -= kneeBuckleDrop;
       lx += legStaggerX * Math.max(0.35, (base.y - 0.45) / 1.1);
     }
 
-    if (zone === 'KNEE_LEFT' && !target.leftLegFunctional && !leftLegSevered) {
+    if (zone === 'KNEE_RIGHT' && !target.rightLegFunctional && !rightLegSevered) {
       ly = 0.22;
       lz = 0.16;
     }
-    if (zone === 'KNEE_RIGHT' && !target.rightLegFunctional && !rightLegSevered) {
+    if (zone === 'KNEE_LEFT' && !target.leftLegFunctional && !leftLegSevered) {
       ly = 0.22;
       lz = 0.16;
     }
@@ -95,8 +96,8 @@ export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS
       zone === 'NECK_CERVICAL' ||
       zone === 'HEAD_CRANIUM' ||
       zone === 'HEAD_FACE_JAW' ||
-      zone === 'SHOULDER_LEFT' ||
-      zone === 'SHOULDER_RIGHT'
+      zone === 'SHOULDER_RIGHT' ||
+      zone === 'SHOULDER_LEFT'
     ) {
       ly += breath + gutFoldY;
       lx += swayX;
@@ -107,28 +108,29 @@ export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS
       lz += headSnapZ;
     }
 
-    if (rx.type === 'ARM_WRENCH_LEFT' && (zone === 'SHOULDER_LEFT' || zone === 'UPPER_ARM_LEFT')) {
-      lz -= 0.10 * rxWeight;
-    }
     if (rx.type === 'ARM_WRENCH_RIGHT' && (zone === 'SHOULDER_RIGHT' || zone === 'UPPER_ARM_RIGHT')) {
       lz -= 0.10 * rxWeight;
     }
+    if (rx.type === 'ARM_WRENCH_LEFT' && (zone === 'SHOULDER_LEFT' || zone === 'UPPER_ARM_LEFT')) {
+      lz -= 0.10 * rxWeight;
+    }
 
-    if ((!target.rightArmFunctional || target.weaponDropped) && zone === 'HAND_RIGHT') {
+    if ((!target.leftArmFunctional || target.weaponDropped) && zone === 'HAND_LEFT') {
       lx = 0.33;
       ly = 0.88 - kneeBuckleDrop;
       lz = 0.04;
     }
-    if ((!target.leftArmFunctional || target.weaponDropped) && zone === 'HAND_LEFT') {
+    if ((!target.rightArmFunctional || target.weaponDropped) && zone === 'HAND_RIGHT') {
       lx = -0.33;
       ly = 0.88 - kneeBuckleDrop;
       lz = 0.04;
     }
 
-    const clutchHandZone: GhoulZoneId = target.isLeftHanded ? 'HAND_LEFT' : 'HAND_RIGHT';
-    const clutchForearmZone: GhoulZoneId = target.isLeftHanded ? 'FOREARM_LEFT' : 'FOREARM_RIGHT';
-    const clutchArmFunctional = target.isLeftHanded ? target.leftArmFunctional : target.rightArmFunctional;
-    const clutchSign = target.isLeftHanded ? -1 : 1;
+    const clutchSide = supportSide(target.isLeftHanded);
+    const clutchHandZone: GhoulZoneId = `HAND_${clutchSide}`;
+    const clutchForearmZone: GhoulZoneId = `FOREARM_${clutchSide}`;
+    const clutchArmFunctional = clutchSide === 'LEFT' ? target.leftArmFunctional : target.rightArmFunctional;
+    const clutchSign = sideSignX(clutchSide);
 
     if (target.posture === 'THROAT_CLUTCH' || rx.type === 'THROAT_CLUTCH') {
       if (zone === clutchHandZone && clutchArmFunctional) {
@@ -156,10 +158,10 @@ export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS
     bone.prevPosition = copyVec3(wp);
   }
 
-  for (const side of ['LEFT', 'RIGHT'] as const) {
-    const shin = target.ragdollBones[side === 'LEFT' ? 'SHIN_LEFT' : 'SHIN_RIGHT'];
-    const knee = target.ragdollBones[side === 'LEFT' ? 'KNEE_LEFT' : 'KNEE_RIGHT'];
-    const foot = target.ragdollBones[side === 'LEFT' ? 'FOOT_LEFT' : 'FOOT_RIGHT'];
+  for (const side of ['RIGHT', 'LEFT'] as const) {
+    const shin = target.ragdollBones[side === 'RIGHT' ? 'SHIN_RIGHT' : 'SHIN_LEFT'];
+    const knee = target.ragdollBones[side === 'RIGHT' ? 'KNEE_RIGHT' : 'KNEE_LEFT'];
+    const foot = target.ragdollBones[side === 'RIGHT' ? 'FOOT_RIGHT' : 'FOOT_LEFT'];
     if (!shin.severed && !knee.severed && !foot.severed) {
       const mid = scale(add(knee.position, foot.position), 0.5);
       shin.position = mid;

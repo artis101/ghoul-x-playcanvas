@@ -30,18 +30,18 @@ const JOINT_SEVER_SPECS: Array<{
   label: string;
   relatedZones: GhoulZoneId[];
 }> = [
-  { severZone: 'HAND_LEFT', jointPivotZone: 'HAND_LEFT', radiusM: 0.085, label: 'Left Wrist Joint', relatedZones: ['HAND_LEFT', 'FOREARM_LEFT'] },
   { severZone: 'HAND_RIGHT', jointPivotZone: 'HAND_RIGHT', radiusM: 0.085, label: 'Right Wrist Joint', relatedZones: ['HAND_RIGHT', 'FOREARM_RIGHT'] },
-  { severZone: 'FOREARM_LEFT', jointPivotZone: 'FOREARM_LEFT', radiusM: 0.085, label: 'Left Elbow Joint', relatedZones: ['FOREARM_LEFT', 'UPPER_ARM_LEFT'] },
+  { severZone: 'HAND_LEFT', jointPivotZone: 'HAND_LEFT', radiusM: 0.085, label: 'Left Wrist Joint', relatedZones: ['HAND_LEFT', 'FOREARM_LEFT'] },
   { severZone: 'FOREARM_RIGHT', jointPivotZone: 'FOREARM_RIGHT', radiusM: 0.085, label: 'Right Elbow Joint', relatedZones: ['FOREARM_RIGHT', 'UPPER_ARM_RIGHT'] },
-  { severZone: 'UPPER_ARM_LEFT', jointPivotZone: 'UPPER_ARM_LEFT', radiusM: 0.088, label: 'Left Shoulder Joint', relatedZones: ['UPPER_ARM_LEFT', 'SHOULDER_LEFT'] },
+  { severZone: 'FOREARM_LEFT', jointPivotZone: 'FOREARM_LEFT', radiusM: 0.085, label: 'Left Elbow Joint', relatedZones: ['FOREARM_LEFT', 'UPPER_ARM_LEFT'] },
   { severZone: 'UPPER_ARM_RIGHT', jointPivotZone: 'UPPER_ARM_RIGHT', radiusM: 0.088, label: 'Right Shoulder Joint', relatedZones: ['UPPER_ARM_RIGHT', 'SHOULDER_RIGHT'] },
-  { severZone: 'FOOT_LEFT', jointPivotZone: 'FOOT_LEFT', radiusM: 0.085, label: 'Left Ankle Joint', relatedZones: ['FOOT_LEFT', 'SHIN_LEFT'] },
+  { severZone: 'UPPER_ARM_LEFT', jointPivotZone: 'UPPER_ARM_LEFT', radiusM: 0.088, label: 'Left Shoulder Joint', relatedZones: ['UPPER_ARM_LEFT', 'SHOULDER_LEFT'] },
   { severZone: 'FOOT_RIGHT', jointPivotZone: 'FOOT_RIGHT', radiusM: 0.085, label: 'Right Ankle Joint', relatedZones: ['FOOT_RIGHT', 'SHIN_RIGHT'] },
-  { severZone: 'KNEE_LEFT', jointPivotZone: 'KNEE_LEFT', radiusM: 0.092, label: 'Left Knee Joint', relatedZones: ['KNEE_LEFT', 'THIGH_LEFT', 'SHIN_LEFT'] },
+  { severZone: 'FOOT_LEFT', jointPivotZone: 'FOOT_LEFT', radiusM: 0.085, label: 'Left Ankle Joint', relatedZones: ['FOOT_LEFT', 'SHIN_LEFT'] },
   { severZone: 'KNEE_RIGHT', jointPivotZone: 'KNEE_RIGHT', radiusM: 0.092, label: 'Right Knee Joint', relatedZones: ['KNEE_RIGHT', 'THIGH_RIGHT', 'SHIN_RIGHT'] },
-  { severZone: 'THIGH_LEFT', jointPivotZone: 'THIGH_LEFT', radiusM: 0.090, label: 'Left Hip Joint', relatedZones: ['THIGH_LEFT', 'PELVIS_GROIN'] },
+  { severZone: 'KNEE_LEFT', jointPivotZone: 'KNEE_LEFT', radiusM: 0.092, label: 'Left Knee Joint', relatedZones: ['KNEE_LEFT', 'THIGH_LEFT', 'SHIN_LEFT'] },
   { severZone: 'THIGH_RIGHT', jointPivotZone: 'THIGH_RIGHT', radiusM: 0.090, label: 'Right Hip Joint', relatedZones: ['THIGH_RIGHT', 'PELVIS_GROIN'] },
+  { severZone: 'THIGH_LEFT', jointPivotZone: 'THIGH_LEFT', radiusM: 0.090, label: 'Left Hip Joint', relatedZones: ['THIGH_LEFT', 'PELVIS_GROIN'] },
   { severZone: 'NECK_CERVICAL', jointPivotZone: 'NECK_CERVICAL', radiusM: 0.078, label: 'Cervical Neck Joint', relatedZones: ['NECK_CERVICAL'] },
 ];
 
@@ -102,10 +102,10 @@ export function evaluateJointDismemberment(
       }
       if (matched) {
         const isThickSocket =
-          jSpec.severZone === 'THIGH_LEFT' ||
           jSpec.severZone === 'THIGH_RIGHT' ||
-          jSpec.severZone === 'UPPER_ARM_LEFT' ||
+          jSpec.severZone === 'THIGH_LEFT' ||
           jSpec.severZone === 'UPPER_ARM_RIGHT' ||
+          jSpec.severZone === 'UPPER_ARM_LEFT' ||
           jSpec.severZone === 'NECK_CERVICAL';
         if (weapon.role === 'HEAVY_PISTOL' && isThickSocket && targetDistanceM > 6.0) {
           continue;
@@ -209,9 +209,9 @@ export function evaluateJointDismemberment(
       }
 
       const isArm =
-        zone === 'HAND_LEFT' || zone === 'HAND_RIGHT' ||
-        zone === 'UPPER_ARM_LEFT' || zone === 'FOREARM_LEFT' ||
-        zone === 'UPPER_ARM_RIGHT' || zone === 'FOREARM_RIGHT';
+        zone === 'HAND_RIGHT' || zone === 'HAND_LEFT' ||
+        zone === 'UPPER_ARM_RIGHT' || zone === 'FOREARM_RIGHT' ||
+        zone === 'UPPER_ARM_LEFT' || zone === 'FOREARM_LEFT';
       if (isArm) weaponDisarmed = true;
 
       const detachedSubtree = getSubtreeZones(zone);

@@ -59,7 +59,7 @@ export class OffhandSidearmSync {
 
     if (transition.shouldSpawnDroppedProp) {
       const dropHand = transition.dropHand ?? rig.lastHand;
-      const dropZone: GhoulZoneId = dropHand === 'LEFT' ? 'HAND_LEFT' : 'HAND_RIGHT';
+      const dropZone: GhoulZoneId = dropHand === 'RIGHT' ? 'HAND_RIGHT' : 'HAND_LEFT';
       const handBone = hs.ragdollBones[dropZone];
       if (rig.glbInstance && fxManager) {
         fxManager.spawnDroppedWeaponProp(
@@ -78,11 +78,11 @@ export class OffhandSidearmSync {
     const activeHand = hand;
     rig.holderEntity.enabled = true;
 
-    const upperArmZone: GhoulZoneId = activeHand === 'LEFT' ? 'UPPER_ARM_LEFT' : 'UPPER_ARM_RIGHT';
-    const forearmZone: GhoulZoneId = activeHand === 'LEFT' ? 'FOREARM_LEFT' : 'FOREARM_RIGHT';
-    const handZone: GhoulZoneId = activeHand === 'LEFT' ? 'HAND_LEFT' : 'HAND_RIGHT';
-    const handTipAuxId = activeHand === 'LEFT' ? 'HAND_TIP_LEFT' : 'HAND_TIP_RIGHT';
-    const sideSign = activeHand === 'LEFT' ? -1 : 1;
+    const upperArmZone: GhoulZoneId = activeHand === 'RIGHT' ? 'UPPER_ARM_RIGHT' : 'UPPER_ARM_LEFT';
+    const forearmZone: GhoulZoneId = activeHand === 'RIGHT' ? 'FOREARM_RIGHT' : 'FOREARM_LEFT';
+    const handZone: GhoulZoneId = activeHand === 'RIGHT' ? 'HAND_RIGHT' : 'HAND_LEFT';
+    const handTipAuxId = activeHand === 'RIGHT' ? 'HAND_TIP_RIGHT' : 'HAND_TIP_LEFT';
+    const sideSign = activeHand === 'RIGHT' ? -1 : 1;
 
     const pUpper = copyVec3(hs.ragdollBones[upperArmZone].position);
     const charFwd = vec3(Math.sin(hs.yawRad), 0, Math.cos(hs.yawRad));

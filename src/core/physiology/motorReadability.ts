@@ -39,7 +39,7 @@ export function recomputeMotorAndReadability(
   }
 
   // Structural standing capability
-  if (!state.leftLegFunctional || !state.rightLegFunctional) {
+  if (!state.rightLegFunctional || !state.leftLegFunctional) {
     state.canStand = false;
   }
 
@@ -47,7 +47,7 @@ export function recomputeMotorAndReadability(
 
   // Dominant arm trigger capability
   const domArmFunctional =
-    state.dominantHand === 'RIGHT' ? state.rightArmFunctional : state.leftArmFunctional;
+    state.dominantHand === 'LEFT' ? state.leftArmFunctional : state.rightArmFunctional;
   state.canPullTrigger =
     state.alive && state.conscious && !state.weaponDropped && domArmFunctional;
 

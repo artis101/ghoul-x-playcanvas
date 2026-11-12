@@ -25,10 +25,10 @@ export function applyShotReportToTarget(
 
   const wasAlreadyRagdoll = target.isRagdollActive;
 
-  const { leftLegShotEnergyJ, rightLegShotEnergyJ } = applyWoundsAndDecals(target, report);
+  const { rightLegShotEnergyJ, leftLegShotEnergyJ } = applyWoundsAndDecals(target, report);
 
-  if (leftLegShotEnergyJ >= 85.0) target.leftLegFunctional = false;
   if (rightLegShotEnergyJ >= 85.0) target.rightLegFunctional = false;
+  if (leftLegShotEnergyJ >= 85.0) target.leftLegFunctional = false;
 
   if (target.alive) {
     target.painShock = Math.min(1.0, target.painShock + 0.65);
@@ -44,10 +44,10 @@ export function applyShotReportToTarget(
     }
   }
 
-  const { newlySeveredLeftLeg, newlySeveredRightLeg } = applyDismembermentTree(target, report);
+  const { newlySeveredRightLeg, newlySeveredLeftLeg } = applyDismembermentTree(target, report);
 
   if (target.alive) {
-    applySurvivingReaction(target, report, newlySeveredLeftLeg, newlySeveredRightLeg);
+    applySurvivingReaction(target, report, newlySeveredRightLeg, newlySeveredLeftLeg);
   }
 
   applyRagdollActivationAndImpulses(target, report, wasAlreadyRagdoll, report.ragdollPlan.primaryHitZone);

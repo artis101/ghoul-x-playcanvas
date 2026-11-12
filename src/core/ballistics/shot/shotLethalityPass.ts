@@ -41,10 +41,10 @@ export function evaluateLethalityAndRagdollPlan(
   }
 
   const isLimbZone = (z: GhoulZoneId): boolean =>
-    z === 'SHOULDER_LEFT' || z === 'UPPER_ARM_LEFT' || z === 'FOREARM_LEFT' || z === 'HAND_LEFT' ||
     z === 'SHOULDER_RIGHT' || z === 'UPPER_ARM_RIGHT' || z === 'FOREARM_RIGHT' || z === 'HAND_RIGHT' ||
-    z === 'THIGH_LEFT' || z === 'KNEE_LEFT' || z === 'SHIN_LEFT' || z === 'FOOT_LEFT' ||
-    z === 'THIGH_RIGHT' || z === 'KNEE_RIGHT' || z === 'SHIN_RIGHT' || z === 'FOOT_RIGHT';
+    z === 'SHOULDER_LEFT' || z === 'UPPER_ARM_LEFT' || z === 'FOREARM_LEFT' || z === 'HAND_LEFT' ||
+    z === 'THIGH_RIGHT' || z === 'KNEE_RIGHT' || z === 'SHIN_RIGHT' || z === 'FOOT_RIGHT' ||
+    z === 'THIGH_LEFT' || z === 'KNEE_LEFT' || z === 'SHIN_LEFT' || z === 'FOOT_LEFT';
 
   const isPureLimbShot =
     hasHitTarget &&
@@ -87,17 +87,17 @@ export function evaluateLethalityAndRagdollPlan(
       isGutEviscerated ||
       isCnsDestroyed);
 
-  const leftLegSeveredAfter =
-    severedZonesSet.has('THIGH_LEFT') ||
-    severedZonesSet.has('KNEE_LEFT') ||
-    severedZonesSet.has('SHIN_LEFT') ||
-    severedZonesSet.has('FOOT_LEFT');
   const rightLegSeveredAfter =
     severedZonesSet.has('THIGH_RIGHT') ||
     severedZonesSet.has('KNEE_RIGHT') ||
     severedZonesSet.has('SHIN_RIGHT') ||
     severedZonesSet.has('FOOT_RIGHT');
-  const bothLegsSevered = leftLegSeveredAfter && rightLegSeveredAfter;
+  const leftLegSeveredAfter =
+    severedZonesSet.has('THIGH_LEFT') ||
+    severedZonesSet.has('KNEE_LEFT') ||
+    severedZonesSet.has('SHIN_LEFT') ||
+    severedZonesSet.has('FOOT_LEFT');
+  const bothLegsSevered = rightLegSeveredAfter && leftLegSeveredAfter;
 
   const bodyMassKg = 82.0;
   const horizontalImpulseMag = length(vec3(netRootImpulseWorld.x, 0, netRootImpulseWorld.z));

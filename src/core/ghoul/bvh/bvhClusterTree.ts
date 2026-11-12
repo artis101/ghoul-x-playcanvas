@@ -31,20 +31,20 @@ export function buildOuterShellTree(
     [
       'ABDOMEN_SKIN_MUSCLE',
       'PELVIS_SKIN_MUSCLE',
-      'THIGH_LEFT_SHELL',
       'THIGH_RIGHT_SHELL',
-      'CALF_LEFT_SHELL',
+      'THIGH_LEFT_SHELL',
       'CALF_RIGHT_SHELL',
+      'CALF_LEFT_SHELL',
     ].includes(e.item.id)
-  );
-  const leftArm = shellEntries.filter((e) =>
-    ['AXILLARY_GAP_LEFT', 'UPPER_ARM_LEFT_SHELL', 'FOREARM_LEFT_SHELL'].includes(e.item.id)
   );
   const rightArm = shellEntries.filter((e) =>
     ['AXILLARY_GAP_RIGHT', 'UPPER_ARM_RIGHT_SHELL', 'FOREARM_RIGHT_SHELL'].includes(e.item.id)
   );
+  const leftArm = shellEntries.filter((e) =>
+    ['AXILLARY_GAP_LEFT', 'UPPER_ARM_LEFT_SHELL', 'FOREARM_LEFT_SHELL'].includes(e.item.id)
+  );
 
-  return [upperAxial, lowerAxial, leftArm, rightArm]
+  return [upperAxial, lowerAxial, rightArm, leftArm]
     .filter((group) => group.length > 0)
     .map((group) => ({
       aabb: mergeAabbs(group.map((g) => g.aabb)),

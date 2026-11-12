@@ -1,3 +1,4 @@
+import type { BodySide } from './handedness.ts';
 import type {
   GhoulZoneId,
   RagdollBoneState,
@@ -16,7 +17,7 @@ import {
   vec3,
 } from '../../ballistics/vec3.ts';
 
-export type ArmSide = 'LEFT' | 'RIGHT';
+export type ArmSide = BodySide;
 
 /**
  * Explicit discriminated union for per-arm pinned dead-limb Verlet simulation state.
@@ -35,7 +36,7 @@ export interface DeadArmTrackerSlice {
 
 export function isArmDeadButAttached(state: TargetHealthState, side: ArmSide): boolean {
   if (!state.alive || state.isRagdollActive) return false;
-  const functional = side === 'LEFT' ? state.leftArmFunctional : state.rightArmFunctional;
+  const functional = side === 'RIGHT' ? state.rightArmFunctional : state.leftArmFunctional;
   if (functional) return false;
   const upperZone: GhoulZoneId = `UPPER_ARM_${side}`;
   const shoulderZone: GhoulZoneId = `SHOULDER_${side}`;
@@ -85,7 +86,7 @@ export function stepPinnedDeadArmVerlet(
   const handBone = state.ragdollBones[`HAND_${side}`];
   const tipAux = state.auxParticles[`HAND_TIP_${side}`];
 
-  const sideSign = side === 'LEFT' ? -1 : 1;
+  const sideSign = side === 'RIGHT' ? -1 : 1;
   const upperLen = 0.27;
   const forearmLen = 0.25;
   const handLen = 0.09;
@@ -157,7 +158,7 @@ export function stepPinnedDeadArmVerlet(
 
   const cosYaw = Math.cos(state.yawRad);
   const sinYaw = Math.sin(state.yawRad);
-  const bodyRight = vec3(cosYaw, 0, -sinYaw);
+  const bodyLeft = vec3(cosYaw, 0, -sinYaw);
   const torsoCenter = state.ragdollBones.TORSO_LOWER_ABDOMEN.position;
 
   // 4 PBD constraint & torso-avoidance iterations
@@ -180,11 +181,11 @@ export function stepPinnedDeadArmVerlet(
 
     for (const joint of [forearmBone, handBone]) {
       const rel = sub(joint.position, torsoCenter);
-      const lat = dot(rel, bodyRight) * sideSign;
+      const lat = dot(rel, bodyLeft) * sideSign;
       const minOutward = 0.19;
       if (lat < minOutward) {
-        joint.position.x += bodyRight.x * sideSign * (minOutward - lat);
-        joint.position.z += bodyRight.z * sideSign * (minOutward - lat);
+        joint.position.x += bodyLeft.x * sideSign * (minOutward - lat);
+        joint.position.z += bodyLeft.z * sideSign * (minOutward - lat);
       }
     }
   }

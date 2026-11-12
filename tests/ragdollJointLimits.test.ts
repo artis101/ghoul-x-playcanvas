@@ -19,7 +19,7 @@ function sever(target: TargetHealthState, zone: GhoulZoneId): void {
     detachedSubtree: getSubtreeZones(zone),
     stumpWorldPosition: target.ragdollBones[zone].position,
     arterialSprayDirection: vec3(0, 1, 0),
-    severedLimbVelocity: vec3(zone.endsWith('LEFT') ? -1.6 : 1.6, 1.8, -0.6),
+    severedLimbVelocity: vec3(zone.endsWith('RIGHT') ? -1.6 : 1.6, 1.8, -0.6),
     severedLimbAngularVelocity: vec3(3, 2, -4),
     gibCount: 0,
   }];
@@ -40,7 +40,7 @@ function simulate(target: TargetHealthState, seconds: number, consciousness?: nu
 }
 
 /** Knee flexion in degrees, negative when the shin has folded in front of the thigh. */
-function kneeFlexionDeg(target: TargetHealthState, side: 'LEFT' | 'RIGHT'): number {
+function kneeFlexionDeg(target: TargetHealthState, side: 'RIGHT' | 'LEFT'): number {
   const bones = target.ragdollBones;
   const pelvis = computePelvisFrame(target)!;
   const thigh = normalize(sub(bones[`KNEE_${side}`].position, bones[`THIGH_${side}`].position));
@@ -73,8 +73,8 @@ describe('Ragdoll anatomical joint limits', () => {
   it('keeps the pelvis oriented after a leg is severed at the hip', () => {
     const target = createTargetHealthState('frame', 'Militia', vec3(0, 0, 0), 0);
     const intact = computePelvisFrame(target)!;
-    sever(target, 'THIGH_LEFT');
-    target.ragdollBones.THIGH_LEFT.position = vec3(3, 0.1, -2);
+    sever(target, 'THIGH_RIGHT');
+    target.ragdollBones.THIGH_RIGHT.position = vec3(3, 0.1, -2);
     const oneLegged = computePelvisFrame(target)!;
     expect(dot(oneLegged.right, intact.right)).toBeGreaterThan(0.99);
     expect(dot(oneLegged.forward, intact.forward)).toBeGreaterThan(0.99);
@@ -88,13 +88,13 @@ describe('Ragdoll anatomical joint limits', () => {
     let highest = 0;
     for (let i = 0; i < 360; i++) {
       stepRagdollPhysics(target, STEP_S, 0);
-      highest = Math.max(highest, target.ragdollBones.FOOT_LEFT.position.y, target.ragdollBones.FOOT_RIGHT.position.y);
+      highest = Math.max(highest, target.ragdollBones.FOOT_RIGHT.position.y, target.ragdollBones.FOOT_LEFT.position.y);
     }
 
     expect(target.ragdollPhase.kind).toBe('CORPSE_SLEEPING');
     // Nothing flings the legs into the air on the way down.
     expect(highest).toBeLessThan(0.6);
-    for (const side of ['LEFT', 'RIGHT'] as const) {
+    for (const side of ['RIGHT', 'LEFT'] as const) {
       expect(kneeFlexionDeg(target, side)).toBeGreaterThan(-15);
     }
     expect(bendDeg(target, 'PELVIS_GROIN', 'TORSO_LOWER_ABDOMEN', 'TORSO_UPPER_THORAX')).toBeLessThan(50);
@@ -102,7 +102,7 @@ describe('Ragdoll anatomical joint limits', () => {
   });
 
   it('holds a living downed combatant in place, with or without a lost limb', () => {
-    for (const lost of [null, 'THIGH_LEFT', 'UPPER_ARM_RIGHT'] as const) {
+    for (const lost of [null, 'THIGH_RIGHT', 'UPPER_ARM_LEFT'] as const) {
       const target = createTargetHealthState(`downed_${lost}`, 'Militia', vec3(0, 0, 0), 0);
       if (lost) sever(target, lost);
       target.currentHp = target.maxHp * 0.25;
@@ -126,7 +126,7 @@ describe('Ragdoll anatomical joint limits', () => {
 
   it('slumps a combatant who dies sitting up, then lets the corpse sleep', () => {
     const target = createTargetHealthState('sit_death', 'Militia', vec3(0, 0, 0), 0);
-    target.leftLegFunctional = false;
+    target.rightLegFunctional = false;
     simulate(target, 2.5, 1);
     expect(target.isRagdollActive).toBe(true);
     expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeGreaterThan(0.6);

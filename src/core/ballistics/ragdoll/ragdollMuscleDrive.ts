@@ -8,7 +8,7 @@ const GRAVITY_MS2 = 9.81;
 const POSE_STIFFNESS = 42.0;
 const POSE_DAMPING = 8.5;
 const MAX_POSE_ACCEL_MS2 = 28.0;
-const SEAT_ZONES: readonly GhoulZoneId[] = ['PELVIS_GROIN', 'THIGH_LEFT', 'THIGH_RIGHT'];
+const SEAT_ZONES: readonly GhoulZoneId[] = ['PELVIS_GROIN', 'THIGH_RIGHT', 'THIGH_LEFT'];
 const MAX_SEAT_REACTION_MS2 = 4.5;
 
 export type MuscleDrive = Partial<Record<GhoulZoneId, Vec3Like>>;
@@ -95,7 +95,7 @@ export function releaseMuscleTone(target: TargetHealthState): void {
   const frame = computePelvisFrame(target);
   if (!frame || bones.HEAD_CRANIUM.position.y - pelvis.position.y < PROPPED_UP_HEIGHT_M) return;
 
-  const hips = [bones.THIGH_LEFT, bones.THIGH_RIGHT].filter((hip) => hip.componentId === 'BODY');
+  const hips = [bones.THIGH_RIGHT, bones.THIGH_LEFT].filter((hip) => hip.componentId === 'BODY');
   const pivot = hips.length
     ? scale(hips.reduce((sum, hip) => add(sum, hip.position), vec3(0, 0, 0)), 1 / hips.length)
     : pelvis.position;
@@ -110,5 +110,5 @@ export function releaseMuscleTone(target: TargetHealthState): void {
   for (const zone of ALL_GHOUL_ZONES) {
     if (!LEG_ZONE_PREFIXES.some((prefix) => zone.startsWith(prefix))) turn(bones[zone]);
   }
-  for (const id of ['HEAD_TOP', 'HAND_TIP_LEFT', 'HAND_TIP_RIGHT'] as const) turn(target.auxParticles[id]);
+  for (const id of ['HEAD_TOP', 'HAND_TIP_RIGHT', 'HAND_TIP_LEFT'] as const) turn(target.auxParticles[id]);
 }

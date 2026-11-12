@@ -1,3 +1,4 @@
+import { oppositeSide, supportSide, triggerSide } from './handedness.ts';
 import type { GhoulZoneId, TargetHealthState, Vec3Like } from '../../../contracts/ballistics.ts';
 import { add, dot, length, normalize, scale, vec3 } from '../../ballistics/vec3.ts';
 import {
@@ -51,14 +52,14 @@ export function createProceduralTraumaTracker(): ProceduralTraumaTrackerState {
     clutchBlend: 0,
     propUpBlend: 0,
     deadArmState: {
-      LEFT: { kind: 'INACTIVE' },
       RIGHT: { kind: 'INACTIVE' },
+      LEFT: { kind: 'INACTIVE' },
     },
   };
 }
 
 function isArmAvailableForClutch(state: TargetHealthState, side: ArmSide): boolean {
-  const functional = side === 'LEFT' ? state.leftArmFunctional : state.rightArmFunctional;
+  const functional = side === 'RIGHT' ? state.rightArmFunctional : state.leftArmFunctional;
   if (!functional) return false;
   if (
     state.severedZones.has(`SHOULDER_${side}`) ||
@@ -68,9 +69,9 @@ function isArmAvailableForClutch(state: TargetHealthState, side: ArmSide): boole
   ) {
     return false;
   }
-  const primarySide: ArmSide = state.isLeftHanded ? 'LEFT' : 'RIGHT';
+  const primarySide: ArmSide = triggerSide(state.isLeftHanded);
   const primaryFunctional =
-    primarySide === 'LEFT' ? state.leftArmFunctional : state.rightArmFunctional;
+    primarySide === 'RIGHT' ? state.rightArmFunctional : state.leftArmFunctional;
   const holdingWeaponSide: ArmSide | null =
     state.weaponDropped ? null : primaryFunctional ? primarySide : side;
 
@@ -118,8 +119,8 @@ function resolveWoundClutchTargetWorld(state: TargetHealthState): Vec3Like | nul
     const gut = state.ragdollBones.TORSO_LOWER_ABDOMEN;
     return add(gut.position, scale(gut.basisForward, 0.11));
   }
-  if (state.posture === 'LEG_BUCKLED' || !state.leftLegFunctional || !state.rightLegFunctional) {
-    const thighZone: GhoulZoneId = !state.leftLegFunctional ? 'THIGH_LEFT' : 'THIGH_RIGHT';
+  if (state.posture === 'LEG_BUCKLED' || !state.rightLegFunctional || !state.leftLegFunctional) {
+    const thighZone: GhoulZoneId = !state.rightLegFunctional ? 'THIGH_RIGHT' : 'THIGH_LEFT';
     const thigh = state.ragdollBones[thighZone];
     return add(thigh.position, scale(thigh.basisForward, 0.08));
   }
@@ -151,12 +152,12 @@ export function stepProceduralTraumaIk(
     const sinYaw = Math.sin(state.yawRad);
     const cosYaw = Math.cos(state.yawRad);
     const fwd = vec3(sinYaw, 0, cosYaw);
-    const right = vec3(cosYaw, 0, -sinYaw);
+    const left = vec3(cosYaw, 0, -sinYaw);
     const hitDir =
       length(rx.hitDirectionWorld) > 1e-4 ? normalize(rx.hitDirectionWorld) : scale(fwd, -1);
 
     const frontDot = dot(hitDir, fwd);
-    const sideDot = dot(hitDir, right);
+    const sideDot = dot(hitDir, left);
     const joltMag = Math.min(1.6, Math.max(0.45, rx.intensity * 1.15));
 
     tracker.joltVelPitch += frontDot * 9.5 * joltMag;
@@ -196,19 +197,19 @@ export function stepProceduralTraumaIk(
     state.alive &&
     !state.isRagdollActive &&
     !state.weaponDropped &&
-    (state.posture === 'LEG_BUCKLED' || !state.leftLegFunctional || !state.rightLegFunctional) &&
-    (state.leftArmFunctional || state.rightArmFunctional);
+    (state.posture === 'LEG_BUCKLED' || !state.rightLegFunctional || !state.leftLegFunctional) &&
+    (state.rightArmFunctional || state.leftArmFunctional);
   const targetProp = downedReturningFire ? 1.0 : 0.0;
   tracker.propUpBlend += (targetProp - tracker.propUpBlend) * (1 - Math.exp(-9 * safeDt));
   const propUpPitchRad = tracker.propUpBlend * -0.44; // Lifts chest/head upward from crawl pose
 
   // Wound-clutching IK evaluation
   let clutchSide: ArmSide | null = null;
-  const preferredSupport: ArmSide = state.isLeftHanded ? 'RIGHT' : 'LEFT';
+  const preferredSupport: ArmSide = supportSide(state.isLeftHanded);
   if (isArmAvailableForClutch(state, preferredSupport)) {
     clutchSide = preferredSupport;
   } else {
-    const otherSide: ArmSide = preferredSupport === 'LEFT' ? 'RIGHT' : 'LEFT';
+    const otherSide: ArmSide = oppositeSide(preferredSupport);
     if (isArmAvailableForClutch(state, otherSide)) {
       clutchSide = otherSide;
     }
