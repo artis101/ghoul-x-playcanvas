@@ -14,6 +14,25 @@ import {
   RagdollActivationPlan,
   WoundChannelEvent,
 } from './ghoulZoneContracts.ts';
+import type {
+  CombatantArmamentState,
+  CombatantBodyState,
+  CorpseSleepPhase,
+  RagdollBoneAttachmentState,
+  RagdollPhaseState,
+  StandingCombatPosture,
+  TargetLifecycleEvent,
+} from './targetLifecycleTypes.ts';
+
+export type {
+  CombatantArmamentState,
+  CombatantBodyState,
+  CorpseSleepPhase,
+  RagdollBoneAttachmentState,
+  RagdollPhaseState,
+  StandingCombatPosture,
+  TargetLifecycleEvent,
+};
 
 export interface PelletTrajectoryResult {
   pelletIndex: number;
@@ -87,6 +106,8 @@ export interface RagdollBoneState {
   componentId: string;
   severed: boolean;
   goreMode: GoreMode;
+  /** Explicit attachment state ('ATTACHED' | 'DETACHED_LIMB' | 'OBLITERATED_HIDDEN') */
+  attachmentState: RagdollBoneAttachmentState;
   grounded: boolean;
 }
 
@@ -125,6 +146,8 @@ export interface ActivePainReaction {
   durationS: number;
   intensity: number;
   hitDirectionWorld: Vec3Like;
+  /** Monotonic counter incremented whenever a fresh pain reaction starts */
+  epoch: number;
 }
 
 export interface TargetHealthState {
@@ -177,6 +200,12 @@ export interface TargetHealthState {
   hitstopRemainingS?: number;
   alive: boolean;
   isRagdollActive: boolean;
+  /** Explicit ragdoll corpse-sleep & living-agony phase FSM */
+  ragdollPhase: RagdollPhaseState;
+  /** Synchronized orthogonal body lifecycle FSM state */
+  bodyState?: CombatantBodyState;
+  /** Synchronized orthogonal armament lifecycle FSM state */
+  armamentState?: CombatantArmamentState;
   ragdollRootPosition: Vec3Like;
   ragdollRootVelocity: Vec3Like;
   ragdollAngularVelocity: Vec3Like;

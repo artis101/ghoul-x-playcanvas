@@ -33,6 +33,25 @@ interface PhaseRange {
   readonly label: string;
 }
 
+export type PreloaderBootState =
+  | {
+      readonly kind: 'RUNNING';
+      readonly phase: PreloadPhaseId;
+      readonly maxOverallProgress: number;
+      readonly completedSteps: number;
+      readonly totalSteps: number;
+    }
+  | {
+      readonly kind: 'READY';
+      readonly completedSteps: number;
+      readonly totalSteps: number;
+    }
+  | {
+      readonly kind: 'FAULT';
+      readonly phase: PreloadPhaseId;
+      readonly message: string;
+    };
+
 const PHASE_RANGES: Record<PreloadPhaseId, PhaseRange> = {
   FONTS_AND_DOM: { base: 0.0, weight: 0.05, label: 'WASM PHYSICS & DOM RUNTIME' },
   WASM_PHYSICS: { base: 0.05, weight: 0.1, label: 'WASM PHYSICS & DOM RUNTIME' },
@@ -81,11 +100,19 @@ export async function runGamePreloader(
     return Math.max(0, now - startTimeMs);
   };
 
-  let currentPhase: PreloadPhaseId = 'FONTS_AND_DOM';
+  let bootState: PreloaderBootState = {
+    kind: 'RUNNING',
+    phase: 'FONTS_AND_DOM',
+    maxOverallProgress: 0,
+    completedSteps: 0,
+    totalSteps: 32,
+  };
   let app: pc.Application | null = options.app ?? null;
-  let maxOverallProgress = 0;
-  let completedSteps = 0;
-  let totalSteps = 32;
+
+  const advancePhase = (phase: PreloadPhaseId): void => {
+    if (bootState.kind !== 'RUNNING') return;
+    bootState = { ...bootState, phase };
+  };
 
   const emitProgress = (
     phase: PreloadPhaseId,
@@ -93,28 +120,38 @@ export async function runGamePreloader(
     itemLabel: string,
     markReady = false
   ): void => {
-    currentPhase = phase;
+    if (bootState.kind !== 'RUNNING') return;
     const range = PHASE_RANGES[phase];
     const clampedPhase = clamp01(phaseProgress);
     const rawOverall = markReady ? 1 : range.base + range.weight * clampedPhase;
-    maxOverallProgress = Math.max(maxOverallProgress, clamp01(rawOverall));
+    const nextOverall = Math.max(bootState.maxOverallProgress, clamp01(rawOverall));
 
-    completedSteps += 1;
-    if (markReady) {
-      totalSteps = Math.max(completedSteps, totalSteps);
-      completedSteps = totalSteps;
-    } else if (completedSteps >= totalSteps) {
-      totalSteps = completedSteps + 2;
-    }
+    const rawCompleted = bootState.completedSteps + 1;
+    const nextTotal = markReady
+      ? Math.max(rawCompleted, bootState.totalSteps)
+      : rawCompleted >= bootState.totalSteps
+        ? rawCompleted + 2
+        : bootState.totalSteps;
+    const nextCompleted = markReady ? nextTotal : rawCompleted;
+
+    bootState = markReady
+      ? { kind: 'READY', completedSteps: nextCompleted, totalSteps: nextTotal }
+      : {
+          kind: 'RUNNING',
+          phase,
+          maxOverallProgress: nextOverall,
+          completedSteps: nextCompleted,
+          totalSteps: nextTotal,
+        };
 
     const snapshot: PreloadProgressSnapshot = {
       phase,
       phaseLabel: range.label,
       itemLabel,
-      overallProgress: maxOverallProgress,
+      overallProgress: nextOverall,
       phaseProgress: clampedPhase,
-      completedSteps,
-      totalSteps,
+      completedSteps: nextCompleted,
+      totalSteps: nextTotal,
       elapsedMs: getElapsedMs(),
     };
 
@@ -142,7 +179,7 @@ export async function runGamePreloader(
     await yieldAnimationFrame(yieldFrames);
 
     // 2. WASM_PHYSICS
-    currentPhase = 'WASM_PHYSICS';
+    advancePhase('WASM_PHYSICS');
     emitProgress('WASM_PHYSICS', 0.15, 'Initializing Rapier3D SIMD WebAssembly physics kernel...');
     await yieldAnimationFrame(yieldFrames);
     await initRapierPhysics();
@@ -150,7 +187,7 @@ export async function runGamePreloader(
     await yieldAnimationFrame(yieldFrames);
 
     // 3. MODELS_AND_GRAPHS
-    currentPhase = 'MODELS_AND_GRAPHS';
+    advancePhase('MODELS_AND_GRAPHS');
     const glbRegistry = options.glbRegistry ?? new GlbModelRegistry(app);
     emitProgress('MODELS_AND_GRAPHS', 0.02, 'Loading 3D GLB arsenal, GHOUL rig & Voronoi fracture graphs...');
 
@@ -175,7 +212,7 @@ export async function runGamePreloader(
     await yieldAnimationFrame(yieldFrames);
 
     // 4. PROCEDURAL_TEXTURES
-    currentPhase = 'PROCEDURAL_TEXTURES';
+    advancePhase('PROCEDURAL_TEXTURES');
     const materials = getOrCreateMaterials();
     const extraMaterials = await prewarmProceduralTexturesAndMaterials(
       app,
@@ -187,7 +224,7 @@ export async function runGamePreloader(
     );
 
     // 5. AUDIO_DSP
-    currentPhase = 'AUDIO_DSP';
+    advancePhase('AUDIO_DSP');
     emitProgress('AUDIO_DSP', 0.25, 'Synthesizing warehouse impulse response & WebAudio DSP buses...');
     await yieldAnimationFrame(yieldFrames);
     const combatAudio = new CombatAudioEngine({
@@ -205,7 +242,7 @@ export async function runGamePreloader(
     await yieldAnimationFrame(yieldFrames);
 
     // 6. WORLD_COMPOSITION
-    currentPhase = 'WORLD_COMPOSITION';
+    advancePhase('WORLD_COMPOSITION');
     emitProgress('WORLD_COMPOSITION', 0.2, 'Composing arena geometry, destructible cover & tactical AI wave...');
     await yieldAnimationFrame(yieldFrames);
     const ghoulApp = new GhoulXApplication(canvas, app, glbRegistry, {
@@ -217,7 +254,7 @@ export async function runGamePreloader(
     await yieldAnimationFrame(yieldFrames);
 
     // 7. SHADER_COMPILATION
-    currentPhase = 'SHADER_COMPILATION';
+    advancePhase('SHADER_COMPILATION');
     emitProgress('SHADER_COMPILATION', 0.05, 'Preparing GPU shader compilation staging pass...');
     const warmup = await compileAllGameShaders({
       app,
@@ -230,7 +267,7 @@ export async function runGamePreloader(
     });
 
     // 8. READY
-    currentPhase = 'READY';
+    advancePhase('READY');
     ghoulApp.start();
     emitProgress('READY', 1.0, 'All Tactical Subsystems Ready', true);
     app.fire('preloader:complete', {
@@ -243,8 +280,12 @@ export async function runGamePreloader(
     return ghoulApp;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    preloaderScreen.showError(currentPhase, message);
-    app?.fire('preloader:error', { phase: currentPhase, message });
+    const currentBoot = bootState as PreloaderBootState;
+    const failedPhase: PreloadPhaseId =
+      currentBoot.kind === 'RUNNING' || currentBoot.kind === 'FAULT' ? currentBoot.phase : 'READY';
+    bootState = { kind: 'FAULT', phase: failedPhase, message };
+    preloaderScreen.showError(failedPhase, message);
+    app?.fire('preloader:error', { phase: failedPhase, message });
     throw err;
   }
 }

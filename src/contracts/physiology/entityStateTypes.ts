@@ -38,6 +38,21 @@ export type CauseOfDeath =
   | 'EXSANGUINATION_CLASS_IV_ARREST'
   | 'HYPOXIC_ASPHYXIA_ARREST';
 
+export type PhysiologicalVitalPhase =
+  | { readonly kind: 'CONSCIOUS' }
+  | { readonly kind: 'UNCONSCIOUS'; readonly neurogenicShock: boolean }
+  | { readonly kind: 'DEAD'; readonly causeOfDeath: Exclude<CauseOfDeath, 'NONE'> };
+
+export type VitalTransitionEvent =
+  | { readonly kind: 'FALL_UNCONSCIOUS'; readonly neurogenicShock?: boolean }
+  | { readonly kind: 'RECOVER_CONSCIOUS' }
+  | { readonly kind: 'LETHAL_ARREST'; readonly cause: Exclude<CauseOfDeath, 'NONE'> };
+
+export type PneumothoraxEvent =
+  | { readonly kind: 'LUNG_HIT'; readonly severity: number }
+  | { readonly kind: 'SEAL_DECOMPRESS' }
+  | { readonly kind: 'TICK'; readonly dt: number };
+
 export type ImmediatePostureReaction =
   | 'NONE'
   | 'DIAPHRAGM_DROP_KNEEL'

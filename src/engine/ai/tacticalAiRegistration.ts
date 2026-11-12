@@ -1,4 +1,6 @@
 import type { TargetHealthState } from '../../contracts/ballistics.ts';
+import { createPrimaryArmedState } from '../../core/ai/enemyArmamentFsm.ts';
+import { createCooldownBurstState } from '../../core/ai/weaponBurstFsm.ts';
 import { copyVec3, vec3 } from '../../core/ballistics/vec3.ts';
 import { updateStandingCombatPose } from '../../core/ghoul/anatomy.ts';
 import { computeCombatantTriageStatus } from '../../core/ballistics/solver.ts';
@@ -72,6 +74,7 @@ export function registerWaveTargetsInternal(
         : -1;
 
     const primaryHand = getPreferredPrimaryHand(hs);
+    const initialCooldownS = 0.65 + (i % 4) * 0.35;
 
     const agent: EnemyAiAgentRuntime = {
       targetId: hs.targetId,
@@ -103,7 +106,7 @@ export function registerWaveTargetsInternal(
 
       burstShotsRemaining: 0,
       burstInterShotTimerS: 0,
-      fireCooldownTimerS: 0.65 + (i % 4) * 0.35,
+      fireCooldownTimerS: initialCooldownS,
       tracerSeedCounter: 100 + i * 37,
       completedBurstCount: 0,
 
@@ -118,6 +121,10 @@ export function registerWaveTargetsInternal(
       alertReactionTimerS: 0,
       hasFiredWarningShot: false,
       timeWithoutLosS: 0,
+
+      armamentState: createPrimaryArmedState(primaryHand),
+      burstState: createCooldownBurstState(initialCooldownS),
+      shockState: { kind: 'CLEAR' },
     };
 
     agents.set(hs.targetId, agent);

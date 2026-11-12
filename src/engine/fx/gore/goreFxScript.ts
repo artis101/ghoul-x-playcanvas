@@ -4,6 +4,12 @@ import type { DismembermentEvent, EnemyArchetypeId, TargetHealthState, Trajector
 import type { EngineMaterialPalette } from '../../materials.ts';
 import type { GlbModelRegistry } from '../../assets/glbLoader.ts';
 
+export type GoreFxScriptLifecycleState =
+  | 'UNINITIALIZED'
+  | 'ACTIVE'
+  | 'SWAPPED_OUT'
+  | 'DESTROYED';
+
 export class GoreFxScript extends pc.Script {
   /**
    * @attribute
@@ -32,85 +38,128 @@ export class GoreFxScript extends pc.Script {
   public showTrails = true;
 
   public manager!: GoreAndBallisticsFxManager;
-  private appEventHandles: Array<{ name: string; fn: (...args: unknown[]) => void }> = [];
+  private _lifecycleState: GoreFxScriptLifecycleState = 'UNINITIALIZED';
+  private readonly _eventCleanups: Array<() => void> = [];
+
+  public get lifecycleState(): GoreFxScriptLifecycleState {
+    return this._lifecycleState;
+  }
 
   public initialize(): void {
-    const materials = (this.app as unknown as { materials?: EngineMaterialPalette }).materials;
-    const glbRegistry = (this.app as unknown as { glbRegistry?: GlbModelRegistry }).glbRegistry;
-    this.manager = new GoreAndBallisticsFxManager(this.app as any, materials ?? ({} as EngineMaterialPalette), glbRegistry);
+    if (this._lifecycleState === 'ACTIVE') return;
+    if (!this.manager) {
+      const materials = (this.app as unknown as { materials?: EngineMaterialPalette }).materials;
+      const glbRegistry = (this.app as unknown as { glbRegistry?: GlbModelRegistry }).glbRegistry;
+      this.manager = new GoreAndBallisticsFxManager(
+        this.app as pc.AppBase,
+        materials ?? ({} as EngineMaterialPalette),
+        glbRegistry,
+      );
+    }
 
     this.bindEvents();
+    this._lifecycleState = 'ACTIVE';
   }
 
   private bindEvents(): void {
+    this.unbindEvents();
     const bind = (name: string, fn: (...args: unknown[]) => void): void => {
       this.app.on(name, fn, this);
-      this.appEventHandles.push({ name, fn });
+      this._eventCleanups.push(() => this.app.off(name, fn, this));
     };
 
     bind('gore:projectileSpawn', (d: unknown) => {
       const p = d as { trajectorySamples: TrajectorySample[]; isShotgunPellet?: boolean };
-      this.manager.spawnFlyingProjectile(p.trajectorySamples, p.isShotgunPellet);
+      this.manager?.spawnFlyingProjectile(p.trajectorySamples, p.isShotgunPellet);
     });
 
     bind('gore:bloodBurst', (d: unknown) => {
       const p = d as { worldPos: Vec3Like; normalDir: Vec3Like; energyJ: number; count?: number };
-      this.manager.spawnBloodBurst(p.worldPos, p.normalDir, p.energyJ, p.count);
+      this.manager?.spawnBloodBurst(p.worldPos, p.normalDir, p.energyJ, p.count);
     });
 
     bind('gore:dismember', (d: unknown) => {
-      this.manager.spawnDismembermentGibs(d as DismembermentEvent);
+      this.manager?.spawnDismembermentGibs(d as DismembermentEvent);
     });
 
     bind('gore:arterialFountain', (d: unknown) => {
       const p = d as { target: TargetHealthState; event: DismembermentEvent };
-      this.manager.attachArterialFountain(p.target, p.event);
+      this.manager?.attachArterialFountain(p.target, p.event);
     });
 
     bind('gore:boneShatter', (d: unknown) => {
       const p = d as { worldPos: Vec3Like; dir: Vec3Like };
-      this.manager.spawnBoneShatterSparks(p.worldPos, p.dir);
+      this.manager?.spawnBoneShatterSparks(p.worldPos, p.dir);
     });
 
     bind('gore:armorSpark', (d: unknown) => {
       const p = d as { worldPos: Vec3Like; normalDir: Vec3Like };
-      this.manager.spawnArmorImpactSparks(p.worldPos, p.normalDir);
+      this.manager?.spawnArmorImpactSparks(p.worldPos, p.normalDir);
     });
 
     bind('gore:detachedHeadgear', (d: unknown) => {
       const p = d as { archetype: EnemyArchetypeId; worldPos: Vec3Like; shotDir: Vec3Like };
-      this.manager.spawnDetachedHeadgearProp(p.archetype, p.worldPos, p.shotDir);
+      this.manager?.spawnDetachedHeadgearProp(p.archetype, p.worldPos, p.shotDir);
     });
 
     bind('gore:droppedWeapon', (d: unknown) => {
       const p = d as { archetype: EnemyArchetypeId; worldPos: Vec3Like; inheritedVel: Vec3Like };
-      this.manager.spawnDroppedWeaponProp(p.archetype, p.worldPos, p.inheritedVel);
+      this.manager?.spawnDroppedWeaponProp(p.archetype, p.worldPos, p.inheritedVel);
     });
 
     bind('gore:clearAll', () => {
-      this.manager.clearAll();
+      this.manager?.clearAll();
     });
 
     bind('camera:transform', (d: unknown) => {
-      const p = d as { position: pc.Vec3 };
-      this.manager.setCachedCameraPos(p.position);
+      const p = d as { position: pc.Vec3; entity?: pc.Entity };
+      if (p.entity) this.manager?.setCameraEntity(p.entity);
+      this.manager?.setCachedCameraPos(p.position);
     });
   }
 
+  private unbindEvents(): void {
+    while (this._eventCleanups.length > 0) {
+      const cleanup = this._eventCleanups.pop();
+      cleanup?.();
+    }
+  }
+
   public update(dt: number): void {
+    if (this._lifecycleState !== 'ACTIVE' || !this.manager) return;
     this.manager.update(dt, this.showTrails);
   }
 
   public swap(old: GoreFxScript): void {
+    old.unbindEvents();
+    old._lifecycleState = 'SWAPPED_OUT';
+
+    if (this.manager && this.manager !== old.manager) {
+      this.manager.clearAll();
+      this.manager.fxRoot?.destroy();
+    }
     this.manager = old.manager;
-    this.appEventHandles = old.appEventHandles;
+    old.manager = undefined as unknown as GoreAndBallisticsFxManager;
+
+    this.bindEvents();
+    this._lifecycleState = 'ACTIVE';
   }
 
   public destroy(): void {
-    for (const h of this.appEventHandles) {
-      this.app.off(h.name, h.fn, this);
+    if (this._lifecycleState === 'DESTROYED') return;
+    this.unbindEvents();
+    if (this._lifecycleState !== 'SWAPPED_OUT' && this.manager) {
+      this.manager.clearAll();
+      this.manager.fxRoot?.destroy();
     }
-    this.appEventHandles.length = 0;
-    this.manager.clearAll();
+    this.manager = undefined as unknown as GoreAndBallisticsFxManager;
+    this._lifecycleState = 'DESTROYED';
   }
 }
+
+try {
+  (pc.registerScript as (script: typeof pc.Script, name?: string) => void)(
+    GoreFxScript,
+    'goreFxScript',
+  );
+} catch {}

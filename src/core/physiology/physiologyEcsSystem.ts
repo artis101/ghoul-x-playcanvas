@@ -6,6 +6,7 @@ import {
 } from '../../contracts/physiology.ts';
 import { createPhysiologicalEntityState } from './initialState.ts';
 import { recomputeMotorAndReadability } from './motorReadability.ts';
+import { transitionPneumothorax } from './physiologyLifecycleFsm.ts';
 import { computeBleedVisualProfile } from './shockBleedProfiles.ts';
 import { applyInternalBallisticsTrauma } from './traumaDispatcher.ts';
 import { stepBiologicalTick } from './biologicalTick.ts';
@@ -69,12 +70,7 @@ export class PhysiologyEcsSystem {
   public applyChestSealOrDecompression(entityId: string): boolean {
     const state = this.entities.get(entityId);
     if (!state || !state.alive) return false;
-    if (
-      state.pneumothoraxState === 'TENSION_PNEUMOTHORAX' ||
-      state.pneumothoraxState === 'OPEN_PNEUMOTHORAX'
-    ) {
-      state.pneumothoraxState = 'DECOMPRESSED_SEALED';
-      state.lungIntegrity = Math.max(state.lungIntegrity, 0.78);
+    if (transitionPneumothorax(state, { kind: 'SEAL_DECOMPRESS' })) {
       recomputeMotorAndReadability(state);
       return true;
     }

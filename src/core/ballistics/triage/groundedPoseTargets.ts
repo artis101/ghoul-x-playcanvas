@@ -5,8 +5,6 @@ import {
 } from '../../../contracts/ballistics.ts';
 import { add, normalize, scale, vec3 } from '../vec3.ts';
 
-export const livingGroundAgonyClock = new WeakMap<TargetHealthState, number>();
-
 /**
  * Builds Active Ragdoll Muscle-Tone target positions for a LIVING downed combatant on the ground.
  */

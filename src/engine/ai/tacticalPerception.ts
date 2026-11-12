@@ -1,7 +1,12 @@
 import type { TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
+import { cancelActiveBurst, enterNeurogenicShock } from '../../core/ai/weaponBurstFsm.ts';
 import { distance } from '../../core/ballistics/vec3.ts';
 import { computeCombatantTriageStatus } from '../../core/ballistics/solver.ts';
-import type { EnemyAiAgentRuntime, EnemyHitNotification, EnemyTacticalAiState } from './tacticalAiTypes.ts';
+import type {
+  EnemyAiAgentRuntime,
+  EnemyHitNotification,
+  EnemyTacticalAiState,
+} from './tacticalAiTypes.ts';
 import { TORSO_ZONES } from './archetypeTuning.ts';
 
 export function handleGunshotOrExplosion(
@@ -25,10 +30,16 @@ export function handleGunshotOrExplosion(
           : agent.resolveProfile === 'PANICKED_SCRAPPER'
             ? 1.25
             : 1.0;
-    agent.suppression = Math.min(1.0, agent.suppression + suppressionImpulse * proximity * suppressionScale);
+    agent.suppression = Math.min(
+      1.0,
+      agent.suppression + suppressionImpulse * proximity * suppressionScale
+    );
 
     if (agent.state === 'PATROL_GUARD') {
-      agent.adrenaline = Math.max(agent.adrenaline, agent.resolveProfile === 'FANATIC_BERSERKER' ? 0.96 : 0.88);
+      agent.adrenaline = Math.max(
+        agent.adrenaline,
+        agent.resolveProfile === 'FANATIC_BERSERKER' ? 0.96 : 0.88
+      );
       onTransition(agent, 'ALERTED_ENGAGING');
     } else if (agent.state === 'ALERTED_ENGAGING') {
       agent.adrenaline = Math.min(1.0, agent.adrenaline + 0.14);
@@ -39,6 +50,7 @@ export function handleGunshotOrExplosion(
         agent.adrenaline < 0.75
       ) {
         agent.staggerTimerS = Math.max(agent.staggerTimerS, 0.5);
+        cancelActiveBurst(agent);
         onTransition(agent, 'SUPPRESSED_STAGGERED');
       }
     }
@@ -63,23 +75,36 @@ export function handleEnemyHit(
   }
 
   onArmamentSync();
-  const hitTorso = hit.isTorsoHit === true || (hit.hitZone !== undefined && TORSO_ZONES.has(hit.hitZone));
+  const hitTorso =
+    hit.isTorsoHit === true || (hit.hitZone !== undefined && TORSO_ZONES.has(hit.hitZone));
   const wasUnsuspecting = agent.state === 'PATROL_GUARD' && agent.adrenaline < 0.35;
 
   if (!target.leftLegFunctional || !target.rightLegFunctional) {
-    agent.adrenaline = Math.max(agent.adrenaline, agent.resolveProfile === 'FANATIC_BERSERKER' ? 1.0 : 0.82);
-    if (!target.isRagdollActive) target.posture = agent.clutchingWound ? 'DISARMED' : 'LEG_BUCKLED';
+    if (wasUnsuspecting && hitTorso) {
+      enterNeurogenicShock(agent, 1.65);
+      target.painShock = Math.max(target.painShock, 0.85);
+      target.consciousness = Math.min(target.consciousness, 0.42);
+    }
+    agent.adrenaline = Math.max(
+      agent.adrenaline,
+      agent.resolveProfile === 'FANATIC_BERSERKER' ? 1.0 : 0.82
+    );
+    if (!target.isRagdollActive) {
+      target.posture = agent.clutchingWound ? 'DISARMED' : 'LEG_BUCKLED';
+    }
     onTransition(agent, 'DOWNED_CRAWLING');
     return agent.state;
   }
 
   if (wasUnsuspecting && hitTorso) {
-    agent.neurogenicShockTimerS = 1.65;
+    enterNeurogenicShock(agent, 1.65);
     agent.staggerTimerS = 1.65;
-    agent.burstShotsRemaining = 0;
+    cancelActiveBurst(agent);
     target.painShock = Math.max(target.painShock, 0.85);
     target.consciousness = Math.min(target.consciousness, 0.42);
-    if (!target.isRagdollActive) target.posture = hit.hitZone === 'TORSO_LOWER_ABDOMEN' ? 'GUT_HURT' : 'STAGGERED';
+    if (!target.isRagdollActive) {
+      target.posture = hit.hitZone === 'TORSO_LOWER_ABDOMEN' ? 'GUT_HURT' : 'STAGGERED';
+    }
     onTransition(agent, 'SUPPRESSED_STAGGERED');
   } else {
     if (agent.resolveProfile === 'FANATIC_BERSERKER') agent.adrenaline = 1.0;
@@ -96,10 +121,16 @@ export function handleEnemyHit(
             ? 0.52
             : 0.46;
 
-    if (heavyEnergy || target.painShock - agent.adrenaline * 0.65 > 0.32 || agent.triageStatus === 'MORTALLY_WOUNDED') {
+    if (
+      heavyEnergy ||
+      target.painShock - agent.adrenaline * 0.65 > 0.32 ||
+      agent.triageStatus === 'MORTALLY_WOUNDED'
+    ) {
       agent.staggerTimerS = Math.max(agent.staggerTimerS, flinchDurationS);
-      agent.burstShotsRemaining = 0;
-      if (!target.isRagdollActive && target.posture === 'COMBAT_READY') target.posture = 'STAGGERED';
+      cancelActiveBurst(agent);
+      if (!target.isRagdollActive && target.posture === 'COMBAT_READY') {
+        target.posture = 'STAGGERED';
+      }
       onTransition(agent, 'SUPPRESSED_STAGGERED');
     } else if (agent.state === 'PATROL_GUARD') {
       onTransition(agent, 'ALERTED_ENGAGING');

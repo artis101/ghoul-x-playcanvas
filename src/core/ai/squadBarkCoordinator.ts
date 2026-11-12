@@ -2,73 +2,45 @@ import type { AiBarkCategory, AiBarkPayload } from '../../contracts/ai/aiContrac
 import type { EnemyArchetypeId, Vec3Like } from '../../contracts/ballistics.ts';
 import type { VocalTraumaCue } from '../../contracts/physiology/entityStateTypes.ts';
 import { copyVec3, distance } from '../ballistics/vec3.ts';
+import {
+  canStartPrimaryRadioCall,
+  createIdleRadioChannelState,
+  type PendingRadioResponse,
+  type RadioChannelState,
+  type SquadMateSummary,
+  stepRadioChannelState,
+  transitionBeginRadioCall,
+  transitionCancelAgentRadioResponses,
+  transitionScheduleAllyDown,
+} from './radioChannelFsm.ts';
 
-export interface SquadMateSummary {
-  readonly targetId: string;
-  readonly archetype: EnemyArchetypeId;
-  readonly worldPos: Vec3Like;
-  readonly alive: boolean;
-  readonly conscious: boolean;
-  readonly isSuppressing: boolean;
-}
-
-interface PendingRadioResponse {
-  readonly triggerAtS: number;
-  readonly responderId: string;
-  readonly archetype: EnemyArchetypeId;
-  readonly category: AiBarkCategory;
-  readonly text: string;
-  readonly worldPos: Vec3Like;
-}
+export type { PendingRadioResponse, RadioChannelState, SquadMateSummary };
 
 const CONTACT_LINES = [
   'Contact front! Target in the killzone!',
   'Hostile sighted! Weapons free!',
   'Eyes on target! Engage!',
 ];
-
 const CONTACT_REPLY_LINES = [
   'Copy! Moving to firing angle!',
   'Solid copy, locking him down!',
   'Roger, pinning his position!',
 ];
-
-const FLANK_LEFT_LINES = [
-  'Flanking left! Keep him pinned!',
-  'Shifting left angle—cover me!',
-];
-
-const FLANK_RIGHT_LINES = [
-  'Pushing right side! Lay it down!',
-  'Re-angling right—suppressing fire!',
-];
-
+const FLANK_LEFT_LINES = ['Flanking left! Keep him pinned!', 'Shifting left angle—cover me!'];
+const FLANK_RIGHT_LINES = ['Pushing right side! Lay it down!', 'Re-angling right—suppressing fire!'];
 const SUPPRESS_REPLY_LINES = [
   'Copy, suppressing! Move now!',
   'Covering your flank—pour it on!',
   'Keeping his head down! Go!',
 ];
-
-const COVER_RETREAT_LINES = [
-  'Taking heavy fire! Shifting cover!',
-  'Pinned down! Need suppression!',
-];
-
-const SIDEARM_LINES = [
-  'Primary disabled—transitioning to M9!',
-  'Drawing backup sidearm!',
-];
-
+const COVER_RETREAT_LINES = ['Taking heavy fire! Shifting cover!', 'Pinned down! Need suppression!'];
+const SIDEARM_LINES = ['Primary disabled—transitioning to M9!', 'Drawing backup sidearm!'];
 const ALLY_DOWN_LINES = [
   'Man down! Check your sectors!',
   'They got him! Pour fire on that angle!',
   'Squadmate KIA—stay sharp!',
 ];
-
-const BERSERKER_LINES = [
-  'BLEED HIM DRY! PUSH!',
-  'NO COVER! RUSH HIM NOW!',
-];
+const BERSERKER_LINES = ['BLEED HIM DRY! PUSH!', 'NO COVER! RUSH HIM NOW!'];
 
 const VOCAL_CUE_TEXT: Record<Exclude<VocalTraumaCue, 'NONE'>, string> = {
   SHARP_GASP: '*sharp pleural gasp*',
@@ -77,24 +49,23 @@ const VOCAL_CUE_TEXT: Record<Exclude<VocalTraumaCue, 'NONE'>, string> = {
   PAIN_GRUNT: '*visceral pain grunt*',
 };
 
-/**
- * Pure F.E.A.R.-style Squad Radio & Trauma Bark Coordinator.
- * Enforces a global 2.2s radio channel lock so bots never talk over each other,
- * schedules 0.85s call-and-response pairs, and cancels queued replies if the responder dies.
- */
 export class SquadBarkCoordinator {
   private readonly globalRadioLockDurationS = 2.2;
+  private readonly replyLockDurationS = 1.45;
   private readonly callAndResponseDelayS = 0.85;
   private readonly allyDownDelayS = 0.48;
   private readonly perSpeakerRadioCooldownS = 4.5;
   private readonly perSpeakerTraumaCooldownS = 1.65;
 
-  private globalRadioAvailableAtS = 0;
+  private channelState: RadioChannelState = createIdleRadioChannelState();
   private readonly callsigns = new Map<string, string>();
   private readonly speakerNextRadioS = new Map<string, number>();
   private readonly speakerNextTraumaS = new Map<string, number>();
-  private readonly pendingResponses: PendingRadioResponse[] = [];
   private lineCounter = 0;
+
+  public get radioState(): RadioChannelState {
+    return this.channelState;
+  }
 
   public resolveCallsign(targetId: string, archetype: EnemyArchetypeId): string {
     const existing = this.callsigns.get(targetId);
@@ -120,34 +91,25 @@ export class SquadBarkCoordinator {
     resolveMateState: (targetId: string) => SquadMateSummary | undefined,
     onBark: (bark: AiBarkPayload) => void
   ): void {
-    for (let i = this.pendingResponses.length - 1; i >= 0; i--) {
-      const pending = this.pendingResponses[i];
-      if (elapsedClockS < pending.triggerAtS) continue;
+    const stepped = stepRadioChannelState(
+      this.channelState,
+      elapsedClockS,
+      resolveMateState,
+      this.replyLockDurationS
+    );
+    this.channelState = stepped.state;
 
-      this.pendingResponses.splice(i, 1);
-      const mate = resolveMateState(pending.responderId);
-      if (!mate || !mate.alive || !mate.conscious) {
-        continue; // Cancelled because responder died or lost consciousness mid-delay
-      }
-
-      const bark: AiBarkPayload = {
+    for (const { mate, response } of stepped.emissions) {
+      this.speakerNextRadioS.set(mate.targetId, elapsedClockS + this.perSpeakerRadioCooldownS);
+      onBark({
         speakerId: mate.targetId,
         callsign: this.resolveCallsign(mate.targetId, mate.archetype),
-        category: pending.category,
-        text: pending.text,
+        category: response.category,
+        text: response.text,
         worldPos: copyVec3(mate.worldPos),
         isRadio: true,
         durationS: 2.3,
-      };
-      this.globalRadioAvailableAtS = Math.max(
-        this.globalRadioAvailableAtS,
-        elapsedClockS + 1.45
-      );
-      this.speakerNextRadioS.set(
-        mate.targetId,
-        elapsedClockS + this.perSpeakerRadioCooldownS
-      );
-      onBark(bark);
+      });
     }
   }
 
@@ -159,24 +121,19 @@ export class SquadBarkCoordinator {
     elapsedClockS: number,
     onBark: (bark: AiBarkPayload) => void
   ): void {
+    const responder = squadmates.find((m) => m.targetId !== speakerId && m.alive && m.conscious);
     const text = CONTACT_LINES[this.lineCounter++ % CONTACT_LINES.length];
-    if (!this.tryEmitRadioBark(speakerId, archetype, 'CONTACT', text, worldPos, elapsedClockS, onBark)) {
-      return;
-    }
-
-    const responder = squadmates.find(
-      (m) => m.targetId !== speakerId && m.alive && m.conscious
-    );
-    if (responder) {
-      this.queueResponse({
-        triggerAtS: elapsedClockS + this.callAndResponseDelayS,
-        responderId: responder.targetId,
-        archetype: responder.archetype,
-        category: 'SUPPRESSING',
-        text: CONTACT_REPLY_LINES[this.lineCounter++ % CONTACT_REPLY_LINES.length],
-        worldPos: copyVec3(responder.worldPos),
-      });
-    }
+    const scheduledReply: PendingRadioResponse | null = responder
+      ? {
+          triggerAtS: elapsedClockS + this.callAndResponseDelayS,
+          responderId: responder.targetId,
+          archetype: responder.archetype,
+          category: 'SUPPRESSING',
+          text: CONTACT_REPLY_LINES[this.lineCounter++ % CONTACT_REPLY_LINES.length],
+          worldPos: copyVec3(responder.worldPos),
+        }
+      : null;
+    this.tryEmitRadioBark(speakerId, archetype, 'CONTACT', text, worldPos, elapsedClockS, onBark, scheduledReply);
   }
 
   public notifyFlankOrPeekShift(
@@ -188,25 +145,22 @@ export class SquadBarkCoordinator {
     elapsedClockS: number,
     onBark: (bark: AiBarkPayload) => void
   ): void {
-    const pool = peekSign < 0 ? FLANK_LEFT_LINES : FLANK_RIGHT_LINES;
-    const text = pool[this.lineCounter++ % pool.length];
-    if (!this.tryEmitRadioBark(speakerId, archetype, 'FLANKING', text, worldPos, elapsedClockS, onBark)) {
-      return;
-    }
-
     const suppressor =
       squadmates.find((m) => m.targetId !== speakerId && m.alive && m.conscious && m.isSuppressing) ??
       squadmates.find((m) => m.targetId !== speakerId && m.alive && m.conscious);
-    if (suppressor) {
-      this.queueResponse({
-        triggerAtS: elapsedClockS + this.callAndResponseDelayS,
-        responderId: suppressor.targetId,
-        archetype: suppressor.archetype,
-        category: 'SUPPRESSING',
-        text: SUPPRESS_REPLY_LINES[this.lineCounter++ % SUPPRESS_REPLY_LINES.length],
-        worldPos: copyVec3(suppressor.worldPos),
-      });
-    }
+    const pool = peekSign < 0 ? FLANK_LEFT_LINES : FLANK_RIGHT_LINES;
+    const text = pool[this.lineCounter++ % pool.length];
+    const scheduledReply: PendingRadioResponse | null = suppressor
+      ? {
+          triggerAtS: elapsedClockS + this.callAndResponseDelayS,
+          responderId: suppressor.targetId,
+          archetype: suppressor.archetype,
+          category: 'SUPPRESSING',
+          text: SUPPRESS_REPLY_LINES[this.lineCounter++ % SUPPRESS_REPLY_LINES.length],
+          worldPos: copyVec3(suppressor.worldPos),
+        }
+      : null;
+    this.tryEmitRadioBark(speakerId, archetype, 'FLANKING', text, worldPos, elapsedClockS, onBark, scheduledReply);
   }
 
   public notifyCoverRetreat(
@@ -238,7 +192,6 @@ export class SquadBarkCoordinator {
     elapsedClockS: number
   ): void {
     this.cancelPendingForAgent(deadTargetId);
-
     let nearestMate: SquadMateSummary | undefined;
     let bestDist = 22.0;
     for (const m of squadmates) {
@@ -249,9 +202,8 @@ export class SquadBarkCoordinator {
         nearestMate = m;
       }
     }
-
     if (nearestMate) {
-      this.queueResponse({
+      this.channelState = transitionScheduleAllyDown(this.channelState, {
         triggerAtS: elapsedClockS + this.allyDownDelayS,
         responderId: nearestMate.targetId,
         archetype: nearestMate.archetype,
@@ -276,7 +228,6 @@ export class SquadBarkCoordinator {
       this.tryEmitRadioBark(speakerId, archetype, 'BERSERKER_CHARGE', text, worldPos, elapsedClockS, onBark);
       return;
     }
-
     if (vocalCue === 'NONE') return;
     const nextAllowed = this.speakerNextTraumaS.get(speakerId) ?? 0;
     if (elapsedClockS < nextAllowed) return;
@@ -295,19 +246,14 @@ export class SquadBarkCoordinator {
   }
 
   public cancelPendingForAgent(targetId: string): void {
-    for (let i = this.pendingResponses.length - 1; i >= 0; i--) {
-      if (this.pendingResponses[i].responderId === targetId) {
-        this.pendingResponses.splice(i, 1);
-      }
-    }
+    this.channelState = transitionCancelAgentRadioResponses(this.channelState, targetId);
   }
 
   public reset(): void {
-    this.globalRadioAvailableAtS = 0;
+    this.channelState = createIdleRadioChannelState();
     this.callsigns.clear();
     this.speakerNextRadioS.clear();
     this.speakerNextTraumaS.clear();
-    this.pendingResponses.length = 0;
   }
 
   private tryEmitRadioBark(
@@ -317,13 +263,15 @@ export class SquadBarkCoordinator {
     text: string,
     worldPos: Vec3Like,
     elapsedClockS: number,
-    onBark: (bark: AiBarkPayload) => void
+    onBark: (bark: AiBarkPayload) => void,
+    scheduledReply: PendingRadioResponse | null = null
   ): boolean {
-    if (elapsedClockS < this.globalRadioAvailableAtS) return false;
+    if (!canStartPrimaryRadioCall(this.channelState, elapsedClockS)) return false;
     const speakerAllowedAt = this.speakerNextRadioS.get(speakerId) ?? 0;
     if (elapsedClockS < speakerAllowedAt) return false;
 
-    this.globalRadioAvailableAtS = elapsedClockS + this.globalRadioLockDurationS;
+    const lockUntilS = elapsedClockS + this.globalRadioLockDurationS;
+    this.channelState = transitionBeginRadioCall(this.channelState, speakerId, lockUntilS, scheduledReply);
     this.speakerNextRadioS.set(speakerId, elapsedClockS + this.perSpeakerRadioCooldownS);
     onBark({
       speakerId,
@@ -335,12 +283,5 @@ export class SquadBarkCoordinator {
       durationS: 2.4,
     });
     return true;
-  }
-
-  private queueResponse(resp: PendingRadioResponse): void {
-    if (this.pendingResponses.length >= 2) {
-      this.pendingResponses.shift();
-    }
-    this.pendingResponses.push(resp);
   }
 }

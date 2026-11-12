@@ -8,6 +8,7 @@ import {
 } from '../../../core/destruction/woodPolygonClipper.ts';
 import type { HardwareInstancedPool } from '../../physics/instancedPool.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
+import { resetPelletVolley } from './buckshotVolleyTracker.ts';
 import { damageInteriorStudSections } from './woodStudDamageSolver.ts';
 import { spawnBlastSplinterShower } from './woodSplinterEmitter.ts';
 import type { WoodSlabDynamicPool } from './woodSlabDynamicPool.ts';
@@ -47,7 +48,7 @@ export function applyWoodWallRadialBlast(
     const wall = walls[i];
     const internal = internalByWallId.get(wall.id);
     if (internal) {
-      internal.activeVolley = null;
+      resetPelletVolley(internal);
     }
 
     const rx = blast.centerWorld.x - wall.centerWorld.x;

@@ -167,6 +167,18 @@ export class MarchingTileGlassWindow {
     return this.armoredPane.isDetachedAt(x2d, y2d);
   }
 
+  public isPlayerPassable(pointWorld?: Vec3Like): boolean {
+    if (this.armoredPane.survivingChunkCount === 0) {
+      return true;
+    }
+    if (pointWorld && !this.isBrokenAtWorldPoint(pointWorld)) {
+      return false;
+    }
+    const total = Math.max(1, this.armoredPane.totalChunks);
+    const detachedFraction = this.armoredPane.detachedChunkCount / total;
+    return detachedFraction >= 0.55 && this.isBrokenAtWorldPoint(this.centerWorld);
+  }
+
   public breakAtWorldPoint(
     pointWorld: Vec3Like,
     directionWorld: Vec3Like,

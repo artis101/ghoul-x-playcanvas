@@ -83,10 +83,26 @@ export class BrickDynamicPool {
     this.variantPools[2].upload();
   }
 
-  public syncFromPhysics(rapierWorld: RapierPhysicsWorld, dt: number): void {
-    this.variantPools[0].syncFromPhysics(rapierWorld, dt);
-    this.variantPools[1].syncFromPhysics(rapierWorld, dt);
-    this.variantPools[2].syncFromPhysics(rapierWorld, dt);
+  public syncFromPhysics(
+    rapierWorld: RapierPhysicsWorld,
+    dt: number,
+    onVariantSlotExpired?: (variant: number, slotId: number, bodyHandle: number) => void
+  ): void {
+    this.variantPools[0].syncFromPhysics(
+      rapierWorld,
+      dt,
+      onVariantSlotExpired ? (s, b) => onVariantSlotExpired(0, s, b) : undefined
+    );
+    this.variantPools[1].syncFromPhysics(
+      rapierWorld,
+      dt,
+      onVariantSlotExpired ? (s, b) => onVariantSlotExpired(1, s, b) : undefined
+    );
+    this.variantPools[2].syncFromPhysics(
+      rapierWorld,
+      dt,
+      onVariantSlotExpired ? (s, b) => onVariantSlotExpired(2, s, b) : undefined
+    );
     this.mortarChipPool.syncFromPhysics(rapierWorld, dt);
   }
 

@@ -51,6 +51,7 @@ export interface BoneShardSpark {
   position: pc.Vec3;
   velocity: pc.Vec3;
   life: number;
+  maxLife: number;
 }
 
 export interface ArterialFountainStream {

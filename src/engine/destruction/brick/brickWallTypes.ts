@@ -13,6 +13,14 @@ export const BRICK_HEAVY_PENETRATOR_THRESHOLD_J = 1400;
 
 export const IDENTITY_QUAT: Readonly<QuatLike> = { x: 0, y: 0, z: 0, w: 1 };
 
+export enum BrickPhase {
+  INTACT_STATIC = 0,
+  DYNAMIC_SINGLE = 1,
+  DYNAMIC_ISLAND_PRIMARY = 2,
+  DYNAMIC_ISLAND_FOLLOWER = 3,
+  EXPIRED_REMOVED = 4,
+}
+
 export interface BrickWallConfig {
   wallId: string;
   position: Vec3Like;
@@ -39,6 +47,7 @@ export interface BrickWallInstanceState {
   readonly brickH: number;
   readonly brickD: number;
   readonly dynamicDebrisTtlS: number;
+  readonly brickPhase: Uint8Array;
   readonly variantByBrick: Uint8Array;
   readonly poolSlotByBrick: Int32Array;
   readonly staticColliderHandles: Float64Array;

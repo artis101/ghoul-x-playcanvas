@@ -3,6 +3,9 @@ import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import type { EngineMaterialPalette } from '../../materials.ts';
 import type { BoneShardSpark, WetGoreMaterialSuite } from './goreTypes.ts';
 
+export const HOT_SPARK_MAX_LIFE_S = 0.55;
+export const BONE_SHARD_MAX_LIFE_S = 3.2;
+
 export function spawnArmorImpactSparks(
   fxRoot: pc.Entity,
   materials: EngineMaterialPalette,
@@ -36,7 +39,8 @@ export function spawnArmorImpactSparks(
       entity: spark,
       position: new pc.Vec3(worldPos.x, worldPos.y, worldPos.z),
       velocity: new pc.Vec3(vx, vy, vz),
-      life: isHotSpark ? 2.65 : 0,
+      life: 0,
+      maxLife: isHotSpark ? HOT_SPARK_MAX_LIFE_S : BONE_SHARD_MAX_LIFE_S,
     });
   }
 }
@@ -71,6 +75,7 @@ export function spawnBoneShatterSparks(
         dir.z * spd + (Math.random() - 0.5) * 2.8,
       ),
       life: 0,
+      maxLife: BONE_SHARD_MAX_LIFE_S,
     });
   }
 }
@@ -96,7 +101,8 @@ export function updateBoneShards(
       shard.velocity.set(0, 0, 0);
     }
 
-    if (shard.life >= 3.2) {
+    const maxLife = shard.maxLife ?? BONE_SHARD_MAX_LIFE_S;
+    if (shard.life >= maxLife) {
       shard.entity.destroy();
       boneShards.splice(i, 1);
     }

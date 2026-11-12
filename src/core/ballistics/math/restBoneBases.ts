@@ -45,6 +45,7 @@ export const REST_BONE_BASES: Record<
       componentId: 'BODY',
       severed: false,
       goreMode: 'INTACT',
+      attachmentState: 'ATTACHED',
       grounded: false,
     };
   }

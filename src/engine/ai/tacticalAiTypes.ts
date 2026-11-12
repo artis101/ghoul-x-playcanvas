@@ -1,25 +1,43 @@
 import * as pc from 'playcanvas';
 import type {
+  ActiveFiringHand,
   AiBarkCategory,
   AiBarkPayload,
+  ArterialBleedState,
   EnemyFireMode,
+  HealthGateState,
   PlayerCombatVitals,
   PlayerNearMissGrazeKind,
   PlayerNearMissGrazePayload,
+  PlayerSurvivalPhase,
 } from '../../contracts/ai/aiContracts.ts';
 import type { EnemyArchetypeId, GhoulZoneId, Vec3Like } from '../../contracts/ballistics.ts';
+import type { EnemyArmamentState } from '../../core/ai/enemyArmamentFsm.ts';
+import type {
+  AlertedEngagementSubstate,
+  TraumaShockState,
+  WeaponBurstState,
+} from '../../core/ai/weaponBurstFsm.ts';
 import type { CombatantTriageStatus } from '../../core/ballistics/solver.ts';
 import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
 import { DESTRUCTION_ZONE_LAYOUT } from '../world/arenaLayout.ts';
 
 export type {
+  ActiveFiringHand,
   AiBarkCategory,
   AiBarkPayload,
+  AlertedEngagementSubstate,
+  ArterialBleedState,
   CombatantTriageStatus,
+  EnemyArmamentState,
   EnemyFireMode,
+  HealthGateState,
   PlayerCombatVitals,
   PlayerNearMissGrazeKind,
   PlayerNearMissGrazePayload,
+  PlayerSurvivalPhase,
+  TraumaShockState,
+  WeaponBurstState,
 };
 
 export const BACKUP_SIDEARM_WEAPON_ID = 'weapon_beretta_m9';
@@ -40,8 +58,6 @@ export type CombatantResolveProfile =
   | 'FANATIC_BERSERKER'
   | 'GRITTY_REGULAR'
   | 'PANICKED_SCRAPPER';
-
-export type ActiveFiringHand = 'LEFT' | 'RIGHT';
 
 export type BrutalKillRewardKind =
   | 'CRANIAL_POP'
@@ -191,6 +207,11 @@ export interface EnemyAiAgentRuntime {
   alertReactionTimerS?: number;
   hasFiredWarningShot?: boolean;
   timeWithoutLosS?: number;
+
+  armamentState?: EnemyArmamentState;
+  burstState?: WeaponBurstState;
+  engagementSubstate?: AlertedEngagementSubstate;
+  shockState?: TraumaShockState;
 }
 
 export interface EnemyHitNotification {

@@ -17,6 +17,14 @@ import type { PomCraterDecalSystem } from '../pomCraterDecals.ts';
 
 export const IDENTITY_QUAT: Readonly<QuatLike> = { x: 0, y: 0, z: 0, w: 1 };
 
+export enum ConcreteChunkPhase {
+  INTACT_STATIC = 0,
+  DYNAMIC_ACTIVE = 1,
+  DYNAMIC_SLEEPING_SYNCED = 2,
+  DYNAMIC_SHRINKING = 3,
+  EVICTED_DESTROYED = 4,
+}
+
 export interface ConcreteWallConfig {
   wallId: string;
   position: Vec3Like;
@@ -46,6 +54,7 @@ export interface ConcreteWallInstanceState {
   readonly drawCommands: pc.DrawCommands | undefined;
   readonly staticColliderHandles: Float64Array;
   readonly dynamicBodyHandles: Float64Array;
+  readonly chunkPhase: Uint8Array;
   readonly dynamicDebrisTtlS: number;
   activeIntactChunkCount: number;
   detachedChunkCount: number;
@@ -63,6 +72,7 @@ export interface ActiveDynamicConcreteChunk {
   ageS: number;
   ttlS: number;
   sleepingSynced: boolean;
+  phase: ConcreteChunkPhase;
 }
 
 export interface ConcreteWallSystemOptions {

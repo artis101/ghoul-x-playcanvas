@@ -3,6 +3,7 @@
  */
 
 export * from './initialState.ts';
+export * from './physiologyLifecycleFsm.ts';
 export * from './shockBleedProfiles.ts';
 export * from './motorReadability.ts';
 export * from './vascularHelper.ts';

@@ -1,6 +1,15 @@
 import * as pc from 'playcanvas';
 import type { GhoulZoneId } from '../../contracts/ballistics.ts';
 
+export type {
+  MannequinDriveMode,
+  MannequinDriveState,
+  PropAttachmentKind,
+  PropAttachmentState,
+  PropAttachmentTransitionInput,
+  PropAttachmentTransitionResult,
+} from './propAttachmentState.ts';
+
 export interface ChildSocketStump {
   childZone: GhoulZoneId;
   node: pc.Entity;

@@ -10,6 +10,7 @@ import {
   SquadBarkCoordinator,
   type SquadMateSummary,
 } from '../../core/ai/squadBarkCoordinator.ts';
+import { cancelActiveBurst, enterAlertReactionHold } from '../../core/ai/weaponBurstFsm.ts';
 import { distance, dot, length, normalize, sub } from '../../core/ballistics/vec3.ts';
 import { HardwareInstancedPool } from '../physics/instancedPool.ts';
 import {
@@ -87,7 +88,7 @@ export function updateSquadTokensAndFrustum(
     if (!ag) continue;
     const isAlive = hs.alive && hs.currentHp > 0 && ag.state !== 'DEAD';
     if (!isAlive) {
-      ag.burstShotsRemaining = 0;
+      cancelActiveBurst(ag);
       ag.fireMode = 'CINEMATIC_SUPPRESSION';
       tokenPool.releaseToken(hs.targetId);
       barkCoordinator.cancelPendingForAgent(hs.targetId);
@@ -168,7 +169,7 @@ export function triggerStateTransitionBark(
 ): void {
   const hs = targetStateById.get(agent.targetId);
   if (prevState === 'PATROL_GUARD' && nextState === 'ALERTED_ENGAGING') {
-    agent.alertReactionTimerS = Math.max(agent.alertReactionTimerS ?? 0, 0.28);
+    enterAlertReactionHold(agent, 0.28);
     if (hs) {
       barkCoordinator.notifyContact(
         hs.targetId,
@@ -180,7 +181,7 @@ export function triggerStateTransitionBark(
       );
     }
   } else if (nextState === 'DEAD') {
-    agent.burstShotsRemaining = 0;
+    cancelActiveBurst(agent);
     agent.fireMode = 'CINEMATIC_SUPPRESSION';
     barkCoordinator.cancelPendingForAgent(agent.targetId);
     if (hs) {

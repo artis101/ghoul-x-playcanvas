@@ -1,6 +1,7 @@
 import {
   AuxParticleId,
   GhoulZoneId,
+  RagdollBoneState,
   TargetHealthState,
   Vec3Like,
 } from '../../../contracts/ballistics.ts';
@@ -16,14 +17,27 @@ export interface RagdollParticleRef {
   active: boolean;
 }
 
+export function isRagdollBoneParticleActive(
+  target: TargetHealthState,
+  bone: RagdollBoneState
+): boolean {
+  if (bone.attachmentState === 'OBLITERATED_HIDDEN' || bone.goreMode === 'CRANIAL_POP') {
+    return false;
+  }
+  return (
+    target.isRagdollActive ||
+    bone.attachmentState === 'DETACHED_LIMB' ||
+    bone.componentId !== 'BODY'
+  );
+}
+
 export function getRagdollParticleRef(
   target: TargetHealthState,
   id: GhoulZoneId | AuxParticleId
 ): RagdollParticleRef {
   if (id in target.ragdollBones) {
     const b = target.ragdollBones[id as GhoulZoneId];
-    const active =
-      (target.isRagdollActive || b.componentId !== 'BODY') && b.goreMode !== 'CRANIAL_POP';
+    const active = isRagdollBoneParticleActive(target, b);
     return {
       position: b.position,
       prevPosition: b.prevPosition,
@@ -38,8 +52,11 @@ export function getRagdollParticleRef(
   const a = target.auxParticles[id as AuxParticleId];
   const parentBone = target.ragdollBones[a.parentZone];
   const active =
-    (target.isRagdollActive || a.componentId !== 'BODY') &&
-    parentBone.goreMode !== 'CRANIAL_POP';
+    parentBone.attachmentState !== 'OBLITERATED_HIDDEN' &&
+    parentBone.goreMode !== 'CRANIAL_POP' &&
+    (target.isRagdollActive ||
+      parentBone.attachmentState === 'DETACHED_LIMB' ||
+      a.componentId !== 'BODY');
   return {
     position: a.position,
     prevPosition: a.prevPosition,

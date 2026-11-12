@@ -1,5 +1,5 @@
 import * as pc from 'playcanvas';
-import type { GhoulZoneId, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
+import type { GhoulZoneId, Vec3Like } from '../../contracts/ballistics.ts';
 import { add, copyVec3, dot, length, normalize, scale, sub, vec3 } from '../../core/ballistics/vec3.ts';
 import { safeOrthonormalBasis } from '../../core/ghoul/anatomy/ragdollBasisMath.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
@@ -9,6 +9,7 @@ import type { OffhandSidearmRig } from './offhandSidearmTypes.ts';
 import { basisToQuat } from '../mannequin/combatantPoseConstants.ts';
 import { CombatantWeaponGrip } from '../mannequin/combatantWeaponGrip.ts';
 import { CombatantBoneSync } from '../mannequin/combatantBoneSync.ts';
+import { transitionPropAttachment } from '../mannequin/propAttachmentState.ts';
 
 export class OffhandSidearmSync {
   private readonly scratchMat4 = new pc.Mat4();
@@ -24,43 +25,58 @@ export class OffhandSidearmSync {
     fxManager: GoreAndBallisticsFxManager
   ): boolean {
     const hs = target.healthState;
-    if (!hs.alive || hs.currentHp <= 0) {
+    const alive = hs.alive && hs.currentHp > 0;
+    if (!alive) {
       hs.weaponDropped = true;
-      if (rig.wasHeldLastFrame) {
-        rig.wasHeldLastFrame = false;
-        const dropZone: GhoulZoneId = rig.lastHand === 'LEFT' ? 'HAND_LEFT' : 'HAND_RIGHT';
-        const handBone = hs.ragdollBones[dropZone];
-        if (rig.glbInstance) {
-          fxManager.spawnDroppedWeaponProp('SKINHEAD_PUNK', rig.holderEntity.getPosition(), handBone.velocity);
-        }
-      }
-      rig.holderEntity.enabled = false;
-      return false;
     }
 
     const sidearmState = tacticalAi?.getSidearmVisualState(hs.targetId);
     const hand: ActiveFiringHand | null = sidearmState?.hand ?? null;
     const armIntact = hand !== null && isArmChainIntactAndFunctional(hs, hand);
-    const notAirborne = !(hs.isRagdollActive && hs.posture === 'AIRBORNE_RAGDOLL');
+    const isAirborneRagdoll = hs.isRagdollActive && hs.posture === 'AIRBORNE_RAGDOLL';
 
-    const shouldShow = Boolean(sidearmState?.visible) && hs.alive && hs.currentHp > 0 && armIntact && notAirborne;
-    if (!shouldShow) {
-      if (rig.wasHeldLastFrame) {
-        rig.wasHeldLastFrame = false;
-        const dropZone: GhoulZoneId = rig.lastHand === 'LEFT' ? 'HAND_LEFT' : 'HAND_RIGHT';
-        const handBone = hs.ragdollBones[dropZone];
-        if (rig.glbInstance) {
-          fxManager.spawnDroppedWeaponProp('SKINHEAD_PUNK', rig.holderEntity.getPosition(), handBone.velocity);
-        }
+    const wantsSidearm = Boolean(sidearmState?.visible) && alive && armIntact;
+    const shouldBeAttached = wantsSidearm && !isAirborneRagdoll;
+    const temporarilyHidden =
+      (wantsSidearm && isAirborneRagdoll) ||
+      (!wantsSidearm &&
+        alive &&
+        rig.attachmentState.kind === 'HIDDEN_TEMP' &&
+        rig.attachmentState.hand === undefined);
+
+    const transition = transitionPropAttachment(rig.attachmentState, {
+      shouldBeAttached,
+      temporarilyHidden,
+      hand: hand ?? rig.lastHand ?? undefined,
+    });
+    rig.attachmentState = transition.state;
+    rig.wasHeldLastFrame = transition.isVisible;
+    if (transition.state.kind === 'ATTACHED' || transition.state.kind === 'HIDDEN_TEMP') {
+      if (transition.state.hand) {
+        rig.lastHand = transition.state.hand;
       }
+    }
+
+    if (transition.shouldSpawnDroppedProp) {
+      const dropHand = transition.dropHand ?? rig.lastHand;
+      const dropZone: GhoulZoneId = dropHand === 'LEFT' ? 'HAND_LEFT' : 'HAND_RIGHT';
+      const handBone = hs.ragdollBones[dropZone];
+      if (rig.glbInstance) {
+        fxManager.spawnDroppedWeaponProp(
+          'SKINHEAD_PUNK',
+          rig.holderEntity.getPosition(),
+          handBone.velocity
+        );
+      }
+    }
+
+    if (!transition.isVisible || !hand) {
       rig.holderEntity.enabled = false;
       return false;
     }
 
-    const activeHand = hand!;
+    const activeHand = hand;
     rig.holderEntity.enabled = true;
-    rig.wasHeldLastFrame = true;
-    rig.lastHand = activeHand;
 
     const upperArmZone: GhoulZoneId = activeHand === 'LEFT' ? 'UPPER_ARM_LEFT' : 'UPPER_ARM_RIGHT';
     const forearmZone: GhoulZoneId = activeHand === 'LEFT' ? 'FOREARM_LEFT' : 'FOREARM_RIGHT';

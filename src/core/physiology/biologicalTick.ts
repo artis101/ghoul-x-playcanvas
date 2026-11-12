@@ -2,8 +2,12 @@ import {
   PHYSIOLOGY_CONSTANTS,
   PhysiologicalEntityState,
 } from '../../contracts/physiology.ts';
-import { classifyShockStage } from './shockBleedProfiles.ts';
 import { recomputeMotorAndReadability } from './motorReadability.ts';
+import {
+  transitionPneumothorax,
+  transitionVitalState,
+} from './physiologyLifecycleFsm.ts';
+import { classifyShockStage } from './shockBleedProfiles.ts';
 
 export function stepBiologicalTick(state: PhysiologicalEntityState, tickDt: number): void {
   state.biologicalTicksExecuted++;
@@ -78,27 +82,20 @@ export function stepBiologicalTick(state: PhysiologicalEntityState, tickDt: numb
   // Class IV Exsanguination Arrest
   if (state.bloodVolumeMl <= PHYSIOLOGY_CONSTANTS.CLASS_IV_ARREST_VOLUME_ML) {
     state.shockStage = 'CLASS_IV';
-    state.conscious = false;
-    state.alive = false;
-    state.causeOfDeath = 'EXSANGUINATION_CLASS_IV_ARREST';
-    state.heartRateBpm = 0;
-    state.meanArterialPressureMmHg = 0;
+    transitionVitalState(state, {
+      kind: 'LETHAL_ARREST',
+      cause: 'EXSANGUINATION_CLASS_IV_ARREST',
+    });
     recomputeMotorAndReadability(state, 'NEUROGENIC_DROP', 'AGUNAL_WHEEZE');
     return;
   }
 
   if (state.meanArterialPressureMmHg < PHYSIOLOGY_CONSTANTS.HYPOTENSION_UNCONSCIOUS_MAP_MMHG) {
-    state.conscious = false;
+    transitionVitalState(state, { kind: 'FALL_UNCONSCIOUS' });
   }
 
   // 4. Pulmonary Collapse & SpO2
-  if (state.pneumothoraxState === 'TENSION_PNEUMOTHORAX') {
-    state.lungIntegrity = Math.max(0.04, state.lungIntegrity - 0.095 * tickDt);
-  } else if (state.pneumothoraxState === 'OPEN_PNEUMOTHORAX') {
-    state.lungIntegrity = Math.max(0.45, state.lungIntegrity - 0.03 * tickDt);
-  } else if (state.pneumothoraxState === 'DECOMPRESSED_SEALED') {
-    state.lungIntegrity = Math.min(0.92, state.lungIntegrity + 0.065 * tickDt);
-  }
+  transitionPneumothorax(state, { kind: 'TICK', dt: tickDt });
 
   const respiratoryDrive = 0.25 + 0.75 * state.diaphragmIntegrity;
   const perfusionMatch = Math.min(1.05, 0.52 + 0.48 * state.cardiacOutputRatio);
@@ -112,14 +109,13 @@ export function stepBiologicalTick(state: PhysiologicalEntityState, tickDt: numb
   state.oxygenSaturationPct += (targetSpO2 - state.oxygenSaturationPct) * spo2Rate * tickDt;
 
   if (state.oxygenSaturationPct < PHYSIOLOGY_CONSTANTS.HYPOXIA_COMA_SPO2_PCT) {
-    state.conscious = false;
+    transitionVitalState(state, { kind: 'FALL_UNCONSCIOUS' });
   }
   if (state.oxygenSaturationPct < PHYSIOLOGY_CONSTANTS.HYPOXIC_ARREST_SPO2_PCT) {
-    state.conscious = false;
-    state.alive = false;
-    state.causeOfDeath = 'HYPOXIC_ASPHYXIA_ARREST';
-    state.heartRateBpm = 0;
-    state.meanArterialPressureMmHg = 0;
+    transitionVitalState(state, {
+      kind: 'LETHAL_ARREST',
+      cause: 'HYPOXIC_ASPHYXIA_ARREST',
+    });
     recomputeMotorAndReadability(state, 'NEUROGENIC_DROP', 'AGUNAL_WHEEZE');
     return;
   }

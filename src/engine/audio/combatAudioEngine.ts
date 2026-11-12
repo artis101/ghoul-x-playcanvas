@@ -20,7 +20,13 @@ import { playMaterialImpact } from '../../core/audio/synth/materialImpactSynth.t
 import { playGoreImpact } from '../../core/audio/synth/fleshGoreAudioSynth.ts';
 import { playVocalTraumaCue } from '../../core/audio/synth/vocalTraumaSynth.ts';
 import { playExplosion } from '../../core/audio/synth/explosionAudioSynth.ts';
-import { playSlowMoTransition, scheduleHeartbeatPair, type SlowMoSynthState } from '../../core/audio/synth/slowMoAudioSynth.ts';
+import {
+  createSlowMoSynthState,
+  playSlowMoTransition,
+  resetSlowMoSynthState,
+  stepSlowMoHeartbeat,
+  type SlowMoSynthState,
+} from '../../core/audio/synth/slowMoAudioSynth.ts';
 import {
   playEnemyBallisticShot,
   playNearMissGrazeTinnitus,
@@ -28,9 +34,18 @@ import {
   type SupersonicShotAudioResult,
 } from '../../core/audio/synth/supersonicBallisticSynth.ts';
 import { playRadioBarkCue } from '../../core/audio/synth/radioBarkSynth.ts';
-import { AudioSourceTracker } from './tinnitusSystem.ts';
+import { AudioSourceTracker, type TinnitusState } from './tinnitusSystem.ts';
 import { bindGestureUnlock, createGraphFactory, resolveBrowserAudioContextCtor } from './audioContextResolver.ts';
 import { AudioCounters } from './audioDiagnostics.ts';
+import {
+  createInitialAudioRuntimeState,
+  getAudioRuntimeGraph,
+  materializeAudioGraph,
+  syncAudioRuntimeWithContextState,
+  transitionAudioRuntimeState,
+  unlockAudioRuntime,
+  type AudioRuntimeState,
+} from './audioLifecycleState.ts';
 
 export * from '../../core/audio/contracts.ts';
 export * from '../../core/audio/types.ts';
@@ -38,21 +53,24 @@ export * from '../../core/audio/audioMath.ts';
 export * from '../../core/audio/spatialAudio.ts';
 export * from '../../core/audio/dspCurves.ts';
 export * from '../../core/audio/reverbSynth.ts';
+export type { AudioRuntimeState, TinnitusState };
 export { CombatAudioScript } from './combatAudioScript.ts';
 
 export class CombatAudioEngine {
-  private graph: InternalAudioGraph | null = null;
+  private runtimeState: AudioRuntimeState;
   private readonly contextFactory: () => InternalAudioGraph | null;
+  private readonly hasCustomContextFactory: boolean;
   private readonly rng: () => number;
   private pannerModel: PanningModelType;
   private masterVolume: number;
   private readonly reverbWetMix: number;
   private timeScale = 1.0;
+  private desiredSlowMoActive = false;
   private listenerPos: Vec3Like = { x: 0, y: 1.62, z: 0 };
   private listenerYawDeg = 0;
   private listenerPitchDeg = 0;
   private readonly gunshotState: GunshotSynthState = { m4ShotCounter: 0, lastWeaponPitchJitter: 1.0 };
-  private readonly slowMoState: SlowMoSynthState = { slowMoActive: false, heartbeatBus: null, heartbeatNextScheduleTime: 0 };
+  private readonly slowMoState: SlowMoSynthState = createSlowMoSynthState();
   private lastVocalCueTime = -10;
   private lastPruneTime = -10;
   private impactWindowStart = -10;
@@ -64,14 +82,13 @@ export class CombatAudioEngine {
   private goreWindowCount = 0;
   private readonly tracker = new AudioSourceTracker();
   private readonly counters = new AudioCounters();
-  private gestureCleanup: (() => void) | null = null;
-  private destroyed = false;
 
   constructor(options: CombatAudioEngineOptions = {}) {
     this.pannerModel = options.pannerModel ?? 'HRTF';
     this.masterVolume = clampNumber(options.masterVolume ?? 0.9, 0, 2.0);
     this.reverbWetMix = clampNumber(options.reverbWetMix ?? 0.34, 0, 1.0);
     this.rng = options.random ?? Math.random;
+    this.hasCustomContextFactory = Boolean(options.contextFactory);
     this.contextFactory = createGraphFactory(
       options,
       this.masterVolume,
@@ -79,22 +96,40 @@ export class CombatAudioEngine {
       this.rng,
       (nodes, endTime) => this.tracker.registerTransientNodes(nodes, endTime),
     );
-    if (options.context) this.graph = this.contextFactory();
-    if (options.autoUnlockOnGesture !== false) {
-      this.gestureCleanup = bindGestureUnlock(() => { if (!this.destroyed) void this.unlock(); });
-    }
+    const initialGraph = options.context ? this.contextFactory() : null;
+    const gestureCleanup =
+      options.autoUnlockOnGesture !== false
+        ? bindGestureUnlock(() => { if (this.runtimeState.kind !== 'DESTROYED') void this.unlock(); })
+        : null;
+    this.runtimeState = createInitialAudioRuntimeState(initialGraph, options.context === null, gestureCleanup);
+  }
+
+  public get lifecycleState(): AudioRuntimeState { return this.runtimeState; }
+
+  private materializeGraph(): InternalAudioGraph | null {
+    return materializeAudioGraph(
+      () => this.runtimeState,
+      (next) => { this.runtimeState = next; },
+      this.contextFactory,
+      this.listenerPos,
+      this.listenerYawDeg,
+      this.listenerPitchDeg,
+      (created) => {
+        if (this.desiredSlowMoActive && this.slowMoState.phase?.kind !== 'ACTIVE') {
+          playSlowMoTransition(this.getSynthContext(created), this.slowMoState, true);
+        }
+      },
+    );
   }
 
   private ensureGraph(): InternalAudioGraph | null {
-    if (this.destroyed) return null;
-    if (!this.graph) this.graph = this.contextFactory();
-    if (this.graph && this.graph.ctx.state === 'suspended') void this.graph.ctx.resume().catch(() => {});
-    if (this.graph) {
-      const now = this.graph.ctx.currentTime;
-      this.tracker.pruneFinished(now);
-      this.lastPruneTime = now;
-    }
-    return this.graph;
+    const graph = this.materializeGraph();
+    if (!graph) return null;
+    if (this.runtimeState.kind === 'SUSPENDED') void this.unlock();
+    const now = graph.ctx.currentTime;
+    this.tracker.pruneFinished(now);
+    this.lastPruneTime = now;
+    return graph;
   }
 
   private getSynthContext(graph: InternalAudioGraph): SynthContext {
@@ -106,35 +141,22 @@ export class CombatAudioEngine {
     };
   }
 
-  public prewarmDspGraph(): boolean {
-    if (this.destroyed) return false;
-    if (!this.graph) {
-      try {
-        this.graph = this.contextFactory();
-      } catch {
-        this.graph = null;
-      }
-    }
-    return this.graph !== null;
-  }
+  public prewarmDspGraph(): boolean { return this.materializeGraph() !== null; }
 
   public async unlock(): Promise<boolean> {
-    if (this.destroyed) return false;
-    if (!this.graph) this.graph = this.contextFactory();
-    if (!this.graph) return false;
-    if (this.graph.ctx.state === 'suspended') {
-      try { await this.graph.ctx.resume(); } catch { return false; }
-    }
-    return this.graph.ctx.state === 'running';
+    const graph = this.materializeGraph();
+    return unlockAudioRuntime(() => this.runtimeState, (next) => { this.runtimeState = next; }, graph);
   }
 
   public isAvailable(): boolean {
-    if (this.destroyed) return false;
-    return this.graph !== null || resolveBrowserAudioContextCtor() !== null;
+    if (this.runtimeState.kind === 'DESTROYED' || this.runtimeState.kind === 'UNAVAILABLE') return false;
+    if (getAudioRuntimeGraph(this.runtimeState) !== null) return true;
+    return this.hasCustomContextFactory || resolveBrowserAudioContextCtor() !== null;
   }
 
   public isUnlocked(): boolean {
-    return Boolean(this.graph && this.graph.ctx.state === 'running');
+    this.runtimeState = syncAudioRuntimeWithContextState(this.runtimeState);
+    return this.runtimeState.kind === 'RUNNING';
   }
 
   public getDiagnostics(): CombatAudioDiagnostics {
@@ -147,10 +169,11 @@ export class CombatAudioEngine {
 
   public setMasterVolume(v: number): void {
     this.masterVolume = clampNumber(v, 0, 2.0);
-    if (this.graph) {
-      const now = this.graph.ctx.currentTime;
-      this.graph.masterGain.gain.cancelScheduledValues(now);
-      this.graph.masterGain.gain.setTargetAtTime(this.masterVolume, now, 0.015);
+    const graph = getAudioRuntimeGraph(this.runtimeState);
+    if (graph) {
+      const now = graph.ctx.currentTime;
+      graph.masterGain.gain.cancelScheduledValues(now);
+      graph.masterGain.gain.setTargetAtTime(this.masterVolume, now, 0.015);
     }
   }
   public getMasterVolume(): number { return this.masterVolume; }
@@ -161,32 +184,31 @@ export class CombatAudioEngine {
     this.listenerPos = { x: pos.x, y: pos.y, z: pos.z };
     this.listenerYawDeg = yawDeg;
     this.listenerPitchDeg = pitchDeg;
-    if (this.graph) this.graph.updateListener(this.listenerPos, yawDeg, pitchDeg);
+    const graph = getAudioRuntimeGraph(this.runtimeState);
+    if (graph) graph.updateListener(this.listenerPos, yawDeg, pitchDeg);
   }
 
   public setTimeScale(scale: number): void {
     const clamped = clampTimeScale(scale);
     if (Math.abs(clamped - this.timeScale) < 1e-4) return;
     this.timeScale = clamped;
-    if (!this.graph) return;
-    const now = this.graph.ctx.currentTime;
+    const graph = getAudioRuntimeGraph(this.runtimeState);
+    if (!graph) return;
+    const now = graph.ctx.currentTime;
     this.tracker.pruneFinished(now);
     this.tracker.applyTimeScale(this.timeScale, now);
   }
   public getTimeScale(): number { return this.timeScale; }
 
   public update(_rawDt: number): void {
-    if (!this.graph) return;
-    const now = this.graph.ctx.currentTime;
+    const graph = getAudioRuntimeGraph(this.runtimeState);
+    if (!graph) return;
+    const now = graph.ctx.currentTime;
     if (now - this.lastPruneTime >= 0.12) {
       this.tracker.pruneFinished(now);
       this.lastPruneTime = now;
     }
-    if (!this.slowMoState.slowMoActive || !this.slowMoState.heartbeatBus) return;
-    if (now + 0.35 >= this.slowMoState.heartbeatNextScheduleTime) {
-      scheduleHeartbeatPair(this.getSynthContext(this.graph), this.slowMoState.heartbeatBus, Math.max(now + 0.05, this.slowMoState.heartbeatNextScheduleTime));
-      this.slowMoState.heartbeatNextScheduleTime = Math.max(now + 0.05, this.slowMoState.heartbeatNextScheduleTime) + 0.92;
-    }
+    stepSlowMoHeartbeat(this.getSynthContext(graph), this.slowMoState, now);
   }
 
   public playWeaponFire(id: string, ammo: string, ads: boolean): void {
@@ -227,16 +249,8 @@ export class CombatAudioEngine {
     const startOffsetS = matCount === 0 ? 0 : matCount * 0.0045 + this.rng() * 0.0025;
     const gainMul = matCount === 0 ? 1.0 : 1.0 / Math.sqrt(matCount + 1);
     playMaterialImpact(
-      this.getSynthContext(g),
-      m,
-      pos,
-      energy,
-      lPos,
-      this.listenerYawDeg,
-      this.pannerModel,
-      this.reverbWetMix,
-      startOffsetS,
-      gainMul,
+      this.getSynthContext(g), m, pos, energy, lPos,
+      this.listenerYawDeg, this.pannerModel, this.reverbWetMix, startOffsetS, gainMul,
     );
   }
 
@@ -270,15 +284,27 @@ export class CombatAudioEngine {
     this.counters.explosionCount += 1;
     if (!Number.isFinite(intensity) || intensity <= 0) return;
     const distM = Math.hypot(worldPos.x - listenerPos.x, worldPos.y - listenerPos.y, worldPos.z - listenerPos.z);
-    if (distM <= TINNITUS_PROXIMITY_RADIUS_M) this.counters.tinnitusTriggerCount += 1;
     const g = this.ensureGraph();
+    if (distM <= TINNITUS_PROXIMITY_RADIUS_M) {
+      this.counters.tinnitusTriggerCount += 1;
+      if (g) this.tracker.triggerTinnitusSpike(g.ctx.currentTime, Math.min(1.5, intensity));
+    }
     if (g) playExplosion(this.getSynthContext(g), worldPos, listenerPos, intensity, this.listenerYawDeg, this.pannerModel, this.reverbWetMix);
   }
 
   public playSlowMoTransition(entering: boolean): void {
     this.counters.slowMoTransitionCount += 1;
+    this.desiredSlowMoActive = entering;
     const g = this.ensureGraph();
     if (g) playSlowMoTransition(this.getSynthContext(g), this.slowMoState, entering);
+    else this.slowMoState.slowMoActive = entering;
+  }
+
+  public resetSlowMo(): void {
+    this.desiredSlowMoActive = false;
+    const g = getAudioRuntimeGraph(this.runtimeState);
+    resetSlowMoSynthState(g ? this.getSynthContext(g) : null, this.slowMoState);
+    this.setTimeScale(1.0);
   }
 
   public playEnemyBallisticShot(params: EnemyBallisticShotAudioParams): SupersonicShotAudioResult | null {
@@ -286,34 +312,15 @@ export class CombatAudioEngine {
     const g = this.ensureGraph();
     if (!g) return null;
     const lPos = params.listenerPos ?? this.listenerPos;
-    return playEnemyBallisticShot(
-      this.getSynthContext(g),
-      params,
-      lPos,
-      this.listenerYawDeg,
-      this.pannerModel,
-      this.reverbWetMix,
-    );
+    return playEnemyBallisticShot(this.getSynthContext(g), params, lPos, this.listenerYawDeg, this.pannerModel, this.reverbWetMix);
   }
 
-  public playNearMissGrazeTinnitus(
-    kind: NearMissGrazeAudioKind,
-    hitOrigin: Vec3Like,
-    listenerPos = this.listenerPos,
-  ): void {
+  public playNearMissGrazeTinnitus(kind: NearMissGrazeAudioKind, hitOrigin: Vec3Like, listenerPos = this.listenerPos): void {
     this.counters.tinnitusTriggerCount += 1;
     const g = this.ensureGraph();
     if (!g) return;
     this.tracker.triggerTinnitusSpike(g.ctx.currentTime, kind === 'HELMET_POP' ? 1.15 : 0.95);
-    playNearMissGrazeTinnitus(
-      this.getSynthContext(g),
-      kind,
-      hitOrigin,
-      listenerPos,
-      this.listenerYawDeg,
-      this.pannerModel,
-      this.reverbWetMix,
-    );
+    playNearMissGrazeTinnitus(this.getSynthContext(g), kind, hitOrigin, listenerPos, this.listenerYawDeg, this.pannerModel, this.reverbWetMix);
   }
 
   public playRadioBarkCue(params: RadioBarkCueAudioParams): void {
@@ -321,39 +328,21 @@ export class CombatAudioEngine {
     const g = this.ensureGraph();
     if (!g) return;
     const lPos = params.listenerPos ?? this.listenerPos;
-    playRadioBarkCue(
-      this.getSynthContext(g),
-      params,
-      lPos,
-      this.listenerYawDeg,
-      this.pannerModel,
-      this.reverbWetMix,
-    );
+    playRadioBarkCue(this.getSynthContext(g), params, lPos, this.listenerYawDeg, this.pannerModel, this.reverbWetMix);
   }
 
   public playRicochetSnap(origin: Vec3Like, listenerPos = this.listenerPos): void {
     this.counters.materialImpactCount += 1;
     const g = this.ensureGraph();
     if (!g) return;
-    playRicochetSnap(
-      this.getSynthContext(g),
-      origin,
-      listenerPos,
-      this.listenerYawDeg,
-      this.pannerModel,
-      this.reverbWetMix,
-    );
+    playRicochetSnap(this.getSynthContext(g), origin, listenerPos, this.listenerYawDeg, this.pannerModel, this.reverbWetMix);
   }
 
   public destroy(): void {
-    if (this.destroyed) return;
-    this.destroyed = true;
-    if (this.gestureCleanup) { this.gestureCleanup(); this.gestureCleanup = null; }
-    if (this.graph) {
-      try { void this.graph.ctx.close(); } catch {}
-      this.graph = null;
-    }
+    if (this.runtimeState.kind === 'DESTROYED') return;
+    this.desiredSlowMoActive = false;
+    resetSlowMoSynthState(null, this.slowMoState);
+    this.runtimeState = transitionAudioRuntimeState(this.runtimeState, { kind: 'DESTROYED' });
     this.tracker.clear();
-    this.slowMoState.heartbeatBus = null;
   }
 }

@@ -16,8 +16,12 @@ import { CombatantVisualGoreSync } from './combatantVisualGoreSync.ts';
 import { CombatantWoundDecals } from './combatantWoundDecals.ts';
 import { CombatantWeaponMount } from './combatantWeaponMount.ts';
 import { CombatantDeadLimbOverlay } from './combatantDeadLimbOverlay.ts';
-import { isArmDeadButAttached } from '../../core/ghoul/anatomy/proceduralTraumaIk.ts';
 import { buildDistalParentSocketStumps, buildProximalLimbStump } from './combatantStumpBuilder.ts';
+import {
+  resolveMannequinDriveState,
+  type MannequinDriveMode,
+  type MannequinDriveState,
+} from './propAttachmentState.ts';
 
 export class GhoulMannequinEntity {
   public readonly rootEntity: pc.Entity;
@@ -30,6 +34,7 @@ export class GhoulMannequinEntity {
   public combatantGlb: CombatantGlbInstance | null = null;
   public zoneBundles: Map<GhoulZoneId, ZoneMeshBundle> = new Map();
   public isXRayActive = false;
+  public driveState: MannequinDriveState;
 
   private readonly animController = new CombatantAnimController();
   private readonly locomotion = new CombatantLocomotion();
@@ -55,6 +60,7 @@ export class GhoulMannequinEntity {
     this.materials = materials;
     this.fxManager = fxManager;
     this.retroMats = getArchetypeRetroMaterials(app.graphicsDevice, healthState.archetype);
+    this.driveState = resolveMannequinDriveState(healthState);
 
     this.rootEntity = new pc.Entity(`GhoulMannequin_${healthState.targetId}`);
     this.buildSkeleton();
@@ -62,6 +68,17 @@ export class GhoulMannequinEntity {
     if (glbRegistry) {
       this.attachCombatantGlb(glbRegistry);
     }
+  }
+
+  public get driveMode(): MannequinDriveMode {
+    return this.driveState.mode;
+  }
+
+  public reset(): void {
+    this.dismemberment.reset();
+    this.weaponMount.reset();
+    this.animController.reset();
+    this.driveState = resolveMannequinDriveState(this.healthState);
   }
 
   private buildSkeleton(): void {
@@ -113,46 +130,50 @@ export class GhoulMannequinEntity {
   }
 
   public syncFromHealthState(dt: number, elapsedTime: number, guarding = false): void {
+    this.driveState = resolveMannequinDriveState(this.healthState);
     const headgearAttached = this.dismemberment.syncHeadgear(this.healthState, this.fxManager);
     const glb = this.combatantGlb;
-    const isFullRagdoll = this.healthState.isRagdollActive || !this.healthState.alive;
 
     if (glb) {
       glb.rootEntity.enabled = true;
       this.dismemberment.syncGlbSeverances(glb, this.healthState, this.isXRayActive);
       this.dismemberment.syncGearVisibility(glb, this.healthState, this.isXRayActive, headgearAttached);
 
-      if (isFullRagdoll) {
-        this.animController.freezeAnimation(glb);
-        glb.rootEntity.setPosition(0, 0, 0);
-        glb.rootEntity.setEulerAngles(0, 0, 0);
-        for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
-          this.boneSync.applyRagdollBoneToGlbJoint(glb, zone, this.healthState);
-        }
-        glb.rootEntity.syncHierarchy();
-      } else {
-        this.animController.syncAnimation(glb, this.healthState, guarding);
-        glb.rootEntity.setPosition(
-          this.healthState.worldPosition.x,
-          this.healthState.worldPosition.y,
-          this.healthState.worldPosition.z
-        );
-        glb.rootEntity.setEulerAngles(0, (this.healthState.yawRad * 180) / Math.PI, 0);
-        if (glb.animComponent) {
-          const posture = this.healthState.posture;
-          const standing = posture === 'COMBAT_READY' || posture === 'DISARMED';
-          this.locomotion.sync(glb, this.healthState, dt, standing && this.healthState.activeReaction.type === 'NONE');
-        }
-
-        if (this.healthState.severedZones.size > 0) {
+      switch (this.driveState.mode) {
+        case 'FULL_RAGDOLL': {
+          this.animController.freezeAnimation(glb);
+          glb.rootEntity.setPosition(0, 0, 0);
+          glb.rootEntity.setEulerAngles(0, 0, 0);
           for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
-            if (this.healthState.ragdollBones[zone].componentId !== 'BODY') {
-              this.boneSync.applyRagdollBoneToGlbJoint(glb, zone, this.healthState);
-            }
+            this.boneSync.applyRagdollBoneToGlbJoint(glb, zone, this.healthState);
           }
           glb.rootEntity.syncHierarchy();
+          break;
         }
-        this.deadLimbOverlay.sync(glb, this.healthState, this.boneSync, dt);
+        case 'ANIM_STANDING':
+        case 'ANIM_WOUNDED_POSTURE': {
+          this.animController.syncAnimation(glb, this.healthState, guarding);
+          glb.rootEntity.setPosition(
+            this.healthState.worldPosition.x,
+            this.healthState.worldPosition.y,
+            this.healthState.worldPosition.z
+          );
+          glb.rootEntity.setEulerAngles(0, (this.healthState.yawRad * 180) / Math.PI, 0);
+          if (glb.animComponent) {
+            this.locomotion.sync(glb, this.healthState, dt, this.driveState.mode === 'ANIM_STANDING');
+          }
+
+          if (this.healthState.severedZones.size > 0) {
+            for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
+              if (this.healthState.ragdollBones[zone].componentId !== 'BODY') {
+                this.boneSync.applyRagdollBoneToGlbJoint(glb, zone, this.healthState);
+              }
+            }
+            glb.rootEntity.syncHierarchy();
+          }
+          this.deadLimbOverlay.sync(glb, this.healthState, this.boneSync, dt);
+          break;
+        }
       }
     }
 
@@ -177,9 +198,10 @@ export class GhoulMannequinEntity {
   public syncPoseAttachments(): void {
     const state = this.healthState;
     const glb = this.combatantGlb;
-    const animated = glb && state.alive && !state.isRagdollActive;
-    const leftArmDead = animated ? isArmDeadButAttached(state, 'LEFT') : false;
-    const rightArmDead = animated ? isArmDeadButAttached(state, 'RIGHT') : false;
+    this.driveState = resolveMannequinDriveState(state);
+    const animated = glb !== null && this.driveState.mode !== 'FULL_RAGDOLL';
+    const leftArmDead = this.driveState.leftArmDeadAttached;
+    const rightArmDead = this.driveState.rightArmDeadAttached;
     for (const [zone, bundle] of this.zoneBundles) {
       const skipRead =
         (leftArmDead && (zone === 'UPPER_ARM_LEFT' || zone === 'FOREARM_LEFT' || zone === 'HAND_LEFT')) ||

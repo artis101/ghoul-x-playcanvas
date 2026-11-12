@@ -4,6 +4,8 @@ import {
   GLASS_SHARD_STYLE_ARMORED,
   GLASS_SHARD_STYLE_CLEAR,
   IDENTITY_QUAT,
+  SHARD_DYNAMIC,
+  SHARD_FADING,
   type ExtrudedGlassShardGeometry,
   type QuatLike,
   type SpawnVoronoiShardsTransform,
@@ -11,7 +13,7 @@ import {
   type VoronoiWindowShatterResult,
 } from './glassShardTypes.ts';
 import { rotateVec3ByQuatOut } from './glassShardPoolTypes.ts';
-import { findOldestSlotIndex } from './glassShardIntegrator.ts';
+import { findOldestSlotIndex, transitionShardStage } from './glassShardIntegrator.ts';
 import type { GlassShardPool } from './glassShardPool.ts';
 
 export function spawnSingleShard(
@@ -50,7 +52,7 @@ export function spawnSingleShard(
   pool.ageS[slot] = 0;
   pool.ttlS[slot] = Math.max(0.1, ttlSeconds);
   pool.fadeScale[slot] = 1;
-  pool.settled[slot] = 0;
+  transitionShardStage(pool, slot, SHARD_DYNAMIC);
   pool.shardStyle[slot] = style;
 
   if (extruded && extruded.vertexCount > 0 && extruded.vertexCount <= pool.maxVertsPerShard && extruded.indexCount <= pool.maxIndicesPerShard) {
@@ -165,7 +167,10 @@ export function applyShardBlast(pool: GlassShardPool, blast: BlastEvent): number
     pool.velZ[i] += dz * invD * dv;
     pool.angVelX[i] += -dz * invD * dv * 2.2;
     pool.angVelZ[i] += dx * invD * dv * 2.2;
-    pool.settled[i] = 0;
+    transitionShardStage(pool, i, SHARD_DYNAMIC);
+    if (pool.fadeScale[i] < 1) {
+      transitionShardStage(pool, i, SHARD_FADING);
+    }
     affected++;
   }
 

@@ -1,6 +1,7 @@
 import * as pc from 'playcanvas';
 import type { GlbModelRegistry, WeaponGlbInstance } from '../assets/glbLoader.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
+import { createPropAttachmentState } from '../mannequin/propAttachmentState.ts';
 import type { OffhandSidearmRig } from './offhandSidearmTypes.ts';
 
 export function createOffhandSidearmRig(
@@ -68,6 +69,7 @@ export function createOffhandSidearmRig(
     holderEntity,
     glbInstance,
     isGlbModel,
+    attachmentState: createPropAttachmentState('HIDDEN_TEMP'),
     wasHeldLastFrame: false,
     lastHand: null,
     clonedMaterials,

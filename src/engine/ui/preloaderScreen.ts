@@ -11,6 +11,26 @@ type StageDomKey =
 
 type StageVisualState = 'pending' | 'active' | 'done' | 'error';
 
+export type PreloaderScreenState =
+  | { readonly kind: 'UNAVAILABLE' }
+  | { readonly kind: 'BOOTING'; readonly phase: PreloadPhaseId; readonly maxProgress: number }
+  | {
+      readonly kind: 'DISMISSING_DELAY';
+      readonly timer: ReturnType<typeof globalThis.setTimeout>;
+      readonly inFlight: Promise<void>;
+      readonly settle: () => void;
+    }
+  | {
+      readonly kind: 'DISMISSING_FADE';
+      readonly fallbackTimer: ReturnType<typeof globalThis.setTimeout>;
+      readonly onTransitionEnd: () => void;
+      readonly inFlight: Promise<void>;
+      readonly settle: () => void;
+    }
+  | { readonly kind: 'DISMISSED' }
+  | { readonly kind: 'FAULT'; readonly phase: PreloadPhaseId; readonly message: string }
+  | { readonly kind: 'DESTROYED' };
+
 const ORDERED_STAGE_KEYS: readonly StageDomKey[] = [
   'WASM_PHYSICS',
   'MODELS_AND_GRAPHS',
@@ -53,8 +73,6 @@ function clamp01(value: number): number {
 }
 
 export class PreloaderScreen {
-  public readonly isAvailable: boolean;
-
   private readonly overlayEl = queryEl('preloader-overlay');
   private readonly statusBadgeEl = queryEl('preloader-status-badge');
   private readonly progressFillEl = queryEl('preloader-progress-fill');
@@ -69,12 +87,8 @@ export class PreloaderScreen {
   private readonly retryBtnEl = queryEl('preloader-retry-btn');
   private readonly stagePills: readonly StagePillRefs[];
 
-  private maxOverallProgress = 0;
-  private hasError = false;
-  private isDismissed = false;
-  private dismissDelayTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
-  private transitionFallbackTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
-  private activeTransitionHandler: (() => void) | null = null;
+  public state: PreloaderScreenState;
+
   private readonly retryClickHandler = (): void => {
     if (typeof window !== 'undefined' && window.location) {
       window.location.reload();
@@ -82,7 +96,10 @@ export class PreloaderScreen {
   };
 
   public constructor() {
-    this.isAvailable = this.overlayEl !== null;
+    this.state =
+      this.overlayEl !== null
+        ? { kind: 'BOOTING', phase: 'FONTS_AND_DOM', maxProgress: 0 }
+        : { kind: 'UNAVAILABLE' };
     this.stagePills = ORDERED_STAGE_KEYS.map((key) => ({
       key,
       pillEl: queryEl(`preloader-stage-${key}`),
@@ -91,15 +108,42 @@ export class PreloaderScreen {
     this.retryBtnEl?.addEventListener('click', this.retryClickHandler);
   }
 
-  public update(snapshot: PreloadProgressSnapshot): void {
-    if (!this.isAvailable || this.hasError || this.isDismissed) return;
+  public get isAvailable(): boolean {
+    return this.overlayEl !== null && this.state.kind !== 'UNAVAILABLE';
+  }
 
-    this.maxOverallProgress = Math.max(this.maxOverallProgress, clamp01(snapshot.overallProgress));
+  private transitionState(next: PreloaderScreenState): void {
+    const prev = this.state;
+    if (prev.kind === 'DISMISSING_DELAY') {
+      globalThis.clearTimeout(prev.timer);
+      const handingOffToFade =
+        next.kind === 'DISMISSING_FADE' && next.inFlight === prev.inFlight;
+      if (!handingOffToFade) {
+        prev.settle();
+      }
+    } else if (prev.kind === 'DISMISSING_FADE') {
+      globalThis.clearTimeout(prev.fallbackTimer);
+      this.overlayEl?.removeEventListener('transitionend', prev.onTransitionEnd);
+      prev.settle();
+    }
+    this.state = next;
+  }
+
+  public update(snapshot: PreloadProgressSnapshot): void {
+    if (this.state.kind !== 'BOOTING') return;
+
+    const maxOverallProgress = Math.max(this.state.maxProgress, clamp01(snapshot.overallProgress));
+    this.transitionState({
+      kind: 'BOOTING',
+      phase: snapshot.phase,
+      maxProgress: maxOverallProgress,
+    });
+
     const phaseRatio = clamp01(snapshot.phaseProgress);
-    const pctInt = Math.round(this.maxOverallProgress * 100);
+    const pctInt = Math.round(maxOverallProgress * 100);
 
     if (this.progressFillEl) {
-      this.progressFillEl.style.width = `${(this.maxOverallProgress * 100).toFixed(1)}%`;
+      this.progressFillEl.style.width = `${(maxOverallProgress * 100).toFixed(1)}%`;
     }
     if (this.subprogressFillEl) {
       this.subprogressFillEl.style.width = `${(phaseRatio * 100).toFixed(1)}%`;
@@ -127,7 +171,12 @@ export class PreloaderScreen {
   }
 
   public setPhase(phase: PreloadPhaseId, phaseLabel?: string, itemLabel?: string): void {
-    if (!this.isAvailable || this.hasError || this.isDismissed) return;
+    if (this.state.kind !== 'BOOTING') return;
+    this.transitionState({
+      kind: 'BOOTING',
+      phase,
+      maxProgress: this.state.maxProgress,
+    });
     this.applyStageStates(phase);
     if (this.phaseLabelEl) {
       this.phaseLabelEl.textContent = phaseLabel ?? DEFAULT_PHASE_LABELS[phase];
@@ -138,9 +187,8 @@ export class PreloaderScreen {
   }
 
   public showError(phase: PreloadPhaseId, message: string): void {
-    if (!this.isAvailable) return;
-    this.hasError = true;
-    this.clearTimers();
+    if (!this.isAvailable || this.state.kind === 'DESTROYED') return;
+    this.transitionState({ kind: 'FAULT', phase, message });
 
     if (this.overlayEl) {
       this.overlayEl.classList.remove('preloader-dismissed', 'hidden');
@@ -161,13 +209,12 @@ export class PreloaderScreen {
   }
 
   public completeAndDismiss(delayMs = 120): Promise<void> {
-    if (!this.isAvailable || !this.overlayEl || this.isDismissed || this.hasError) {
+    if (this.state.kind === 'DISMISSING_DELAY' || this.state.kind === 'DISMISSING_FADE') {
+      return this.state.inFlight;
+    }
+    if (this.state.kind !== 'BOOTING' || !this.overlayEl) {
       return Promise.resolve();
     }
-
-    this.isDismissed = true;
-    this.maxOverallProgress = 1;
-    this.clearTimers();
 
     if (this.progressFillEl) this.progressFillEl.style.width = '100%';
     if (this.subprogressFillEl) this.subprogressFillEl.style.width = '100%';
@@ -183,37 +230,64 @@ export class PreloaderScreen {
     this.applyStageStates('READY');
     this.overlayEl.style.pointerEvents = 'none';
 
-    return new Promise<void>((resolve) => {
-      const startFadeOut = (): void => {
-        if (!this.overlayEl) {
-          resolve();
-          return;
-        }
-        let settled = false;
-        const finishDismiss = (): void => {
-          if (settled) return;
-          settled = true;
-          this.clearTransitionCleanup();
-          this.overlayEl?.classList.add('hidden');
-          resolve();
-        };
+    let settleFn!: () => void;
+    let settled = false;
+    const inFlight = new Promise<void>((resolve) => {
+      settleFn = (): void => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+    });
 
-        this.activeTransitionHandler = finishDismiss;
-        this.overlayEl.addEventListener('transitionend', finishDismiss, { once: true });
-        this.overlayEl.classList.add('preloader-dismissed');
-        this.transitionFallbackTimer = globalThis.setTimeout(finishDismiss, 360);
+    const startFadeOut = (): void => {
+      if (this.state.kind !== 'BOOTING' && this.state.kind !== 'DISMISSING_DELAY') {
+        settleFn();
+        return;
+      }
+      if (!this.overlayEl) {
+        this.transitionState({ kind: 'DISMISSED' });
+        return;
+      }
+
+      const finishDismiss = (): void => {
+        if (this.state.kind !== 'DISMISSING_FADE') return;
+        this.overlayEl?.classList.add('hidden');
+        this.transitionState({ kind: 'DISMISSED' });
       };
 
-      if (delayMs > 0) {
-        this.dismissDelayTimer = globalThis.setTimeout(startFadeOut, delayMs);
-      } else {
-        startFadeOut();
-      }
-    });
+      this.overlayEl.addEventListener('transitionend', finishDismiss, { once: true });
+      this.overlayEl.classList.add('preloader-dismissed');
+      const fallbackTimer = globalThis.setTimeout(finishDismiss, 360);
+      this.transitionState({
+        kind: 'DISMISSING_FADE',
+        fallbackTimer,
+        onTransitionEnd: finishDismiss,
+        inFlight,
+        settle: settleFn,
+      });
+    };
+
+    if (delayMs > 0) {
+      const timer = globalThis.setTimeout(startFadeOut, delayMs);
+      this.transitionState({
+        kind: 'DISMISSING_DELAY',
+        timer,
+        inFlight,
+        settle: settleFn,
+      });
+    } else {
+      startFadeOut();
+    }
+
+    return inFlight;
   }
 
   public destroy(): void {
-    this.clearTimers();
+    if (this.state.kind === 'DESTROYED') return;
+    if (this.state.kind !== 'UNAVAILABLE') {
+      this.transitionState({ kind: 'DESTROYED' });
+    }
     this.retryBtnEl?.removeEventListener('click', this.retryClickHandler);
   }
 
@@ -235,24 +309,5 @@ export class PreloaderScreen {
         ref.stateEl.textContent = STAGE_STATE_BADGES[state];
       }
     }
-  }
-
-  private clearTransitionCleanup(): void {
-    if (this.transitionFallbackTimer !== null) {
-      globalThis.clearTimeout(this.transitionFallbackTimer);
-      this.transitionFallbackTimer = null;
-    }
-    if (this.activeTransitionHandler && this.overlayEl) {
-      this.overlayEl.removeEventListener('transitionend', this.activeTransitionHandler);
-      this.activeTransitionHandler = null;
-    }
-  }
-
-  private clearTimers(): void {
-    if (this.dismissDelayTimer !== null) {
-      globalThis.clearTimeout(this.dismissDelayTimer);
-      this.dismissDelayTimer = null;
-    }
-    this.clearTransitionCleanup();
   }
 }

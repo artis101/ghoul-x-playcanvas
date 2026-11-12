@@ -8,12 +8,13 @@ import {
   BARREL_SYMPATHETIC_CHAIN_RADIUS_M,
   BARREL_SYMPATHETIC_IGNITION_J,
   DEFAULT_HAZARD_BARREL_POSITIONS,
-  ExplosiveBarrelHitInput,
-  ExplosiveBarrelManagerOptions,
-  HazardBarrelInstance,
+  type ExplosiveBarrelHitInput,
+  type ExplosiveBarrelManagerOptions,
+  type HazardBarrelInstance,
+  type HazardBarrelPhase,
 } from './barrelTypes.ts';
 import { createBarrelStaticCollider, createHazardBarrelEntity } from './barrelSpawner.ts';
-import { BarrelResources, createBarrelResources, destroyBarrelResources } from './barrelResources.ts';
+import { type BarrelResources, createBarrelResources, destroyBarrelResources } from './barrelResources.ts';
 import { executeBarrelDetonation } from './barrelDetonation.ts';
 
 export class ExplosiveBarrelManager implements IDestructibleSubsystem {
@@ -60,14 +61,76 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
     return this.barrels.find((b) => b.objectId === objectId);
   }
 
+  public transitionBarrelState(
+    barrel: HazardBarrelInstance,
+    nextState: HazardBarrelPhase,
+  ): BlastEvent | null {
+    if (this.destroyed) return null;
+
+    if (nextState.kind === 'INTACT') {
+      barrel.phase = nextState;
+      barrel.state = 'INTACT';
+      barrel.colliderHandle = nextState.colliderHandle;
+      barrel.ignitionDamage = nextState.ignitionDamage;
+      barrel.fuseRemainingS = 0;
+      if (barrel.intactDrumEntity) barrel.intactDrumEntity.enabled = true;
+      if (barrel.flameJetEntity) barrel.flameJetEntity.enabled = false;
+      if (barrel.crumpledBaseEntity) barrel.crumpledBaseEntity.enabled = false;
+      if (barrel.scorchDecalEntity) barrel.scorchDecalEntity.enabled = false;
+      return null;
+    }
+
+    if (nextState.kind === 'IGNITED_HISSING') {
+      if (barrel.state === 'DETONATED') return null;
+      const wasIntact = barrel.state === 'INTACT';
+      const fuseS = Math.max(0.01, nextState.fuseRemainingS);
+      barrel.phase = {
+        kind: 'IGNITED_HISSING',
+        colliderHandle: nextState.colliderHandle,
+        fuseRemainingS: fuseS,
+      };
+      barrel.state = 'IGNITED_HISSING';
+      barrel.colliderHandle = nextState.colliderHandle;
+      barrel.ignitionDamage = Math.max(1.0, barrel.ignitionDamage);
+      barrel.fuseRemainingS = fuseS;
+      if (barrel.intactDrumEntity) barrel.intactDrumEntity.enabled = true;
+      if (barrel.flameJetEntity) {
+        barrel.flameJetEntity.setLocalPosition(
+          barrel.leakOffsetLocal.x,
+          barrel.leakOffsetLocal.y,
+          barrel.leakOffsetLocal.z,
+        );
+        barrel.flameJetEntity.enabled = true;
+      }
+      if (barrel.crumpledBaseEntity) barrel.crumpledBaseEntity.enabled = false;
+      if (barrel.scorchDecalEntity) barrel.scorchDecalEntity.enabled = false;
+      if (wasIntact) {
+        this.onBarrelIgnited?.(barrel);
+      }
+      return null;
+    }
+
+    if (barrel.state === 'DETONATED') return null;
+    if (barrel.state === 'INTACT') {
+      this.transitionBarrelState(barrel, {
+        kind: 'IGNITED_HISSING',
+        colliderHandle: barrel.colliderHandle,
+        fuseRemainingS: 0.01,
+      });
+    }
+    const blast = executeBarrelDetonation(barrel, this.rapierWorld, this.shrapnelPool);
+    this.onBarrelDetonated?.(barrel, blast);
+    this.applyBlast(blast);
+    return blast;
+  }
+
   public registerBarrelHit(barrelOrId: HazardBarrelInstance | string | number, hit: ExplosiveBarrelHitInput = {}): boolean {
     if (this.destroyed) return false;
     const barrel = typeof barrelOrId === 'number' ? this.barrels[barrelOrId] : typeof barrelOrId === 'string' ? this.getBarrelByObjectId(barrelOrId) : barrelOrId;
-    if (!barrel || barrel.state !== 'INTACT') return false;
+    if (!barrel || barrel.state === 'DETONATED') return false;
 
     const isBuckshot = hit.ammoType === 'BUCKSHOT_00' || (hit.pelletCount !== undefined && hit.pelletCount > 1) || (hit.ammoType === undefined && !hit.isArmorPiercing && hit.kineticEnergyJ !== undefined && hit.kineticEnergyJ < 650);
     barrel.hitCount += 1;
-    barrel.ignitionDamage += isBuckshot ? 0.5 : 1.0;
 
     if (hit.hitPointWorld) {
       barrel.leakOffsetLocal = {
@@ -79,8 +142,35 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
     if (hit.hitNormalWorld && length(hit.hitNormalWorld) > 1e-4) {
       barrel.leakNormalWorld = normalize(hit.hitNormalWorld);
     }
+
+    if (barrel.state === 'IGNITED_HISSING') {
+      if (!isBuckshot) {
+        this.transitionBarrelState(barrel, { kind: 'DETONATED' });
+      } else {
+        const nextFuse = barrel.fuseRemainingS - BARREL_FUSE_DURATION_S * 0.5;
+        if (nextFuse <= 0) {
+          this.transitionBarrelState(barrel, { kind: 'DETONATED' });
+        } else {
+          this.transitionBarrelState(barrel, {
+            kind: 'IGNITED_HISSING',
+            colliderHandle: barrel.colliderHandle,
+            fuseRemainingS: nextFuse,
+          });
+        }
+      }
+      return true;
+    }
+
+    barrel.ignitionDamage += isBuckshot ? 0.5 : 1.0;
+    if (barrel.phase.kind === 'INTACT') {
+      barrel.phase.ignitionDamage = barrel.ignitionDamage;
+    }
     if (barrel.ignitionDamage >= 1.0 - 1e-6) {
-      this.igniteBarrel(barrel, BARREL_FUSE_DURATION_S);
+      this.transitionBarrelState(barrel, {
+        kind: 'IGNITED_HISSING',
+        colliderHandle: barrel.colliderHandle,
+        fuseRemainingS: BARREL_FUSE_DURATION_S,
+      });
       return true;
     }
     return false;
@@ -113,8 +203,15 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
       const falloff = Math.max(0, 1 - distM / maxChainDistM);
       if (blast.peakEnergyJ * falloff < BARREL_SYMPATHETIC_IGNITION_J) continue;
       barrel.ignitionDamage = Math.max(1.0, barrel.ignitionDamage + 1.0);
-      if (this.sympatheticChainFuseS <= 0) this.detonateBarrel(barrel);
-      else this.igniteBarrel(barrel, this.sympatheticChainFuseS);
+      if (this.sympatheticChainFuseS <= 0) {
+        this.transitionBarrelState(barrel, { kind: 'DETONATED' });
+      } else {
+        this.transitionBarrelState(barrel, {
+          kind: 'IGNITED_HISSING',
+          colliderHandle: barrel.colliderHandle,
+          fuseRemainingS: this.sympatheticChainFuseS,
+        });
+      }
     }
   }
 
@@ -137,7 +234,12 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
         this.shrapnelPool.spawnKinematicParticle(jetWorld, jetVel, vec3(14, 18, -12), vec3(0.022, 0.022, 0.022), -6.5, 0.35, 0.26);
       }
       barrel.fuseRemainingS -= dt;
-      if (barrel.fuseRemainingS <= 0) this.detonateBarrel(barrel);
+      if (barrel.phase.kind === 'IGNITED_HISSING') {
+        barrel.phase.fuseRemainingS = barrel.fuseRemainingS;
+      }
+      if (barrel.fuseRemainingS <= 0) {
+        this.transitionBarrelState(barrel, { kind: 'DETONATED' });
+      }
     }
   }
 
@@ -145,17 +247,15 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
     if (this.destroyed) return;
     for (const barrel of this.barrels) {
       if (barrel.colliderHandle >= 0) this.rapierWorld.removeCollider(barrel.colliderHandle);
-      barrel.colliderHandle = createBarrelStaticCollider(this.rapierWorld, barrel.index, barrel.basePosition);
-      barrel.state = 'INTACT';
-      barrel.ignitionDamage = 0;
+      const colliderHandle = createBarrelStaticCollider(this.rapierWorld, barrel.index, barrel.basePosition);
       barrel.hitCount = 0;
-      barrel.fuseRemainingS = 0;
       barrel.leakOffsetLocal = { x: 0, y: 0.62, z: 0.28 };
       barrel.leakNormalWorld = { x: 0, y: 0.35, z: 0.94 };
-      if (barrel.intactDrumEntity) barrel.intactDrumEntity.enabled = true;
-      if (barrel.flameJetEntity) barrel.flameJetEntity.enabled = false;
-      if (barrel.crumpledBaseEntity) barrel.crumpledBaseEntity.enabled = false;
-      if (barrel.scorchDecalEntity) barrel.scorchDecalEntity.enabled = false;
+      this.transitionBarrelState(barrel, {
+        kind: 'INTACT',
+        colliderHandle,
+        ignitionDamage: 0,
+      });
     }
     this.flushRapierBroadPhaseQueries();
   }
@@ -181,23 +281,5 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
     this.barrels.length = 0;
     if (this.rootContainer) this.rootContainer.destroy();
     destroyBarrelResources(this.resources);
-  }
-
-  private igniteBarrel(barrel: HazardBarrelInstance, fuseDurationS: number): void {
-    if (barrel.state !== 'INTACT') return;
-    barrel.state = 'IGNITED_HISSING';
-    barrel.fuseRemainingS = Math.max(0.01, fuseDurationS);
-    if (barrel.flameJetEntity) {
-      barrel.flameJetEntity.setLocalPosition(barrel.leakOffsetLocal.x, barrel.leakOffsetLocal.y, barrel.leakOffsetLocal.z);
-      barrel.flameJetEntity.enabled = true;
-    }
-    this.onBarrelIgnited?.(barrel);
-  }
-
-  private detonateBarrel(barrel: HazardBarrelInstance): void {
-    if (barrel.state === 'DETONATED') return;
-    const blast = executeBarrelDetonation(barrel, this.rapierWorld, this.shrapnelPool);
-    this.onBarrelDetonated?.(barrel, blast);
-    this.applyBlast(blast);
   }
 }

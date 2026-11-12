@@ -2,6 +2,10 @@ import {
   ShotSimulationReport,
   TargetHealthState,
 } from '../../../contracts/ballistics.ts';
+import {
+  syncTargetLifecycleDerivedState,
+  transitionTargetLifecycle,
+} from '../lifecycle/targetLifecycleFsm.ts';
 import { stabilizeRagdollPoseForTransition } from '../ragdoll/ragdollPoseStabilizer.ts';
 import { applyWoundsAndDecals } from './woundDecalApplicator.ts';
 import { applyDismembermentTree } from './dismembermentTreeApplicator.ts';
@@ -30,12 +34,12 @@ export function applyShotReportToTarget(
     target.painShock = Math.min(1.0, target.painShock + 0.65);
     target.heartRateBpm = Math.min(168, target.heartRateBpm + 32);
   } else {
-    target.activeReaction.type = 'NONE';
-    target.activeReaction.timerS = 0;
-    target.weaponDropped = true;
+    transitionTargetLifecycle(target, { kind: 'LETHAL_DEATH' });
     if (!target.isRagdollActive && !report.ragdollPlan.willEnableRagdoll) {
-      target.isRagdollActive = true;
-      target.posture = 'AIRBORNE_RAGDOLL';
+      transitionTargetLifecycle(target, {
+        kind: 'ACTIVATE_RAGDOLL',
+        isOverkillCorpseHit: false,
+      });
       stabilizeRagdollPoseForTransition(target, 0.0);
     }
   }
@@ -63,6 +67,8 @@ export function applyShotReportToTarget(
       : hasBoneShatter || isHeavyCaliber
         ? 0.042
         : 0.035;
-    target.hitstopRemainingS = Math.max(target.hitstopRemainingS ?? 0, durationS);
+    transitionTargetLifecycle(target, { kind: 'APPLY_HITSTOP', durationS });
+  } else {
+    syncTargetLifecycleDerivedState(target);
   }
 }

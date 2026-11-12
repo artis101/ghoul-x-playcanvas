@@ -1,4 +1,24 @@
 import type { GlassShardPool } from './glassShardPool.ts';
+import {
+  SHARD_DYNAMIC,
+  SHARD_FADING,
+  SHARD_SETTLED,
+  type ShardStage,
+} from './glassShardTypes.ts';
+
+export function transitionShardStage(
+  pool: GlassShardPool,
+  index: number,
+  nextStage: ShardStage,
+): void {
+  if (index < 0 || index >= pool.maxShards) return;
+  pool.stage[index] = nextStage;
+  if (nextStage === SHARD_DYNAMIC) {
+    pool.settled[index] = 0;
+  } else if (nextStage === SHARD_SETTLED) {
+    pool.settled[index] = 1;
+  }
+}
 
 export function findOldestSlotIndex(pool: GlassShardPool): number {
   let oldestIdx = 0;
@@ -40,6 +60,7 @@ export function removeAtSwapLast(pool: GlassShardPool, index: number): void {
     pool.ageS[index] = pool.ageS[last];
     pool.ttlS[index] = pool.ttlS[last];
     pool.fadeScale[index] = pool.fadeScale[last];
+    pool.stage[index] = pool.stage[last];
     pool.settled[index] = pool.settled[last];
     pool.shardStyle[index] = pool.shardStyle[last];
 
@@ -90,7 +111,11 @@ export function stepShardSimulation(pool: GlassShardPool, dt: number): void {
 
     const fadeWindow = Math.min(0.55, ttl * 0.22);
     const remaining = ttl - nextAge;
-    const nextFade = fadeWindow > 1e-4 && remaining < fadeWindow ? Math.max(0, remaining / fadeWindow) : 1;
+    const isFading = fadeWindow > 1e-4 && remaining < fadeWindow;
+    const nextFade = isFading ? Math.max(0, remaining / fadeWindow) : 1;
+    if (isFading && pool.stage[i] !== SHARD_FADING) {
+      transitionShardStage(pool, i, SHARD_FADING);
+    }
     if (nextFade !== pool.fadeScale[i]) {
       pool.fadeScale[i] = nextFade;
       pool.setMeshDirty();
@@ -156,7 +181,10 @@ export function stepShardSimulation(pool: GlassShardPool, dt: number): void {
         wx = 0;
         wy = 0;
         wz = 0;
-        pool.settled[i] = 1;
+        transitionShardStage(pool, i, SHARD_SETTLED);
+        if (isFading) {
+          transitionShardStage(pool, i, SHARD_FADING);
+        }
       }
     }
 

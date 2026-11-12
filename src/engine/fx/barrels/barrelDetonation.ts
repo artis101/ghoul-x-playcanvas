@@ -7,7 +7,7 @@ import {
   BARREL_BLAST_PEAK_ENERGY_J,
   BARREL_BLAST_PEAK_IMPULSE_NS,
   BARREL_BLAST_RADIUS_M,
-  HazardBarrelInstance,
+  type HazardBarrelInstance,
 } from './barrelTypes.ts';
 
 export function spawnBarrelShrapnel(
@@ -46,12 +46,13 @@ export function executeBarrelDetonation(
   rapierWorld: RapierPhysicsWorld,
   shrapnelPool: HardwareInstancedPool | null,
 ): BlastEvent {
-  barrel.state = 'DETONATED';
-  barrel.fuseRemainingS = 0;
   if (barrel.colliderHandle >= 0) {
     rapierWorld.removeCollider(barrel.colliderHandle);
     barrel.colliderHandle = -1;
   }
+  barrel.phase = { kind: 'DETONATED' };
+  barrel.state = 'DETONATED';
+  barrel.fuseRemainingS = 0;
   if (barrel.intactDrumEntity) barrel.intactDrumEntity.enabled = false;
   if (barrel.flameJetEntity) barrel.flameJetEntity.enabled = false;
   if (barrel.crumpledBaseEntity) barrel.crumpledBaseEntity.enabled = true;

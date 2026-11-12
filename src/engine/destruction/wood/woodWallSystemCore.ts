@@ -12,6 +12,7 @@ import {
 } from '../../../core/destruction/woodPolygonClipper.ts';
 import { HardwareInstancedPool } from '../../physics/instancedPool.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
+import { resetPelletVolley } from './buckshotVolleyTracker.ts';
 import {
   createProceduralPineStudTexture,
   createProceduralWoodPanelTexture,
@@ -263,7 +264,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       const wall = this.walls[i];
       const internal = this.internalByWallId.get(wall.id);
       if (internal) {
-        internal.activeVolley = null;
+        resetPelletVolley(internal);
         let hadBrokenStud = false;
         for (let c = 0; c < internal.studColumns.length; c++) {
           const col = internal.studColumns[c];

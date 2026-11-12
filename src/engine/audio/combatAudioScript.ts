@@ -11,6 +11,12 @@ import type {
   VocalTraumaCueKind,
 } from '../../core/audio/types.ts';
 
+export type CombatAudioScriptLifecycleState =
+  | 'UNINITIALIZED'
+  | 'ACTIVE'
+  | 'SWAPPED_OUT'
+  | 'DESTROYED';
+
 /**
  * CombatAudioScript
  *
@@ -46,22 +52,32 @@ export class CombatAudioScript extends pc.Script {
   public pannerModel: PanningModelType = 'equalpower';
 
   public engine!: CombatAudioEngine;
-  private appEventHandles: Array<{ name: string; fn: (...args: unknown[]) => void }> = [];
+  private _lifecycleState: CombatAudioScriptLifecycleState = 'UNINITIALIZED';
+  private readonly _eventCleanups: Array<() => void> = [];
+
+  public get lifecycleState(): CombatAudioScriptLifecycleState {
+    return this._lifecycleState;
+  }
 
   public initialize(): void {
-    this.engine = new CombatAudioEngine({
-      masterVolume: this.masterVolume,
-      reverbWetMix: this.reverbWetMix,
-      pannerModel: this.pannerModel,
-    });
+    if (this._lifecycleState === 'ACTIVE') return;
+    if (!this.engine) {
+      this.engine = new CombatAudioEngine({
+        masterVolume: this.masterVolume,
+        reverbWetMix: this.reverbWetMix,
+        pannerModel: this.pannerModel,
+      });
+    }
 
     this.bindEvents();
+    this._lifecycleState = 'ACTIVE';
   }
 
   private bindEvents(): void {
+    this.unbindEvents();
     const bind = (name: string, fn: (...args: unknown[]) => void): void => {
       this.app.on(name, fn, this);
-      this.appEventHandles.push({ name, fn });
+      this._eventCleanups.push(() => this.app.off(name, fn, this));
     };
 
     bind('audio:fireWeapon', (data: unknown) => {
@@ -120,6 +136,10 @@ export class CombatAudioScript extends pc.Script {
       this.engine.playSlowMoTransition(p.entering);
     });
 
+    bind('audio:slowMoReset', () => {
+      this.engine.resetSlowMo();
+    });
+
     bind('audio:timeScale', (data: unknown) => {
       const p = data as { scale: number };
       this.engine.setTimeScale(p.scale);
@@ -159,7 +179,15 @@ export class CombatAudioScript extends pc.Script {
     });
   }
 
+  private unbindEvents(): void {
+    while (this._eventCleanups.length > 0) {
+      const cleanup = this._eventCleanups.pop();
+      cleanup?.();
+    }
+  }
+
   public update(dt: number): void {
+    if (this._lifecycleState !== 'ACTIVE' || !this.engine) return;
     const pos = this.entity.getPosition();
     const rot = this.entity.getEulerAngles();
     this.engine.updateListener(pos, rot.y, rot.x);
@@ -167,15 +195,33 @@ export class CombatAudioScript extends pc.Script {
   }
 
   public swap(old: CombatAudioScript): void {
+    old.unbindEvents();
+    old._lifecycleState = 'SWAPPED_OUT';
+
+    if (this.engine && this.engine !== old.engine) {
+      this.engine.destroy();
+    }
     this.engine = old.engine;
-    this.appEventHandles = old.appEventHandles;
+    old.engine = undefined as unknown as CombatAudioEngine;
+
+    this.bindEvents();
+    this._lifecycleState = 'ACTIVE';
   }
 
   public destroy(): void {
-    for (const h of this.appEventHandles) {
-      this.app.off(h.name, h.fn, this);
+    if (this._lifecycleState === 'DESTROYED') return;
+    this.unbindEvents();
+    if (this._lifecycleState !== 'SWAPPED_OUT') {
+      this.engine?.destroy();
     }
-    this.appEventHandles.length = 0;
-    this.engine.destroy();
+    this.engine = undefined as unknown as CombatAudioEngine;
+    this._lifecycleState = 'DESTROYED';
   }
 }
+
+try {
+  (pc.registerScript as (script: typeof pc.Script, name?: string) => void)(
+    CombatAudioScript,
+    'combatAudioScript',
+  );
+} catch {}

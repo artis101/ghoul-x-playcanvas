@@ -2,6 +2,25 @@ export type KillPunchReason = 'CRANIAL_POP' | 'MULTI_KILL_BLAST' | 'DISMEMBERMEN
 
 export type BulletTimeVignetteTint = 'NONE' | 'CYAN_REFLEX' | 'AMBER_KILL_PUNCH';
 
+export type ReflexMeterState =
+  | { readonly kind: 'READY' }
+  | { readonly kind: 'DRAINING'; readonly energyPct: number }
+  | {
+      readonly kind: 'COOLDOWN';
+      readonly energyPct: number;
+      readonly cooldownRemainingS: number;
+    }
+  | { readonly kind: 'RECHARGING'; readonly energyPct: number };
+
+export type KillPunchState =
+  | { readonly kind: 'INACTIVE' }
+  | {
+      readonly kind: 'ACTIVE';
+      readonly reason: KillPunchReason;
+      readonly remainingS: number;
+      readonly targetScale: number;
+    };
+
 export interface BulletTimeVignetteState {
   readonly active: boolean;
   readonly killPunchActive: boolean;

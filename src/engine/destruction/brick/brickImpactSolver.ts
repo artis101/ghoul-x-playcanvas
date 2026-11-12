@@ -23,6 +23,7 @@ import {
 import type { BrickDynamicPool } from './brickDynamicPool.ts';
 import {
   BRICK_HEAVY_PENETRATOR_THRESHOLD_J,
+  BrickPhase,
   type BrickWallInstanceState,
   IDENTITY_QUAT,
 } from './brickWallTypes.ts';
@@ -99,8 +100,13 @@ export function handleBrickRaySegment(
 
   const dirNorm = normalizeDir(seg.directionWorld);
   const hitChunkIdx = matchedHit.surface.chunkIndex ?? -1;
+  const hitPhase =
+    hitChunkIdx >= 0
+      ? (matchedWall.brickPhase[hitChunkIdx] as BrickPhase)
+      : BrickPhase.INTACT_STATIC;
   const isAlreadyDetachedBrick =
-    hitChunkIdx >= 0 && matchedWall.graph.detached[hitChunkIdx] === 1;
+    hitChunkIdx >= 0 &&
+    (hitPhase !== BrickPhase.INTACT_STATIC || matchedWall.graph.detached[hitChunkIdx] === 1);
 
   dynamicPool.spawnMortarChips(
     matchedHit.pointWorld,

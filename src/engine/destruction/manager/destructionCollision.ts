@@ -55,14 +55,20 @@ export function isHorizontalStepBlocked(
         }
       }
 
-      if (
-        h.surface.material === 'GLASS_MARCHING_256' ||
-        h.surface.material === 'GLASS_VORONOI'
-      ) {
+      if (h.surface.material === 'GLASS_VORONOI') {
         const vorWin = ctx.glassSystem.voronoiWindows.find(
           (w) => w.id === h.surface.objectId
         );
-        if (vorWin && vorWin.shattered) {
+        if (vorWin && vorWin.isPlayerPassable(h.pointWorld)) {
+          continue;
+        }
+      }
+
+      if (h.surface.material === 'GLASS_MARCHING_256') {
+        const marWin = ctx.glassSystem.marchingWindows.find(
+          (w) => w.id === h.surface.objectId
+        );
+        if (marWin && marWin.isPlayerPassable(h.pointWorld)) {
           continue;
         }
       }

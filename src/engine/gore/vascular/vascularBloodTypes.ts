@@ -1,6 +1,13 @@
 import * as pc from 'playcanvas';
 import type { CharacterTransform, PhysiologicalEntityState, VesselKind } from '../../../contracts/physiology.ts';
 
+export type VascularWoundEmissionMode =
+  | 'ARTERIAL_PULSING_JET'
+  | 'VENOUS_OOZE'
+  | 'CLOTTED';
+
+export type BloodPoolLifecyclePhase = 'EXPANDING' | 'STATIC';
+
 export interface VascularBloodMaterials {
   readonly arterialJetMat: pc.StandardMaterial;
   readonly arterialPoolMat: pc.StandardMaterial;
@@ -25,6 +32,7 @@ export interface ActiveVascularFloorPool {
   currentRadiusM: number;
   targetRadiusM: number;
   growthRateMPerSec: number;
+  phase: BloodPoolLifecyclePhase;
 }
 
 export interface ActiveVascularMistPuff {

@@ -42,7 +42,7 @@ export function onEngineUpdate(app: IGhoulXApp, dt: number): void {
   app.mayhemDirector.syncSurfaceBreaches();
 
   if (
-    app.fpsController.isAimingDownSights &&
+    app.fpsController.isScopeOpticActive &&
     app.arsenalManager.currentWeapon.role === 'SNIPER'
   ) {
     const aim = app.fpsController.getAimDirection();

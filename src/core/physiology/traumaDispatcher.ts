@@ -7,10 +7,16 @@ import {
   VocalTraumaCue,
 } from '../../contracts/physiology.ts';
 import { copyVec3, vec3 } from '../ballistics/vec3.ts';
+import { recomputeMotorAndReadability } from './motorReadability.ts';
+import {
+  escalatePostureReaction,
+  escalateVocalCue,
+  transitionAlertnessState,
+  transitionVitalState,
+} from './physiologyLifecycleFsm.ts';
 import { applyBoneAndNerveTrauma } from './traumaBonesNerves.ts';
 import { applyOrganTrauma } from './traumaOrgans.ts';
 import { mergeOrAddVascularWound } from './vascularHelper.ts';
-import { recomputeMotorAndReadability } from './motorReadability.ts';
 
 export function applyInternalBallisticsTrauma(
   state: PhysiologicalEntityState,
@@ -23,7 +29,8 @@ export function applyInternalBallisticsTrauma(
     );
   }
 
-  if (!report.hitOuterShell) {
+  // Terminal DEAD guard: post-mortem shots never overwrite latched causeOfDeath or vitals
+  if (!report.hitOuterShell || !state.alive) {
     return state;
   }
 
@@ -35,8 +42,8 @@ export function applyInternalBallisticsTrauma(
   if (report.stoppedByArmorPlate !== null && report.totalPenetrationDepthCm < 1.5) {
     painSpike += report.armorBackfaceBluntTraumaJ / 260;
     if (report.armorBackfaceBluntTraumaJ >= 65) {
-      reaction = 'VIOLENT_CHEST_STAGGER';
-      vocal = 'SHARP_GASP';
+      reaction = escalatePostureReaction(reaction, 'VIOLENT_CHEST_STAGGER');
+      vocal = escalateVocalCue(vocal, 'SHARP_GASP');
       state.diaphragmIntegrity = Math.max(0.76, state.diaphragmIntegrity - 0.15);
     }
   }
@@ -118,15 +125,16 @@ export function applyInternalBallisticsTrauma(
     !isDefeatedAtOuterArmor &&
     painSpike > adrenalineBuffer
   ) {
-    state.neurogenicShockCollapsed = true;
-    state.conscious = false;
-    state.canStand = false;
-    state.canPullTrigger = false;
-    state.locomotionMode = 'PARALYZED';
-    reaction = 'NEUROGENIC_DROP';
-    vocal = 'SHARP_GASP';
+    transitionVitalState(state, { kind: 'FALL_UNCONSCIOUS', neurogenicShock: true });
+    reaction = escalatePostureReaction(reaction, 'NEUROGENIC_DROP');
+    vocal = escalateVocalCue(vocal, 'SHARP_GASP');
   } else if (state.alive && state.conscious && isTorsoHit && reaction === 'NONE') {
-    reaction = 'VIOLENT_CHEST_STAGGER';
+    reaction = escalatePostureReaction(reaction, 'VIOLENT_CHEST_STAGGER');
+  }
+
+  // Surviving ballistic trauma transitions UNSUSPECTING -> COMBAT_ALERT
+  if (state.alive && state.conscious && state.alertnessState === 'UNSUSPECTING') {
+    transitionAlertnessState(state, 'COMBAT_ALERT');
   }
 
   recomputeMotorAndReadability(state, reaction, vocal);

@@ -2,6 +2,11 @@ import type { GhoulZoneId, TargetHealthState } from '../../contracts/ballistics.
 import type { CombatantGlbInstance } from '../assets/glbLoader.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
 import { add, scale } from '../../core/ballistics/vec3.ts';
+import {
+  createPropAttachmentState,
+  transitionPropAttachment,
+  type PropAttachmentState,
+} from './propAttachmentState.ts';
 import type { ZoneMeshBundle } from './types.ts';
 
 const PARENT_ZONE_MAP: Partial<Record<GhoulZoneId, GhoulZoneId>> = {
@@ -33,7 +38,11 @@ export function getParentZone(zone: GhoulZoneId): GhoulZoneId | undefined {
 }
 
 export class CombatantDismemberment {
-  private wasHeadgearIntact = true;
+  public headgearAttachment: PropAttachmentState = createPropAttachmentState('ATTACHED');
+
+  public reset(): void {
+    this.headgearAttachment = createPropAttachmentState('ATTACHED');
+  }
 
   public syncHeadgear(
     healthState: TargetHealthState,
@@ -43,18 +52,21 @@ export class CombatantDismemberment {
     const isHeadPoppedOrSevered = isCranialPopped || healthState.severedZones.has('HEAD_CRANIUM');
     const headgearNowAttached = healthState.headgearIntact && !isHeadPoppedOrSevered;
 
-    if (this.wasHeadgearIntact && !headgearNowAttached) {
-      this.wasHeadgearIntact = false;
-      if (fxManager) {
-        const headBone = healthState.ragdollBones.HEAD_CRANIUM;
-        fxManager.spawnDetachedHeadgearProp(
-          healthState.archetype,
-          add(headBone.position, scale(headBone.basisUp, 0.11)),
-          healthState.activeReaction.hitDirectionWorld
-        );
-      }
+    const transition = transitionPropAttachment(this.headgearAttachment, {
+      shouldBeAttached: headgearNowAttached,
+      allowReattachAfterDrop: headgearNowAttached,
+    });
+    this.headgearAttachment = transition.state;
+
+    if (transition.shouldSpawnDroppedProp && fxManager) {
+      const headBone = healthState.ragdollBones.HEAD_CRANIUM;
+      fxManager.spawnDetachedHeadgearProp(
+        healthState.archetype,
+        add(headBone.position, scale(headBone.basisUp, 0.11)),
+        healthState.activeReaction.hitDirectionWorld
+      );
     }
-    return headgearNowAttached;
+    return transition.isVisible;
   }
 
   public syncGlbSeverances(

@@ -4,9 +4,8 @@ import { RapierPhysicsWorld, writeColumnMajorTrsMatrix4 } from '../rapierWorld.t
 import {
   IDENTITY_QUAT,
   KINEMATIC_FLOOR_Y,
-  SLOT_MODE_KINEMATIC,
-  SLOT_MODE_RAPIER,
-  SLOT_MODE_STATIC,
+  type OnInstanceSlotExpired,
+  SlotLifecyclePhase,
   UNIT_SCALE,
 } from './instancePackerTypes.ts';
 import { InstanceStorageSoa } from './instanceStorageSoa.ts';
@@ -32,6 +31,10 @@ export class DenseInstancePacker {
   public getDenseIndex(slotId: number): number {
     return slotId >= 0 && slotId < this.maxInstances ? this.soa.slotToDense[slotId] : -1;
   }
+  public getSlotPhase(slotId: number): SlotLifecyclePhase {
+    const d = this.getDenseIndex(slotId);
+    return d >= 0 ? (this.soa.densePhase[d] as SlotLifecyclePhase) : SlotLifecyclePhase.FREE;
+  }
   public allocSlot(): number { return this.soa.allocSlot(); }
   public freeSlot(slotId: number): boolean { return this.soa.freeSlot(slotId); }
 
@@ -40,9 +43,10 @@ export class DenseInstancePacker {
     const denseIndex = this.soa.slotToDense[slotId];
     if (denseIndex < 0 || matrix16.length < srcOffset + 16) return false;
 
-    this.soa.denseMode[denseIndex] = SLOT_MODE_STATIC;
+    this.soa.densePhase[denseIndex] = SlotLifecyclePhase.STATIC;
     this.soa.denseBodyHandle[denseIndex] = -1;
-    this.soa.denseSleepingSynced[denseIndex] = 0;
+    this.soa.denseAgeS[denseIndex] = 0;
+    this.soa.denseTtlS[denseIndex] = 0;
 
     const dstOffset = denseIndex * 16;
     for (let i = 0; i < 16; i++) this.matrixData[dstOffset + i] = matrix16[srcOffset + i];
@@ -60,9 +64,10 @@ export class DenseInstancePacker {
     const denseIndex = this.soa.slotToDense[slotId];
     if (denseIndex < 0) return false;
 
-    this.soa.denseMode[denseIndex] = SLOT_MODE_STATIC;
+    this.soa.densePhase[denseIndex] = SlotLifecyclePhase.STATIC;
     this.soa.denseBodyHandle[denseIndex] = -1;
-    this.soa.denseSleepingSynced[denseIndex] = 0;
+    this.soa.denseAgeS[denseIndex] = 0;
+    this.soa.denseTtlS[denseIndex] = 0;
     this.soa.denseScaleX[denseIndex] = scale.x;
     this.soa.denseScaleY[denseIndex] = scale.y;
     this.soa.denseScaleZ[denseIndex] = scale.z;
@@ -89,9 +94,8 @@ export class DenseInstancePacker {
     const denseIndex = this.soa.slotToDense[slotId];
     if (denseIndex < 0) return false;
 
-    this.soa.denseMode[denseIndex] = SLOT_MODE_RAPIER;
+    this.soa.densePhase[denseIndex] = SlotLifecyclePhase.RAPIER_AWAKE;
     this.soa.denseBodyHandle[denseIndex] = bodyHandle;
-    this.soa.denseSleepingSynced[denseIndex] = 0;
     this.soa.denseScaleX[denseIndex] = scale.x;
     this.soa.denseScaleY[denseIndex] = scale.y;
     this.soa.denseScaleZ[denseIndex] = scale.z;
@@ -121,9 +125,8 @@ export class DenseInstancePacker {
     }
 
     const d = this.soa.slotToDense[slotId];
-    this.soa.denseMode[d] = SLOT_MODE_KINEMATIC;
+    this.soa.densePhase[d] = SlotLifecyclePhase.KINEMATIC_ACTIVE;
     this.soa.denseBodyHandle[d] = -1;
-    this.soa.denseSleepingSynced[d] = 0;
     this.soa.denseScaleX[d] = scale.x;
     this.soa.denseScaleY[d] = scale.y;
     this.soa.denseScaleZ[d] = scale.z;
@@ -160,13 +163,21 @@ export class DenseInstancePacker {
     return slotId;
   }
 
-  public syncFromPhysics(rapierWorld: RapierPhysicsWorld | null, dt: number): void {
+  public syncFromPhysics(
+    rapierWorld: RapierPhysicsWorld | null,
+    dt: number,
+    onSlotExpired?: OnInstanceSlotExpired
+  ): void {
     const stepDt = dt > 0 && Number.isFinite(dt) ? Math.min(dt, 0.1) : 0;
     for (let d = this.soa.count - 1; d >= 0; d--) {
-      const mode = this.soa.denseMode[d];
-      if (mode === SLOT_MODE_STATIC) continue;
+      const phase = this.soa.densePhase[d] as SlotLifecyclePhase;
+      if (phase === SlotLifecyclePhase.FREE || phase === SlotLifecyclePhase.STATIC) continue;
 
-      if (mode === SLOT_MODE_RAPIER) {
+      if (
+        phase === SlotLifecyclePhase.RAPIER_AWAKE ||
+        phase === SlotLifecyclePhase.RAPIER_SLEEPING_SYNCED ||
+        phase === SlotLifecyclePhase.RAPIER_SHRINKING
+      ) {
         if (!rapierWorld) continue;
         const bodyHandle = this.soa.denseBodyHandle[d];
         const ttl = this.soa.denseTtlS[d];
@@ -175,8 +186,10 @@ export class DenseInstancePacker {
           const nextAge = this.soa.denseAgeS[d] + stepDt;
           this.soa.denseAgeS[d] = nextAge;
           if (nextAge >= ttl) {
+            const expiredSlot = this.soa.denseToSlot[d];
             rapierWorld.removeBody(bodyHandle);
-            this.freeSlot(this.soa.denseToSlot[d]);
+            this.freeSlot(expiredSlot);
+            onSlotExpired?.(expiredSlot, bodyHandle);
             continue;
           }
           const fadeWindow = Math.min(0.4, ttl * 0.2);
@@ -185,7 +198,7 @@ export class DenseInstancePacker {
         }
 
         const isSleeping = rapierWorld.isBodySleeping(bodyHandle);
-        if (isSleeping && this.soa.denseSleepingSynced[d] === 1 && shrink >= 1) continue;
+        if (isSleeping && phase === SlotLifecyclePhase.RAPIER_SLEEPING_SYNCED && shrink >= 1) continue;
 
         const sx = this.soa.denseScaleX[d] * shrink;
         const sy = this.soa.denseScaleY[d] * shrink;
@@ -193,7 +206,9 @@ export class DenseInstancePacker {
         const base = d * 16;
         const ok = rapierWorld.writeBodyMatrix4(bodyHandle, this.matrixData, base, sx, sy, sz);
         if (!ok) {
-          this.freeSlot(this.soa.denseToSlot[d]);
+          const expiredSlot = this.soa.denseToSlot[d];
+          this.freeSlot(expiredSlot);
+          onSlotExpired?.(expiredSlot, bodyHandle);
           continue;
         }
         const ox = this.soa.densePosX[d] * shrink;
@@ -207,17 +222,29 @@ export class DenseInstancePacker {
           this.matrixData[base + 13] += this.matrixData[base + 1] * ux + this.matrixData[base + 5] * uy + this.matrixData[base + 9] * uz;
           this.matrixData[base + 14] += this.matrixData[base + 2] * ux + this.matrixData[base + 6] * uy + this.matrixData[base + 10] * uz;
         }
-        this.soa.denseSleepingSynced[d] = isSleeping ? 1 : 0;
+        this.soa.densePhase[d] =
+          shrink < 1
+            ? SlotLifecyclePhase.RAPIER_SHRINKING
+            : isSleeping
+              ? SlotLifecyclePhase.RAPIER_SLEEPING_SYNCED
+              : SlotLifecyclePhase.RAPIER_AWAKE;
         this.soa.isDirty = true;
         continue;
       }
 
-      if (mode === SLOT_MODE_KINEMATIC && stepDt > 0) {
+      if (
+        (phase === SlotLifecyclePhase.KINEMATIC_ACTIVE ||
+          phase === SlotLifecyclePhase.KINEMATIC_RESTING ||
+          phase === SlotLifecyclePhase.KINEMATIC_SHRINKING) &&
+        stepDt > 0
+      ) {
         const ttl = this.soa.denseTtlS[d];
         const nextAge = this.soa.denseAgeS[d] + stepDt;
         this.soa.denseAgeS[d] = nextAge;
         if (ttl > 0 && nextAge >= ttl) {
-          this.freeSlot(this.soa.denseToSlot[d]);
+          const expiredSlot = this.soa.denseToSlot[d];
+          this.freeSlot(expiredSlot);
+          onSlotExpired?.(expiredSlot, -1);
           continue;
         }
         let shrink = 1;
@@ -226,7 +253,7 @@ export class DenseInstancePacker {
           const rem = ttl - nextAge;
           if (fadeWindow > 1e-4 && rem < fadeWindow) shrink = Math.max(0, rem / fadeWindow);
         }
-        if (this.soa.denseSleepingSynced[d] === 1 && shrink >= 1) continue;
+        if (phase === SlotLifecyclePhase.KINEMATIC_RESTING && shrink >= 1) continue;
 
         let vx = this.soa.denseVelX[d];
         let vy = this.soa.denseVelY[d] + this.soa.denseGravityY[d] * stepDt;
@@ -263,12 +290,16 @@ export class DenseInstancePacker {
           this.soa.denseQuatX[d] = qx; this.soa.denseQuatY[d] = qy; this.soa.denseQuatZ[d] = qz; this.soa.denseQuatW[d] = qw;
         }
 
-        if (py <= KINEMATIC_FLOOR_Y + 1e-5 && vy === 0 && vx * vx + vz * vz < 1e-4 && spinSq < 1e-4) {
+        const isResting = py <= KINEMATIC_FLOOR_Y + 1e-5 && vy === 0 && vx * vx + vz * vz < 1e-4 && spinSq < 1e-4;
+        if (isResting) {
           vx = 0; vz = 0; wx = 0; wy = 0; wz = 0;
-          this.soa.denseSleepingSynced[d] = 1;
-        } else {
-          this.soa.denseSleepingSynced[d] = 0;
         }
+        this.soa.densePhase[d] =
+          shrink < 1
+            ? SlotLifecyclePhase.KINEMATIC_SHRINKING
+            : isResting
+              ? SlotLifecyclePhase.KINEMATIC_RESTING
+              : SlotLifecyclePhase.KINEMATIC_ACTIVE;
 
         this.soa.densePosX[d] = px; this.soa.densePosY[d] = py; this.soa.densePosZ[d] = pz;
         this.soa.denseVelX[d] = vx; this.soa.denseVelY[d] = vy; this.soa.denseVelZ[d] = vz;
@@ -286,6 +317,8 @@ export class DenseInstancePacker {
   public clear(): void {
     this.soa.count = 0;
     this.soa.freeCount = this.maxInstances;
+    this.soa.densePhase.fill(SlotLifecyclePhase.FREE);
+    this.soa.denseBodyHandle.fill(-1);
     for (let i = 0; i < this.maxInstances; i++) {
       this.soa.freeStack[i] = this.maxInstances - 1 - i;
       this.soa.slotToDense[i] = -1;
@@ -300,10 +333,21 @@ export class DenseInstancePacker {
     let bestSlot = -1;
     let smallestRemaining = Infinity;
     for (let d = 0; d < this.soa.count; d++) {
-      if (this.soa.denseMode[d] !== SLOT_MODE_KINEMATIC) continue;
+      const phase = this.soa.densePhase[d] as SlotLifecyclePhase;
+      if (
+        phase !== SlotLifecyclePhase.KINEMATIC_ACTIVE &&
+        phase !== SlotLifecyclePhase.KINEMATIC_RESTING &&
+        phase !== SlotLifecyclePhase.KINEMATIC_SHRINKING
+      ) {
+        continue;
+      }
       const age = this.soa.denseAgeS[d];
       const ttl = this.soa.denseTtlS[d];
-      if (this.soa.denseSleepingSynced[d] === 1 || ttl <= 0) {
+      if (
+        phase === SlotLifecyclePhase.KINEMATIC_RESTING ||
+        phase === SlotLifecyclePhase.KINEMATIC_SHRINKING ||
+        ttl <= 0
+      ) {
         if (age > oldestSettledAge) {
           oldestSettledAge = age;
           bestSettledSlot = this.soa.denseToSlot[d];

@@ -15,6 +15,7 @@ import { HardwareInstancedPool } from '../physics/instancedPool.ts';
 import { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
 import {
   getBrickWorldCenter,
+  handleBrickPoolSlotExpired,
   populateIntactWallState,
   releaseWallResources,
 } from './brick/brickColliders.ts';
@@ -28,6 +29,7 @@ import {
   createProceduralBrickMaterial,
 } from './brick/brickMaterial.ts';
 import {
+  BrickPhase,
   type BrickWallConfig,
   type BrickWallInstanceState,
   type BrickWallSystemOptions,
@@ -175,6 +177,7 @@ export class BrickWallSystem implements IDestructibleSubsystem {
       brickH,
       brickD,
       dynamicDebrisTtlS: config.dynamicDebrisTtlS ?? 0,
+      brickPhase: new Uint8Array(n).fill(BrickPhase.INTACT_STATIC),
       variantByBrick: new Uint8Array(n),
       poolSlotByBrick: new Int32Array(n).fill(-1),
       staticColliderHandles: new Float64Array(n).fill(-1),
@@ -213,7 +216,9 @@ export class BrickWallSystem implements IDestructibleSubsystem {
 
   public update(dt: number): void {
     if (this.destroyed) return;
-    this.pool.syncFromPhysics(this.rapierWorld, dt);
+    this.pool.syncFromPhysics(this.rapierWorld, dt, (variant, slotId, bodyHandle) => {
+      handleBrickPoolSlotExpired(this.wallsById, variant, slotId, bodyHandle);
+    });
   }
 
   public reset(): void {

@@ -1,6 +1,7 @@
 import type { TargetHealthState } from '../../contracts/ballistics.ts';
 import { computeCombatantTriageStatus } from '../../core/ballistics/solver.ts';
-import type { ActiveFiringHand, EnemyAimProfile, EnemyAiAgentRuntime } from './tacticalAiTypes.ts';
+import { evaluateTargetArmamentState } from './agentArmamentController.ts';
+import type { EnemyAimProfile, EnemyAiAgentRuntime } from './tacticalAiTypes.ts';
 import {
   ARCHETYPE_TUNING,
   DOWNED_ONE_HANDED_SPREAD_MULTIPLIER,
@@ -9,10 +10,8 @@ import {
   SIDEARM_M9_TUNING,
 } from './archetypeTuning.ts';
 import {
-  getPreferredPrimaryHand,
   isArmChainIntactAndFunctional,
   resolveDefaultCombatantProfile,
-  selectIntactFiringHand,
 } from './combatantArmEvaluation.ts';
 
 export function computeEnemyAimProfile(
@@ -52,12 +51,9 @@ export function computeEnemyAimProfile(
     };
   }
 
-  const leftIntact = isArmChainIntactAndFunctional(target, 'LEFT');
-  const rightIntact = isArmChainIntactAndFunctional(target, 'RIGHT');
-  const bothArmsLost = !leftIntact && !rightIntact;
-  const anyArmLost = !leftIntact || !rightIntact;
+  const armament = evaluateTargetArmamentState(target, agent);
 
-  if (bothArmsLost) {
+  if (armament.kind === 'DISARMED') {
     return {
       baseSpreadRad: tuning.baseSpreadRad,
       spreadMultiplier: 8.5,
@@ -72,58 +68,29 @@ export function computeEnemyAimProfile(
     };
   }
 
-  const preferredHand = getPreferredPrimaryHand(target);
-  const intactHand = selectIntactFiringHand(target, agent?.activeFiringHand ?? preferredHand);
-
-  const sidearmActive =
-    agent !== undefined &&
-    agent.sidearmActive &&
-    intactHand !== null &&
-    isArmChainIntactAndFunctional(target, agent.activeFiringHand);
-  const sidearmDrawing =
-    agent !== undefined && agent.sidearmDrawing && !sidearmActive && intactHand !== null;
-
-  const groundedWithUnbrokenArms =
-    target.isRagdollActive &&
-    target.posture !== 'AIRBORNE_RAGDOLL' &&
-    !target.primaryArmDisarmed &&
-    intactHand !== null;
-
-  const primaryWeaponUsable =
-    !anyArmLost && !target.primaryArmDisarmed && (!target.weaponDropped || groundedWithUnbrokenArms);
-
-  if (!primaryWeaponUsable && !sidearmActive) {
-    if (sidearmDrawing) {
-      return {
-        baseSpreadRad: SIDEARM_M9_TUNING.baseSpreadRad,
-        spreadMultiplier: OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
-        effectiveSpreadRad: SIDEARM_M9_TUNING.baseSpreadRad * OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
-        aimAccuracyMultiplier: 1.0 / OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
-        canReturnFire: false,
-        isOneHandedDownedFire: !target.leftLegFunctional || !target.rightLegFunctional,
-        clutchingWound: false,
-        usingBackupSidearm: false,
-        sidearmDrawing: true,
-        activeFiringHand: agent?.activeFiringHand ?? intactHand,
-      };
-    }
-
+  if (armament.kind === 'SIDEARM_DRAWING') {
     return {
-      baseSpreadRad: tuning.baseSpreadRad,
-      spreadMultiplier: 8.5,
-      effectiveSpreadRad: tuning.baseSpreadRad * 8.5,
-      aimAccuracyMultiplier: 0.08,
+      baseSpreadRad: SIDEARM_M9_TUNING.baseSpreadRad,
+      spreadMultiplier: OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
+      effectiveSpreadRad: SIDEARM_M9_TUNING.baseSpreadRad * OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
+      aimAccuracyMultiplier: 1.0 / OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
       canReturnFire: false,
-      isOneHandedDownedFire: false,
-      clutchingWound: true,
+      isOneHandedDownedFire: !target.leftLegFunctional || !target.rightLegFunctional,
+      clutchingWound: false,
       usingBackupSidearm: false,
-      sidearmDrawing: false,
-      activeFiringHand: null,
+      sidearmDrawing: true,
+      activeFiringHand: armament.hand,
     };
   }
+
+  const sidearmActive = armament.kind === 'SIDEARM_ACTIVE';
+  const anyArmLost =
+    !isArmChainIntactAndFunctional(target, 'LEFT') ||
+    !isArmChainIntactAndFunctional(target, 'RIGHT');
 
   const inNeurogenicOrStagger =
-    agent !== undefined && (agent.neurogenicShockTimerS > 0 || agent.state === 'SUPPRESSED_STAGGERED');
+    agent !== undefined &&
+    (agent.neurogenicShockTimerS > 0 || agent.state === 'SUPPRESSED_STAGGERED');
 
   const resolveProfile =
     agent?.resolveProfile ??
@@ -132,7 +99,10 @@ export function computeEnemyAimProfile(
   const triage = computeCombatantTriageStatus(target);
 
   const legCrippled =
-    !target.leftLegFunctional || !target.rightLegFunctional || target.isRagdollActive || agent?.state === 'DOWNED_CRAWLING';
+    !target.leftLegFunctional ||
+    !target.rightLegFunctional ||
+    target.isRagdollActive ||
+    agent?.state === 'DOWNED_CRAWLING';
 
   const baseSpreadRad = sidearmActive ? SIDEARM_M9_TUNING.baseSpreadRad : tuning.baseSpreadRad;
   let spreadMultiplier = 1.0;
@@ -141,7 +111,11 @@ export function computeEnemyAimProfile(
   if (sidearmActive || anyArmLost) spreadMultiplier *= OFFHAND_SIDEARM_SPREAD_MULTIPLIER;
 
   const painMitigationFactor =
-    resolveProfile === 'HARDENED_VETERAN' ? 0.62 : resolveProfile === 'FANATIC_BERSERKER' ? 0.55 : 0.35;
+    resolveProfile === 'HARDENED_VETERAN'
+      ? 0.62
+      : resolveProfile === 'FANATIC_BERSERKER'
+        ? 0.55
+        : 0.35;
   const adrenalineVal = agent ? agent.adrenaline : resolveProfile === 'HARDENED_VETERAN' ? 0.85 : 0;
   const effectiveShock = Math.max(0, target.painShock - adrenalineVal * painMitigationFactor);
   spreadMultiplier *= 1.0 + effectiveShock * 2.2;
@@ -154,13 +128,21 @@ export function computeEnemyAimProfile(
     spreadMultiplier *= organPenalty;
   }
 
-  if (target.systolicBpMmHg < 105) spreadMultiplier *= 1.0 + ((105 - target.systolicBpMmHg) / 45) * 2.0;
-  if (target.oxygenSaturationPct < 94) spreadMultiplier *= 1.0 + ((94 - target.oxygenSaturationPct) / 25) * 1.9;
-  if (target.consciousness < 0.9) spreadMultiplier *= 1.0 + (0.9 - target.consciousness) * 2.5;
+  if (target.systolicBpMmHg < 105) {
+    spreadMultiplier *= 1.0 + ((105 - target.systolicBpMmHg) / 45) * 2.0;
+  }
+  if (target.oxygenSaturationPct < 94) {
+    spreadMultiplier *= 1.0 + ((94 - target.oxygenSaturationPct) / 25) * 1.9;
+  }
+  if (target.consciousness < 0.9) {
+    spreadMultiplier *= 1.0 + (0.9 - target.consciousness) * 2.5;
+  }
 
   if (
     resolveProfile === 'PANICKED_SCRAPPER' &&
-    (target.currentHp < target.maxHp * 0.8 || target.painShock > 0.22 || (agent?.suppression ?? 0) > 0.45)
+    (target.currentHp < target.maxHp * 0.8 ||
+      target.painShock > 0.22 ||
+      (agent?.suppression ?? 0) > 0.45)
   ) {
     spreadMultiplier *= 1.32;
   }
@@ -170,13 +152,10 @@ export function computeEnemyAimProfile(
   }
 
   if (agent?.isOffScreen) {
-    spreadMultiplier *= 4.0; // 0.25x off-screen accuracy nerf
+    spreadMultiplier *= 4.0;
   }
 
   const aimAccuracyMultiplier = Math.max(0.08, Math.min(1.0, 1.0 / spreadMultiplier));
-  const activeHand: ActiveFiringHand = sidearmActive
-    ? agent!.activeFiringHand
-    : intactHand ?? preferredHand;
 
   return {
     baseSpreadRad,
@@ -188,6 +167,6 @@ export function computeEnemyAimProfile(
     clutchingWound: false,
     usingBackupSidearm: sidearmActive,
     sidearmDrawing: false,
-    activeFiringHand: activeHand,
+    activeFiringHand: armament.hand,
   };
 }

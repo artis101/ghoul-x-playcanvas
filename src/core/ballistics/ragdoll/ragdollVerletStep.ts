@@ -5,6 +5,12 @@ import {
   recomputeRagdollBasisVectors,
 } from '../../ghoul/anatomy.ts';
 import {
+  stepLivingTargetVitalsAndFall,
+  syncTargetLifecycleDerivedState,
+  transitionTargetLifecycle,
+} from '../lifecycle/targetLifecycleFsm.ts';
+import { buildLivingGroundedPoseTargets } from '../triage/groundedPoseTargets.ts';
+import {
   add,
   copyVec3,
   length,
@@ -14,24 +20,19 @@ import {
   vec3,
   Vec3Like,
 } from '../vec3.ts';
-import { getRagdollParticleRef } from './ragdollParticles.ts';
-import { projectConstraintsAndAnatomyOnce } from './ragdollConstraintsProjector.ts';
-import { stabilizeRagdollPoseForTransition } from './ragdollPoseStabilizer.ts';
 import {
-  buildLivingGroundedPoseTargets,
-  livingGroundAgonyClock,
-} from '../triage/groundedPoseTargets.ts';
+  stepCorpseSettleAndSleep,
+  stepRagdollPhasePreSolve,
+} from './corpseSleepFsm.ts';
+import { projectConstraintsAndAnatomyOnce } from './ragdollConstraintsProjector.ts';
+import {
+  getRagdollParticleRef,
+  isRagdollBoneParticleActive,
+} from './ragdollParticles.ts';
 
 const MAX_PARTICLE_SPEED_MS = 11.0;
 const MAX_PARTICLE_SPEED_SQ = MAX_PARTICLE_SPEED_MS * MAX_PARTICLE_SPEED_MS;
 const MAX_GROUNDED_UPWARD_POP_MS = 4.0;
-
-interface CorpseSleepState {
-  settleTimerS: number;
-  sleeping: boolean;
-}
-
-const corpseSleepRegistry = new WeakMap<TargetHealthState, CorpseSleepState>();
 
 function clampParticleVelocity(vel: Vec3Like, grounded: boolean): void {
   if (grounded && vel.y > MAX_GROUNDED_UPWARD_POP_MS) {
@@ -43,23 +44,6 @@ function clampParticleVelocity(vel: Vec3Like, grounded: boolean): void {
     vel.x *= s;
     vel.y *= s;
     vel.z *= s;
-  }
-}
-
-function freezeCorpseParticles(target: TargetHealthState): void {
-  for (const z of ALL_GHOUL_ZONES) {
-    const b = target.ragdollBones[z];
-    b.velocity.x = 0;
-    b.velocity.y = 0;
-    b.velocity.z = 0;
-    b.prevPosition = copyVec3(b.position);
-  }
-  for (const aId of ALL_AUX_PARTICLES) {
-    const a = target.auxParticles[aId];
-    a.velocity.x = 0;
-    a.velocity.y = 0;
-    a.velocity.z = 0;
-    a.prevPosition = copyVec3(a.position);
   }
 }
 
@@ -75,125 +59,21 @@ export function stepRagdollPhysics(
   if (dt <= 0) return;
 
   // 1. Tick Physiological Hemorrhage, Leg-Disable Fall & Pain Reactions on living combatants
-  if (target.alive) {
-    const prevSleep = corpseSleepRegistry.get(target);
-    if (prevSleep) {
-      prevSleep.settleTimerS = 0;
-      prevSleep.sleeping = false;
-    }
-
-    if (target.bloodLossRateMlPerSec > 0) {
-      target.bloodVolumeMl = Math.max(0, target.bloodVolumeMl - target.bloodLossRateMlPerSec * dt);
-      const bloodRatio = target.bloodVolumeMl / 5000;
-      target.systolicBpMmHg = Math.max(0, Math.round(120 * Math.pow(bloodRatio, 1.35)));
-      target.consciousness = Math.max(0.2, Math.min(1.0, (target.bloodVolumeMl - 2500) / 2200));
-      target.currentHp = Math.max(0, target.currentHp - (target.bloodLossRateMlPerSec * 0.16) * dt);
-
-      if (target.bloodVolumeMl <= 2500 || target.currentHp <= 0) {
-        target.alive = false;
-        target.consciousness = 0;
-        target.heartRateBpm = 0;
-        target.systolicBpMmHg = 0;
-        target.weaponDropped = true;
-        if (!target.isRagdollActive) {
-          target.isRagdollActive = true;
-          target.posture = 'AIRBORNE_RAGDOLL';
-          stabilizeRagdollPoseForTransition(target, floorY);
-          const slump = vec3(
-            (Math.random() - 0.5) * 0.5,
-            0,
-            Math.cos(target.yawRad) * 0.75
-          );
-          target.ragdollBones.TORSO_UPPER_THORAX.velocity = slump;
-          target.ragdollBones.HEAD_CRANIUM.velocity = scale(slump, 1.2);
-        }
-      }
-    }
-
-    if (target.alive && target.activeReaction.type !== 'NONE') {
-      target.activeReaction.timerS += dt;
-      if (target.activeReaction.timerS >= target.activeReaction.durationS) {
-        target.activeReaction.type = 'NONE';
-      }
-    }
-
-    if (
-      target.alive &&
-      (!target.leftLegFunctional || !target.rightLegFunctional) &&
-      !target.isRagdollActive &&
-      target.activeReaction.type === 'NONE'
-    ) {
-      target.isRagdollActive = true;
-      target.weaponDropped = true;
-      target.posture = 'AIRBORNE_RAGDOLL';
-      stabilizeRagdollPoseForTransition(target, floorY);
-
-      const cosY = Math.cos(target.yawRad);
-      const sinY = Math.sin(target.yawRad);
-      const sideSign = !target.leftLegFunctional ? -1.0 : 1.0;
-      const sideWorld = vec3(cosY * sideSign, 0, -sinY * sideSign);
-      const fwdWorld = vec3(sinY, 0, cosY);
-      const dropVel = add(scale(sideWorld, 0.55), add(scale(fwdWorld, -0.35), vec3(0, -1.1, 0)));
-
-      for (const z of ALL_GHOUL_ZONES) {
-        const b = target.ragdollBones[z];
-        if (b.componentId === 'BODY') {
-          b.velocity = copyVec3(dropVel);
-        }
-      }
-      for (const aId of ALL_AUX_PARTICLES) {
-        const a = target.auxParticles[aId];
-        if (a.componentId === 'BODY') {
-          a.velocity = copyVec3(dropVel);
-        }
-      }
-    }
-
-    target.painShock = Math.max(0, target.painShock - dt * 0.55);
-  }
+  stepLivingTargetVitalsAndFall(target, dt, floorY);
 
   const hasSeveredLimbs = target.severedZones.size > 0;
   if (!target.isRagdollActive && !hasSeveredLimbs) {
     return;
   }
 
-  // Permanent Corpse Sleep Check: once a dead ragdoll has settled on the floor, stay 100% still
-  let sleepState = corpseSleepRegistry.get(target);
-  if (!sleepState) {
-    sleepState = { settleTimerS: 0, sleeping: false };
-    corpseSleepRegistry.set(target, sleepState);
+  // 2. Step Ragdoll Corpse-Sleep & Living-Agony FSM
+  const { skipSolverForSleepingCorpse, agonyClockS } = stepRagdollPhasePreSolve(target, dt);
+  if (skipSolverForSleepingCorpse) {
+    syncTargetLifecycleDerivedState(target);
+    return;
   }
 
-  if (!target.alive && target.isRagdollActive && sleepState.sleeping) {
-    let wokenByImpulse = false;
-    for (const z of ALL_GHOUL_ZONES) {
-      const b = target.ragdollBones[z];
-      if (b.goreMode === 'CRANIAL_POP') continue;
-      const vSq = lengthSq(b.velocity);
-      if (vSq > 0.25) {
-        wokenByImpulse = true;
-        if (vSq > 20.25) {
-          const s = 4.5 / Math.sqrt(vSq);
-          b.velocity.x *= s;
-          b.velocity.y *= s;
-          b.velocity.z *= s;
-        }
-      }
-    }
-    if (!wokenByImpulse) {
-      return;
-    }
-    sleepState.sleeping = false;
-    sleepState.settleTimerS = 1.25;
-  }
-
-  let agonyClock = livingGroundAgonyClock.get(target) || 0;
-  if (target.alive && target.isRagdollActive) {
-    agonyClock += dt;
-    livingGroundAgonyClock.set(target, agonyClock);
-  }
-
-  // 2. Sub-stepped Rigid-Skeleton PBD Ragdoll Solver
+  // 3. Sub-stepped Rigid-Skeleton PBD Ragdoll Solver
   const gravity = -9.81;
   const subSteps = Math.max(2, Math.min(8, Math.ceil(dt / 0.004)));
   const h = dt / subSteps;
@@ -207,14 +87,12 @@ export function stepRagdollPhysics(
   let finalGroundedCount = 0;
   for (let step = 0; step < subSteps; step++) {
     const activePoseTargets =
-      muscleTone > 0.01 ? buildLivingGroundedPoseTargets(target, floorY, agonyClock) : null;
+      muscleTone > 0.01 ? buildLivingGroundedPoseTargets(target, floorY, agonyClockS) : null;
 
     // A. Symplectic Euler Prediction Step
     for (const z of ALL_GHOUL_ZONES) {
       const b = target.ragdollBones[z];
-      const active =
-        (target.isRagdollActive || b.componentId !== 'BODY') && b.goreMode !== 'CRANIAL_POP';
-      if (!active) continue;
+      if (!isRagdollBoneParticleActive(target, b)) continue;
 
       clampParticleVelocity(b.velocity, b.grounded);
       b.prevPosition = copyVec3(b.position);
@@ -252,8 +130,11 @@ export function stepRagdollPhysics(
       const a = target.auxParticles[aId];
       const parentBone = target.ragdollBones[a.parentZone];
       const active =
-        (target.isRagdollActive || a.componentId !== 'BODY') &&
-        parentBone.goreMode !== 'CRANIAL_POP';
+        parentBone.attachmentState !== 'OBLITERATED_HIDDEN' &&
+        parentBone.goreMode !== 'CRANIAL_POP' &&
+        (target.isRagdollActive ||
+          parentBone.attachmentState === 'DETACHED_LIMB' ||
+          a.componentId !== 'BODY');
       if (!active) continue;
 
       const auxGrounded = a.position.y <= floorY + a.radiusM + 0.008;
@@ -280,9 +161,7 @@ export function stepRagdollPhysics(
     let groundedCount = 0;
     for (const z of ALL_GHOUL_ZONES) {
       const b = target.ragdollBones[z];
-      const active =
-        (target.isRagdollActive || b.componentId !== 'BODY') && b.goreMode !== 'CRANIAL_POP';
-      if (!active) continue;
+      if (!isRagdollBoneParticleActive(target, b)) continue;
 
       const preImpactVy = b.velocity.y;
       const newVel = scale(sub(b.position, b.prevPosition), 1 / h);
@@ -319,8 +198,11 @@ export function stepRagdollPhysics(
       const a = target.auxParticles[aId];
       const parentBone = target.ragdollBones[a.parentZone];
       const active =
-        (target.isRagdollActive || a.componentId !== 'BODY') &&
-        parentBone.goreMode !== 'CRANIAL_POP';
+        parentBone.attachmentState !== 'OBLITERATED_HIDDEN' &&
+        parentBone.goreMode !== 'CRANIAL_POP' &&
+        (target.isRagdollActive ||
+          parentBone.attachmentState === 'DETACHED_LIMB' ||
+          a.componentId !== 'BODY');
       if (!active) continue;
 
       const newVel = scale(sub(a.position, a.prevPosition), 1 / h);
@@ -362,51 +244,18 @@ export function stepRagdollPhysics(
 
     finalGroundedCount = groundedCount;
     if (target.isRagdollActive) {
-      target.posture = groundedCount >= 3 ? 'RAGDOLL_GROUNDED' : 'AIRBORNE_RAGDOLL';
+      transitionTargetLifecycle(target, {
+        kind: 'UPDATE_RAGDOLL_GROUNDED',
+        groundedBoneCount: groundedCount,
+      });
     }
   }
 
-  // Progressive Corpse Settle Damping & Permanent Sleep Lock
-  if (!target.alive && target.isRagdollActive && finalGroundedCount >= 4) {
-    const settleDamp = Math.exp(-4.2 * dt * (1.0 + sleepState.settleTimerS * 2.8));
-    let maxSpeedSq = 0;
-    for (const z of ALL_GHOUL_ZONES) {
-      const b = target.ragdollBones[z];
-      if (b.goreMode === 'CRANIAL_POP') continue;
-      b.velocity.x *= settleDamp;
-      b.velocity.y *= settleDamp;
-      b.velocity.z *= settleDamp;
-      const spSq = lengthSq(b.velocity);
-      if (spSq > maxSpeedSq) maxSpeedSq = spSq;
-    }
-    for (const aId of ALL_AUX_PARTICLES) {
-      const a = target.auxParticles[aId];
-      a.velocity.x *= settleDamp;
-      a.velocity.y *= settleDamp;
-      a.velocity.z *= settleDamp;
-    }
+  // 4. Progressive Corpse Settle Damping & Permanent Sleep Lock
+  stepCorpseSettleAndSleep(target, dt, finalGroundedCount);
+  syncTargetLifecycleDerivedState(target);
 
-    const maxSpeed = Math.sqrt(maxSpeedSq);
-    if (maxSpeed < 0.15) {
-      sleepState.settleTimerS += dt * 2.2;
-    } else if (maxSpeed < 0.75) {
-      sleepState.settleTimerS += dt;
-    } else {
-      sleepState.settleTimerS = Math.max(0, sleepState.settleTimerS - dt * 0.5);
-    }
-
-    if (
-      (maxSpeed < 0.15 && sleepState.settleTimerS >= 0.30) ||
-      (maxSpeed < 0.60 && sleepState.settleTimerS >= 1.60) ||
-      sleepState.settleTimerS >= 2.10
-    ) {
-      freezeCorpseParticles(target);
-      target.posture = 'RAGDOLL_GROUNDED';
-      sleepState.sleeping = true;
-    }
-  }
-
-  // 3. Sync Root Position/Velocity & Recompute Exact 3D Orthonormal Bone Bases
+  // 5. Sync Root Position/Velocity & Recompute Exact 3D Orthonormal Bone Bases
   if (target.isRagdollActive) {
     const pelvis = target.ragdollBones.PELVIS_GROIN;
     target.ragdollRootPosition = copyVec3(pelvis.position);

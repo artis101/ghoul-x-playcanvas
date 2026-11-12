@@ -3,13 +3,15 @@ import {
   DEFAULT_SHARD_FLOOR_Y,
   DEFAULT_SHARD_GRAVITY_Y,
   DEFAULT_SHARD_RESTITUTION,
-  type GlassShardBatchedMeshStats,
-} from './glassShardTypes.ts';
-import {
   GLASS_SHARD_STYLE_CLEAR,
   IDENTITY_QUAT,
+  SHARD_DYNAMIC,
+  SHARD_FADING,
+  SHARD_SETTLED,
   type ExtrudedGlassShardGeometry,
+  type GlassShardBatchedMeshStats,
   type QuatLike,
+  type ShardStage,
   type SpawnVoronoiShardsTransform,
   type Vec3Like,
   type VoronoiWindowShatterResult,
@@ -19,7 +21,7 @@ import {
   spawnShardsSubset,
   spawnSingleShard,
 } from './glassShardSpawner.ts';
-import { stepShardSimulation } from './glassShardIntegrator.ts';
+import { stepShardSimulation, transitionShardStage } from './glassShardIntegrator.ts';
 import { writeBatchedMeshBuffers } from './glassShardBatchWriter.ts';
 
 export class GlassShardPool {
@@ -54,6 +56,7 @@ export class GlassShardPool {
   public readonly ageS: Float32Array;
   public readonly ttlS: Float32Array;
   public readonly fadeScale: Float32Array;
+  public readonly stage: Uint8Array;
   public readonly settled: Uint8Array;
   public readonly shardStyle: Uint8Array;
 
@@ -103,6 +106,7 @@ export class GlassShardPool {
     this.ageS = new Float32Array(cap);
     this.ttlS = new Float32Array(cap);
     this.fadeScale = new Float32Array(cap);
+    this.stage = new Uint8Array(cap);
     this.settled = new Uint8Array(cap);
     this.shardStyle = new Uint8Array(cap);
 
@@ -140,7 +144,19 @@ export class GlassShardPool {
 
   public clear(): void {
     this.count = 0;
+    this.stage.fill(SHARD_DYNAMIC);
+    this.settled.fill(0);
     this.meshDirty = true;
+  }
+
+  public getShardStage(index: number): ShardStage {
+    const s = this.stage[index];
+    if (s === SHARD_SETTLED || s === SHARD_FADING) return s;
+    return SHARD_DYNAMIC;
+  }
+
+  public transitionStage(index: number, nextStage: ShardStage): void {
+    transitionShardStage(this, index, nextStage);
   }
 
   public spawnShard(

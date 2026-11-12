@@ -92,6 +92,8 @@ export class MayhemDirector {
   private readonly bloodSplatterAnchors: BloodSplatterSlotAnchor[];
 
   private cachedCameraEntity: pc.Entity | null = null;
+  private cachedCameraPos: pc.Vec3 | null = null;
+  private readonly _eventCleanups: Array<() => void> = [];
   private readonly splatterRecycleCursor = { value: 0 };
   private readonly splatterSeedCounter = { value: 1 };
   private casingSeedCounter = 1;
@@ -149,6 +151,30 @@ export class MayhemDirector {
         this.syncSurfaceBreaches();
       },
     });
+
+    this.cachedCameraEntity =
+      (this.app.root?.findByName?.('PlayerCamera') as pc.Entity | null) ?? null;
+    if (typeof this.app.on === 'function' && typeof this.app.off === 'function') {
+      const onCameraTransform = (data: unknown): void => {
+        const p = data as { position?: pc.Vec3; entity?: pc.Entity } | undefined;
+        if (p?.entity) {
+          this.cachedCameraEntity = p.entity;
+        }
+        if (p?.position) {
+          this.cachedCameraPos = p.position;
+        }
+      };
+      this.app.on('camera:transform', onCameraTransform, this);
+      this._eventCleanups.push(() => this.app.off('camera:transform', onCameraTransform, this));
+    }
+  }
+
+  public setCameraEntity(cameraEntity: pc.Entity | null): void {
+    this.cachedCameraEntity = cameraEntity;
+  }
+
+  public setCachedCameraPos(pos: pc.Vec3 | null): void {
+    this.cachedCameraPos = pos;
   }
 
   public get activeDynamicLightCount(): number {
@@ -325,10 +351,11 @@ export class MayhemDirector {
     stepDynamicLights(this.lightPool, scaledDt);
 
     stepFireballLobes(this.fireballLobes, scaledDt);
-    if (!this.cachedCameraEntity || !this.cachedCameraEntity.parent) {
-      this.cachedCameraEntity = this.app.root.findByName('PlayerCamera') as pc.Entity | null;
-    }
-    const camPos = this.cachedCameraEntity ? this.cachedCameraEntity.getPosition() : null;
+    const camPos =
+      this.cachedCameraPos ??
+      (this.cachedCameraEntity && this.cachedCameraEntity.parent
+        ? this.cachedCameraEntity.getPosition()
+        : null);
     stepBillowPlumes(this.billowPlumes, scaledDt, camPos);
     this.lingeringSmokePool.update(scaledDt, camPos);
 
@@ -347,6 +374,7 @@ export class MayhemDirector {
 
   public resetWave(clearBloodDecals = false): void {
     if (this.destroyed) return;
+    this.bulletTime.reset();
     this.barrels.resetBarrels();
     this.trackedBuffer.reset();
     this.lingeringSmokePool.clear();
@@ -368,6 +396,10 @@ export class MayhemDirector {
   public destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    while (this._eventCleanups.length > 0) {
+      const cleanup = this._eventCleanups.pop();
+      cleanup?.();
+    }
     this.clearTransientExplosionAndImpactFx();
     destroyExplosionTemplateMaterials(this.templates);
     this.bulletTime.destroy();

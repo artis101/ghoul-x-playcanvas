@@ -5,6 +5,10 @@ import {
   PhysiologicalEntityState,
   VocalTraumaCue,
 } from '../../contracts/physiology.ts';
+import {
+  escalatePostureReaction,
+  transitionVitalState,
+} from './physiologyLifecycleFsm.ts';
 
 export function applyBoneAndNerveTrauma(
   state: PhysiologicalEntityState,
@@ -29,12 +33,12 @@ export function applyBoneAndNerveTrauma(
       case 'FEMUR_LEFT':
         state.leftLegFunctional = false;
         state.canStand = false;
-        reaction = 'LEG_COLLAPSE_PRONE';
+        reaction = escalatePostureReaction(reaction, 'LEG_COLLAPSE_PRONE');
         break;
       case 'FEMUR_RIGHT':
         state.rightLegFunctional = false;
         state.canStand = false;
-        reaction = 'LEG_COLLAPSE_PRONE';
+        reaction = escalatePostureReaction(reaction, 'LEG_COLLAPSE_PRONE');
         break;
       case 'PELVIS':
       case 'SPINE_THORACIC':
@@ -42,7 +46,7 @@ export function applyBoneAndNerveTrauma(
         state.leftLegFunctional = false;
         state.rightLegFunctional = false;
         state.canStand = false;
-        reaction = 'LEG_COLLAPSE_PRONE';
+        reaction = escalatePostureReaction(reaction, 'LEG_COLLAPSE_PRONE');
         break;
       case 'SPINE_CERVICAL':
         state.leftLegFunctional = false;
@@ -54,16 +58,16 @@ export function applyBoneAndNerveTrauma(
           state.weaponDropped = true;
           state.canPullTrigger = false;
           state.diaphragmIntegrity = 0;
-          state.locomotionMode = 'PARALYZED';
-          state.conscious = false;
-          state.alive = false;
-          state.causeOfDeath = 'HIGH_CERVICAL_TRANSECTION';
-          reaction = 'NEUROGENIC_DROP';
+          transitionVitalState(state, {
+            kind: 'LETHAL_ARREST',
+            cause: 'HIGH_CERVICAL_TRANSECTION',
+          });
+          reaction = escalatePostureReaction(reaction, 'NEUROGENIC_DROP');
           vocal = 'NONE';
         } else {
           state.locomotionMode = 'PARALYZED';
           state.aimSwayMultiplier = Math.max(state.aimSwayMultiplier, 4.8);
-          reaction = 'LEG_COLLAPSE_PRONE';
+          reaction = escalatePostureReaction(reaction, 'LEG_COLLAPSE_PRONE');
         }
         break;
       case 'HUMERUS_LEFT':
@@ -74,7 +78,7 @@ export function applyBoneAndNerveTrauma(
           state.weaponDropped = true;
           state.canPullTrigger = false;
         }
-        if (reaction === 'NONE') reaction = 'WEAPON_WRENCH_DROP';
+        reaction = escalatePostureReaction(reaction, 'WEAPON_WRENCH_DROP');
         break;
       case 'HUMERUS_RIGHT':
       case 'RADIUS_ULNA_RIGHT':
@@ -84,7 +88,7 @@ export function applyBoneAndNerveTrauma(
           state.weaponDropped = true;
           state.canPullTrigger = false;
         }
-        if (reaction === 'NONE') reaction = 'WEAPON_WRENCH_DROP';
+        reaction = escalatePostureReaction(reaction, 'WEAPON_WRENCH_DROP');
         break;
       default:
         break;
@@ -109,9 +113,7 @@ export function applyBoneAndNerveTrauma(
         state.canPullTrigger = false;
       }
     }
-    if (reaction === 'NONE') {
-      reaction = 'WEAPON_WRENCH_DROP';
-    }
+    reaction = escalatePostureReaction(reaction, 'WEAPON_WRENCH_DROP');
   }
 
   return { reaction, vocal, painSpike };

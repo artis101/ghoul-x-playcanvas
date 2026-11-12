@@ -1,6 +1,7 @@
 import type { PlayerNearMissGrazePayload } from '../../contracts/ai/aiContracts.ts';
 import type { GhoulZoneId, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
 import { computeSuppressionTargetWorld } from '../../core/ai/attackTokenPool.ts';
+import { stepWeaponBurstCadence } from '../../core/ai/weaponBurstFsm.ts';
 import {
   add,
   copyVec3,
@@ -58,55 +59,31 @@ export function stepWeaponBurstFire(
   ctx: BurstContext
 ): void {
   const tuning = ARCHETYPE_TUNING[hs.archetype];
-  const isWounded = hs.currentHp < hs.maxHp * 0.88 || hs.painShock > 0.18 || hs.rupturedOrgans.size > 0;
-
-  if (agent.burstShotsRemaining <= 0) {
-    agent.fireCooldownTimerS = Math.max(0, agent.fireCooldownTimerS - dt);
-  }
+  const isWounded =
+    hs.currentHp < hs.maxHp * 0.88 || hs.painShock > 0.18 || hs.rupturedOrgans.size > 0;
 
   const exposedAimTarget = ctx.resolveExposedPlayerAimPoint(hs, agent, playerEyeWorldPos);
-  if (!exposedAimTarget) {
-    agent.timeWithoutLosS = (agent.timeWithoutLosS ?? 0) + dt;
-    if (agent.timeWithoutLosS >= 4.0) {
-      agent.hasFiredWarningShot = false;
-    }
-    if (agent.burstShotsRemaining > 0) {
-      agent.burstShotsRemaining = 0;
-      agent.fireCooldownTimerS = Math.max(agent.fireCooldownTimerS, 0.25);
-    }
-    return;
+  if (exposedAimTarget) {
+    agent.lastAimTargetWorld = copyVec3(exposedAimTarget);
   }
 
-  agent.timeWithoutLosS = 0;
-  agent.lastAimTargetWorld = copyVec3(exposedAimTarget);
+  const aimYaw = exposedAimTarget
+    ? yawToward(hs.worldPosition, exposedAimTarget, hs.yawRad)
+    : hs.yawRad;
+  const isAimAligned =
+    hs.isRagdollActive || Math.abs(wrapAngleRad(aimYaw - hs.yawRad)) <= Math.PI / 12;
 
-  if ((agent.alertReactionTimerS ?? 0) > 0) return;
-
-  // Grounded ragdolls aim with the sidearm arm pose. Standing enemies turn their whole body.
-  const aimYaw = yawToward(hs.worldPosition, exposedAimTarget, hs.yawRad);
-  if (!hs.isRagdollActive && Math.abs(wrapAngleRad(aimYaw - hs.yawRad)) > Math.PI / 12) return;
-
-  if (agent.burstShotsRemaining <= 0) {
-    if (agent.fireCooldownTimerS <= 0) {
-      if (aimProfile.usingBackupSidearm) {
-        agent.burstShotsRemaining = agent.completedBurstCount % 2 === 0 ? 2 : 3;
-      } else {
-        let desiredBurst = tuning.burstCount;
-        if (agent.resolveProfile === 'FANATIC_BERSERKER' && isWounded) desiredBurst += 2;
-        else if (agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded) desiredBurst += 3;
-        agent.burstShotsRemaining = aimProfile.isOneHandedDownedFire
-          ? Math.max(2, Math.ceil(desiredBurst * 0.65))
-          : desiredBurst;
-      }
-      agent.burstInterShotTimerS = 0;
-    }
-    return;
+  let desiredBurstShots: number;
+  if (aimProfile.usingBackupSidearm) {
+    desiredBurstShots = agent.completedBurstCount % 2 === 0 ? 2 : 3;
+  } else {
+    let desiredBurst = tuning.burstCount;
+    if (agent.resolveProfile === 'FANATIC_BERSERKER' && isWounded) desiredBurst += 2;
+    else if (agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded) desiredBurst += 3;
+    desiredBurstShots = aimProfile.isOneHandedDownedFire
+      ? Math.max(2, Math.ceil(desiredBurst * 0.65))
+      : desiredBurst;
   }
-
-  agent.burstInterShotTimerS -= dt;
-  if (agent.burstInterShotTimerS > 0) return;
-
-  emitEnemyTracerShot(hs, agent, aimProfile, playerEyeWorldPos, exposedAimTarget, ctx);
 
   const cadenceScale =
     agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded
@@ -116,30 +93,51 @@ export function stepWeaponBurstFire(
         : agent.resolveProfile === 'HARDENED_VETERAN'
           ? 0.92
           : 1.0;
-
   const raggedWoundDelay =
-    agent.triageStatus === 'MORTALLY_WOUNDED' && agent.resolveProfile !== 'FANATIC_BERSERKER' ? 1.18 : 1.0;
+    agent.triageStatus === 'MORTALLY_WOUNDED' && agent.resolveProfile !== 'FANATIC_BERSERKER'
+      ? 1.18
+      : 1.0;
 
-  agent.burstShotsRemaining -= 1;
-  if (agent.burstShotsRemaining > 0) {
-    const baseInterShot = aimProfile.usingBackupSidearm ? SIDEARM_M9_TUNING.interShotDelayS : tuning.interShotDelayS;
-    agent.burstInterShotTimerS =
-      baseInterShot *
-      cadenceScale *
-      raggedWoundDelay *
-      (aimProfile.isOneHandedDownedFire && !aimProfile.usingBackupSidearm ? 1.3 : 1.0);
-  } else {
-    agent.completedBurstCount += 1;
-    if (agent.resolveProfile === 'HARDENED_VETERAN' && agent.completedBurstCount % 2 === 0) {
-      agent.peekSign = (agent.peekSign === 1 ? -1 : 1) as -1 | 1;
-    }
-    const baseCooldown = aimProfile.usingBackupSidearm ? SIDEARM_M9_TUNING.burstCooldownS : tuning.burstCooldownS;
-    const offScreenCooldownMul = agent.isOffScreen ? 2.0 : 1.0;
-    agent.fireCooldownTimerS =
-      baseCooldown *
-      cadenceScale *
-      offScreenCooldownMul *
-      (aimProfile.isOneHandedDownedFire && !aimProfile.usingBackupSidearm ? 1.25 : 1.0);
+  const baseInterShot = aimProfile.usingBackupSidearm
+    ? SIDEARM_M9_TUNING.interShotDelayS
+    : tuning.interShotDelayS;
+  const nextInterShotDelayS =
+    baseInterShot *
+    cadenceScale *
+    raggedWoundDelay *
+    (aimProfile.isOneHandedDownedFire && !aimProfile.usingBackupSidearm ? 1.3 : 1.0);
+
+  const baseCooldown = aimProfile.usingBackupSidearm
+    ? SIDEARM_M9_TUNING.burstCooldownS
+    : tuning.burstCooldownS;
+  const offScreenCooldownMul = agent.isOffScreen ? 2.0 : 1.0;
+  const nextBurstCooldownS =
+    baseCooldown *
+    cadenceScale *
+    offScreenCooldownMul *
+    (aimProfile.isOneHandedDownedFire && !aimProfile.usingBackupSidearm ? 1.25 : 1.0);
+
+  const burstRes = stepWeaponBurstCadence(agent, {
+    dt,
+    hasLineOfSight: exposedAimTarget !== null,
+    isAimAligned,
+    desiredBurstShots,
+    nextInterShotDelayS,
+    nextBurstCooldownS,
+  });
+
+  if (!burstRes.shouldFireShot || !exposedAimTarget) {
+    return;
+  }
+
+  emitEnemyTracerShot(hs, agent, aimProfile, playerEyeWorldPos, exposedAimTarget, ctx);
+
+  if (
+    burstRes.completedBurst &&
+    agent.resolveProfile === 'HARDENED_VETERAN' &&
+    agent.completedBurstCount % 2 === 0
+  ) {
+    agent.peekSign = (agent.peekSign === 1 ? -1 : 1) as -1 | 1;
   }
 }
 
@@ -159,8 +157,14 @@ export function emitEnemyTracerShot(
   const handBone = hs.ragdollBones[firingHandZone];
   const handPos = handBone && !handBone.severed ? handBone.position : undefined;
   const isGroundedOrDowned = agent.state === 'DOWNED_CRAWLING' || hs.isRagdollActive;
-  const basePos = hs.isRagdollActive ? hs.ragdollBones.TORSO_UPPER_THORAX?.position ?? hs.worldPosition : hs.worldPosition;
-  const muzzleHeight = hs.isRagdollActive ? Math.max(0.42, basePos.y) : isGroundedOrDowned ? hs.worldPosition.y + 0.62 : hs.worldPosition.y + 1.32;
+  const basePos = hs.isRagdollActive
+    ? hs.ragdollBones.TORSO_UPPER_THORAX?.position ?? hs.worldPosition
+    : hs.worldPosition;
+  const muzzleHeight = hs.isRagdollActive
+    ? Math.max(0.42, basePos.y)
+    : isGroundedOrDowned
+      ? hs.worldPosition.y + 0.62
+      : hs.worldPosition.y + 1.32;
 
   const coreOrigin: Vec3Like = { x: basePos.x, y: muzzleHeight, z: basePos.z };
   const seed = agent.tracerSeedCounter++;
@@ -183,8 +187,18 @@ export function emitEnemyTracerShot(
     ? add(handPos, scale(fwdDir, usingSidearm ? 0.19 : 0.28))
     : { x: coreOrigin.x + fwdDir.x * 0.38, y: muzzleHeight, z: coreOrigin.z + fwdDir.z * 0.38 };
 
-  const playerChestTarget: Vec3Like = { x: playerEyeWorldPos.x, y: playerEyeWorldPos.y - 0.18, z: playerEyeWorldPos.z };
-  const shotDir = deterministicConeSpread(idealDir, aimProfile.effectiveSpreadRad, (seed % 7) + 1, 8, seed * 31);
+  const playerChestTarget: Vec3Like = {
+    x: playerEyeWorldPos.x,
+    y: playerEyeWorldPos.y - 0.18,
+    z: playerEyeWorldPos.z,
+  };
+  const shotDir = deterministicConeSpread(
+    idealDir,
+    aimProfile.effectiveSpreadRad,
+    (seed % 7) + 1,
+    8,
+    seed * 31
+  );
 
   const toChest = sub(playerChestTarget, coreOrigin);
   const alongChest = dot(toChest, shotDir);
@@ -240,9 +254,10 @@ export function emitEnemyTracerShot(
   }
 
   const visualMuzzle = ctx.playFireVisual?.(hs.targetId, usingSidearm);
-  const muzzleOrigin = blockedByCover && distance(coreOrigin, impactPointWorld) < 0.48
-    ? coreOrigin
-    : visualMuzzle ?? rawMuzzleOrigin;
+  const muzzleOrigin =
+    blockedByCover && distance(coreOrigin, impactPointWorld) < 0.48
+      ? coreOrigin
+      : visualMuzzle ?? rawMuzzleOrigin;
   const tracerSpeedMs = usingSidearm ? SIDEARM_M9_TUNING.tracerSpeedMs : tuning.tracerSpeedMs;
   const rawChip = usingSidearm ? SIDEARM_M9_TUNING.baseChipDamage : tuning.baseChipDamage;
 
@@ -268,9 +283,10 @@ export function emitEnemyTracerShot(
   }
 
   if (ctx.tracerPool) {
-    const tracerDir = visualMuzzle && muzzleOrigin === visualMuzzle
-      ? normalize(sub(impactPointWorld, muzzleOrigin))
-      : shotDir;
+    const tracerDir =
+      visualMuzzle && muzzleOrigin === visualMuzzle
+        ? normalize(sub(impactPointWorld, muzzleOrigin))
+        : shotDir;
     const quat = computeTracerOrientationQuat(tracerDir);
     const flightDist = distance(muzzleOrigin, impactPointWorld);
     const ttl = Math.max(0.05, Math.min(0.28, flightDist / tracerSpeedMs));

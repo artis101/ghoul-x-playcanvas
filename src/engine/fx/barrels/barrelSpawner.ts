@@ -100,6 +100,11 @@ export function createHazardBarrelEntity(
     index,
     objectId,
     basePosition: basePos,
+    phase: {
+      kind: 'INTACT',
+      colliderHandle,
+      ignitionDamage: 0,
+    },
     state: 'INTACT',
     colliderHandle,
     ignitionDamage: 0,

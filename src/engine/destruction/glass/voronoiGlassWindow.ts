@@ -19,6 +19,16 @@ import {
 } from './glassSystemTypes.ts';
 import { createIntactWindowPanePrismMesh } from './glassShardMeshes.ts';
 
+export type VoronoiPaneState =
+  | { readonly kind: 'INTACT'; readonly colliderHandle: number }
+  | {
+      readonly kind: 'CLINGING_FANGS';
+      readonly pane: ProgressiveVoronoiPane;
+      readonly colliderHandle: number;
+    }
+  | { readonly kind: 'CLEARED' }
+  | { readonly kind: 'DESTROYED' };
+
 export class VoronoiGlassWindow {
   public readonly id: string;
   public readonly centerWorld: Vec3Like;
@@ -35,10 +45,8 @@ export class VoronoiGlassWindow {
   public readonly fangMesh: pc.Mesh;
   public readonly fangMeshInstance: pc.MeshInstance;
 
-  private colliderHandleValue = -1;
-  private isShattered = false;
+  private paneState: VoronoiPaneState = { kind: 'CLEARED' };
   private shatterCounter = 0;
-  private progressivePane: ProgressiveVoronoiPane | null = null;
 
   private readonly fangPositions: Float32Array;
   private readonly fangNormals: Float32Array;
@@ -148,20 +156,52 @@ export class VoronoiGlassWindow {
     this.fangEntity.enabled = false;
     app.root.addChild(this.fangEntity);
 
-    this.createCollider();
+    this.paneState = { kind: 'INTACT', colliderHandle: this.createCollider() };
+  }
+
+  public get state(): VoronoiPaneState {
+    return this.paneState;
   }
 
   public get colliderHandle(): number {
-    return this.colliderHandleValue;
+    return this.paneState.kind === 'INTACT' || this.paneState.kind === 'CLINGING_FANGS'
+      ? this.paneState.colliderHandle
+      : -1;
   }
 
   public get shattered(): boolean {
-    return this.isShattered;
+    return this.paneState.kind === 'CLINGING_FANGS' || this.paneState.kind === 'CLEARED';
   }
 
   public get survivingFangCount(): number {
-    if (!this.isShattered) return this.voronoiShardCount;
-    return this.progressivePane ? this.progressivePane.survivingFangCount : 0;
+    if (this.paneState.kind === 'INTACT') return this.voronoiShardCount;
+    if (this.paneState.kind === 'CLINGING_FANGS') return this.paneState.pane.survivingFangCount;
+    return 0;
+  }
+
+  public isPlayerPassable(pointWorld?: Vec3Like): boolean {
+    if (this.paneState.kind === 'CLEARED' || this.paneState.kind === 'DESTROYED') {
+      return true;
+    }
+    if (this.paneState.kind === 'INTACT') {
+      return false;
+    }
+    const pane = this.paneState.pane;
+    if (pane.survivingFangCount === 0) {
+      return true;
+    }
+    if (pointWorld && !this.isOpenAtWorldPoint(pointWorld)) {
+      return false;
+    }
+    let survivingAreaM2 = 0;
+    const shards = pane.shatter.shards;
+    for (let i = 0; i < shards.length; i++) {
+      if (pane.attached[i] !== 0) {
+        survivingAreaM2 += shards[i].areaM2;
+      }
+    }
+    const totalAreaM2 = Math.max(1e-4, pane.shatter.totalAreaM2);
+    return survivingAreaM2 / totalAreaM2 <= 0.35 && this.isOpenAtWorldPoint(this.centerWorld);
   }
 
   public worldPointToWindowCoords(pointWorld: Vec3Like): { hitX: number; hitY: number } {
@@ -178,12 +218,14 @@ export class VoronoiGlassWindow {
   }
 
   public isOpenAtWorldPoint(pointWorld: Vec3Like): boolean {
-    if (!this.isShattered) return false;
-    if (!this.progressivePane || this.progressivePane.survivingFangCount === 0) return true;
+    if (this.paneState.kind === 'INTACT') return false;
+    if (this.paneState.kind === 'CLEARED' || this.paneState.kind === 'DESTROYED') return true;
+    const pane = this.paneState.pane;
+    if (pane.survivingFangCount === 0) return true;
     const { hitX, hitY } = this.worldPointToWindowCoords(pointWorld);
-    const shards = this.progressivePane.shatter.shards;
+    const shards = pane.shatter.shards;
     for (let i = 0; i < shards.length; i++) {
-      if (this.progressivePane.attached[i] === 0) continue;
+      if (pane.attached[i] === 0) continue;
       const poly = shards[i].polygon;
       let inside = true;
       for (let k = 0; k < poly.length; k++) {
@@ -205,10 +247,13 @@ export class VoronoiGlassWindow {
     kineticEnergyJ: number,
     impactRadiusM = 0.035,
   ): { alreadyShattered: boolean; energyAbsorbedJ: number; spawnedShards: number } {
+    if (this.paneState.kind === 'DESTROYED') {
+      return { alreadyShattered: true, energyAbsorbedJ: 0, spawnedShards: 0 };
+    }
     const { hitX, hitY } = this.worldPointToWindowCoords(pointWorld);
 
-    if (!this.isShattered) {
-      this.isShattered = true;
+    if (this.paneState.kind === 'INTACT') {
+      const activeCollider = this.paneState.colliderHandle;
       this.intactEntity.enabled = false;
 
       const seed = ++this.shatterCounter * 15485863 + Math.round(hitX * 997 + hitY * 991);
@@ -222,8 +267,8 @@ export class VoronoiGlassWindow {
         seed,
       });
 
-      this.progressivePane = new ProgressiveVoronoiPane(voronoiResult);
-      const detachedIndices = this.progressivePane.triggerInitialBreach(kineticEnergyJ);
+      const pane = new ProgressiveVoronoiPane(voronoiResult);
+      const detachedIndices = pane.triggerInitialBreach(kineticEnergyJ);
 
       const spawnedShards = this.shardPool.spawnShardsSubset(
         voronoiResult,
@@ -240,22 +285,28 @@ export class VoronoiGlassWindow {
         },
       );
 
-      this.rebuildFangMeshAndCollider();
+      this.syncFangStateAndMesh(pane, activeCollider);
       return { alreadyShattered: false, energyAbsorbedJ: this.penetrationResistanceJ, spawnedShards };
     }
 
-    if (!this.progressivePane || this.progressivePane.survivingFangCount === 0) {
+    if (this.paneState.kind === 'CLEARED') {
       return { alreadyShattered: true, energyAbsorbedJ: 0, spawnedShards: 0 };
     }
 
-    const fangHit = this.progressivePane.strikeClingingFangs(hitX, hitY, kineticEnergyJ, impactRadiusM);
+    const { pane, colliderHandle: activeCollider } = this.paneState;
+    if (pane.survivingFangCount === 0) {
+      this.transitionToCleared(activeCollider);
+      return { alreadyShattered: true, energyAbsorbedJ: 0, spawnedShards: 0 };
+    }
+
+    const fangHit = pane.strikeClingingFangs(hitX, hitY, kineticEnergyJ, impactRadiusM);
     if (fangHit.hitOpenBreach || fangHit.newlyDetachedIndices.length === 0) {
       return { alreadyShattered: true, energyAbsorbedJ: 0, spawnedShards: 0 };
     }
 
     const seed = ++this.shatterCounter * 15485863 + Math.round(hitX * 997 + hitY * 991);
     const spawnedShards = this.shardPool.spawnShardsSubset(
-      this.progressivePane.shatter,
+      pane.shatter,
       fangHit.newlyDetachedIndices,
       {
         windowCenterWorld: this.centerWorld,
@@ -269,7 +320,7 @@ export class VoronoiGlassWindow {
       },
     );
 
-    this.rebuildFangMeshAndCollider();
+    this.syncFangStateAndMesh(pane, activeCollider);
     return {
       alreadyShattered: false,
       energyAbsorbedJ: Math.max(MIN_GLASS_ENERGY_LOSS_J, this.penetrationResistanceJ * 0.78),
@@ -278,35 +329,43 @@ export class VoronoiGlassWindow {
   }
 
   public reset(): void {
-    this.isShattered = false;
-    this.progressivePane = null;
+    if (this.paneState.kind === 'DESTROYED') return;
+    this.shatterCounter = 0;
     this.intactEntity.enabled = true;
     this.fangEntity.enabled = false;
-    if (this.colliderHandleValue < 0) this.createCollider();
+    const existingCol = this.colliderHandle;
+    const colHandle = existingCol >= 0 ? existingCol : this.createCollider();
+    this.paneState = { kind: 'INTACT', colliderHandle: colHandle };
   }
 
   public destroy(): void {
-    if (this.colliderHandleValue >= 0) {
-      this.physics.removeCollider(this.colliderHandleValue);
-      this.colliderHandleValue = -1;
+    if (this.paneState.kind === 'DESTROYED') return;
+    const colHandle = this.colliderHandle;
+    if (colHandle >= 0) {
+      this.physics.removeCollider(colHandle);
     }
+    this.paneState = { kind: 'DESTROYED' };
     this.fangEntity.destroy();
     this.fangMesh.destroy();
     this.intactEntity.destroy();
     this.intactMesh.destroy();
   }
 
-  private rebuildFangMeshAndCollider(): void {
-    if (!this.progressivePane || this.progressivePane.survivingFangCount === 0) {
-      this.fangEntity.enabled = false;
-      if (this.colliderHandleValue >= 0) {
-        this.physics.removeCollider(this.colliderHandleValue);
-        this.colliderHandleValue = -1;
-      }
+  private transitionToCleared(activeCollider: number): void {
+    this.fangEntity.enabled = false;
+    if (activeCollider >= 0) {
+      this.physics.removeCollider(activeCollider);
+    }
+    this.paneState = { kind: 'CLEARED' };
+  }
+
+  private syncFangStateAndMesh(pane: ProgressiveVoronoiPane, activeCollider: number): void {
+    if (pane.survivingFangCount === 0) {
+      this.transitionToCleared(activeCollider);
       return;
     }
 
-    const stats = this.progressivePane.writeClingingFangsMeshBuffers(
+    const stats = pane.writeClingingFangsMeshBuffers(
       this.fangPositions,
       this.fangNormals,
       this.fangUvs,
@@ -315,14 +374,11 @@ export class VoronoiGlassWindow {
     );
 
     if (stats.vertexCount === 0 || stats.indexCount === 0) {
-      this.fangEntity.enabled = false;
-      if (this.colliderHandleValue >= 0) {
-        this.physics.removeCollider(this.colliderHandleValue);
-        this.colliderHandleValue = -1;
-      }
+      this.transitionToCleared(activeCollider);
       return;
     }
 
+    this.paneState = { kind: 'CLINGING_FANGS', pane, colliderHandle: activeCollider };
     this.fangEntity.enabled = true;
     this.fangMesh.setPositions(this.fangPositions, 3, stats.vertexCount);
     this.fangMesh.setNormals(this.fangNormals, 3, stats.vertexCount);
@@ -332,14 +388,14 @@ export class VoronoiGlassWindow {
     this.fangMesh.update(pc.PRIMITIVE_TRIANGLES, true);
   }
 
-  private createCollider(): void {
+  private createCollider(): number {
     const tag: ColliderSurfaceTag = {
       material: 'GLASS_VORONOI',
       objectId: this.id,
       thicknessM: this.thicknessM,
       penetrationResistanceJ: this.penetrationResistanceJ,
     };
-    this.colliderHandleValue = this.physics.createStaticBox(
+    return this.physics.createStaticBox(
       this.centerWorld,
       {
         x: this.widthM * 0.5,

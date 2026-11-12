@@ -19,7 +19,25 @@ import type {
   ActiveVascularParticle,
   BoundPhysiologyEmitter,
   VascularBloodMaterials,
+  VascularWoundEmissionMode,
 } from './vascularBloodTypes.ts';
+
+export function resolveWoundEmissionMode(
+  wound: VascularWoundRecord,
+  state: PhysiologicalEntityState,
+  mapRatio: number
+): VascularWoundEmissionMode {
+  if (wound.baseBleedMlPerSec <= 0) {
+    return 'CLOTTED';
+  }
+  if (wound.vesselKind === 'ARTERIAL' && state.alive && mapRatio > 0.12) {
+    return 'ARTERIAL_PULSING_JET';
+  }
+  if (state.alive || mapRatio > 0 || wound.vesselKind === 'VENOUS') {
+    return 'VENOUS_OOZE';
+  }
+  return 'CLOTTED';
+}
 
 export class VascularBloodFxEmitter {
   public readonly app: pc.AppBase;
@@ -96,24 +114,34 @@ export class VascularBloodFxEmitter {
 
       const origin = transform ? characterLocalPointToWorld(wound.positionLocal, transform, wound.ghoulZone) : wound.positionWorld;
       const dir = transform ? characterLocalDirectionToWorld(wound.sprayDirectionWorld, transform) : normalize(wound.sprayDirectionWorld);
+      const emissionMode = resolveWoundEmissionMode(wound, state, mapRatio);
 
-      if (wound.vesselKind === 'ARTERIAL' && state.alive && mapRatio > 0.12) {
-        const pulseGate = 0.22 + 0.78 * systolicWave;
-        const intervalS = Math.max(0.022, 0.075 / Math.max(0.25, pulseGate * mapRatio));
-        while (timer >= intervalS) {
-          timer -= intervalS;
-          if (systolicWave >= 0.25) {
-            const spd = (3.5 + Math.min(3.0, (wound.baseBleedMlPerSec / 95) * 3.0)) * (0.45 + 0.55 * mapRatio) * (0.55 + 0.45 * systolicWave);
-            this.spawnArterialJetDroplet(origin, dir, spd);
-            if (systolicWave >= 0.65 && this.mistPuffs.length < 24) this.spawnArterialMistWisp(origin, dir, spd * 0.36);
+      switch (emissionMode) {
+        case 'ARTERIAL_PULSING_JET': {
+          const pulseGate = 0.22 + 0.78 * systolicWave;
+          const intervalS = Math.max(0.022, 0.075 / Math.max(0.25, pulseGate * mapRatio));
+          while (timer >= intervalS) {
+            timer -= intervalS;
+            if (systolicWave >= 0.25) {
+              const spd = (3.5 + Math.min(3.0, (wound.baseBleedMlPerSec / 95) * 3.0)) * (0.45 + 0.55 * mapRatio) * (0.55 + 0.45 * systolicWave);
+              this.spawnArterialJetDroplet(origin, dir, spd);
+              if (systolicWave >= 0.65 && this.mistPuffs.length < 24) this.spawnArterialMistWisp(origin, dir, spd * 0.36);
+            }
           }
+          break;
         }
-      } else if (state.alive || mapRatio > 0 || wound.vesselKind === 'VENOUS') {
-        const factor = state.alive ? Math.max(0.25, mapRatio) : 0.12;
-        const intervalS = Math.max(0.065, 0.18 / Math.max(0.2, (wound.baseBleedMlPerSec / 14) * factor));
-        while (timer >= intervalS) {
-          timer -= intervalS;
-          this.spawnVenousOozeDrip(origin, dir, 0.38 + 0.35 * factor);
+        case 'VENOUS_OOZE': {
+          const factor = state.alive ? Math.max(0.25, mapRatio) : 0.12;
+          const intervalS = Math.max(0.065, 0.18 / Math.max(0.2, (wound.baseBleedMlPerSec / 14) * factor));
+          while (timer >= intervalS) {
+            timer -= intervalS;
+            this.spawnVenousOozeDrip(origin, dir, 0.38 + 0.35 * factor);
+          }
+          break;
+        }
+        case 'CLOTTED': {
+          timer = 0;
+          break;
         }
       }
       if (woundTimers) woundTimers.set(key, timer);
@@ -194,7 +222,11 @@ export class VascularBloodFxEmitter {
       if (pool.vesselKind !== vesselKind) continue;
       const dx = pool.centerX - x, dz = pool.centerZ - z;
       if (dx * dx + dz * dz <= 0.18 * 0.18) {
-        pool.targetRadiusM = Math.min(0.74, pool.targetRadiusM + 0.036);
+        const nextTarget = Math.min(0.74, pool.targetRadiusM + 0.036);
+        if (nextTarget > pool.currentRadiusM) {
+          pool.targetRadiusM = nextTarget;
+          pool.phase = 'EXPANDING';
+        }
         return;
       }
     }
@@ -219,7 +251,9 @@ export class VascularBloodFxEmitter {
 
     this.pools.push({
       entity: poolEnt, vesselKind, centerX: x, centerZ: z, currentRadiusM: 0.05,
-      targetRadiusM: vesselKind === 'ARTERIAL' ? 0.3 : 0.38, growthRateMPerSec: vesselKind === 'ARTERIAL' ? 0.32 : 0.18,
+      targetRadiusM: vesselKind === 'ARTERIAL' ? 0.3 : 0.38,
+      growthRateMPerSec: vesselKind === 'ARTERIAL' ? 0.32 : 0.18,
+      phase: 'EXPANDING',
     });
   }
 
@@ -291,9 +325,11 @@ export class VascularBloodFxEmitter {
     }
 
     for (const pool of this.pools) {
-      if (pool.currentRadiusM < pool.targetRadiusM) {
-        pool.currentRadiusM = Math.min(pool.targetRadiusM, pool.currentRadiusM + pool.growthRateMPerSec * dt);
-        pool.entity.setLocalScale(pool.currentRadiusM * 2, 0.0024, pool.currentRadiusM * 2);
+      if (pool.phase === 'STATIC') continue;
+      pool.currentRadiusM = Math.min(pool.targetRadiusM, pool.currentRadiusM + pool.growthRateMPerSec * dt);
+      pool.entity.setLocalScale(pool.currentRadiusM * 2, 0.0024, pool.currentRadiusM * 2);
+      if (pool.currentRadiusM >= pool.targetRadiusM) {
+        pool.phase = 'STATIC';
       }
     }
   }

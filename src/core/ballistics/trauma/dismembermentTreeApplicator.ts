@@ -3,6 +3,7 @@ import {
   TargetHealthState,
 } from '../../../contracts/ballistics.ts';
 import { ALL_AUX_PARTICLES } from '../../ghoul/anatomy.ts';
+import { transitionTargetLifecycle } from '../lifecycle/targetLifecycleFsm.ts';
 import { add, copyVec3, cross, scale, sub } from '../vec3.ts';
 
 export function applyDismembermentTree(
@@ -17,11 +18,18 @@ export function applyDismembermentTree(
     target.zoneIntegrity[dism.zone] = 0;
 
     if (dism.goreMode === 'EVISCERATED') {
+      const evisceratedBone = target.ragdollBones[dism.zone];
+      if (evisceratedBone) {
+        evisceratedBone.goreMode = 'EVISCERATED';
+        evisceratedBone.attachmentState = 'ATTACHED';
+      }
       target.bloodLossRateMlPerSec += 110;
       continue;
     }
 
     const severCompId = `SEVERED_${dism.zone}`;
+    const nextAttachment =
+      dism.goreMode === 'CRANIAL_POP' ? 'OBLITERATED_HIDDEN' : 'DETACHED_LIMB';
     target.severedZones.add(dism.zone);
 
     if (dism.zone === 'HAND_LEFT' || dism.zone === 'HAND_RIGHT' || dism.zone === 'FOOT_LEFT' || dism.zone === 'FOOT_RIGHT') {
@@ -42,6 +50,7 @@ export function applyDismembermentTree(
     if (rootBone) {
       rootBone.severed = true;
       rootBone.goreMode = dism.goreMode;
+      rootBone.attachmentState = nextAttachment;
       rootBone.componentId = severCompId;
       rootBone.prevPosition = copyVec3(rootBone.position);
       rootBone.velocity = copyVec3(dism.severedLimbVelocity);
@@ -54,6 +63,7 @@ export function applyDismembermentTree(
       if (childBone) {
         childBone.severed = true;
         if (dism.goreMode === 'CRANIAL_POP') childBone.goreMode = 'CRANIAL_POP';
+        childBone.attachmentState = nextAttachment;
         childBone.componentId = severCompId;
         childBone.prevPosition = copyVec3(childBone.position);
         const offset = sub(childBone.position, rootBone.position);
@@ -83,13 +93,11 @@ export function applyDismembermentTree(
     }
     if (dism.zone === 'UPPER_ARM_LEFT' || dism.zone === 'FOREARM_LEFT' || dism.zone === 'HAND_LEFT') {
       target.leftArmFunctional = false;
-      target.weaponDropped = true;
-      target.primaryArmDisarmed = true;
+      transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
     }
     if (dism.zone === 'UPPER_ARM_RIGHT' || dism.zone === 'FOREARM_RIGHT' || dism.zone === 'HAND_RIGHT') {
       target.rightArmFunctional = false;
-      target.weaponDropped = true;
-      target.primaryArmDisarmed = true;
+      transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
     }
   }
 

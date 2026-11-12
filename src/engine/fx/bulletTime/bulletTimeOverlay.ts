@@ -5,12 +5,16 @@ export function computeBulletTimeVignette(
   killPunchActive: boolean,
   timeScale: number,
   energyPct: number,
+  reflexTargetScale = 0.22,
 ): BulletTimeVignetteState {
-  const dilationDepth = Math.max(0, Math.min(1, (1.0 - timeScale) / (1.0 - 0.08)));
+  const dilationDepth = Math.max(
+    0,
+    Math.min(1, (1.0 - timeScale) / Math.max(0.001, 1.0 - reflexTargetScale)),
+  );
   let tint: BulletTimeVignetteTint = 'NONE';
   let cssBoxShadow = 'none';
 
-  if (active && killPunchActive) {
+  if (killPunchActive && !active) {
     tint = 'AMBER_KILL_PUNCH';
     const alpha = (0.38 * dilationDepth).toFixed(3);
     const spreadPx = Math.round(68 * dilationDepth + 14);

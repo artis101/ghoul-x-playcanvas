@@ -4,8 +4,14 @@ import {
   PhysiologicalEntityState,
   VocalTraumaCue,
 } from '../../contracts/physiology.ts';
-import { TIER2_INTERNAL_ORGANS } from '../ghoul/bvhVolumes.ts';
 import { copyVec3, vec3 } from '../ballistics/vec3.ts';
+import { TIER2_INTERNAL_ORGANS } from '../ghoul/bvhVolumes.ts';
+import {
+  escalatePostureReaction,
+  escalateVocalCue,
+  transitionPneumothorax,
+  transitionVitalState,
+} from './physiologyLifecycleFsm.ts';
 import { mergeOrAddVascularWound } from './vascularHelper.ts';
 
 export function applyOrganTrauma(
@@ -13,7 +19,12 @@ export function applyOrganTrauma(
   organTrauma: readonly OrganTraumaRecord[],
   currentReaction: ImmediatePostureReaction,
   currentVocal: VocalTraumaCue
-): { reaction: ImmediatePostureReaction; vocal: VocalTraumaCue; painSpike: number; organBleedMlPerSec: number } {
+): {
+  reaction: ImmediatePostureReaction;
+  vocal: VocalTraumaCue;
+  painSpike: number;
+  organBleedMlPerSec: number;
+} {
   let reaction = currentReaction;
   let vocal = currentVocal;
   let painSpike = 0;
@@ -34,24 +45,26 @@ export function applyOrganTrauma(
         state.brainIntegrity = Math.max(0, state.brainIntegrity - (0.65 + 0.5 * ot.severity));
         if (state.brainIntegrity <= 0.25 || ot.stretchCavitationRuptured) {
           state.brainIntegrity = 0;
-          state.conscious = false;
-          state.alive = false;
-          state.causeOfDeath = 'CNS_BRAINSTEM_DESTRUCTION';
-          reaction = 'NEUROGENIC_DROP';
+          transitionVitalState(state, {
+            kind: 'LETHAL_ARREST',
+            cause: 'CNS_BRAINSTEM_DESTRUCTION',
+          });
+          reaction = escalatePostureReaction(reaction, 'NEUROGENIC_DROP');
           vocal = 'NONE';
         }
         break;
 
       case 'HEART':
         state.heartIntegrity = Math.max(0, state.heartIntegrity - (0.55 + 0.45 * ot.severity));
-        reaction = 'VIOLENT_CHEST_STAGGER';
-        vocal = 'SHARP_GASP';
+        reaction = escalatePostureReaction(reaction, 'VIOLENT_CHEST_STAGGER');
+        if (state.alive) {
+          vocal = escalateVocalCue(vocal, 'SHARP_GASP');
+        }
         if (state.heartIntegrity <= 0.08 && ot.stretchCavitationRuptured) {
-          state.cardiacOutputRatio = 0;
-          state.meanArterialPressureMmHg = 0;
-          state.conscious = false;
-          state.alive = false;
-          state.causeOfDeath = 'CARDIAC_DESTRUCTION';
+          transitionVitalState(state, {
+            kind: 'LETHAL_ARREST',
+            cause: 'CARDIAC_DESTRUCTION',
+          });
         }
         mergeOrAddVascularWound(state, {
           vesselId: 'AORTA_THORACIC_ABDOMINAL',
@@ -68,35 +81,28 @@ export function applyOrganTrauma(
 
       case 'LUNG_LEFT':
       case 'LUNG_RIGHT':
-        state.lungIntegrity = Math.max(0.08, state.lungIntegrity - 0.32 * ot.severity);
-        if (state.pneumothoraxState === 'NONE' || state.pneumothoraxState === 'OPEN_PNEUMOTHORAX') {
-          state.pneumothoraxState =
-            ot.severity >= 0.35 ? 'TENSION_PNEUMOTHORAX' : 'OPEN_PNEUMOTHORAX';
+        transitionPneumothorax(state, { kind: 'LUNG_HIT', severity: ot.severity });
+        if (reaction === 'NONE' || (reaction === 'WEAPON_WRENCH_DROP' && ot.directCrushLacerated)) {
+          reaction = escalatePostureReaction(reaction, 'VIOLENT_CHEST_STAGGER');
         }
-        if (
-          reaction === 'NONE' ||
-          (reaction === 'WEAPON_WRENCH_DROP' && ot.directCrushLacerated)
-        ) {
-          reaction = 'VIOLENT_CHEST_STAGGER';
+        if (state.alive) {
+          vocal = escalateVocalCue(vocal, 'WET_HEMOTHORAX_COUGH');
         }
-        vocal = 'WET_HEMOTHORAX_COUGH';
         break;
 
       case 'DIAPHRAGM':
         state.diaphragmIntegrity = Math.max(0.15, state.diaphragmIntegrity - 0.55 * ot.severity);
-        if (reaction !== 'LEG_COLLAPSE_PRONE' && reaction !== 'NEUROGENIC_DROP') {
-          reaction = 'DIAPHRAGM_DROP_KNEEL';
+        reaction = escalatePostureReaction(reaction, 'DIAPHRAGM_DROP_KNEEL');
+        if (state.alive) {
+          vocal = escalateVocalCue(vocal, 'SHARP_GASP');
         }
-        vocal = 'SHARP_GASP';
         break;
 
       case 'LIVER':
         state.liverIntegrity = Math.max(0.05, state.liverIntegrity - (0.50 + 0.45 * ot.severity));
-        if (reaction !== 'LEG_COLLAPSE_PRONE' && reaction !== 'NEUROGENIC_DROP') {
-          reaction = 'DIAPHRAGM_DROP_KNEEL';
-        }
-        if (vocal !== 'WET_HEMOTHORAX_COUGH') {
-          vocal = 'SHARP_GASP';
+        reaction = escalatePostureReaction(reaction, 'DIAPHRAGM_DROP_KNEEL');
+        if (state.alive) {
+          vocal = escalateVocalCue(vocal, 'SHARP_GASP');
         }
         mergeOrAddVascularWound(state, {
           vesselId: 'VENA_CAVA_JUGULAR_FEMORAL',

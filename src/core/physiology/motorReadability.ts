@@ -4,6 +4,11 @@ import {
   PhysiologicalEntityState,
   VocalTraumaCue,
 } from '../../contracts/physiology.ts';
+import {
+  escalatePostureReaction,
+  escalateVocalCue,
+  evaluateLocomotionMode,
+} from './physiologyLifecycleFsm.ts';
 import { computeBleedVisualProfile } from './shockBleedProfiles.ts';
 
 export function recomputeMotorAndReadability(
@@ -14,12 +19,15 @@ export function recomputeMotorAndReadability(
   if (!state.alive || !state.conscious) {
     state.canStand = false;
     state.canPullTrigger = false;
-    state.locomotionMode = 'PARALYZED';
+    state.locomotionMode = evaluateLocomotionMode(state);
     state.readability.aiAccuracyMultiplier = 0.0;
     state.readability.staminaMultiplier = 0.0;
     state.readability.visionTunnelIntensity = 1.0;
     if (latestReaction && latestReaction !== 'NONE') {
-      state.readability.immediatePostureReaction = latestReaction;
+      state.readability.immediatePostureReaction = escalatePostureReaction(
+        state.readability.immediatePostureReaction,
+        latestReaction
+      );
     } else if (state.readability.immediatePostureReaction === 'NONE') {
       state.readability.immediatePostureReaction = 'NEUROGENIC_DROP';
     }
@@ -35,19 +43,7 @@ export function recomputeMotorAndReadability(
     state.canStand = false;
   }
 
-  if (!state.canStand) {
-    if (state.locomotionMode !== 'PARALYZED') {
-      state.locomotionMode = 'PRONE_CRAWL';
-    }
-  } else if (state.diaphragmIntegrity < 0.72 || state.liverIntegrity < 0.68) {
-    state.locomotionMode = 'KNEELING_WINDED';
-  } else if (
-    state.shockStage === 'CLASS_III' ||
-    state.lungIntegrity < 0.75 ||
-    state.heartIntegrity < 0.85
-  ) {
-    state.locomotionMode = 'STAGGERED_LIMP';
-  }
+  state.locomotionMode = evaluateLocomotionMode(state);
 
   // Dominant arm trigger capability
   const domArmFunctional =
@@ -101,11 +97,11 @@ export function recomputeMotorAndReadability(
   }
   if (latestVocal && latestVocal !== 'NONE') {
     state.readability.vocalCue = latestVocal;
-  } else if (
-    state.oxygenSaturationPct < 74 &&
-    state.readability.vocalCue !== 'WET_HEMOTHORAX_COUGH'
-  ) {
-    state.readability.vocalCue = 'AGUNAL_WHEEZE';
+  } else if (state.oxygenSaturationPct < 74) {
+    state.readability.vocalCue = escalateVocalCue(
+      state.readability.vocalCue,
+      'AGUNAL_WHEEZE'
+    );
   }
 
   state.readability.aiAccuracyMultiplier = aiAcc;

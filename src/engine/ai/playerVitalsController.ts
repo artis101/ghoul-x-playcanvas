@@ -1,11 +1,12 @@
 import type {
-  PlayerCombatVitals,
-  PlayerNearMissGrazeKind,
-  PlayerNearMissGrazePayload,
+  ArterialBleedState, HealthGateState, PlayerCombatVitals,
+  PlayerNearMissGrazeKind, PlayerNearMissGrazePayload, PlayerSurvivalPhase,
 } from '../../contracts/ai/aiContracts.ts';
 import type { EnemyArchetypeId, Vec3Like } from '../../contracts/ballistics.ts';
 import { copyVec3 } from '../../core/ballistics/vec3.ts';
 import type { BrutalKillRewardKind, TacticalCombatAiOptions } from './tacticalAiTypes.ts';
+
+export type { ArterialBleedState, HealthGateState, PlayerSurvivalPhase };
 
 export interface IncomingPlayerShotContext {
   readonly rawChipDamage: number;
@@ -21,11 +22,62 @@ export interface PlayerShotDamageResolution {
   readonly grazeEvent: PlayerNearMissGrazePayload | null;
 }
 
+const REGEN_QUIET_DELAY_S = 3.5;
+
+export function syncPlayerVitalsFsm(vitals: PlayerCombatVitals): void {
+  if (vitals.health <= 0 || vitals.survivalPhase?.kind === 'DEAD') {
+    vitals.health = 0;
+    vitals.invulnerabilityRemainingS = 0;
+    vitals.healthGateReady = false;
+    vitals.urgentBleedHpPerSec = 0;
+    vitals.urgentBleedRemainingS = 0;
+    vitals.arterialBleed = { kind: 'NONE' };
+    vitals.healthGate = { kind: 'RECHARGING', quietElapsedS: vitals.timeSinceLastHitS };
+    vitals.survivalPhase = { kind: 'DEAD' };
+    return;
+  }
+
+  const bleedRate = vitals.urgentBleedHpPerSec ?? 0;
+  const bleedRem = vitals.urgentBleedRemainingS ?? 0;
+  if (bleedRate > 0 && bleedRem > 0) {
+    vitals.arterialBleed = { kind: 'BLEEDING', hpPerSec: bleedRate, remainingS: bleedRem };
+  } else {
+    vitals.urgentBleedHpPerSec = 0;
+    vitals.urgentBleedRemainingS = 0;
+    vitals.arterialBleed = { kind: 'NONE' };
+  }
+
+  const gateReady = vitals.healthGateReady ?? vitals.health >= 35;
+  vitals.healthGateReady = gateReady;
+  if (vitals.invulnerabilityRemainingS > 0) {
+    vitals.healthGate = { kind: 'INVULNERABLE_WINDOW', remainingS: vitals.invulnerabilityRemainingS, gateReady };
+  } else if (gateReady) {
+    vitals.healthGate = { kind: 'READY' };
+  } else {
+    vitals.healthGate = { kind: 'RECHARGING', quietElapsedS: vitals.timeSinceLastHitS };
+  }
+
+  if (vitals.arterialBleed.kind === 'BLEEDING') {
+    vitals.survivalPhase = {
+      kind: 'BLEEDING_URGENT',
+      hpPerSec: vitals.arterialBleed.hpPerSec,
+      remainingS: vitals.arterialBleed.remainingS,
+    };
+  } else if (vitals.health >= vitals.maxHealth) {
+    vitals.survivalPhase = { kind: 'FULL_HEALTH' };
+  } else if (vitals.timeSinceLastHitS < REGEN_QUIET_DELAY_S) {
+    vitals.survivalPhase = { kind: 'RECOVERING_DELAY', quietElapsedS: vitals.timeSinceLastHitS };
+  } else {
+    vitals.survivalPhase = { kind: 'REGENERATING' };
+  }
+}
+
 export function createDefaultPlayerVitals(options: TacticalCombatAiOptions = {}): PlayerCombatVitals {
   const maxHealth = 100;
   const maxArmor = 100;
-  const health = Math.max(1, Math.min(maxHealth, options.initialPlayerHealth ?? 100));
-  return {
+  const rawInitialHp = options.initialPlayerHealth ?? 100;
+  const health = rawInitialHp <= 0 ? 0 : Math.max(1, Math.min(maxHealth, rawInitialHp));
+  const vitals: PlayerCombatVitals = {
     health,
     maxHealth,
     armor: Math.max(0, Math.min(maxArmor, options.initialPlayerArmor ?? 50)),
@@ -38,23 +90,27 @@ export function createDefaultPlayerVitals(options: TacticalCombatAiOptions = {})
     urgentBleedHpPerSec: 0,
     urgentBleedRemainingS: 0,
   };
+  syncPlayerVitalsFsm(vitals);
+  return vitals;
 }
 
 export function stepPlayerVitalsRegen(vitals: PlayerCombatVitals, dt: number): void {
-  if (vitals.invulnerabilityRemainingS > 0) {
-    vitals.invulnerabilityRemainingS = Math.max(
-      0,
-      vitals.invulnerabilityRemainingS - dt
-    );
+  if (vitals.health <= 0 || vitals.survivalPhase?.kind === 'DEAD') {
+    syncPlayerVitalsFsm(vitals);
+    return;
   }
 
-  const bleedRemaining = vitals.urgentBleedRemainingS ?? 0;
-  const bleedRate = vitals.urgentBleedHpPerSec ?? 0;
-  if (bleedRemaining > 0 && bleedRate > 0) {
-    const stepBleedS = Math.min(dt, bleedRemaining);
-    vitals.urgentBleedRemainingS = Math.max(0, bleedRemaining - dt);
+  if (vitals.invulnerabilityRemainingS > 0) {
+    vitals.invulnerabilityRemainingS = Math.max(0, vitals.invulnerabilityRemainingS - dt);
+  }
+  syncPlayerVitalsFsm(vitals);
+
+  if (vitals.arterialBleed?.kind === 'BLEEDING') {
+    const { hpPerSec, remainingS } = vitals.arterialBleed;
+    const stepBleedS = Math.min(dt, remainingS);
+    vitals.urgentBleedRemainingS = Math.max(0, remainingS - dt);
     if (vitals.health > 1) {
-      vitals.health = Math.max(1, vitals.health - bleedRate * stepBleedS);
+      vitals.health = Math.max(1, vitals.health - hpPerSec * stepBleedS);
     }
     if (vitals.urgentBleedRemainingS <= 0) {
       vitals.urgentBleedHpPerSec = 0;
@@ -62,47 +118,32 @@ export function stepPlayerVitalsRegen(vitals: PlayerCombatVitals, dt: number): v
   }
 
   vitals.timeSinceLastHitS += dt;
+  syncPlayerVitalsFsm(vitals);
 
-  if (
-    vitals.timeSinceLastHitS >= 3.5 &&
-    (vitals.urgentBleedRemainingS ?? 0) <= 0 &&
-    vitals.health < vitals.maxHealth
-  ) {
-    vitals.health = Math.min(
-      vitals.maxHealth,
-      vitals.health + 8.5 * dt
-    );
-    if (vitals.health >= 35) {
-      vitals.healthGateReady = true;
-    }
+  if (vitals.survivalPhase?.kind === 'REGENERATING') {
+    vitals.health = Math.min(vitals.maxHealth, vitals.health + 8.5 * dt);
+    if (vitals.health >= 35) vitals.healthGateReady = true;
+    syncPlayerVitalsFsm(vitals);
   }
 }
 
 export function grantBrutalKillReward(vitals: PlayerCombatVitals, kind: BrutalKillRewardKind): void {
+  if (vitals.health <= 0 || vitals.survivalPhase?.kind === 'DEAD') {
+    syncPlayerVitalsFsm(vitals);
+    return;
+  }
+
   const armorGain =
-    kind === 'MULTI_KILL_BLAST'
-      ? 22
-      : kind === 'CRANIAL_POP'
-        ? 16
-        : kind === 'CLEAN_SEVER' || kind === 'EVISCERATED'
-          ? 14
-          : 6;
+    kind === 'MULTI_KILL_BLAST' ? 22 : kind === 'CRANIAL_POP' ? 16 : kind === 'CLEAN_SEVER' || kind === 'EVISCERATED' ? 14 : 6;
   const hpGain =
-    kind === 'MULTI_KILL_BLAST'
-      ? 18
-      : kind === 'CRANIAL_POP'
-        ? 12
-        : kind === 'CLEAN_SEVER' || kind === 'EVISCERATED'
-          ? 10
-          : 4;
+    kind === 'MULTI_KILL_BLAST' ? 18 : kind === 'CRANIAL_POP' ? 12 : kind === 'CLEAN_SEVER' || kind === 'EVISCERATED' ? 10 : 4;
 
   vitals.armor = Math.min(vitals.maxArmor, vitals.armor + armorGain);
   vitals.health = Math.min(vitals.maxHealth, vitals.health + hpGain);
   vitals.urgentBleedHpPerSec = 0;
   vitals.urgentBleedRemainingS = 0;
-  if (vitals.health >= 20) {
-    vitals.healthGateReady = true;
-  }
+  if (vitals.health >= 20) vitals.healthGateReady = true;
+  syncPlayerVitalsFsm(vitals);
 }
 
 export function notifyWaveCleared(vitals: PlayerCombatVitals): void {
@@ -113,26 +154,26 @@ export function notifyWaveCleared(vitals: PlayerCombatVitals): void {
   vitals.helmetIntact = true;
   vitals.urgentBleedHpPerSec = 0;
   vitals.urgentBleedRemainingS = 0;
+  vitals.survivalPhase = { kind: 'FULL_HEALTH' };
+  syncPlayerVitalsFsm(vitals);
 }
 
-/**
- * Resolves incoming enemy shot damage with Last-Chance Lethality Gate
- * and Near-Miss Helmet Pop / Ear-Neck Arterial Graze deflection.
- */
 export function resolveIncomingPlayerShotDamage(
   vitals: PlayerCombatVitals,
   ctx: IncomingPlayerShotContext
 ): PlayerShotDamageResolution {
-  if (!vitals.damageEnabled || vitals.invulnerabilityRemainingS > 0) {
+  if (
+    !vitals.damageEnabled ||
+    vitals.invulnerabilityRemainingS > 0 ||
+    vitals.health <= 0 ||
+    vitals.survivalPhase?.kind === 'DEAD'
+  ) {
     return { armorChipApplied: 0, healthDamageApplied: 0, grazeEvent: null };
   }
 
-  if (vitals.healthGateReady === undefined && vitals.health >= 35) {
-    vitals.healthGateReady = true;
-  }
-  if (vitals.helmetIntact === undefined) {
-    vitals.helmetIntact = true;
-  }
+  if (vitals.healthGateReady === undefined && vitals.health >= 35) vitals.healthGateReady = true;
+  if (vitals.helmetIntact === undefined) vitals.helmetIntact = true;
+  syncPlayerVitalsFsm(vitals);
 
   let armorChipApplied = 0;
   let healthDamageApplied = 0;
@@ -145,16 +186,15 @@ export function resolveIncomingPlayerShotDamage(
   }
 
   const isHeadLevelShot = ctx.hitPointWorld.y >= ctx.playerEyeWorldPos.y - 0.1;
-  const isHeavyCaliber =
-    ctx.archetype === 'SNIPER_OPERATIVE' || ctx.archetype === 'HEAVY_ENFORCER';
+  const isHeavyCaliber = ctx.archetype === 'SNIPER_OPERATIVE' || ctx.archetype === 'HEAVY_ENFORCER';
   const wouldBeLethal = vitals.health - healthDamageApplied <= 0;
-  const gateArmed = vitals.healthGateReady === true;
+  const gateArmed = vitals.healthGate?.kind === 'READY' || vitals.healthGateReady === true;
 
-  let grazeEvent: PlayerNearMissGrazePayload | null = null;
-
-  if ((wouldBeLethal && gateArmed) || (isHeadLevelShot && isHeavyCaliber && (vitals.helmetIntact || gateArmed))) {
-    const side: 'LEFT' | 'RIGHT' =
-      ctx.hitPointWorld.x < ctx.playerEyeWorldPos.x ? 'LEFT' : 'RIGHT';
+  if (
+    (wouldBeLethal && gateArmed) ||
+    (isHeadLevelShot && isHeavyCaliber && (vitals.helmetIntact || gateArmed))
+  ) {
+    const side: 'LEFT' | 'RIGHT' = ctx.hitPointWorld.x < ctx.playerEyeWorldPos.x ? 'LEFT' : 'RIGHT';
     let kind: PlayerNearMissGrazeKind;
     let helmetPopped = false;
     let bleedRate = 0;
@@ -178,35 +218,35 @@ export function resolveIncomingPlayerShotDamage(
     vitals.health = Math.max(2, vitals.health - healthDamageApplied);
     vitals.timeSinceLastHitS = 0;
     vitals.invulnerabilityRemainingS = helmetPopped ? 0.45 : 0.65;
+    syncPlayerVitalsFsm(vitals);
 
-    grazeEvent = {
-      kind,
-      side,
-      attackerId: ctx.attackerId,
-      hitPointWorld: copyVec3(ctx.hitPointWorld),
-      tinnitusIntensity: helmetPopped ? 0.82 : 0.68,
-      tinnitusDurationS: helmetPopped ? 2.4 : 1.9,
-      bleedRateHpPerSec: bleedRate,
-      helmetPopped,
+    return {
+      armorChipApplied,
+      healthDamageApplied,
+      grazeEvent: {
+        kind,
+        side,
+        attackerId: ctx.attackerId,
+        hitPointWorld: copyVec3(ctx.hitPointWorld),
+        tinnitusIntensity: helmetPopped ? 0.82 : 0.68,
+        tinnitusDurationS: helmetPopped ? 2.4 : 1.9,
+        bleedRateHpPerSec: bleedRate,
+        helmetPopped,
+      },
     };
-
-    return { armorChipApplied, healthDamageApplied, grazeEvent };
   }
 
   vitals.health = Math.max(0, vitals.health - healthDamageApplied);
   vitals.timeSinceLastHitS = 0;
-  vitals.invulnerabilityRemainingS = 0.22;
+  vitals.invulnerabilityRemainingS = vitals.health > 0 ? 0.22 : 0;
+  syncPlayerVitalsFsm(vitals);
   return { armorChipApplied, healthDamageApplied, grazeEvent: null };
 }
 
 export class PlayerVitalsController {
   public readonly playerVitals: PlayerCombatVitals;
 
-  public constructor(
-    playerDamageEnabled = true,
-    initialPlayerHealth = 100,
-    initialPlayerArmor = 100
-  ) {
+  public constructor(playerDamageEnabled = true, initialPlayerHealth = 100, initialPlayerArmor = 100) {
     this.playerVitals = createDefaultPlayerVitals({
       playerDamageEnabled,
       initialPlayerHealth,

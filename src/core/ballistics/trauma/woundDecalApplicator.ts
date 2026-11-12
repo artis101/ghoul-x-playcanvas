@@ -2,6 +2,7 @@ import {
   ShotSimulationReport,
   TargetHealthState,
 } from '../../../contracts/ballistics.ts';
+import { transitionTargetLifecycle } from '../lifecycle/targetLifecycleFsm.ts';
 import { copyVec3, vec3 } from '../vec3.ts';
 
 export function applyWoundsAndDecals(
@@ -10,14 +11,12 @@ export function applyWoundsAndDecals(
 ): { leftLegShotEnergyJ: number; rightLegShotEnergyJ: number } {
   target.currentHp = Math.max(0, target.currentHp - report.totalDamageHp);
   if (report.isLethalKill || target.currentHp <= 0) {
-    target.alive = false;
-    target.consciousness = 0;
+    transitionTargetLifecycle(target, { kind: 'LETHAL_DEATH' });
   }
 
   if (report.headgearKnockedOff) target.headgearIntact = false;
   if (report.weaponDisarmed) {
-    target.weaponDropped = true;
-    target.primaryArmDisarmed = true;
+    transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
   } else if (!target.alive) {
     target.weaponDropped = true;
   }
@@ -77,13 +76,11 @@ export function applyWoundsAndDecals(
       }
       if (w.ghoulZone === 'UPPER_ARM_LEFT' || w.ghoulZone === 'FOREARM_LEFT') {
         target.leftArmFunctional = false;
-        target.weaponDropped = true;
-        target.primaryArmDisarmed = true;
+        transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
       }
       if (w.ghoulZone === 'UPPER_ARM_RIGHT' || w.ghoulZone === 'FOREARM_RIGHT') {
         target.rightArmFunctional = false;
-        target.weaponDropped = true;
-        target.primaryArmDisarmed = true;
+        transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
       }
     }
 

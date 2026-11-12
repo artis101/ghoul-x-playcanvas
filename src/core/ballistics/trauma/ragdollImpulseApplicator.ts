@@ -4,6 +4,7 @@ import {
   TargetHealthState,
 } from '../../../contracts/ballistics.ts';
 import { ALL_AUX_PARTICLES, ALL_GHOUL_ZONES } from '../../ghoul/anatomy.ts';
+import { transitionTargetLifecycle } from '../lifecycle/targetLifecycleFsm.ts';
 import {
   add,
   copyVec3,
@@ -22,9 +23,11 @@ export function applyRagdollActivationAndImpulses(
 ): void {
   if (!report.ragdollPlan.willEnableRagdoll) return;
 
-  target.isRagdollActive = true;
-  target.weaponDropped = true;
-  target.posture = 'AIRBORNE_RAGDOLL';
+  const isOverkillCorpseHit = wasAlreadyRagdoll && !target.alive;
+  transitionTargetLifecycle(target, {
+    kind: 'ACTIVATE_RAGDOLL',
+    isOverkillCorpseHit,
+  });
 
   if (!wasAlreadyRagdoll) {
     stabilizeRagdollPoseForTransition(target, 0.0);
@@ -32,7 +35,6 @@ export function applyRagdollActivationAndImpulses(
 
   const bodyMassKg = 82.0;
   const impulse = report.ragdollPlan.netRootImpulseWorld;
-  const isOverkillCorpseHit = wasAlreadyRagdoll && !target.alive;
   const liftY = isOverkillCorpseHit
     ? 0.0
     : wasAlreadyRagdoll

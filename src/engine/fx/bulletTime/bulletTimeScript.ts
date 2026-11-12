@@ -2,6 +2,12 @@ import * as pc from 'playcanvas';
 import { BulletTimeController } from './bulletTimeController.ts';
 import type { KillPunchReason } from './bulletTimeTypes.ts';
 
+export type BulletTimeScriptLifecycleState =
+  | 'UNINITIALIZED'
+  | 'ACTIVE'
+  | 'SWAPPED_OUT'
+  | 'DESTROYED';
+
 export class BulletTimeScript extends pc.Script {
   /**
    * @attribute
@@ -31,52 +37,95 @@ export class BulletTimeScript extends pc.Script {
   public rechargePctPerRealSec = 15.0;
 
   public controller!: BulletTimeController;
-  private appEventHandles: Array<{ name: string; fn: (...args: unknown[]) => void }> = [];
+  private _lifecycleState: BulletTimeScriptLifecycleState = 'UNINITIALIZED';
+  private readonly _eventCleanups: Array<() => void> = [];
+
+  public get lifecycleState(): BulletTimeScriptLifecycleState {
+    return this._lifecycleState;
+  }
 
   public initialize(): void {
-    this.controller = new BulletTimeController({
-      reflexTargetScale: this.reflexTargetScale,
-      drainPctPerRealSec: this.drainPctPerRealSec,
-      rechargePctPerRealSec: this.rechargePctPerRealSec,
-    });
+    if (this._lifecycleState === 'ACTIVE') return;
+    if (!this.controller) {
+      this.controller = new BulletTimeController({
+        reflexTargetScale: this.reflexTargetScale,
+        drainPctPerRealSec: this.drainPctPerRealSec,
+        rechargePctPerRealSec: this.rechargePctPerRealSec,
+      });
+      this.controller.bindKeyboardShortcut();
+      this.controller.mountVignetteOverlay();
+    }
 
-    this.controller.bindKeyboardShortcut();
-    this.controller.mountVignetteOverlay();
+    this.bindEvents();
+    this._lifecycleState = 'ACTIVE';
+  }
 
+  private bindEvents(): void {
+    this.unbindEvents();
     const bind = (name: string, fn: (...args: unknown[]) => void): void => {
       this.app.on(name, fn, this);
-      this.appEventHandles.push({ name, fn });
+      this._eventCleanups.push(() => this.app.off(name, fn, this));
     };
 
     bind('fx:bulletTimeToggle', () => {
-      this.controller.toggleReflex();
+      this.controller?.toggleReflex();
     });
 
     bind('fx:bulletTimeKillPunch', (d: unknown) => {
       const p = d as { reason?: KillPunchReason; durationS?: number };
-      this.controller.triggerKillPunch(p.durationS ?? 0.35, 0.16, p.reason ?? 'CRANIAL_POP');
+      this.controller?.triggerKillPunch(p.durationS ?? 0.35, 0.16, p.reason ?? 'CRANIAL_POP');
     });
 
     bind('fx:bulletTimeAdrenaline', (d: unknown) => {
       const p = d as { amountPct: number };
-      this.controller.grantReflexEnergy(p.amountPct);
+      this.controller?.grantReflexEnergy(p.amountPct);
+    });
+
+    bind('fx:bulletTimeReset', () => {
+      this.controller?.reset();
     });
   }
 
+  private unbindEvents(): void {
+    while (this._eventCleanups.length > 0) {
+      const cleanup = this._eventCleanups.pop();
+      cleanup?.();
+    }
+  }
+
   public update(dt: number): void {
+    if (this._lifecycleState !== 'ACTIVE' || !this.controller) return;
     this.controller.update(dt);
   }
 
   public swap(old: BulletTimeScript): void {
+    old.unbindEvents();
+    old._lifecycleState = 'SWAPPED_OUT';
+
+    if (this.controller && this.controller !== old.controller) {
+      this.controller.destroy();
+    }
     this.controller = old.controller;
-    this.appEventHandles = old.appEventHandles;
+    old.controller = undefined as unknown as BulletTimeController;
+
+    this.bindEvents();
+    this._lifecycleState = 'ACTIVE';
   }
 
   public destroy(): void {
-    for (const h of this.appEventHandles) {
-      this.app.off(h.name, h.fn, this);
+    if (this._lifecycleState === 'DESTROYED') return;
+    this.unbindEvents();
+    if (this._lifecycleState !== 'SWAPPED_OUT') {
+      this.controller?.destroy();
     }
-    this.appEventHandles.length = 0;
-    this.controller.destroy();
+    this.controller = undefined as unknown as BulletTimeController;
+    this._lifecycleState = 'DESTROYED';
   }
 }
+
+try {
+  (pc.registerScript as (script: typeof pc.Script, name?: string) => void)(
+    BulletTimeScript,
+    'bulletTimeScript',
+  );
+} catch {}

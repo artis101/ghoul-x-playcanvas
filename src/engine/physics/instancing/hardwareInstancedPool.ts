@@ -3,6 +3,7 @@ import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import type { QuatLike } from '../../../contracts/destruction.ts';
 import type { RapierPhysicsWorld } from '../rapierWorld.ts';
 import { DenseInstancePacker } from './denseInstancePacker.ts';
+import type { OnInstanceSlotExpired, SlotLifecyclePhase } from './instancePackerTypes.ts';
 
 export class HardwareInstancedPool {
   public readonly app: pc.Application;
@@ -11,6 +12,7 @@ export class HardwareInstancedPool {
   public readonly vertexBuffer: pc.VertexBuffer;
   public readonly maxInstances: number;
   public readonly matrixData: Float32Array;
+  public onSlotExpired?: OnInstanceSlotExpired;
 
   private readonly packer: DenseInstancePacker;
   private destroyed = false;
@@ -63,6 +65,7 @@ export class HardwareInstancedPool {
   public get dirty(): boolean { return this.packer.dirty; }
   public isSlotActive(slotId: number): boolean { return this.packer.isSlotActive(slotId); }
   public getDenseIndex(slotId: number): number { return this.packer.getDenseIndex(slotId); }
+  public getSlotPhase(slotId: number): SlotLifecyclePhase { return this.packer.getSlotPhase(slotId); }
 
   public allocSlot(): number {
     const slotId = this.packer.allocSlot();
@@ -111,9 +114,13 @@ export class HardwareInstancedPool {
     return slotId;
   }
 
-  public syncFromPhysics(rapierWorld: RapierPhysicsWorld | null, dt: number): void {
+  public syncFromPhysics(
+    rapierWorld: RapierPhysicsWorld | null,
+    dt: number,
+    onSlotExpired?: OnInstanceSlotExpired
+  ): void {
     if (this.destroyed) return;
-    this.packer.syncFromPhysics(rapierWorld, dt);
+    this.packer.syncFromPhysics(rapierWorld, dt, onSlotExpired ?? this.onSlotExpired);
     this.upload();
   }
 

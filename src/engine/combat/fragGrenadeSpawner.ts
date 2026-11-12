@@ -2,7 +2,7 @@ import * as pc from 'playcanvas';
 import type { Vec3Like } from '../../contracts/ballistics.ts';
 import { add, normalize, scale, vec3 } from '../../core/ballistics/vec3.ts';
 import type { GlbModelRegistry, WeaponGlbInstance } from '../assets/glbLoader.ts';
-import type { ActiveFragGrenade } from './fragGrenadeTypes.ts';
+import { GRENADE_FUSE_S, type ActiveFragGrenade } from './fragGrenadeTypes.ts';
 
 export function spawnLiveFragGrenade(
   origin: Vec3Like,
@@ -41,7 +41,9 @@ export function spawnLiveFragGrenade(
     position: new pc.Vec3(spawnPos.x, spawnPos.y, spawnPos.z),
     velocity: new pc.Vec3(throwVel.x, throwVel.y, throwVel.z),
     angularVelocity: new pc.Vec3(8.5, 5.2, -6.4),
-    fuseRemainingS: 1.6,
+    fuseRemainingS: GRENADE_FUSE_S,
     blinkTimerS: 0,
+    flightState: 'BALLISTIC',
+    fuseState: 'ARMED',
   };
 }

@@ -17,6 +17,7 @@ import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 import type { PomCraterDecalSystem } from '../pomCraterDecals.ts';
 import type { ConcreteDynamicChunkPool } from './concreteDynamicPool.ts';
 import {
+  ConcreteChunkPhase,
   type ConcreteWallInstanceState,
   IDENTITY_QUAT,
 } from './concreteWallTypes.ts';
@@ -65,6 +66,7 @@ export function createStaticChunkColliders(
 
     wall.staticColliderHandles[i] = handle;
     wall.dynamicBodyHandles[i] = -1;
+    wall.chunkPhase[i] = ConcreteChunkPhase.INTACT_STATIC;
   }
 }
 
@@ -241,7 +243,17 @@ export function applyConcreteBlast(
         };
       }
 
-      dynamicPool.detachChunkToDynamicPool(wall, chunkIdx, linVel, angVel, wallsById, spawnOffset);
+      dynamicPool.detachChunkToDynamicPool(
+        wall,
+        chunkIdx,
+        linVel,
+        angVel,
+        wallsById,
+        spawnOffset,
+        (worldCenter, vel) => {
+          pomDecals.spawnSpallChipBurst(worldCenter, wallAwayWorld, vel, 1.5, 8);
+        }
+      );
     }
 
     rebuildWallMultiDraw(wall);

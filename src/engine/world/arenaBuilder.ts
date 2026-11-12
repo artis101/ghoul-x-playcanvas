@@ -7,14 +7,22 @@ import { getOrCreateProceduralIblEnvironment } from './arenaIblLighting.ts';
 export * from './arenaLayout.ts';
 export * from './arenaIblLighting.ts';
 
+export type ArenaBuildState =
+  | { readonly kind: 'UNBUILT' }
+  | {
+      readonly kind: 'BUILT';
+      readonly colliderHandles: number[];
+      readonly detailMaterials: pc.StandardMaterial[];
+    }
+  | { readonly kind: 'DESTROYED' };
+
 export class ArenaBuilder {
   public readonly app: pc.AppBase;
   public readonly materials: EngineMaterialPalette;
   public readonly rapierWorld: RapierPhysicsWorld | null;
   public readonly arenaRootEntity: pc.Entity;
+  public buildState: ArenaBuildState = { kind: 'UNBUILT' };
 
-  private readonly colliderHandles: number[] = [];
-  private readonly customDetailMaterials: pc.StandardMaterial[] = [];
   private preRenderHookBound = false;
 
   private readonly onPreRenderCamera = (camera: pc.CameraComponent): void => {
@@ -35,12 +43,17 @@ export class ArenaBuilder {
   }
 
   public get registeredColliderCount(): number {
-    return this.colliderHandles.length;
+    return this.buildState.kind === 'BUILT' ? this.buildState.colliderHandles.length : 0;
   }
 
   public build(): void {
-    this.clearPhysicsColliders();
-    this.clearCustomDetailMaterials();
+    if (this.buildState.kind === 'DESTROYED') {
+      throw new Error('Cannot build ArenaBuilder after it has been destroyed.');
+    }
+    this.teardownBuiltResources();
+
+    const colliderHandles: number[] = [];
+    const detailMaterials: pc.StandardMaterial[] = [];
 
     upgradePaletteWithProceduralPbrMaps(this.app.graphicsDevice, this.materials);
 
@@ -112,32 +125,42 @@ export class ArenaBuilder {
       this.arenaRootEntity,
       this.materials,
       this.rapierWorld,
-      this.colliderHandles,
-      this.customDetailMaterials
+      colliderHandles,
+      detailMaterials
     );
+
+    this.buildState = {
+      kind: 'BUILT',
+      colliderHandles,
+      detailMaterials,
+    };
   }
 
   public destroy(): void {
+    if (this.buildState.kind === 'DESTROYED') return;
     if (this.preRenderHookBound) {
       this.app.scene.off('prerender', this.onPreRenderCamera);
       this.preRenderHookBound = false;
     }
-    this.clearPhysicsColliders();
+    this.teardownBuiltResources();
     this.arenaRootEntity.destroy();
-    this.clearCustomDetailMaterials();
+    this.buildState = { kind: 'DESTROYED' };
   }
 
-  private clearCustomDetailMaterials(): void {
-    for (const m of this.customDetailMaterials) m.destroy();
-    this.customDetailMaterials.length = 0;
-  }
-
-  private clearPhysicsColliders(): void {
-    if (this.rapierWorld) {
-      for (const handle of this.colliderHandles) {
-        this.rapierWorld.removeCollider(handle);
+  private teardownBuiltResources(): void {
+    if (this.buildState.kind === 'BUILT') {
+      if (this.rapierWorld) {
+        for (const handle of this.buildState.colliderHandles) {
+          this.rapierWorld.removeCollider(handle);
+        }
+      }
+      for (const m of this.buildState.detailMaterials) {
+        m.destroy();
       }
     }
-    this.colliderHandles.length = 0;
+    while (this.arenaRootEntity.children.length > 0) {
+      const child = this.arenaRootEntity.children[0];
+      child.destroy();
+    }
   }
 }

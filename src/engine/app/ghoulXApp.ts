@@ -16,7 +16,7 @@ import { MayhemDirector } from '../fx/mayhemDirector.ts';
 import { DestructionManager } from '../destruction/destructionManager.ts';
 import { TacticalCombatAiSystem } from '../ai/tacticalCombatAi.ts';
 import type { IGhoulXApp } from './appContext.ts';
-import { createPlayCanvasApp } from './appSetup.ts';
+import { createPlayCanvasApp, unbindPlayCanvasAppResize } from './appSetup.ts';
 import { onEngineUpdate } from './engineUpdateLoop.ts';
 import { wireCombatDirectorInterceptors } from './combatEventWiring.ts';
 import {
@@ -31,6 +31,11 @@ export interface GhoulXAppOptions {
   readonly combatAudio?: CombatAudioEngine;
   readonly autoStart?: boolean;
 }
+
+export type AppLifecycleState =
+  | { readonly kind: 'INITIALIZED' }
+  | { readonly kind: 'RUNNING'; readonly updateHandler: (dt: number) => void }
+  | { readonly kind: 'DESTROYED' };
 
 export class GhoulXApplication implements IGhoulXApp {
   public readonly canvas: HTMLCanvasElement;
@@ -50,7 +55,7 @@ export class GhoulXApplication implements IGhoulXApp {
   public readonly combatDirector: CombatDirector;
 
   public totalElapsedTimeS = 0;
-  private started = false;
+  public lifecycleState: AppLifecycleState = { kind: 'INITIALIZED' };
 
   constructor(
     canvas?: HTMLCanvasElement,
@@ -259,13 +264,27 @@ export class GhoulXApplication implements IGhoulXApp {
   }
 
   public get isStarted(): boolean {
-    return this.started;
+    return this.lifecycleState.kind === 'RUNNING';
   }
 
   public start(): void {
-    if (this.started) return;
-    this.started = true;
+    if (this.lifecycleState.kind !== 'INITIALIZED') return;
+    const updateHandler = (dt: number): void => onEngineUpdate(this, dt);
+    this.lifecycleState = { kind: 'RUNNING', updateHandler };
     this.app.start();
-    this.app.on('update', (dt: number) => onEngineUpdate(this, dt));
+    this.app.on('update', updateHandler);
+  }
+
+  public destroy(): void {
+    if (this.lifecycleState.kind === 'DESTROYED') return;
+    if (this.lifecycleState.kind === 'RUNNING') {
+      this.app.off('update', this.lifecycleState.updateHandler);
+    }
+    this.lifecycleState = { kind: 'DESTROYED' };
+    unbindPlayCanvasAppResize(this.app);
+    this.fpsController.destroy();
+    this.arsenalManager.destroy();
+    this.arenaBuilder.destroy();
+    this.combatAudio.destroy();
   }
 }

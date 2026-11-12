@@ -70,6 +70,7 @@ export function createTargetHealthState(
       componentId: 'BODY',
       severed: false,
       goreMode: 'INTACT',
+      attachmentState: 'ATTACHED',
       grounded: false,
     };
   }
@@ -139,9 +140,18 @@ export function createTargetHealthState(
       durationS: 0,
       intensity: 0,
       hitDirectionWorld: vec3(0, 0, -1),
+      epoch: 0,
     },
     alive: true,
     isRagdollActive: false,
+    ragdollPhase: { kind: 'INACTIVE' },
+    bodyState: {
+      kind: 'STANDING',
+      posture: 'COMBAT_READY',
+      reaction: null,
+      hitstopRemainingS: 0,
+    },
+    armamentState: 'PRIMARY_READY',
     ragdollRootPosition: copyVec3(worldPosition),
     ragdollRootVelocity: vec3(0, 0, 0),
     ragdollAngularVelocity: vec3(0, 0, 0),

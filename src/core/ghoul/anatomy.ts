@@ -18,5 +18,7 @@ export * from './anatomy/ragdollConstraints';
 export * from './anatomy/ragdollBasisMath';
 export * from './anatomy/ragdollBasis';
 export * from './anatomy/combatPose';
+export * from './anatomy/deadArmVerlet';
+export * from './anatomy/proceduralTraumaIk';
 export * from './anatomy/targetHealthState';
 export { computeCombatantTriageStatus } from '../ballistics/triage/triageEvaluator.ts';

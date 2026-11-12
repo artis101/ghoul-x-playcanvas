@@ -41,6 +41,7 @@ export class GoreAndBallisticsFxManager {
   private readonly goreSuite: WetGoreMaterialSuite;
   private poolCounter = { val: 0 };
   private cachedCameraPos: pc.Vec3 | null = null;
+  private cachedCameraEntity: pc.Entity | null = null;
 
   constructor(app: pc.AppBase, materials: EngineMaterialPalette, glbRegistry?: GlbModelRegistry | null) {
     this.app = app;
@@ -49,6 +50,7 @@ export class GoreAndBallisticsFxManager {
     this.goreSuite = createWetGoreMaterialSuite(this.app.graphicsDevice ?? null);
     this.fxRoot = new pc.Entity('GoreAndBallisticsFxRoot');
     this.app.root.addChild(this.fxRoot);
+    this.cachedCameraEntity = (this.app.root?.findByName?.('PlayerCamera') as pc.Entity | null) ?? null;
   }
 
   public attachGlbRegistry(glbRegistry: GlbModelRegistry): void {
@@ -57,6 +59,10 @@ export class GoreAndBallisticsFxManager {
 
   public setCachedCameraPos(pos: pc.Vec3): void {
     this.cachedCameraPos = pos;
+  }
+
+  public setCameraEntity(cameraEntity: pc.Entity | null): void {
+    this.cachedCameraEntity = cameraEntity;
   }
 
   public spawnFlyingProjectile(trajectorySamples: TrajectorySample[], isShotgunPellet = false): ActiveProjectileFx | null {
@@ -100,11 +106,11 @@ export class GoreAndBallisticsFxManager {
     updateArterialFountains(this.arterialFountains, dt, (pos, dir, e, cnt) => this.spawnBloodBurst(pos, dir, e, cnt));
     updateBloodDrops(this.bloodDrops, dt, gravity, (pos, rad) => spawnBloodPool(this.fxRoot, this.goreSuite, this.bloodPools, this.poolCounter, pos, rad));
 
-    let camPos = this.cachedCameraPos;
-    if (!camPos) {
-      const cam = this.app.root.findByName('PlayerCamera') as pc.Entity | null;
-      if (cam) camPos = cam.getPosition();
-    }
+    const camPos =
+      this.cachedCameraPos ??
+      (this.cachedCameraEntity && this.cachedCameraEntity.parent
+        ? this.cachedCameraEntity.getPosition()
+        : null);
     updateMistPuffs(this.mistPuffs, dt, camPos);
 
     updateGibChunks(this.gibChunks, dt, gravity, (pos, rad) => spawnBloodPool(this.fxRoot, this.goreSuite, this.bloodPools, this.poolCounter, pos, rad));

@@ -1,8 +1,8 @@
 import type { QuatLike } from '../../../contracts/destruction.ts';
 import {
-  BUCKSHOT_VOLLEY_WINDOW_MS,
   BUCKSHOT_VOLLEY_WINDOW_S,
   MAX_PELLETS_PER_VOLLEY,
+  type CollectingPelletVolleyState,
   type PelletVolleyImpact,
   type PelletVolleyState,
   type WallInternalState,
@@ -104,24 +104,31 @@ export function quatAlignUnitXToVector(dx: number, dy: number, dz: number, out: 
   out.w = qw / qNorm;
 }
 
-export function acquirePelletVolley(internal: WallInternalState, elapsedSimTimeS: number): PelletVolleyState {
-  const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
-  const cur = internal.activeVolley;
+export function resetPelletVolley(internal: WallInternalState): void {
+  internal.volleyState = { kind: 'IDLE' };
+}
+
+export function acquirePelletVolley(
+  internal: WallInternalState,
+  elapsedSimTimeS: number,
+): CollectingPelletVolleyState {
+  const cur = internal.volleyState;
   if (
-    !cur ||
-    elapsedSimTimeS - cur.simTimeS > BUCKSHOT_VOLLEY_WINDOW_S ||
-    nowMs - cur.wallClockMs > BUCKSHOT_VOLLEY_WINDOW_MS ||
+    cur.kind !== 'COLLECTING' ||
+    Math.abs(elapsedSimTimeS - cur.simTimeS) > BUCKSHOT_VOLLEY_WINDOW_S ||
     cur.pelletRayCount >= MAX_PELLETS_PER_VOLLEY
   ) {
-    const fresh: PelletVolleyState = {
+    const fresh: CollectingPelletVolleyState = {
+      kind: 'COLLECTING',
+      volleyId: internal.nextVolleyId++,
       simTimeS: elapsedSimTimeS,
-      wallClockMs: nowMs,
       pelletRayCount: 1,
-      clusterTierApplied: 0,
+      tier: 'NONE',
+      appliedStudDamageHp: 0,
       impacts: [],
       clusterCuts: [],
     };
-    internal.activeVolley = fresh;
+    internal.volleyState = fresh;
     return fresh;
   }
 

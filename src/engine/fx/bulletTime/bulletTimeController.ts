@@ -1,10 +1,11 @@
 import {
   type BulletTimeOptions,
   type BulletTimeVignetteState,
-  type BulletTimeVignetteTint,
   type KillPunchReason,
+  type KillPunchState,
   MAX_TIME_SCALE_LIMIT,
   MIN_TIME_SCALE_LIMIT,
+  type ReflexMeterState,
 } from './bulletTimeTypes.ts';
 import { BulletTimeOverlayManager, computeBulletTimeVignette } from './bulletTimeOverlay.ts';
 
@@ -20,11 +21,8 @@ export class BulletTimeController {
   public onVignetteUpdate?: (state: BulletTimeVignetteState) => void;
 
   private currentScale = 1.0;
-  private reflexActive = false;
-  private energyPct = 100.0;
-  private rechargeDelayTimerS = 0;
-  private killPunchRemainingS = 0;
-  private killPunchTargetScale = 0.16;
+  private reflexState: ReflexMeterState = { kind: 'READY' };
+  private killPunchState: KillPunchState = { kind: 'INACTIVE' };
 
   private boundKeyTarget: EventTarget | null = null;
   private boundKeyHandler: ((ev: Event) => void) | null = null;
@@ -47,21 +45,40 @@ export class BulletTimeController {
     this.onVignetteUpdate = options.onVignetteUpdate;
   }
 
-  public get timeScale(): number { return this.currentScale; }
-  public get isReflexActive(): boolean { return this.reflexActive; }
-  public get isKillPunchActive(): boolean { return this.killPunchRemainingS > 0; }
-  public get reflexEnergyPct(): number { return this.energyPct; }
+  public get reflexMeterState(): ReflexMeterState {
+    return this.reflexState;
+  }
+
+  public get killPunchPhase(): KillPunchState {
+    return this.killPunchState;
+  }
+
+  public get timeScale(): number {
+    return this.currentScale;
+  }
+
+  public get isReflexActive(): boolean {
+    return this.reflexState.kind === 'DRAINING';
+  }
+
+  public get isKillPunchActive(): boolean {
+    return this.killPunchState.kind === 'ACTIVE';
+  }
+
+  public get reflexEnergyPct(): number {
+    return this.reflexState.kind === 'READY' ? 100.0 : this.reflexState.energyPct;
+  }
 
   public effectiveDt(rawDt: number): number {
-    return (!Number.isFinite(rawDt) || rawDt <= 0) ? 0 : rawDt * this.currentScale;
+    return !Number.isFinite(rawDt) || rawDt <= 0 ? 0 : rawDt * this.currentScale;
   }
 
   public toggleReflex(): boolean {
-    if (this.reflexActive) {
+    if (this.isReflexActive) {
       this.setReflexActive(false);
       return false;
     }
-    if (this.energyPct >= this.minActivationPct) {
+    if (this.reflexEnergyPct >= this.minActivationPct) {
       this.setReflexActive(true);
       return true;
     }
@@ -70,20 +87,53 @@ export class BulletTimeController {
 
   public setReflexActive(active: boolean): void {
     if (active) {
-      if (this.energyPct >= this.minActivationPct) {
-        this.reflexActive = true;
+      const currentEnergy = this.reflexEnergyPct;
+      if (currentEnergy >= this.minActivationPct && this.reflexState.kind !== 'DRAINING') {
+        this.reflexState = { kind: 'DRAINING', energyPct: currentEnergy };
       }
-    } else {
-      if (this.reflexActive) {
-        this.reflexActive = false;
-        this.rechargeDelayTimerS = this.rechargeCooldownS;
+      return;
+    }
+
+    if (this.reflexState.kind === 'DRAINING') {
+      const energyPct = this.reflexState.energyPct;
+      if (this.rechargeCooldownS > 0) {
+        this.reflexState = {
+          kind: 'COOLDOWN',
+          energyPct,
+          cooldownRemainingS: this.rechargeCooldownS,
+        };
+      } else if (energyPct < 100.0) {
+        this.reflexState = { kind: 'RECHARGING', energyPct };
+      } else {
+        this.reflexState = { kind: 'READY' };
       }
     }
   }
 
   public grantReflexEnergy(amountPct: number): void {
     if (!Number.isFinite(amountPct) || amountPct <= 0) return;
-    this.energyPct = Math.min(100.0, this.energyPct + amountPct);
+    const nextPct = Math.min(100.0, this.reflexEnergyPct + amountPct);
+    switch (this.reflexState.kind) {
+      case 'READY':
+        break;
+      case 'DRAINING':
+        this.reflexState = { kind: 'DRAINING', energyPct: nextPct };
+        break;
+      case 'COOLDOWN':
+        this.reflexState =
+          nextPct >= 100.0 && this.reflexState.cooldownRemainingS <= 0
+            ? { kind: 'READY' }
+            : {
+                kind: 'COOLDOWN',
+                energyPct: nextPct,
+                cooldownRemainingS: this.reflexState.cooldownRemainingS,
+              };
+        break;
+      case 'RECHARGING':
+        this.reflexState =
+          nextPct >= 100.0 ? { kind: 'READY' } : { kind: 'RECHARGING', energyPct: nextPct };
+        break;
+    }
   }
 
   public triggerKillPunch(
@@ -91,7 +141,7 @@ export class BulletTimeController {
     targetScaleOrDuration: number = 0.35,
     maybeReason?: KillPunchReason,
   ): void {
-    let reason: KillPunchReason =
+    const reason: KillPunchReason =
       maybeReason ?? (typeof durationOrReason === 'string' ? durationOrReason : 'CRANIAL_POP');
     let durationS = 0.35;
     if (typeof durationOrReason === 'string') {
@@ -102,7 +152,8 @@ export class BulletTimeController {
       durationS = durationOrReason;
     }
     const clampedDuration = Math.max(0.08, Math.min(1.25, durationS));
-    this.killPunchRemainingS = Math.max(this.killPunchRemainingS, clampedDuration);
+    const prevRemaining =
+      this.killPunchState.kind === 'ACTIVE' ? this.killPunchState.remainingS : 0;
 
     const punchScale =
       reason === 'MULTI_KILL_BLAST'
@@ -110,81 +161,98 @@ export class BulletTimeController {
         : reason === 'CRANIAL_POP'
           ? 0.16
           : 0.2;
-    this.killPunchTargetScale = Math.max(this.minTimeScale, punchScale);
+    const targetScale = Math.max(this.minTimeScale, punchScale);
+
+    this.killPunchState = {
+      kind: 'ACTIVE',
+      reason,
+      remainingS: Math.max(prevRemaining, clampedDuration),
+      targetScale,
+    };
 
     const bonusPct = reason === 'MULTI_KILL_BLAST' ? 18 : reason === 'CRANIAL_POP' ? 12 : 8;
     this.grantReflexEnergy(bonusPct);
   }
 
   public getVignetteState(): BulletTimeVignetteState {
-    const dilationDepth = Math.max(
-      0,
-      Math.min(1, (1.0 - this.currentScale) / Math.max(0.001, 1.0 - this.reflexTargetScale)),
+    return computeBulletTimeVignette(
+      this.isReflexActive,
+      this.isKillPunchActive,
+      this.currentScale,
+      this.reflexEnergyPct,
+      this.reflexTargetScale,
     );
-    const killPunchActive = this.killPunchRemainingS > 0;
-
-    let tint: BulletTimeVignetteTint = 'NONE';
-    let cssBoxShadow = 'none';
-
-    if (killPunchActive && !this.reflexActive) {
-      tint = 'AMBER_KILL_PUNCH';
-      const alpha = (0.38 * dilationDepth).toFixed(3);
-      const spreadPx = Math.round(68 * dilationDepth + 14);
-      cssBoxShadow = `inset 0 0 ${spreadPx}px rgba(255, 146, 36, ${alpha})`;
-    } else if (dilationDepth > 0.02) {
-      tint = killPunchActive ? 'AMBER_KILL_PUNCH' : 'CYAN_REFLEX';
-      const r = killPunchActive ? 255 : 34;
-      const g = killPunchActive ? 168 : 226;
-      const b = killPunchActive ? 58 : 255;
-      const alpha = (0.34 * dilationDepth).toFixed(3);
-      const spreadPx = Math.round(76 * dilationDepth + 16);
-      cssBoxShadow = `inset 0 0 ${spreadPx}px rgba(${r}, ${g}, ${b}, ${alpha})`;
-    }
-
-    return {
-      active: this.reflexActive,
-      killPunchActive,
-      timeScale: this.currentScale,
-      reflexEnergyPct: this.energyPct,
-      intensity: dilationDepth,
-      tint,
-      cssBoxShadow,
-    };
   }
 
   public update(realDeltaTimeS: number): number {
     if (!Number.isFinite(realDeltaTimeS) || realDeltaTimeS <= 0) return 0;
     const dt = Math.min(0.1, realDeltaTimeS);
 
-    if (this.reflexActive) {
-      this.energyPct = Math.max(0, this.energyPct - this.drainPctPerSec * dt);
-      if (this.energyPct <= 0.001) {
-        this.reflexActive = false;
-        this.rechargeDelayTimerS = this.rechargeCooldownS;
+    switch (this.reflexState.kind) {
+      case 'DRAINING': {
+        const nextEnergy = Math.max(0, this.reflexState.energyPct - this.drainPctPerSec * dt);
+        if (nextEnergy <= 0.001) {
+          this.reflexState =
+            this.rechargeCooldownS > 0
+              ? { kind: 'COOLDOWN', energyPct: 0, cooldownRemainingS: this.rechargeCooldownS }
+              : { kind: 'RECHARGING', energyPct: 0 };
+        } else {
+          this.reflexState = { kind: 'DRAINING', energyPct: nextEnergy };
+        }
+        break;
       }
-    } else if (this.rechargeDelayTimerS > 0) {
-      this.rechargeDelayTimerS = Math.max(0, this.rechargeDelayTimerS - dt);
-    } else if (this.energyPct < 100.0) {
-      this.energyPct = Math.min(100.0, this.energyPct + this.rechargePctPerSec * dt);
+      case 'COOLDOWN': {
+        const nextCooldown = Math.max(0, this.reflexState.cooldownRemainingS - dt);
+        if (nextCooldown <= 0) {
+          this.reflexState =
+            this.reflexState.energyPct >= 100.0
+              ? { kind: 'READY' }
+              : { kind: 'RECHARGING', energyPct: this.reflexState.energyPct };
+        } else {
+          this.reflexState = {
+            kind: 'COOLDOWN',
+            energyPct: this.reflexState.energyPct,
+            cooldownRemainingS: nextCooldown,
+          };
+        }
+        break;
+      }
+      case 'RECHARGING': {
+        const nextEnergy = Math.min(100.0, this.reflexState.energyPct + this.rechargePctPerSec * dt);
+        this.reflexState =
+          nextEnergy >= 100.0 ? { kind: 'READY' } : { kind: 'RECHARGING', energyPct: nextEnergy };
+        break;
+      }
+      case 'READY':
+        break;
     }
 
-    if (this.killPunchRemainingS > 0) {
-      this.killPunchRemainingS = Math.max(0, this.killPunchRemainingS - dt);
-      if (this.killPunchRemainingS <= 0) this.killPunchTargetScale = 0.16;
+    if (this.killPunchState.kind === 'ACTIVE') {
+      const nextRem = Math.max(0, this.killPunchState.remainingS - dt);
+      this.killPunchState =
+        nextRem > 0
+          ? {
+              ...this.killPunchState,
+              remainingS: nextRem,
+            }
+          : { kind: 'INACTIVE' };
     }
 
     let desiredScale = MAX_TIME_SCALE_LIMIT;
-    if (this.killPunchRemainingS > 0 && this.reflexActive) {
-      desiredScale = Math.min(this.killPunchTargetScale, this.reflexTargetScale);
-    } else if (this.killPunchRemainingS > 0) {
-      desiredScale = this.killPunchTargetScale;
-    } else if (this.reflexActive) {
+    if (this.killPunchState.kind === 'ACTIVE' && this.isReflexActive) {
+      desiredScale = Math.min(this.killPunchState.targetScale, this.reflexTargetScale);
+    } else if (this.killPunchState.kind === 'ACTIVE') {
+      desiredScale = this.killPunchState.targetScale;
+    } else if (this.isReflexActive) {
       desiredScale = this.reflexTargetScale;
     }
 
     const blendFactor = 1.0 - Math.exp(-this.lerpRatePerSec * dt);
     this.currentScale += (desiredScale - this.currentScale) * blendFactor;
-    this.currentScale = Math.max(this.minTimeScale, Math.min(MAX_TIME_SCALE_LIMIT, this.currentScale));
+    this.currentScale = Math.max(
+      this.minTimeScale,
+      Math.min(MAX_TIME_SCALE_LIMIT, this.currentScale),
+    );
 
     const state = this.getVignetteState();
     this.overlay.sync(state);
@@ -222,11 +290,12 @@ export class BulletTimeController {
   }
 
   public reset(): void {
-    this.reflexActive = false;
+    this.reflexState = { kind: 'READY' };
+    this.killPunchState = { kind: 'INACTIVE' };
     this.currentScale = 1.0;
-    this.energyPct = 100.0;
-    this.rechargeDelayTimerS = 0;
-    this.killPunchRemainingS = 0;
+    const state = this.getVignetteState();
+    this.overlay.sync(state);
+    this.onVignetteUpdate?.(state);
   }
 
   public destroy(): void {

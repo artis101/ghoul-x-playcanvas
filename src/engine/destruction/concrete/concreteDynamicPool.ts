@@ -5,6 +5,7 @@ import { localToWorldPoint } from '../../../core/destruction/connectivityGraph.t
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 import {
   type ActiveDynamicConcreteChunk,
+  ConcreteChunkPhase,
   type ConcreteWallInstanceState,
   IDENTITY_QUAT,
 } from './concreteWallTypes.ts';
@@ -80,8 +81,14 @@ export class ConcreteDynamicChunkPool {
     linVel: Vec3Like,
     angVel: Vec3Like,
     wallsById: Map<string, ConcreteWallInstanceState>,
-    spawnOffsetWorld?: Vec3Like
+    spawnOffsetWorld?: Vec3Like,
+    onOverflowEvicted?: (worldCenter: Vec3Like, linVel: Vec3Like) => void
   ): void {
+    const chunk = wall.voronoiData.chunks[chunkIndex];
+    if (!chunk) return;
+    const vCount = chunk.localPositions.length / 3;
+    const iCount = chunk.indices.length;
+
     const staticCol = wall.staticColliderHandles[chunkIndex];
     if (staticCol >= 0) {
       this.rapierWorld.removeCollider(staticCol);
@@ -90,10 +97,20 @@ export class ConcreteDynamicChunkPool {
 
     if (wall.dynamicBodyHandles[chunkIndex] >= 0) return;
 
-    const chunk = wall.voronoiData.chunks[chunkIndex];
-    const vCount = chunk.localPositions.length / 3;
-    const iCount = chunk.indices.length;
-    if (vCount === 0 || iCount === 0) return;
+    const rot = wall.transform.rotation ?? IDENTITY_QUAT;
+    const baseWorldCenter = localToWorldPoint(chunk.localCenter, wall.transform);
+    const worldCenter: Vec3Like = spawnOffsetWorld
+      ? {
+          x: baseWorldCenter.x + spawnOffsetWorld.x,
+          y: baseWorldCenter.y + spawnOffsetWorld.y,
+          z: baseWorldCenter.z + spawnOffsetWorld.z,
+        }
+      : baseWorldCenter;
+
+    if (vCount === 0 || iCount === 0) {
+      wall.chunkPhase[chunkIndex] = ConcreteChunkPhase.EVICTED_DESTROYED;
+      return;
+    }
 
     while (
       this.activeDynamicChunks.length > 0 &&
@@ -107,18 +124,10 @@ export class ConcreteDynamicChunkPool {
       this.activeDynVertCount + vCount > this.maxDynamicVertices ||
       this.activeDynIndexCount + iCount > this.maxDynamicIndices
     ) {
+      wall.chunkPhase[chunkIndex] = ConcreteChunkPhase.EVICTED_DESTROYED;
+      onOverflowEvicted?.(worldCenter, linVel);
       return;
     }
-
-    const rot = wall.transform.rotation ?? IDENTITY_QUAT;
-    const baseWorldCenter = localToWorldPoint(chunk.localCenter, wall.transform);
-    const worldCenter: Vec3Like = spawnOffsetWorld
-      ? {
-          x: baseWorldCenter.x + spawnOffsetWorld.x,
-          y: baseWorldCenter.y + spawnOffsetWorld.y,
-          z: baseWorldCenter.z + spawnOffsetWorld.z,
-        }
-      : baseWorldCenter;
 
     const scaledHull = new Float32Array(chunk.hullVertices.length);
     for (let k = 0; k < chunk.hullVertices.length; k++) {
@@ -142,9 +151,13 @@ export class ConcreteDynamicChunkPool {
       rot,
       dynamicTag
     );
-    if (!spawned) return;
+    if (!spawned) {
+      wall.chunkPhase[chunkIndex] = ConcreteChunkPhase.EVICTED_DESTROYED;
+      return;
+    }
 
     wall.dynamicBodyHandles[chunkIndex] = spawned.bodyHandle;
+    wall.chunkPhase[chunkIndex] = ConcreteChunkPhase.DYNAMIC_ACTIVE;
 
     const entry: ActiveDynamicConcreteChunk = {
       wallId: wall.wallId,
@@ -158,6 +171,7 @@ export class ConcreteDynamicChunkPool {
       ageS: 0,
       ttlS: wall.dynamicDebrisTtlS,
       sleepingSynced: false,
+      phase: ConcreteChunkPhase.DYNAMIC_ACTIVE,
     };
 
     this.writeChunkStaticStreams(entry);
@@ -180,10 +194,14 @@ export class ConcreteDynamicChunkPool {
   public removeDynamicChunkEntryAt(idx: number, wallsById?: Map<string, ConcreteWallInstanceState>): void {
     const removed = this.activeDynamicChunks[idx];
     this.rapierWorld.removeBody(removed.bodyHandle);
+    removed.phase = ConcreteChunkPhase.EVICTED_DESTROYED;
     if (wallsById) {
       const ownerWall = wallsById.get(removed.wallId);
-      if (ownerWall && ownerWall.dynamicBodyHandles[removed.chunkIndex] === removed.bodyHandle) {
-        ownerWall.dynamicBodyHandles[removed.chunkIndex] = -1;
+      if (ownerWall) {
+        if (ownerWall.dynamicBodyHandles[removed.chunkIndex] === removed.bodyHandle) {
+          ownerWall.dynamicBodyHandles[removed.chunkIndex] = -1;
+        }
+        ownerWall.chunkPhase[removed.chunkIndex] = ConcreteChunkPhase.EVICTED_DESTROYED;
       }
     }
 
@@ -305,6 +323,18 @@ export class ConcreteDynamicChunkPool {
       }
 
       entry.sleepingSynced = isSleeping && shrink >= 1;
+      entry.phase =
+        shrink < 1
+          ? ConcreteChunkPhase.DYNAMIC_SHRINKING
+          : entry.sleepingSynced
+            ? ConcreteChunkPhase.DYNAMIC_SLEEPING_SYNCED
+            : ConcreteChunkPhase.DYNAMIC_ACTIVE;
+      if (wallsById) {
+        const ownerWall = wallsById.get(entry.wallId);
+        if (ownerWall) {
+          ownerWall.chunkPhase[entry.chunkIndex] = entry.phase;
+        }
+      }
       anyTransformUpdated = true;
     }
 

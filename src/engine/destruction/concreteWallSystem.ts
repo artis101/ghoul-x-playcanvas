@@ -28,6 +28,7 @@ import {
 } from './concrete/concreteImpactSolver.ts';
 import { createProceduralConcreteMaterial } from './concrete/concreteMaterial.ts';
 import {
+  ConcreteChunkPhase,
   type ConcreteWallConfig,
   type ConcreteWallInstanceState,
   type ConcreteWallSystemOptions,
@@ -211,6 +212,7 @@ export class ConcreteWallSystem implements IDestructibleSubsystem {
       drawCommands,
       staticColliderHandles: new Float64Array(chunkCount).fill(-1),
       dynamicBodyHandles: new Float64Array(chunkCount).fill(-1),
+      chunkPhase: new Uint8Array(chunkCount).fill(ConcreteChunkPhase.INTACT_STATIC),
       dynamicDebrisTtlS: config.dynamicChunkTtlS ?? 0,
       activeIntactChunkCount: 0,
       detachedChunkCount: 0,
@@ -228,6 +230,9 @@ export class ConcreteWallSystem implements IDestructibleSubsystem {
       connectivityJsonUrl?: string;
     }
   ): Promise<ConcreteWallInstanceState> {
+    if (this.destroyed) {
+      throw new Error('Cannot load concrete wall on destroyed ConcreteWallSystem.');
+    }
     const glbUrl = config.glbUrl ?? '/models/concrete_wall_fractured.glb';
     const jsonUrl =
       config.connectivityJsonUrl ?? '/models/concrete_wall_connectivity.json';
@@ -235,8 +240,14 @@ export class ConcreteWallSystem implements IDestructibleSubsystem {
     if (typeof fetch === 'function') {
       try {
         const jsonResp = await fetch(jsonUrl);
+        if (this.destroyed) {
+          throw new Error('Cannot load concrete wall on destroyed ConcreteWallSystem.');
+        }
         if (jsonResp.ok) {
           const connectivityText = await jsonResp.text();
+          if (this.destroyed) {
+            throw new Error('Cannot load concrete wall on destroyed ConcreteWallSystem.');
+          }
           const containerAsset = await new Promise<pc.Asset>((resolve, reject) => {
             const asset = new pc.Asset(
               `${config.wallId}_glb`,
@@ -248,6 +259,12 @@ export class ConcreteWallSystem implements IDestructibleSubsystem {
             asset.once('error', (err: string) => reject(new Error(err)));
             this.app.assets.load(asset);
           });
+
+          if (this.destroyed) {
+            this.app.assets.remove(containerAsset);
+            containerAsset.unload();
+            throw new Error('Cannot load concrete wall on destroyed ConcreteWallSystem.');
+          }
 
           const resource = containerAsset.resource as pc.ContainerResource | null;
           const renders = resource ? resource.renders : [];
@@ -292,6 +309,9 @@ export class ConcreteWallSystem implements IDestructibleSubsystem {
           }
         }
       } catch {
+        if (this.destroyed) {
+          throw new Error('Cannot load concrete wall on destroyed ConcreteWallSystem.');
+        }
         // Fall through cleanly to procedural 3D Voronoi fracture
       }
     }

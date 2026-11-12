@@ -1,9 +1,11 @@
 import {
   PainReactionType,
   ShotSimulationReport,
+  StandingCombatPosture,
   TargetHealthState,
 } from '../../../contracts/ballistics.ts';
 import { ALL_AUX_PARTICLES, ALL_GHOUL_ZONES } from '../../ghoul/anatomy.ts';
+import { transitionTargetLifecycle } from '../lifecycle/targetLifecycleFsm.ts';
 import { add, copyVec3, length, normalize, scale, vec3 } from '../vec3.ts';
 
 export function applySurvivingReaction(
@@ -41,33 +43,35 @@ export function applySurvivingReaction(
 
   let rxType: PainReactionType = 'CHEST_STAGGER';
   let rxDurationS = 0.65;
+  let postureOverride: StandingCombatPosture | undefined;
 
   if (!target.leftLegFunctional || !target.rightLegFunctional) {
     rxType = !target.leftLegFunctional ? 'LEG_BUCKLE_LEFT' : 'LEG_BUCKLE_RIGHT';
     rxDurationS = newlySeveredLeftLeg || newlySeveredRightLeg ? 0.68 : 0.46;
-    target.posture = 'LEG_BUCKLED';
+    postureOverride = 'LEG_BUCKLED';
   } else if (hitZone === 'NECK_CERVICAL') {
     rxType = 'THROAT_CLUTCH';
-    target.posture = 'THROAT_CLUTCH';
+    postureOverride = 'THROAT_CLUTCH';
   } else if (hitZone === 'TORSO_LOWER_ABDOMEN') {
     rxType = 'GUT_FOLD';
-    target.posture = 'GUT_HURT';
+    postureOverride = 'GUT_HURT';
   } else if (hitZone === 'HEAD_CRANIUM' || hitZone === 'HEAD_FACE_JAW') {
     rxType = 'HEAD_SNAP';
-    target.posture = 'STAGGERED';
+    postureOverride = 'STAGGERED';
   } else if (hitZone === 'SHOULDER_LEFT' || hitZone === 'UPPER_ARM_LEFT' || hitZone === 'FOREARM_LEFT' || hitZone === 'HAND_LEFT') {
     rxType = 'ARM_WRENCH_LEFT';
-    if (target.weaponDropped) target.posture = 'DISARMED';
+    if (target.weaponDropped) postureOverride = 'DISARMED';
   } else if (hitZone === 'SHOULDER_RIGHT' || hitZone === 'UPPER_ARM_RIGHT' || hitZone === 'FOREARM_RIGHT' || hitZone === 'HAND_RIGHT') {
     rxType = 'ARM_WRENCH_RIGHT';
-    if (target.weaponDropped) target.posture = 'DISARMED';
+    if (target.weaponDropped) postureOverride = 'DISARMED';
   }
 
-  target.activeReaction = {
-    type: rxType,
-    timerS: 0,
+  transitionTargetLifecycle(target, {
+    kind: 'START_PAIN_REACTION',
+    reactionType: rxType,
     durationS: rxDurationS,
     intensity: Math.min(1.3, 0.60 + report.totalEnergyDepositedJ / 450),
-    hitDirectionWorld: copyVec3(report.aimDirectionWorld),
-  };
+    hitDirectionWorld: report.aimDirectionWorld,
+    postureOverride,
+  });
 }

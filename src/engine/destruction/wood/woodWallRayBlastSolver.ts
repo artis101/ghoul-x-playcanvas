@@ -14,7 +14,11 @@ import {
 } from '../../../core/destruction/woodPolygonClipper.ts';
 import type { HardwareInstancedPool } from '../../physics/instancedPool.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
-import { acquirePelletVolley, wasPointCutByCurrentVolley } from './buckshotVolleyTracker.ts';
+import {
+  acquirePelletVolley,
+  resetPelletVolley,
+  wasPointCutByCurrentVolley,
+} from './buckshotVolleyTracker.ts';
 import { isPointOverIntactStud } from './woodStudColliderSync.ts';
 import {
   damageInteriorStudSections,
@@ -209,7 +213,7 @@ export function handleWoodWallRaySegment(
         }
       }
     } else {
-      internal.activeVolley = null;
+      resetPelletVolley(internal);
 
       if (alreadyOpenBeforeThisShot && !hitStud) {
         effectiveMaterial = 'WOOD_DRYWALL';

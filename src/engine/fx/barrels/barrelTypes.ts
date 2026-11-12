@@ -6,10 +6,26 @@ import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 
 export type HazardBarrelState = 'INTACT' | 'IGNITED_HISSING' | 'DETONATED';
 
+export type HazardBarrelPhase =
+  | {
+      readonly kind: 'INTACT';
+      colliderHandle: number;
+      ignitionDamage: number;
+    }
+  | {
+      readonly kind: 'IGNITED_HISSING';
+      colliderHandle: number;
+      fuseRemainingS: number;
+    }
+  | {
+      readonly kind: 'DETONATED';
+    };
+
 export interface HazardBarrelInstance {
   readonly index: number;
   readonly objectId: string;
   readonly basePosition: Vec3Like;
+  phase: HazardBarrelPhase;
   state: HazardBarrelState;
   colliderHandle: number;
   /** Accumulated ignition damage where >= 1.0 ignites the 0.18s hissing fuse */

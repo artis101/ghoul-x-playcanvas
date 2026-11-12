@@ -9,8 +9,18 @@ import { BarrelSmokeSystem } from './muzzleSmokeFx.ts';
 import { AmmoInventory } from './ammoInventory.ts';
 import { buildWeaponViewmodel } from './viewmodelBuilder.ts';
 import { mountViewmodelHands } from './viewmodelHands.ts';
-
-const GRENADE_GESTURE_SECONDS = 0.24;
+import {
+  GRENADE_GESTURE_SECONDS,
+  type MuzzleFlashPhase,
+  type ViewmodelActionState,
+  canFireViewmodelAction,
+  canStartGrenadeThrowAction,
+  canStartReloadAction,
+  getFireCooldownRemainingS,
+  getReloadRemainingS,
+  stepGrenadeThrowPose,
+  transitionViewmodelAction,
+} from './weaponActionState.ts';
 
 export class ArsenalManager {
   public readonly weaponViewmodelEntity: pc.Entity;
@@ -20,8 +30,7 @@ export class ArsenalManager {
   public currentWeapon: WeaponSpec = WEAPON_M590;
   public currentAmmo: AmmoSpec = WEAPON_M590.defaultAmmo;
   public readonly ammoInventory: Map<string, WeaponAmmoState>;
-  public reloadTimerS = 0;
-  public fireCooldownTimerS = 0;
+  public actionState: ViewmodelActionState = { kind: 'IDLE' };
 
   private readonly cameraEntity: pc.Entity;
   private readonly hudController: HudController;
@@ -30,17 +39,9 @@ export class ArsenalManager {
   private readonly smokeSystem = new BarrelSmokeSystem();
   private readonly activeViewmodelMaterials: pc.StandardMaterial[] = [];
   private glbRegistry: GlbModelRegistry | null = null;
-  private muzzleFlashTimerS = 0;
-  private muzzleFlashDurationS = 0.056;
+  private muzzleFlashPhase: MuzzleFlashPhase = { kind: 'INACTIVE' };
   private muzzleFlashBaseScale = 1.0;
-  private fireAnimReturnTimerS = 0;
   private shotVisualCounter = 0;
-  private grenadeGesture: {
-    model: WeaponGlbInstance;
-    materials: pc.StandardMaterial[];
-    elapsed: number;
-    release: () => void;
-  } | null = null;
 
   constructor(
     cameraEntity: pc.Entity,
@@ -64,6 +65,46 @@ export class ArsenalManager {
     this.syncWeaponHud();
   }
 
+  public get reloadTimerS(): number {
+    return getReloadRemainingS(this.actionState);
+  }
+
+  public set reloadTimerS(value: number) {
+    if (value <= 0) {
+      if (this.actionState.kind === 'RELOADING') {
+        this.actionState = transitionViewmodelAction(this.actionState, { kind: 'IDLE' }, this.activeWeaponGlb);
+      }
+    } else {
+      this.actionState = transitionViewmodelAction(
+        this.actionState,
+        { kind: 'RELOADING', remainingS: value },
+        this.activeWeaponGlb
+      );
+    }
+  }
+
+  public get fireCooldownTimerS(): number {
+    return getFireCooldownRemainingS(this.actionState);
+  }
+
+  public set fireCooldownTimerS(value: number) {
+    if (value <= 0) {
+      if (this.actionState.kind === 'FIRING' && this.actionState.animReturnRemainingS <= 0) {
+        this.actionState = transitionViewmodelAction(this.actionState, { kind: 'IDLE' }, this.activeWeaponGlb);
+      } else if (this.actionState.kind === 'FIRING') {
+        this.actionState = { ...this.actionState, cooldownRemainingS: 0 };
+      }
+    } else {
+      const animReturnRemainingS =
+        this.actionState.kind === 'FIRING' ? this.actionState.animReturnRemainingS : value;
+      this.actionState = transitionViewmodelAction(
+        this.actionState,
+        { kind: 'FIRING', cooldownRemainingS: value, animReturnRemainingS },
+        this.activeWeaponGlb
+      );
+    }
+  }
+
   public rebuildActiveViewmodel(): pc.Entity {
     this.activeWeaponGlb?.destroy();
     const res = buildWeaponViewmodel(
@@ -74,7 +115,9 @@ export class ArsenalManager {
       this.activeViewmodelMaterials
     );
     this.activeWeaponGlb = res.activeGlb;
-    if (this.grenadeGesture && this.activeWeaponGlb) this.activeWeaponGlb.rootEntity.enabled = false;
+    if (this.actionState.kind === 'THROWING_GRENADE' && this.activeWeaponGlb) {
+      this.activeWeaponGlb.rootEntity.enabled = false;
+    }
     this.muzzleFlashBaseScale = res.baseScale;
     return res.flashEntity;
   }
@@ -82,20 +125,20 @@ export class ArsenalManager {
   public initAmmoInventory(): void {
     this.inventory.init();
     this.currentAmmo = this.inventory.getActiveAmmo(this.currentWeapon);
-    this.reloadTimerS = 0;
+    this.actionState = transitionViewmodelAction(this.actionState, { kind: 'IDLE' }, this.activeWeaponGlb);
+    this.muzzleFlashPhase = { kind: 'INACTIVE' };
     this.syncWeaponHud();
   }
 
   public selectWeaponByIndex(idx: number): void {
     const wrapped = ((idx % WEAPONS.length) + WEAPONS.length) % WEAPONS.length;
-    if (wrapped === this.currentWeaponIndex && this.reloadTimerS <= 0) return;
+    if (wrapped === this.currentWeaponIndex && this.actionState.kind === 'IDLE') return;
 
+    this.actionState = transitionViewmodelAction(this.actionState, { kind: 'IDLE' }, this.activeWeaponGlb);
+    this.muzzleFlashPhase = { kind: 'INACTIVE' };
     this.currentWeaponIndex = wrapped;
     this.currentWeapon = WEAPONS[wrapped];
     this.currentAmmo = this.inventory.getActiveAmmo(this.currentWeapon);
-    this.reloadTimerS = 0;
-    this.muzzleFlashTimerS = 0;
-    this.fireAnimReturnTimerS = 0;
 
     this.muzzleFlashEntity = this.rebuildActiveViewmodel();
     this.onWeaponSwitched?.(this.currentWeapon);
@@ -103,30 +146,48 @@ export class ArsenalManager {
   }
 
   public cycleAmmoType(): void {
+    if (this.actionState.kind === 'THROWING_GRENADE') return;
     const nextAmmo = this.inventory.cycleAmmo(this.currentWeapon);
     if (!nextAmmo) {
       this.hudController.pushSystemToast(this.currentWeapon.codeName, `${this.currentAmmo.caliber} ONLY`);
       return;
     }
     this.currentAmmo = nextAmmo;
+    if (this.actionState.kind === 'RELOADING') {
+      const weapon = this.activeWeaponGlb;
+      const reloadSpeed = 1.15;
+      const durationS = Math.max(0.65, (weapon?.getClipDuration(weapon.reloadClipName) ?? 0) / reloadSpeed);
+      this.actionState = transitionViewmodelAction(
+        this.actionState,
+        { kind: 'RELOADING', remainingS: durationS },
+        this.activeWeaponGlb
+      );
+      weapon?.playReload(reloadSpeed);
+    }
     this.syncWeaponHud();
     this.hudController.pushSystemToast('AMMO LOADED', this.currentAmmo.name.toUpperCase());
   }
 
   public tryConsumeRoundForShot(): boolean {
-    if (this.grenadeGesture || this.fireCooldownTimerS > 0 || this.reloadTimerS > 0) return false;
+    if (!canFireViewmodelAction(this.actionState)) return false;
     if (!this.inventory.consumeShot(this.currentWeapon.id)) {
       this.startReload(false);
       return false;
     }
 
-    this.fireCooldownTimerS = 60 / this.currentWeapon.fireRateRpm;
-    this.syncWeaponHud();
+    const cooldownS = 60 / this.currentWeapon.fireRateRpm;
     const weapon = this.activeWeaponGlb;
     const fireDuration = weapon?.getClipDuration(weapon.fireClipName) ?? 0;
-    const fireSpeed = Math.max(1, fireDuration / this.fireCooldownTimerS);
+    const fireSpeed = Math.max(1, fireDuration / cooldownS);
     weapon?.playFire(fireSpeed);
-    this.fireAnimReturnTimerS = Math.max(0.22, fireDuration / fireSpeed);
+    const animReturnS = Math.max(0.22, fireDuration / fireSpeed);
+
+    this.actionState = transitionViewmodelAction(
+      this.actionState,
+      { kind: 'FIRING', cooldownRemainingS: cooldownS, animReturnRemainingS: animReturnS },
+      this.activeWeaponGlb
+    );
+    this.syncWeaponHud();
 
     this.shotVisualCounter++;
     const rollDeg = (this.shotVisualCounter * 67 + Math.random() * 28) % 360;
@@ -134,9 +195,9 @@ export class ArsenalManager {
     this.muzzleFlashEntity.setLocalEulerAngles(0, 0, rollDeg);
     this.muzzleFlashEntity.setLocalScale(scaleJitter, scaleJitter, scaleJitter * 1.08);
     this.muzzleFlashEntity.enabled = true;
-    this.muzzleFlashDurationS =
+    const flashDurationS =
       this.currentWeapon.role === 'SHOTGUN' || this.currentWeapon.role === 'HEAVY_PISTOL' ? 0.062 : 0.052;
-    this.muzzleFlashTimerS = this.muzzleFlashDurationS;
+    this.muzzleFlashPhase = { kind: 'FLASHING', remainingS: flashDurationS, durationS: flashDurationS };
 
     const device = resolveGraphicsDeviceFromEntity(this.cameraEntity);
     if (device) this.smokeSystem.spawnWisp(device, this.cameraEntity, this.muzzleFlashEntity, this.currentWeapon.role);
@@ -145,7 +206,7 @@ export class ArsenalManager {
   }
 
   public showGrenadeThrow(release: () => void): void {
-    if (this.grenadeGesture) return;
+    if (!canStartGrenadeThrowAction(this.actionState)) return;
     const device = resolveGraphicsDeviceFromEntity(this.cameraEntity);
     if (!device || !this.glbRegistry?.isLoaded('frag_grenade')) {
       release();
@@ -166,33 +227,29 @@ export class ArsenalManager {
       return;
     }
 
-    if (this.activeWeaponGlb) this.activeWeaponGlb.rootEntity.enabled = false;
-    this.grenadeGesture = { model, materials, elapsed: 0, release };
-  }
-
-  private updateGrenadeThrow(dt: number): void {
-    const gesture = this.grenadeGesture;
-    if (!gesture) return;
-    gesture.elapsed += dt;
-    const t = Math.min(1, gesture.elapsed / GRENADE_GESTURE_SECONDS);
-    const lift = Math.sin(t * Math.PI / 2);
-    gesture.model.rootEntity.setLocalPosition(0.24 - 0.11 * lift, -0.35 + 0.25 * lift, -0.47 - 0.18 * t);
-    gesture.model.rootEntity.setLocalEulerAngles(-15 + 32 * t, 0, 18 * (1 - t));
-    if (t < 1) return;
-
-    this.grenadeGesture = null;
-    gesture.model.destroy();
-    for (const material of gesture.materials) material.destroy();
-    if (this.activeWeaponGlb) this.activeWeaponGlb.rootEntity.enabled = true;
-    gesture.release();
+    this.actionState = transitionViewmodelAction(
+      this.actionState,
+      {
+        kind: 'THROWING_GRENADE',
+        elapsedS: 0,
+        durationS: GRENADE_GESTURE_SECONDS,
+        resources: { model, materials, release },
+      },
+      this.activeWeaponGlb
+    );
   }
 
   public startReload(allTargetsDead: boolean, onRespawnAll?: () => void): void {
-    if (this.reloadTimerS > 0) return;
+    if (!canStartReloadAction(this.actionState)) return;
     if (!this.inventory.prepareReload(this.currentWeapon.id, allTargetsDead, onRespawnAll)) return;
     const weapon = this.activeWeaponGlb;
     const reloadSpeed = 1.15;
-    this.reloadTimerS = Math.max(0.65, (weapon?.getClipDuration(weapon.reloadClipName) ?? 0) / reloadSpeed);
+    const remainingS = Math.max(0.65, (weapon?.getClipDuration(weapon.reloadClipName) ?? 0) / reloadSpeed);
+    this.actionState = transitionViewmodelAction(
+      this.actionState,
+      { kind: 'RELOADING', remainingS },
+      this.activeWeaponGlb
+    );
     weapon?.playReload(reloadSpeed);
     this.syncWeaponHud();
   }
@@ -200,38 +257,87 @@ export class ArsenalManager {
   public syncWeaponHud(): void {
     const inv = this.inventory.get(this.currentWeapon.id);
     if (!inv) return;
-    this.hudController.updateWeaponHud(this.currentWeapon, this.currentAmmo, inv.mag, inv.reserve, this.reloadTimerS > 0);
+    this.hudController.updateWeaponHud(
+      this.currentWeapon,
+      this.currentAmmo,
+      inv.mag,
+      inv.reserve,
+      this.actionState.kind === 'RELOADING'
+    );
   }
 
   public update(dt: number): void {
-    this.updateGrenadeThrow(dt);
-    if (this.fireCooldownTimerS > 0) this.fireCooldownTimerS -= dt;
-    if (this.muzzleFlashTimerS > 0) {
-      this.muzzleFlashTimerS = Math.max(0, this.muzzleFlashTimerS - dt);
-      const rem = this.muzzleFlashTimerS / Math.max(0.01, this.muzzleFlashDurationS);
-      if (this.muzzleFlashTimerS <= 0) {
+    if (this.muzzleFlashPhase.kind === 'FLASHING') {
+      const nextRem = Math.max(0, this.muzzleFlashPhase.remainingS - dt);
+      if (nextRem <= 0) {
         this.muzzleFlashEntity.setLocalScale(0.00001, 0.00001, 0.00001);
+        this.muzzleFlashPhase = { kind: 'INACTIVE' };
       } else {
+        const rem = nextRem / Math.max(0.01, this.muzzleFlashPhase.durationS);
         const shrink = this.muzzleFlashBaseScale * (0.72 + 0.36 * rem);
         this.muzzleFlashEntity.setLocalScale(shrink, shrink, shrink * (0.85 + 0.3 * rem));
+        this.muzzleFlashPhase = { ...this.muzzleFlashPhase, remainingS: nextRem };
       }
     }
+
     this.smokeSystem.update(dt, this.cameraEntity);
-    if (this.reloadTimerS > 0) {
-      this.reloadTimerS -= dt;
-      if (this.reloadTimerS <= 0) {
-        this.reloadTimerS = 0;
-        this.inventory.completeReload(this.currentWeapon.id);
-        this.activeWeaponGlb?.playIdle(0.08);
-        this.syncWeaponHud();
+
+    switch (this.actionState.kind) {
+      case 'IDLE':
+        break;
+      case 'THROWING_GRENADE': {
+        const { nextState, completed } = stepGrenadeThrowPose(this.actionState, dt);
+        if (completed) {
+          const releaseFn = this.actionState.resources.release;
+          this.actionState = transitionViewmodelAction(this.actionState, { kind: 'IDLE' }, this.activeWeaponGlb);
+          releaseFn();
+        } else {
+          this.actionState = nextState;
+        }
+        break;
+      }
+      case 'RELOADING': {
+        const nextRemainingS = this.actionState.remainingS - dt;
+        if (nextRemainingS <= 0) {
+          this.actionState = transitionViewmodelAction(this.actionState, { kind: 'IDLE' }, this.activeWeaponGlb);
+          this.inventory.completeReload(this.currentWeapon.id);
+          this.activeWeaponGlb?.playIdle(0.08);
+          this.syncWeaponHud();
+        } else {
+          this.actionState = { kind: 'RELOADING', remainingS: nextRemainingS };
+        }
+        break;
+      }
+      case 'FIRING': {
+        const nextCooldownS = Math.max(0, this.actionState.cooldownRemainingS - dt);
+        const prevAnimS = this.actionState.animReturnRemainingS;
+        const nextAnimS = Math.max(0, prevAnimS - dt);
+        this.actionState = {
+          kind: 'FIRING',
+          cooldownRemainingS: nextCooldownS,
+          animReturnRemainingS: nextAnimS,
+        };
+        if (prevAnimS > 0 && nextAnimS === 0) {
+          this.activeWeaponGlb?.playIdle(0.06);
+          if (this.inventory.get(this.currentWeapon.id)?.mag === 0) {
+            this.startReload(false);
+            break;
+          }
+        }
+        if (this.actionState.kind === 'FIRING' && nextCooldownS <= 0 && nextAnimS <= 0) {
+          this.actionState = transitionViewmodelAction(this.actionState, { kind: 'IDLE' }, this.activeWeaponGlb);
+        }
+        break;
       }
     }
-    if (this.fireAnimReturnTimerS > 0) {
-      this.fireAnimReturnTimerS = Math.max(0, this.fireAnimReturnTimerS - dt);
-      if (this.fireAnimReturnTimerS === 0 && this.reloadTimerS <= 0) {
-        this.activeWeaponGlb?.playIdle(0.06);
-        if (this.inventory.get(this.currentWeapon.id)?.mag === 0) this.startReload(false);
-      }
-    }
+  }
+
+  public destroy(): void {
+    this.actionState = transitionViewmodelAction(this.actionState, { kind: 'IDLE' }, this.activeWeaponGlb);
+    this.activeWeaponGlb?.destroy();
+    this.activeWeaponGlb = null;
+    for (const mat of this.activeViewmodelMaterials) mat.destroy();
+    this.activeViewmodelMaterials.length = 0;
+    this.weaponViewmodelEntity.destroy();
   }
 }

@@ -12,12 +12,63 @@ import type { CompoundBoxChildSpec } from '../../physics/rapier/rapierBodies.ts'
 import type { BrickDynamicPool } from './brickDynamicPool.ts';
 import {
   BRICK_HEAVY_PENETRATOR_THRESHOLD_J,
+  BrickPhase,
   type BrickWallInstanceState,
   IDENTITY_QUAT,
 } from './brickWallTypes.ts';
 
 function getGraphNodes(wall: BrickWallInstanceState): ChunkConnectivityNode[] {
   return (wall.graph.nodes ?? (wall.graph as { chunks?: ChunkConnectivityNode[] }).chunks ?? []) as ChunkConnectivityNode[];
+}
+
+export function transitionBrickPhase(
+  wall: BrickWallInstanceState,
+  brickIndex: number,
+  nextPhase: BrickPhase
+): void {
+  if (brickIndex < 0 || brickIndex >= wall.brickPhase.length) return;
+  const prevPhase = wall.brickPhase[brickIndex] as BrickPhase;
+  wall.brickPhase[brickIndex] = nextPhase;
+
+  if (nextPhase === BrickPhase.INTACT_STATIC) {
+    wall.graph.detached[brickIndex] = 0;
+  } else {
+    wall.graph.detached[brickIndex] = 1;
+    if (prevPhase === BrickPhase.INTACT_STATIC) {
+      wall.intactBrickCount = Math.max(0, wall.intactBrickCount - 1);
+      if (
+        nextPhase === BrickPhase.DYNAMIC_SINGLE ||
+        nextPhase === BrickPhase.DYNAMIC_ISLAND_PRIMARY ||
+        nextPhase === BrickPhase.DYNAMIC_ISLAND_FOLLOWER
+      ) {
+        wall.detachedBrickCount++;
+      }
+    }
+  }
+}
+
+export function handleBrickPoolSlotExpired(
+  wallsById: ReadonlyMap<string, BrickWallInstanceState>,
+  variant: number,
+  slotId: number,
+  bodyHandle: number
+): void {
+  for (const wall of wallsById.values()) {
+    const n = wall.brickPhase.length;
+    for (let i = 0; i < n; i++) {
+      const slotMatches = wall.variantByBrick[i] === variant && wall.poolSlotByBrick[i] === slotId;
+      const bodyMatches = bodyHandle >= 0 && wall.dynamicBodyHandles[i] === bodyHandle;
+      if (slotMatches) {
+        wall.poolSlotByBrick[i] = -1;
+      }
+      if (slotMatches || bodyMatches) {
+        wall.dynamicBodyHandles[i] = -1;
+        if (wall.poolSlotByBrick[i] < 0) {
+          transitionBrickPhase(wall, i, BrickPhase.EXPIRED_REMOVED);
+        }
+      }
+    }
+  }
 }
 
 export function populateIntactWallState(
@@ -52,9 +103,15 @@ export function populateIntactWallState(
     const slotId = pool.allocSlot();
     wall.poolSlotByBrick[i] = slotId;
 
-    if (slotId >= 0) {
-      pool.setSlotTRS(slotId, worldPos, rot, renderScale);
+    if (slotId < 0) {
+      wall.staticColliderHandles[i] = -1;
+      wall.dynamicBodyHandles[i] = -1;
+      wall.brickPhase[i] = BrickPhase.EXPIRED_REMOVED;
+      wall.graph.detached[i] = 1;
+      continue;
     }
+
+    pool.setSlotTRS(slotId, worldPos, rot, renderScale);
 
     const tag: ColliderSurfaceTag = {
       material: 'BRICK_MASONRY',
@@ -67,6 +124,8 @@ export function populateIntactWallState(
     const colHandle = rapierWorld.createStaticBox(worldPos, he, rot, tag);
     wall.staticColliderHandles[i] = colHandle;
     wall.dynamicBodyHandles[i] = -1;
+    wall.brickPhase[i] = BrickPhase.INTACT_STATIC;
+    wall.graph.detached[i] = 0;
     wall.intactBrickCount++;
   }
 
@@ -88,7 +147,10 @@ export function convertBrickToDynamicBody(
     wall.staticColliderHandles[brickIndex] = -1;
   }
 
-  if (wall.dynamicBodyHandles[brickIndex] >= 0) {
+  if (
+    wall.brickPhase[brickIndex] !== BrickPhase.INTACT_STATIC ||
+    wall.dynamicBodyHandles[brickIndex] >= 0
+  ) {
     return;
   }
 
@@ -136,8 +198,7 @@ export function convertBrickToDynamicBody(
   );
 
   wall.dynamicBodyHandles[brickIndex] = bodyHandle;
-  wall.intactBrickCount = Math.max(0, wall.intactBrickCount - 1);
-  wall.detachedBrickCount++;
+  transitionBrickPhase(wall, brickIndex, BrickPhase.DYNAMIC_SINGLE);
 
   const variant = wall.variantByBrick[brickIndex];
   const slotId = wall.poolSlotByBrick[brickIndex];
@@ -193,7 +254,13 @@ export function convertBrickIslandToCompoundBody(
       rapierWorld.removeCollider(staticCol);
       wall.staticColliderHandles[idx] = -1;
     }
-    if (wall.dynamicBodyHandles[idx] >= 0 || !nodes[idx]) continue;
+    if (
+      wall.brickPhase[idx] !== BrickPhase.INTACT_STATIC ||
+      wall.dynamicBodyHandles[idx] >= 0 ||
+      !nodes[idx]
+    ) {
+      continue;
+    }
     validIndices.push(idx);
     sumX += nodes[idx].localCenter.x;
     sumY += nodes[idx].localCenter.y;
@@ -250,6 +317,7 @@ export function convertBrickIslandToCompoundBody(
     rot
   );
 
+  const uniformIslandTtlS = wall.dynamicDebrisTtlS;
   for (let i = 0; i < validIndices.length; i++) {
     const idx = validIndices[i];
     const node = nodes[idx];
@@ -259,8 +327,11 @@ export function convertBrickIslandToCompoundBody(
       z: wall.brickD * 0.5,
     };
     wall.dynamicBodyHandles[idx] = bodyHandle;
-    wall.intactBrickCount = Math.max(0, wall.intactBrickCount - 1);
-    wall.detachedBrickCount++;
+    transitionBrickPhase(
+      wall,
+      idx,
+      i === 0 ? BrickPhase.DYNAMIC_ISLAND_PRIMARY : BrickPhase.DYNAMIC_ISLAND_FOLLOWER
+    );
 
     const variant = wall.variantByBrick[idx];
     const slotId = wall.poolSlotByBrick[idx];
@@ -275,7 +346,7 @@ export function convertBrickIslandToCompoundBody(
         slotId,
         bodyHandle,
         renderScale,
-        wall.dynamicDebrisTtlS,
+        uniformIslandTtlS,
         children[i].localOffset
       );
     }
@@ -299,15 +370,20 @@ export function releaseWallResources(
     const dynBody = wall.dynamicBodyHandles[i];
     if (dynBody >= 0) {
       rapierWorld.removeBody(dynBody);
-      wall.dynamicBodyHandles[i] = -1;
+      for (let k = i; k < n; k++) {
+        if (wall.dynamicBodyHandles[k] === dynBody) {
+          wall.dynamicBodyHandles[k] = -1;
+        }
+      }
     }
 
     const slotId = wall.poolSlotByBrick[i];
-    if (slotId >= 0) {
+    if (slotId >= 0 && wall.brickPhase[i] !== BrickPhase.EXPIRED_REMOVED) {
       const variant = wall.variantByBrick[i];
       dynamicPool.variantPools[variant].freeSlot(slotId);
-      wall.poolSlotByBrick[i] = -1;
     }
+    wall.poolSlotByBrick[i] = -1;
+    wall.brickPhase[i] = BrickPhase.EXPIRED_REMOVED;
   }
 
   wall.intactBrickCount = 0;

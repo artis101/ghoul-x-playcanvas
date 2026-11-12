@@ -1,8 +1,12 @@
 import type { WeaponSpec } from '../../contracts/ballistics.ts';
 import type { FpsInputCallbacks } from './fpsTypes.ts';
 
+export type InputCaptureState =
+  | { readonly kind: 'UNLOCKED' }
+  | { readonly kind: 'POINTER_LOCKED' };
+
 export class PlayerInputManager {
-  public isPointerLocked = false;
+  public captureState: InputCaptureState = { kind: 'UNLOCKED' };
   public isTriggerHeld = false;
   public readonly keysPressed: Record<string, boolean> = {};
 
@@ -11,93 +15,158 @@ export class PlayerInputManager {
   private readonly getCurrentWeapon: () => WeaponSpec;
   private readonly onLook: (deltaYaw: number, deltaPitch: number) => void;
   private readonly onToggleAds: (active: boolean) => void;
-  private isAimingDownSights = false;
+  private readonly getIsAimingDownSights: () => boolean;
+  private readonly eventCleanups: Array<() => void> = [];
 
   constructor(
     canvas: HTMLCanvasElement,
     callbacks: FpsInputCallbacks,
     getCurrentWeapon: () => WeaponSpec,
     onLook: (deltaYaw: number, deltaPitch: number) => void,
-    onToggleAds: (active: boolean) => void
+    onToggleAds: (active: boolean) => void,
+    getIsAimingDownSights: () => boolean = () => false
   ) {
     this.canvas = canvas;
     this.callbacks = callbacks;
     this.getCurrentWeapon = getCurrentWeapon;
     this.onLook = onLook;
     this.onToggleAds = onToggleAds;
+    this.getIsAimingDownSights = getIsAimingDownSights;
     this.bind();
   }
 
-  public setAdsState(ads: boolean): void {
-    this.isAimingDownSights = ads;
+  public get isPointerLocked(): boolean {
+    return this.captureState.kind === 'POINTER_LOCKED';
+  }
+
+  public set isPointerLocked(locked: boolean) {
+    this.transitionCaptureState(locked ? 'POINTER_LOCKED' : 'UNLOCKED');
+  }
+
+  public setAdsState(_ads: boolean): void {
+    // Kept as a no-op for legacy callers; ADS state is read authoritatively via getIsAimingDownSights().
+  }
+
+  public transitionCaptureState(nextKind: InputCaptureState['kind']): void {
+    const prevKind = this.captureState.kind;
+    if (prevKind === nextKind) return;
+
+    this.captureState = { kind: nextKind };
+
+    if (prevKind === 'POINTER_LOCKED' && nextKind === 'UNLOCKED') {
+      this.isTriggerHeld = false;
+      for (const key of Object.keys(this.keysPressed)) {
+        delete this.keysPressed[key];
+      }
+      if (this.getIsAimingDownSights()) {
+        this.onToggleAds(false);
+      }
+    }
   }
 
   private bind(): void {
-    document.addEventListener('pointerlockchange', () => {
-      this.isPointerLocked = document.pointerLockElement === this.canvas;
-      if (!this.isPointerLocked) this.isTriggerHeld = false;
-    });
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      const onPointerLockChange = (): void => {
+        const locked = document.pointerLockElement === this.canvas;
+        this.transitionCaptureState(locked ? 'POINTER_LOCKED' : 'UNLOCKED');
+      };
+      const onMouseMove = (e: MouseEvent): void => {
+        if (this.captureState.kind !== 'POINTER_LOCKED') return;
+        const sensitivity = this.getIsAimingDownSights() ? 0.075 : 0.15;
+        this.onLook(e.movementX * sensitivity, e.movementY * sensitivity);
+      };
+      document.addEventListener('pointerlockchange', onPointerLockChange);
+      document.addEventListener('mousemove', onMouseMove);
+      this.eventCleanups.push(() => {
+        document.removeEventListener('pointerlockchange', onPointerLockChange);
+        document.removeEventListener('mousemove', onMouseMove);
+      });
+    }
 
-    document.addEventListener('mousemove', (e) => {
-      if (!this.isPointerLocked) return;
-      const sensitivity = this.isAimingDownSights ? 0.075 : 0.15;
-      this.onLook(e.movementX * sensitivity, e.movementY * sensitivity);
-    });
+    if (typeof this.canvas?.addEventListener === 'function') {
+      const onMouseDown = (e: MouseEvent): void => {
+        if (this.captureState.kind !== 'POINTER_LOCKED') {
+          this.canvas.requestPointerLock?.();
+          return;
+        }
+        if (e.button === 0) {
+          this.isTriggerHeld = true;
+          this.callbacks.onTriggerPull();
+        } else if (e.button === 1) {
+          e.preventDefault();
+          this.callbacks.onThrowGrenade();
+        } else if (e.button === 2) {
+          e.preventDefault();
+          this.onToggleAds(!this.getIsAimingDownSights());
+        }
+      };
 
-    this.canvas.addEventListener('mousedown', (e) => {
-      if (!this.isPointerLocked) {
-        this.canvas.requestPointerLock();
-        return;
-      }
-      if (e.button === 0) {
-        this.isTriggerHeld = true;
-        this.callbacks.onTriggerPull();
-      } else if (e.button === 1) {
-        e.preventDefault();
-        this.callbacks.onThrowGrenade();
-      } else if (e.button === 2) {
-        e.preventDefault();
-        this.onToggleAds(!this.isAimingDownSights);
-      }
-    });
-
-    window.addEventListener('mouseup', (e) => {
-      if (e.button === 0) this.isTriggerHeld = false;
-    });
-
-    this.canvas.addEventListener(
-      'wheel',
-      (e) => {
+      const onWheel = (e: WheelEvent): void => {
+        if (this.captureState.kind !== 'POINTER_LOCKED') return;
         e.preventDefault();
         if (e.deltaY > 0) this.callbacks.onCycleWeapon(1);
         else if (e.deltaY < 0) this.callbacks.onCycleWeapon(-1);
-      },
-      { passive: false }
-    );
+      };
 
-    this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-
-    window.addEventListener('keydown', (e) => {
-      this.keysPressed[e.code] = true;
-      if (e.code === 'Digit1') this.callbacks.onSelectWeapon(0);
-      else if (e.code === 'Digit2') this.callbacks.onSelectWeapon(1);
-      else if (e.code === 'Digit3') this.callbacks.onSelectWeapon(2);
-      else if (e.code === 'Digit4') this.callbacks.onSelectWeapon(3);
-      else if (e.code === 'KeyB') this.callbacks.onCycleAmmo();
-      else if (e.code === 'KeyR') this.callbacks.onReload();
-      else if (e.code === 'KeyT' || e.code === 'Backspace') {
+      const onContextMenu = (e: MouseEvent): void => {
         e.preventDefault();
-        this.callbacks.onSpawnWave();
-      } else if (e.code === 'KeyF') this.callbacks.onTriggerPull();
-      else if (e.code === 'KeyG') this.callbacks.onThrowGrenade();
-      else if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
-        this.onToggleAds(!this.isAimingDownSights);
-      } else if (e.code === 'KeyX') this.callbacks.onToggleXRay();
-      else if (e.code === 'KeyZ' && !e.repeat) this.callbacks.onToggleBulletTime?.();
-    });
+      };
 
-    window.addEventListener('keyup', (e) => {
-      this.keysPressed[e.code] = false;
-    });
+      this.canvas.addEventListener('mousedown', onMouseDown);
+      this.canvas.addEventListener('wheel', onWheel, { passive: false });
+      this.canvas.addEventListener('contextmenu', onContextMenu);
+      this.eventCleanups.push(() => {
+        this.canvas.removeEventListener('mousedown', onMouseDown);
+        this.canvas.removeEventListener('wheel', onWheel);
+        this.canvas.removeEventListener('contextmenu', onContextMenu);
+      });
+    }
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      const onMouseUp = (e: MouseEvent): void => {
+        if (e.button === 0) this.isTriggerHeld = false;
+      };
+
+      const onKeyDown = (e: KeyboardEvent): void => {
+        if (this.captureState.kind !== 'POINTER_LOCKED') return;
+        this.keysPressed[e.code] = true;
+        if (e.code === 'Digit1') this.callbacks.onSelectWeapon(0);
+        else if (e.code === 'Digit2') this.callbacks.onSelectWeapon(1);
+        else if (e.code === 'Digit3') this.callbacks.onSelectWeapon(2);
+        else if (e.code === 'Digit4') this.callbacks.onSelectWeapon(3);
+        else if (e.code === 'KeyB') this.callbacks.onCycleAmmo();
+        else if (e.code === 'KeyR') this.callbacks.onReload();
+        else if (e.code === 'KeyT' || e.code === 'Backspace') {
+          e.preventDefault();
+          this.callbacks.onSpawnWave();
+        } else if (e.code === 'KeyF') this.callbacks.onTriggerPull();
+        else if (e.code === 'KeyG') this.callbacks.onThrowGrenade();
+        else if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+          this.onToggleAds(!this.getIsAimingDownSights());
+        } else if (e.code === 'KeyX') this.callbacks.onToggleXRay();
+        else if (e.code === 'KeyZ' && !e.repeat) this.callbacks.onToggleBulletTime?.();
+      };
+
+      const onKeyUp = (e: KeyboardEvent): void => {
+        this.keysPressed[e.code] = false;
+      };
+
+      window.addEventListener('mouseup', onMouseUp);
+      window.addEventListener('keydown', onKeyDown);
+      window.addEventListener('keyup', onKeyUp);
+      this.eventCleanups.push(() => {
+        window.removeEventListener('mouseup', onMouseUp);
+        window.removeEventListener('keydown', onKeyDown);
+        window.removeEventListener('keyup', onKeyUp);
+      });
+    }
+  }
+
+  public destroy(): void {
+    this.transitionCaptureState('UNLOCKED');
+    for (const cleanup of this.eventCleanups) {
+      cleanup();
+    }
+    this.eventCleanups.length = 0;
   }
 }

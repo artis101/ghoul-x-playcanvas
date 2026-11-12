@@ -1,3 +1,5 @@
+import { SlotLifecyclePhase } from './instancePackerTypes.ts';
+
 export class InstanceStorageSoa {
   public readonly maxInstances: number;
   public readonly matrixData: Float32Array;
@@ -10,9 +12,8 @@ export class InstanceStorageSoa {
   public readonly slotToDense: Int32Array;
   public readonly denseToSlot: Int32Array;
 
-  public readonly denseMode: Uint8Array;
+  public readonly densePhase: Uint8Array;
   public readonly denseBodyHandle: Float64Array;
-  public readonly denseSleepingSynced: Uint8Array;
 
   public readonly denseScaleX: Float32Array;
   public readonly denseScaleY: Float32Array;
@@ -56,9 +57,8 @@ export class InstanceStorageSoa {
       this.denseToSlot[i] = -1;
     }
 
-    this.denseMode = new Uint8Array(cap);
+    this.densePhase = new Uint8Array(cap).fill(SlotLifecyclePhase.FREE);
     this.denseBodyHandle = new Float64Array(cap).fill(-1);
-    this.denseSleepingSynced = new Uint8Array(cap);
 
     this.denseScaleX = new Float32Array(cap);
     this.denseScaleY = new Float32Array(cap);
@@ -94,6 +94,8 @@ export class InstanceStorageSoa {
     this.slotToDense[slotId] = denseIndex;
     this.denseToSlot[denseIndex] = slotId;
 
+    this.densePhase[denseIndex] = SlotLifecyclePhase.STATIC;
+    this.denseBodyHandle[denseIndex] = -1;
     this.denseScaleX[denseIndex] = 1;
     this.denseScaleY[denseIndex] = 1;
     this.denseScaleZ[denseIndex] = 1;
@@ -101,7 +103,6 @@ export class InstanceStorageSoa {
     this.denseQuatY[denseIndex] = 0;
     this.denseQuatZ[denseIndex] = 0;
     this.denseQuatW[denseIndex] = 1;
-    this.denseSleepingSynced[denseIndex] = 0;
     this.denseAgeS[denseIndex] = 0;
     this.denseTtlS[denseIndex] = 0;
 
@@ -127,9 +128,8 @@ export class InstanceStorageSoa {
       const dst16 = denseIndex * 16;
       for (let i = 0; i < 16; i++) this.matrixData[dst16 + i] = this.matrixData[src16 + i];
 
-      this.denseMode[denseIndex] = this.denseMode[lastDense];
+      this.densePhase[denseIndex] = this.densePhase[lastDense];
       this.denseBodyHandle[denseIndex] = this.denseBodyHandle[lastDense];
-      this.denseSleepingSynced[denseIndex] = this.denseSleepingSynced[lastDense];
       this.denseScaleX[denseIndex] = this.denseScaleX[lastDense];
       this.denseScaleY[denseIndex] = this.denseScaleY[lastDense];
       this.denseScaleZ[denseIndex] = this.denseScaleZ[lastDense];
@@ -156,6 +156,8 @@ export class InstanceStorageSoa {
       this.slotToDense[movedSlotId] = denseIndex;
     }
 
+    this.densePhase[lastDense] = SlotLifecyclePhase.FREE;
+    this.denseBodyHandle[lastDense] = -1;
     this.slotToDense[slotId] = -1;
     this.denseToSlot[lastDense] = -1;
     this.count = lastDense;

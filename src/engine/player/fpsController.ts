@@ -2,7 +2,7 @@ import * as pc from 'playcanvas';
 import type { WeaponSpec } from '../../contracts/ballistics.ts';
 import type { HudController } from '../hudController.ts';
 import type { FpsInputCallbacks } from './fpsTypes.ts';
-import { PlayerCameraRig } from './playerCameraRig.ts';
+import { PlayerCameraRig, type PlayerSightState } from './playerCameraRig.ts';
 import { PlayerInputManager } from './playerInput.ts';
 import { PlayerMovementSolver } from './playerMovement.ts';
 
@@ -39,7 +39,8 @@ export class FpsController {
       callbacks,
       getCurrentWeapon,
       (dy, dp) => this.rig.onLook(dy, dp),
-      (active) => this.setAimDownSights(active, this.getCurrentWeapon())
+      (active) => this.setAimDownSights(active, this.getCurrentWeapon()),
+      () => this.rig.isAimingDownSights
     );
 
     this.cameraEntity = new pc.Entity('PlayerCamera');
@@ -62,6 +63,8 @@ export class FpsController {
   public set cameraYaw(val: number) { this.rig.cameraYaw = val; }
   public get isPointerLocked(): boolean { return this.input.isPointerLocked; }
   public get isAimingDownSights(): boolean { return this.rig.isAimingDownSights; }
+  public get isScopeOpticActive(): boolean { return this.rig.isScopeOpticActive; }
+  public get sightState(): PlayerSightState { return this.rig.sightState; }
   public get isTriggerHeld(): boolean { return this.input.isTriggerHeld; }
   public get recoilPitch(): number { return this.rig.recoilPitch; }
   public get recoilOffsetZ(): number { return this.rig.recoilOffsetZ; }
@@ -112,7 +115,6 @@ export class FpsController {
 
   public setAimDownSights(active: boolean, weapon: WeaponSpec): void {
     this.rig.setAimDownSights(active, weapon, this.hudController);
-    this.input.setAdsState(active);
   }
 
   public update(dt: number, currentWeapon: WeaponSpec, reloadTimerS: number, weaponViewmodelEntity: pc.Entity): void {
@@ -139,5 +141,10 @@ export class FpsController {
     if (this.input.isTriggerHeld && currentWeapon.role === 'ASSAULT_RIFLE') {
       this.callbacks.onTriggerPull();
     }
+  }
+
+  public destroy(): void {
+    this.input.destroy();
+    this.cameraEntity.destroy();
   }
 }

@@ -7,6 +7,18 @@ export interface TrackedTransientNodeGroup {
   readonly endTime: number;
 }
 
+export type TinnitusState =
+  | { readonly kind: 'IDLE' }
+  | {
+      readonly kind: 'RINGING';
+      readonly startTime: number;
+      readonly endTime: number;
+      readonly peakIntensity: number;
+      readonly currentIntensity: number;
+    };
+
+export const DEFAULT_TINNITUS_DECAY_DURATION_S = 2.4;
+
 function disconnectNodeGroup(nodes: readonly AudioNodeLike[]): void {
   for (let i = 0; i < nodes.length; i++) {
     try {
@@ -21,12 +33,47 @@ export class AudioSourceTracker {
   public readonly activeSources: TrackedBufferSource[] = [];
   public readonly activeOscillators: TrackedOscillator[] = [];
   public readonly activeNodeGroups: TrackedTransientNodeGroup[] = [];
-  public lastTinnitusTriggerTime = -10;
-  public activeTinnitusIntensity = 0;
+  public tinnitusState: TinnitusState = { kind: 'IDLE' };
 
-  public triggerTinnitusSpike(now: number, intensity = 1.0): void {
-    this.lastTinnitusTriggerTime = now;
-    this.activeTinnitusIntensity = Math.min(1.5, Math.max(this.activeTinnitusIntensity, intensity));
+  public get lastTinnitusTriggerTime(): number {
+    return this.tinnitusState.kind === 'RINGING' ? this.tinnitusState.startTime : -10;
+  }
+
+  public get activeTinnitusIntensity(): number {
+    return this.tinnitusState.kind === 'RINGING' ? this.tinnitusState.currentIntensity : 0;
+  }
+
+  public getTinnitusIntensityAt(now: number): number {
+    if (this.tinnitusState.kind !== 'RINGING') {
+      return 0;
+    }
+    if (now >= this.tinnitusState.endTime) {
+      return 0;
+    }
+    const duration = Math.max(1e-4, this.tinnitusState.endTime - this.tinnitusState.startTime);
+    const elapsed = Math.max(0, now - this.tinnitusState.startTime);
+    const remainingFrac = Math.max(0, 1 - elapsed / duration);
+    return this.tinnitusState.peakIntensity * remainingFrac;
+  }
+
+  public triggerTinnitusSpike(
+    now: number,
+    intensity = 1.0,
+    durationS = DEFAULT_TINNITUS_DECAY_DURATION_S,
+  ): void {
+    if (!Number.isFinite(intensity) || intensity <= 0) {
+      return;
+    }
+    const current = this.getTinnitusIntensityAt(now);
+    const peak = Math.min(1.5, Math.max(current, intensity));
+    const clampedDuration = Math.max(0.1, durationS);
+    this.tinnitusState = {
+      kind: 'RINGING',
+      startTime: now,
+      endTime: now + clampedDuration,
+      peakIntensity: peak,
+      currentIntensity: peak,
+    };
   }
 
   public registerSource(
@@ -51,6 +98,18 @@ export class AudioSourceTracker {
   }
 
   public pruneFinished(now: number): void {
+    if (this.tinnitusState.kind === 'RINGING') {
+      const decayed = this.getTinnitusIntensityAt(now);
+      if (now >= this.tinnitusState.endTime || decayed <= 1e-4) {
+        this.tinnitusState = { kind: 'IDLE' };
+      } else {
+        this.tinnitusState = {
+          ...this.tinnitusState,
+          currentIntensity: decayed,
+        };
+      }
+    }
+
     let writeIdx = 0;
     for (let i = 0; i < this.activeSources.length; i++) {
       const item = this.activeSources[i];
@@ -123,5 +182,6 @@ export class AudioSourceTracker {
     this.activeNodeGroups.length = 0;
     this.activeSources.length = 0;
     this.activeOscillators.length = 0;
+    this.tinnitusState = { kind: 'IDLE' };
   }
 }

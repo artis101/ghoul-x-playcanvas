@@ -20,9 +20,11 @@ export const STUD_SECTION_MAX_HP = 1_100;
 
 export const TIGHT_BUCKSHOT_CLUSTER_RADIUS_M = 0.22;
 export const MEDIUM_BUCKSHOT_CLUSTER_RADIUS_M = 0.26;
-export const BUCKSHOT_VOLLEY_WINDOW_S = 0.025;
+export const BUCKSHOT_VOLLEY_WINDOW_S = 0.0005;
 export const BUCKSHOT_VOLLEY_WINDOW_MS = 500;
 export const MAX_PELLETS_PER_VOLLEY = 9;
+
+export type BuckshotClusterTier = 'NONE' | 'MEDIUM_3' | 'TIGHT_5' | 'TIGHT_8';
 
 export interface WoodWallConfig {
   id: string;
@@ -91,14 +93,22 @@ export interface PelletVolleyImpact {
   exitSignZ: number;
 }
 
-export interface PelletVolleyState {
-  simTimeS: number;
-  wallClockMs: number;
+export interface CollectingPelletVolleyState {
+  readonly kind: 'COLLECTING';
+  readonly volleyId: number;
+  readonly simTimeS: number;
   pelletRayCount: number;
-  clusterTierApplied: 0 | 1 | 2 | 3;
-  impacts: PelletVolleyImpact[];
-  clusterCuts: Array<{ u: number; v: number; cutRadiusM: number }>;
+  tier: BuckshotClusterTier;
+  appliedStudDamageHp: number;
+  readonly impacts: PelletVolleyImpact[];
+  readonly clusterCuts: Array<{ u: number; v: number; cutRadiusM: number }>;
 }
+
+export type VolleyLifecycleState =
+  | { readonly kind: 'IDLE' }
+  | CollectingPelletVolleyState;
+
+export type PelletVolleyState = CollectingPelletVolleyState;
 
 export interface WallInternalState {
   readonly studColumns: StudColumnState[];
@@ -106,5 +116,6 @@ export interface WallInternalState {
   readonly studScratchBuffers: WoodMeshScratchBuffers;
   readonly visualStudDepthM: number;
   readonly plateHeightM: number;
-  activeVolley: PelletVolleyState | null;
+  nextVolleyId: number;
+  volleyState: VolleyLifecycleState;
 }

@@ -187,7 +187,8 @@ export function createWoodWallInstance(
     studScratchBuffers,
     visualStudDepthM,
     plateHeightM: plateH,
-    activeVolley: null,
+    nextVolleyId: 1,
+    volleyState: { kind: 'IDLE' },
   };
 
   rebuildWallStudColliders(physicsWorld, instance, internal);

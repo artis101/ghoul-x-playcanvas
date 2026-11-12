@@ -22,14 +22,30 @@ import {
 import { getPreferredPrimaryHand, isArmChainIntactAndFunctional } from '../ai/combatantArmEvaluation.ts';
 import { CombatantSupportGrip } from './combatantSupportGrip.ts';
 import { CombatantWeaponGrip } from './combatantWeaponGrip.ts';
+import {
+  createPropAttachmentState,
+  transitionPropAttachment,
+  type PropAttachmentState,
+} from './propAttachmentState.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
 
 export class CombatantWeaponMount {
   public heldWeaponNode: pc.Entity | null = null;
   public heldWeaponGlb: WeaponGlbInstance | null = null;
-  private wasWeaponHeld = false;
+  public attachmentState: PropAttachmentState<'LEFT' | 'RIGHT'> = createPropAttachmentState('ATTACHED');
   private readonly supportGrip = new CombatantSupportGrip();
   private readonly grip = new CombatantWeaponGrip();
+
+  public get wasWeaponHeld(): boolean {
+    return this.attachmentState.kind === 'ATTACHED';
+  }
+
+  public reset(): void {
+    this.attachmentState = createPropAttachmentState('ATTACHED');
+    if (this.heldWeaponNode) {
+      this.heldWeaponNode.enabled = true;
+    }
+  }
 
   public attachGlbWeaponIfReady(
     glbRegistry: GlbModelRegistry,
@@ -50,7 +66,7 @@ export class CombatantWeaponMount {
       }
       this.heldWeaponGlb = wInst;
       this.heldWeaponNode = wInst.rootEntity;
-      this.heldWeaponNode.enabled = this.wasWeaponHeld;
+      this.heldWeaponNode.enabled = this.attachmentState.kind === 'ATTACHED';
       rootEntity.addChild(this.heldWeaponNode);
     } catch {
       // headless test environment
@@ -68,30 +84,46 @@ export class CombatantWeaponMount {
     const triggerHandZone: GhoulZoneId = `HAND_${triggerHand}`;
     const supportHandZone: GhoulZoneId = `HAND_${supportHand}`;
 
+    const armIntact = isArmChainIntactAndFunctional(healthState, triggerHand);
     const shouldHoldWeapon =
       !healthState.weaponDropped &&
-      healthState.alive && healthState.currentHp > 0 &&
+      healthState.alive &&
+      healthState.currentHp > 0 &&
       !healthState.isRagdollActive &&
-      isArmChainIntactAndFunctional(healthState, triggerHand);
+      armIntact;
 
-    if (this.wasWeaponHeld && !shouldHoldWeapon) {
-      if (fxManager && this.heldWeaponNode) {
-        const trigBone = healthState.ragdollBones[triggerHandZone];
-        const dropPos = this.heldWeaponNode.getPosition();
-        fxManager.spawnDroppedWeaponProp(
-          healthState.archetype,
-          dropPos,
-          trigBone.velocity
-        );
-      }
+    const temporarilyHidden =
+      !shouldHoldWeapon &&
+      !healthState.weaponDropped &&
+      healthState.alive &&
+      healthState.currentHp > 0 &&
+      armIntact &&
+      healthState.isRagdollActive &&
+      healthState.posture === 'AIRBORNE_RAGDOLL';
+
+    const transition = transitionPropAttachment(this.attachmentState, {
+      shouldBeAttached: shouldHoldWeapon,
+      temporarilyHidden,
+      hand: triggerHand,
+      allowReattachAfterDrop: shouldHoldWeapon,
+    });
+    this.attachmentState = transition.state;
+
+    if (transition.shouldSpawnDroppedProp && fxManager && this.heldWeaponNode) {
+      const trigBone = healthState.ragdollBones[triggerHandZone];
+      const dropPos = this.heldWeaponNode.getPosition();
+      fxManager.spawnDroppedWeaponProp(
+        healthState.archetype,
+        dropPos,
+        trigBone.velocity
+      );
     }
 
-    this.wasWeaponHeld = shouldHoldWeapon && this.heldWeaponNode !== null;
     if (this.heldWeaponNode) {
-      this.heldWeaponNode.enabled = shouldHoldWeapon;
+      this.heldWeaponNode.enabled = transition.isVisible;
     }
 
-    if (shouldHoldWeapon && this.heldWeaponNode) {
+    if (transition.isVisible && this.heldWeaponNode) {
       const charFwd = vec3(
         Math.sin(healthState.yawRad),
         0,

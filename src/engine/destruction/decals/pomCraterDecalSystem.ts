@@ -14,8 +14,12 @@ import { applyConcreteSurfaceCraterChunks } from './concreteCraterChunks.ts';
 import {
   createConcreteChipMesh,
   createTangentDecalQuadMesh,
-  quatFromPlusZToNormalWithRoll,
 } from './craterMeshes.ts';
+import {
+  CraterDecalSlotState,
+  type CraterSpawnerContext,
+  executeCraterImpact,
+} from './craterImpactSpawner.ts';
 import { spawnSpallChipBurst } from './spallChipEmitter.ts';
 
 export class PomCraterDecalSystem {
@@ -30,7 +34,7 @@ export class PomCraterDecalSystem {
   private readonly decalMesh: pc.Mesh;
   private readonly chipMesh: pc.Mesh;
   private readonly ringSlots: Int32Array;
-  private readonly slotActive: Uint8Array;
+  private readonly slotState: Uint8Array;
   private readonly slotPointX: Float32Array;
   private readonly slotPointY: Float32Array;
   private readonly slotPointZ: Float32Array;
@@ -38,6 +42,7 @@ export class PomCraterDecalSystem {
   private readonly slotNormalY: Float32Array;
   private readonly slotNormalZ: Float32Array;
   private readonly slotUniformIdx: Int32Array;
+  private readonly uniformOwnerDecalSlot: Int16Array;
   private readonly recentImpacts: CraterImpactRecord[] = [];
   private readonly shaderCraterUniformData = new Float32Array(MAX_SHADER_WORLD_CRATERS * 4);
   private readonly trackedConcreteMaterials = new Set<pc.StandardMaterial>();
@@ -58,7 +63,7 @@ export class PomCraterDecalSystem {
     this.app = app;
     this.maxDecals = Math.max(4, Math.floor(maxDecals));
     this.ringSlots = new Int32Array(this.maxDecals).fill(-1);
-    this.slotActive = new Uint8Array(this.maxDecals);
+    this.slotState = new Uint8Array(this.maxDecals).fill(CraterDecalSlotState.INACTIVE);
     this.slotPointX = new Float32Array(this.maxDecals);
     this.slotPointY = new Float32Array(this.maxDecals);
     this.slotPointZ = new Float32Array(this.maxDecals);
@@ -66,6 +71,7 @@ export class PomCraterDecalSystem {
     this.slotNormalY = new Float32Array(this.maxDecals);
     this.slotNormalZ = new Float32Array(this.maxDecals);
     this.slotUniformIdx = new Int32Array(this.maxDecals).fill(-1);
+    this.uniformOwnerDecalSlot = new Int16Array(MAX_SHADER_WORLD_CRATERS).fill(-1);
 
     const device = app.graphicsDevice;
     this.textures = createProceduralCraterTextures(device, textureResolution);
@@ -127,6 +133,11 @@ export class PomCraterDecalSystem {
     this.trackedConcreteMaterials.add(material);
   }
 
+  public getSlotState(slotId: number): CraterDecalSlotState {
+    if (slotId < 0 || slotId >= this.maxDecals) return CraterDecalSlotState.INACTIVE;
+    return this.slotState[slotId] as CraterDecalSlotState;
+  }
+
   public spawnCraterImpact(
     pointWorld: Vec3Like,
     normalWorld: Vec3Like,
@@ -134,74 +145,45 @@ export class PomCraterDecalSystem {
     kineticEnergyJ: number,
     caliberRadiusM = 0.004,
   ): CraterImpactRecord {
-    const energyClamped = Math.max(80, Math.min(18000, kineticEnergyJ));
-    const energyFactor = Math.cbrt(energyClamped / 1800);
-    const craterDiameterM = Math.max(0.095, Math.min(0.38, (caliberRadiusM * 19 + 0.072) * energyFactor));
-    const craterRadiusM = craterDiameterM * 0.5;
-    const craterDepthM = craterRadiusM * 0.36;
-
-    if (!this.destroyed) {
-      let slotId = this.ringSlots[this.ringCursor];
-      if (slotId < 0 || !this.decalPool.isSlotActive(slotId)) {
-        slotId = this.decalPool.allocSlot();
-        this.ringSlots[this.ringCursor] = slotId;
-      }
-      this.ringCursor = (this.ringCursor + 1) % this.maxDecals;
-
-      const quat = quatFromPlusZToNormalWithRoll(normalWorld, this.nextRandom() * Math.PI * 2);
-      const surfaceLiftM = 0.0028 + (slotId % 8) * 0.0001;
-
-      if (slotId >= 0) {
-        this.decalPool.setSlotTRS(
-          slotId,
-          {
-            x: pointWorld.x + normalWorld.x * surfaceLiftM,
-            y: pointWorld.y + normalWorld.y * surfaceLiftM,
-            z: pointWorld.z + normalWorld.z * surfaceLiftM,
-          },
-          quat,
-          { x: craterDiameterM, y: craterDiameterM, z: 1 },
-        );
-        this.decalPool.upload();
-      }
-
-      const uIdx = this.shaderCraterWriteCursor * 4;
-      this.shaderCraterUniformData[uIdx] = pointWorld.x;
-      this.shaderCraterUniformData[uIdx + 1] = pointWorld.y;
-      this.shaderCraterUniformData[uIdx + 2] = pointWorld.z;
-      this.shaderCraterUniformData[uIdx + 3] = craterRadiusM;
-
-      if (slotId >= 0 && slotId < this.maxDecals) {
-        this.slotActive[slotId] = 1;
-        this.slotPointX[slotId] = pointWorld.x;
-        this.slotPointY[slotId] = pointWorld.y;
-        this.slotPointZ[slotId] = pointWorld.z;
-        this.slotNormalX[slotId] = normalWorld.x;
-        this.slotNormalY[slotId] = normalWorld.y;
-        this.slotNormalZ[slotId] = normalWorld.z;
-        this.slotUniformIdx[slotId] = uIdx;
-      }
-
-      this.shaderCraterWriteCursor = (this.shaderCraterWriteCursor + 1) % MAX_SHADER_WORLD_CRATERS;
-      this.shaderCraterActiveCount = Math.min(MAX_SHADER_WORLD_CRATERS, this.shaderCraterActiveCount + 1);
-
-      for (const mat of this.trackedConcreteMaterials) {
-        mat.setParameter('uCraterSpheres[0]', this.shaderCraterUniformData);
-        mat.setParameter('uCraterCount', this.shaderCraterActiveCount);
-      }
-
-      this.spawnSpallChipBurst(pointWorld, normalWorld, bulletDirWorld, energyFactor);
-    }
-
-    this.totalSpawnedCraters++;
-    const record: CraterImpactRecord = {
-      pointWorld: { x: pointWorld.x, y: pointWorld.y, z: pointWorld.z },
-      normalWorld: { x: normalWorld.x, y: normalWorld.y, z: normalWorld.z },
-      radiusM: craterRadiusM,
-      depthM: craterDepthM,
+    const spawnerCtx: CraterSpawnerContext = {
+      maxDecals: this.maxDecals,
+      ringSlots: this.ringSlots,
+      ringCursor: this.ringCursor,
+      slotState: this.slotState,
+      slotPointX: this.slotPointX,
+      slotPointY: this.slotPointY,
+      slotPointZ: this.slotPointZ,
+      slotNormalX: this.slotNormalX,
+      slotNormalY: this.slotNormalY,
+      slotNormalZ: this.slotNormalZ,
+      slotUniformIdx: this.slotUniformIdx,
+      uniformOwnerDecalSlot: this.uniformOwnerDecalSlot,
+      decalPool: this.decalPool,
+      shaderCraterUniformData: this.shaderCraterUniformData,
+      shaderCraterWriteCursor: this.shaderCraterWriteCursor,
+      shaderCraterActiveCount: this.shaderCraterActiveCount,
+      trackedConcreteMaterials: this.trackedConcreteMaterials,
+      recentImpacts: this.recentImpacts,
+      nextRandom: () => this.nextRandom(),
+      spawnSpallChips: (pt, norm, dir, factor) => {
+        this.spawnSpallChipBurst(pt, norm, dir, factor);
+      },
     };
-    this.recentImpacts.push(record);
-    if (this.recentImpacts.length > this.maxDecals) this.recentImpacts.shift();
+
+    const record = executeCraterImpact(
+      spawnerCtx,
+      pointWorld,
+      normalWorld,
+      bulletDirWorld,
+      kineticEnergyJ,
+      caliberRadiusM,
+      this.destroyed,
+    );
+
+    this.ringCursor = spawnerCtx.ringCursor;
+    this.shaderCraterWriteCursor = spawnerCtx.shaderCraterWriteCursor;
+    this.shaderCraterActiveCount = spawnerCtx.shaderCraterActiveCount;
+    this.totalSpawnedCraters++;
     return record;
   }
 
@@ -237,8 +219,9 @@ export class PomCraterDecalSystem {
     let prunedCount = 0;
 
     for (let s = 0; s < this.maxDecals; s++) {
-      if (this.slotActive[s] === 0 || !this.decalPool.isSlotActive(s)) {
-        this.slotActive[s] = 0;
+      const prevState = this.slotState[s] as CraterDecalSlotState;
+      if (prevState === CraterDecalSlotState.INACTIVE || !this.decalPool.isSlotActive(s)) {
+        this.slotState[s] = CraterDecalSlotState.INACTIVE;
         continue;
       }
 
@@ -271,15 +254,25 @@ export class PomCraterDecalSystem {
 
       if (!hasIntactStaticSupport) {
         this.decalPool.freeSlot(s);
-        this.slotActive[s] = 0;
+        this.slotState[s] = CraterDecalSlotState.INACTIVE;
         for (let r = 0; r < this.ringSlots.length; r++) {
           if (this.ringSlots[r] === s) {
             this.ringSlots[r] = -1;
           }
         }
-        const uIdx = this.slotUniformIdx[s];
-        if (uIdx >= 0 && uIdx + 3 < this.shaderCraterUniformData.length) {
-          this.shaderCraterUniformData[uIdx + 3] = 0;
+        if (prevState === CraterDecalSlotState.ACTIVE_WITH_SHADER_UNIFORM) {
+          const uIdx = this.slotUniformIdx[s];
+          const uSlot = Math.floor(uIdx / 4);
+          if (
+            uIdx >= 0 &&
+            uIdx + 3 < this.shaderCraterUniformData.length &&
+            uSlot >= 0 &&
+            uSlot < MAX_SHADER_WORLD_CRATERS &&
+            this.uniformOwnerDecalSlot[uSlot] === s
+          ) {
+            this.shaderCraterUniformData[uIdx + 3] = 0;
+            this.uniformOwnerDecalSlot[uSlot] = -1;
+          }
         }
         this.slotUniformIdx[s] = -1;
         prunedCount++;
@@ -306,8 +299,9 @@ export class PomCraterDecalSystem {
   public clear(): void {
     if (this.destroyed) return;
     this.ringSlots.fill(-1);
-    this.slotActive.fill(0);
+    this.slotState.fill(CraterDecalSlotState.INACTIVE);
     this.slotUniformIdx.fill(-1);
+    this.uniformOwnerDecalSlot.fill(-1);
     this.ringCursor = 0;
     this.totalSpawnedCraters = 0;
     this.recentImpacts.length = 0;

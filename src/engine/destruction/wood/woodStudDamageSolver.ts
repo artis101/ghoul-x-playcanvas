@@ -9,6 +9,7 @@ import {
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 import type { HardwareInstancedPool } from '../../physics/instancedPool.ts';
 import {
+  type BuckshotClusterTier,
   DEFAULT_WOOD_STUD_WIDTH_M,
   MEDIUM_BUCKSHOT_CLUSTER_RADIUS_M,
   TIGHT_BUCKSHOT_CLUSTER_RADIUS_M,
@@ -134,6 +135,20 @@ export function damageInteriorStudSections(
   return brokeAnySection;
 }
 
+const CLUSTER_TIER_RANK: Readonly<Record<BuckshotClusterTier, number>> = {
+  NONE: 0,
+  MEDIUM_3: 1,
+  TIGHT_5: 2,
+  TIGHT_8: 3,
+};
+
+const CLUSTER_TIER_TARGET_STUD_DAMAGE_HP: Readonly<Record<BuckshotClusterTier, number>> = {
+  NONE: 0,
+  MEDIUM_3: 600,
+  TIGHT_5: 1_250,
+  TIGHT_8: 1_250,
+};
+
 export function tryApplyBuckshotClusterBlowout(
   physicsWorld: RapierPhysicsWorld,
   splinterPools: readonly HardwareInstancedPool[],
@@ -150,31 +165,37 @@ export function tryApplyBuckshotClusterBlowout(
 
   const tight = findBestPelletCluster(volley.impacts, TIGHT_BUCKSHOT_CLUSTER_RADIUS_M);
   if (tight.count >= 5) {
-    const targetTier: 2 | 3 = tight.count >= 8 ? 3 : 2;
-    if (targetTier <= volley.clusterTierApplied) return;
-    volley.clusterTierApplied = targetTier;
+    const targetTier: BuckshotClusterTier = tight.count >= 8 ? 'TIGHT_8' : 'TIGHT_5';
+    if (CLUSTER_TIER_RANK[targetTier] <= CLUSTER_TIER_RANK[volley.tier]) return;
+    volley.tier = targetTier;
+
+    const targetDamageHp = CLUSTER_TIER_TARGET_STUD_DAMAGE_HP[targetTier];
+    const deltaStudDamageHp = Math.max(0, targetDamageHp - volley.appliedStudDamageHp);
+    volley.appliedStudDamageHp += deltaStudDamageHp;
 
     const pelletFrac = Math.min(1, (tight.count - 3) / 6);
     const tightnessBonus = Math.max(0, 1 - tight.maxSpreadM / TIGHT_BUCKSHOT_CLUSTER_RADIUS_M);
     const clusterRadiusM = Math.min(0.27, Math.max(0.19 + 0.055 * pelletFrac + 0.02 * tightnessBonus, tight.maxSpreadM * 1.15 + 0.045));
 
-    damageInteriorStudSections(
-      physicsWorld,
-      splinterPools,
-      nextRand,
-      wall,
-      internal,
-      tight.centerU,
-      tight.centerV,
-      clusterRadiusM * 0.78,
-      clusterRadiusM * 0.85,
-      1_250,
-      lastImp.dirWorld,
-      lastImp.exitSignZ,
-      lastImp.energyJ * tight.count,
-      uploadWallPanelMesh,
-      slabPool,
-    );
+    if (deltaStudDamageHp > 0) {
+      damageInteriorStudSections(
+        physicsWorld,
+        splinterPools,
+        nextRand,
+        wall,
+        internal,
+        tight.centerU,
+        tight.centerV,
+        clusterRadiusM * 0.78,
+        clusterRadiusM * 0.85,
+        deltaStudDamageHp,
+        lastImp.dirWorld,
+        lastImp.exitSignZ,
+        lastImp.energyJ * tight.count,
+        uploadWallPanelMesh,
+        slabPool,
+      );
+    }
 
     const clusterStamp = createJaggedHoleStamp({
       u: tight.centerU,
@@ -187,41 +208,47 @@ export function tryApplyBuckshotClusterBlowout(
       grainStretchOverride: 1.44,
     });
 
-    const subRes = stampHoleInWoodPanel(wall.panelState, clusterStamp, wall.scratchBuffers, targetTier === 3 ? 8 : 11);
+    const subRes = stampHoleInWoodPanel(wall.panelState, clusterStamp, wall.scratchBuffers, targetTier === 'TIGHT_8' ? 8 : 11);
     volley.clusterCuts.push({ u: tight.centerU, v: tight.centerV, cutRadiusM: clusterRadiusM * 1.48 });
 
     if (subRes.cutAnyWood) {
       uploadWallPanelMesh(wall, subRes.meshStats);
       spawnPerimeterSplinters(splinterPools, nextRand, wall, subRes.splinters, lastImp.dirWorld, lastImp.exitSignZ, lastImp.energyJ * 4.5);
       slabPool?.spawnDroppedSlabs(wall, subRes.droppedSlabs, lastImp.dirWorld, lastImp.exitSignZ, lastImp.energyJ * 4.5, nextRand);
-      spawnPlankChunkBurst(splinterPools, nextRand, wall, tight.centerU, tight.centerV, clusterRadiusM, lastImp.dirWorld, lastImp.exitSignZ, lastImp.energyJ * 5.0, targetTier === 3 ? 5 : 9);
+      spawnPlankChunkBurst(splinterPools, nextRand, wall, tight.centerU, tight.centerV, clusterRadiusM, lastImp.dirWorld, lastImp.exitSignZ, lastImp.energyJ * 5.0, targetTier === 'TIGHT_8' ? 5 : 9);
     }
     return;
   }
 
-  if (volley.clusterTierApplied < 1) {
+  if (CLUSTER_TIER_RANK[volley.tier] < CLUSTER_TIER_RANK.MEDIUM_3) {
     const med = findBestPelletCluster(volley.impacts, MEDIUM_BUCKSHOT_CLUSTER_RADIUS_M);
     if (med.count >= 3) {
-      volley.clusterTierApplied = 1;
+      volley.tier = 'MEDIUM_3';
+      const targetDamageHp = CLUSTER_TIER_TARGET_STUD_DAMAGE_HP.MEDIUM_3;
+      const deltaStudDamageHp = Math.max(0, targetDamageHp - volley.appliedStudDamageHp);
+      volley.appliedStudDamageHp += deltaStudDamageHp;
+
       const clusterRadiusM = Math.min(0.17, Math.max(0.12 + 0.012 * (med.count - 3), med.maxSpreadM * 0.80 + 0.032));
 
-      damageInteriorStudSections(
-        physicsWorld,
-        splinterPools,
-        nextRand,
-        wall,
-        internal,
-        med.centerU,
-        med.centerV,
-        clusterRadiusM * 0.55,
-        clusterRadiusM * 0.65,
-        600,
-        lastImp.dirWorld,
-        lastImp.exitSignZ,
-        lastImp.energyJ * med.count,
-        uploadWallPanelMesh,
-        slabPool,
-      );
+      if (deltaStudDamageHp > 0) {
+        damageInteriorStudSections(
+          physicsWorld,
+          splinterPools,
+          nextRand,
+          wall,
+          internal,
+          med.centerU,
+          med.centerV,
+          clusterRadiusM * 0.55,
+          clusterRadiusM * 0.65,
+          deltaStudDamageHp,
+          lastImp.dirWorld,
+          lastImp.exitSignZ,
+          lastImp.energyJ * med.count,
+          uploadWallPanelMesh,
+          slabPool,
+        );
+      }
 
       const clusterStamp = createJaggedHoleStamp({
         u: med.centerU,

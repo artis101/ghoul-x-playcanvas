@@ -22,6 +22,15 @@ export type ArmoredChunkStage =
   | typeof ARMORED_CHUNK_FRACTURED
   | typeof ARMORED_CHUNK_DETACHED;
 
+export const SHARD_DYNAMIC = 0;
+export const SHARD_SETTLED = 1;
+export const SHARD_FADING = 2;
+
+export type ShardStage =
+  | typeof SHARD_DYNAMIC
+  | typeof SHARD_SETTLED
+  | typeof SHARD_FADING;
+
 export interface Point2D {
   x: number;
   y: number;

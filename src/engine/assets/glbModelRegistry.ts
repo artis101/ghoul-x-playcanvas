@@ -18,6 +18,23 @@ import {
 import { upgradeContainerPbrQuality } from './materialUpgrade.ts';
 import { instantiateWeaponGlb } from './weaponFactory.ts';
 
+export type AssetLoadEntry<T> =
+  | {
+      readonly kind: 'LOADING';
+      readonly epoch: number;
+      readonly promise: Promise<T>;
+      readonly asset?: pc.Asset;
+    }
+  | {
+      readonly kind: 'READY';
+      readonly value: T;
+      readonly asset?: pc.Asset;
+    };
+
+export type GlbRegistryLifecycleState =
+  | { readonly kind: 'ACTIVE'; readonly epoch: number }
+  | { readonly kind: 'DESTROYED'; readonly epoch: number };
+
 const WARMUP_ARCHETYPES: readonly EnemyArchetypeId[] = [
   'SKINHEAD_PUNK',
   'HEAVY_ENFORCER',
@@ -28,14 +45,14 @@ const WARMUP_ARCHETYPES: readonly EnemyArchetypeId[] = [
 export class GlbModelRegistry {
   public readonly app: pc.AppBase;
   public readonly baseUrl: string;
+  public registryState: GlbRegistryLifecycleState = { kind: 'ACTIVE', epoch: 1 };
 
-  private readonly containerAssets = new Map<GlbAssetKey, pc.Asset>();
-  private readonly loadingPromises = new Map<GlbAssetKey, Promise<pc.ContainerResource>>();
+  private readonly containerEntries = new Map<GlbAssetKey, AssetLoadEntry<pc.ContainerResource>>();
   private readonly detachedHeadgearCache = new Map<string, Array<{ mesh: pc.Mesh; material: pc.Material | null }>>();
   private cachedFracturedConcreteBundle: FracturedConcreteWallBundle | null = null;
   private cachedDebrisPackBundle: DebrisPackBundle | null = null;
+  private connectivityEntry: AssetLoadEntry<ConcreteWallConnectivityGraphJson> | null = null;
   private connectivityGraph: ConcreteWallConnectivityGraphJson | null = null;
-  private connectivityPromise: Promise<ConcreteWallConnectivityGraphJson> | null = null;
 
   public constructor(app: pc.AppBase, baseUrl = '/models') {
     this.app = app;
@@ -47,53 +64,79 @@ export class GlbModelRegistry {
 
   public isLoaded(key: GlbAssetKey | 'weapon_beretta_m9'): boolean {
     const resolvedKey: GlbAssetKey = key === 'weapon_beretta_m9' ? 'silver_talon_50ae' : key;
-    const asset = this.containerAssets.get(resolvedKey);
-    return Boolean(asset && asset.resource);
+    const entry = this.containerEntries.get(resolvedKey);
+    return entry?.kind === 'READY';
   }
 
   public getContainer(key: GlbAssetKey | 'weapon_beretta_m9'): pc.ContainerResource | null {
     const resolvedKey: GlbAssetKey = key === 'weapon_beretta_m9' ? 'silver_talon_50ae' : key;
-    const asset = this.containerAssets.get(resolvedKey);
-    return asset && asset.resource ? (asset.resource as pc.ContainerResource) : null;
+    const entry = this.containerEntries.get(resolvedKey);
+    return entry?.kind === 'READY' ? entry.value : null;
   }
 
   public registerContainerResource(key: GlbAssetKey, container: pc.ContainerResource): void {
+    if (this.registryState.kind === 'DESTROYED') {
+      this.registryState = { kind: 'ACTIVE', epoch: this.registryState.epoch + 1 };
+    }
+    const prev = this.containerEntries.get(key);
+    if (prev?.asset) {
+      this.app.assets.remove(prev.asset);
+      prev.asset.unload();
+    }
     upgradeContainerPbrQuality(container, this.app.graphicsDevice);
     const asset = new pc.Asset(`glb_${key}`, 'container');
     asset.resource = container;
-    this.containerAssets.set(key, asset);
+    this.containerEntries.set(key, { kind: 'READY', value: container, asset });
     if (key === 'concrete_wall_fractured') this.cachedFracturedConcreteBundle = null;
     if (key === 'debris_pack') this.cachedDebrisPackBundle = null;
     if (key === 'ghoul_combatant') this.detachedHeadgearCache.clear();
   }
 
   public loadContainer(key: GlbAssetKey): Promise<pc.ContainerResource> {
-    const existing = this.getContainer(key);
-    if (existing) return Promise.resolve(existing);
+    if (this.registryState.kind === 'DESTROYED') {
+      return Promise.reject(new Error(`Cannot load GLB container ${key}: GlbModelRegistry is destroyed`));
+    }
+    const existing = this.containerEntries.get(key);
+    if (existing?.kind === 'READY') return Promise.resolve(existing.value);
+    if (existing?.kind === 'LOADING' && existing.epoch === this.registryState.epoch) {
+      return existing.promise;
+    }
 
-    const inFlight = this.loadingPromises.get(key);
-    if (inFlight) return inFlight;
-
+    const loadEpoch = this.registryState.epoch;
     const url = this.getAssetUrl(key);
     const asset = new pc.Asset(`glb_${key}`, 'container', { url });
-    this.containerAssets.set(key, asset);
 
     const promise = new Promise<pc.ContainerResource>((resolve, reject) => {
+      const cleanupFailedAsset = (): void => {
+        const cur = this.containerEntries.get(key);
+        if (cur?.kind === 'LOADING' && cur.asset === asset) {
+          this.containerEntries.delete(key);
+        }
+        this.app.assets.remove(asset);
+        asset.unload();
+      };
+
       const onLoad = (loadedAsset: pc.Asset): void => {
         asset.off('error', onError);
-        this.loadingPromises.delete(key);
+        if (this.registryState.kind !== 'ACTIVE' || this.registryState.epoch !== loadEpoch) {
+          cleanupFailedAsset();
+          reject(new Error(`GlbModelRegistry destroyed while loading ${url}`));
+          return;
+        }
         const resource = loadedAsset.resource as pc.ContainerResource | null;
         if (!resource) {
+          cleanupFailedAsset();
           reject(new Error(`Container resource missing after loading ${url}`));
           return;
         }
         upgradeContainerPbrQuality(resource, this.app.graphicsDevice);
+        this.containerEntries.set(key, { kind: 'READY', value: resource, asset });
         resolve(resource);
       };
 
       const onError = (err: string): void => {
         asset.off('load', onLoad);
-        this.loadingPromises.delete(key);
+        cleanupFailedAsset();
         reject(new Error(`Failed to load GLB container ${url}: ${err}`));
       };
 
@@ -103,19 +146,42 @@ export class GlbModelRegistry {
       this.app.assets.load(asset);
     });
 
-    this.loadingPromises.set(key, promise);
+    this.containerEntries.set(key, { kind: 'LOADING', epoch: loadEpoch, promise, asset });
     return promise;
   }
 
   public loadConcreteConnectivity(): Promise<ConcreteWallConnectivityGraphJson> {
-    if (this.connectivityGraph) return Promise.resolve(this.connectivityGraph);
-    if (!this.connectivityPromise) {
-      this.connectivityPromise = loadConnectivityGraphJson(this.getConnectivityUrl()).then((graph) => {
-        this.connectivityGraph = graph;
-        return graph;
-      });
+    if (this.registryState.kind === 'DESTROYED') {
+      return Promise.reject(new Error('Cannot load concrete connectivity: GlbModelRegistry is destroyed'));
     }
-    return this.connectivityPromise;
+    if (this.connectivityGraph) return Promise.resolve(this.connectivityGraph);
+    if (this.connectivityEntry?.kind === 'READY') {
+      this.connectivityGraph = this.connectivityEntry.value;
+      return Promise.resolve(this.connectivityEntry.value);
+    }
+    if (this.connectivityEntry?.kind === 'LOADING' && this.connectivityEntry.epoch === this.registryState.epoch) {
+      return this.connectivityEntry.promise;
+    }
+
+    const loadEpoch = this.registryState.epoch;
+    const promise = loadConnectivityGraphJson(this.getConnectivityUrl())
+      .then((graph) => {
+        if (this.registryState.kind !== 'ACTIVE' || this.registryState.epoch !== loadEpoch) {
+          throw new Error('GlbModelRegistry destroyed while loading concrete connectivity');
+        }
+        this.connectivityGraph = graph;
+        this.connectivityEntry = { kind: 'READY', value: graph };
+        return graph;
+      })
+      .catch((err: unknown) => {
+        if (this.connectivityEntry?.kind === 'LOADING' && this.connectivityEntry.epoch === loadEpoch) {
+          this.connectivityEntry = null;
+        }
+        throw err;
+      });
+
+    this.connectivityEntry = { kind: 'LOADING', epoch: loadEpoch, promise };
+    return promise;
   }
 
   public async preloadAll(onAssetLoaded?: (ev: AssetLoadProgressEvent) => void): Promise<void> {
@@ -140,7 +206,8 @@ export class GlbModelRegistry {
   }
 
   public warmExtractedBundles(onStep?: (label: string) => void): void {
-    if (this.isLoaded('concrete_wall_fractured') && this.connectivityGraph) {
+    const graph = this.connectivityEntry?.kind === 'READY' ? this.connectivityEntry.value : this.connectivityGraph;
+    if (this.isLoaded('concrete_wall_fractured') && graph) {
       onStep?.('Extracting Voronoi concrete fracture bundle...');
       try {
         this.getFracturedConcreteWallBundle();
@@ -196,9 +263,10 @@ export class GlbModelRegistry {
   public getFracturedConcreteWallBundle(): FracturedConcreteWallBundle {
     const container = this.getContainer('concrete_wall_fractured');
     if (!container) throw new Error('concrete_wall_fractured.glb is not loaded yet.');
-    if (!this.connectivityGraph) throw new Error('concrete_wall_connectivity.json is not loaded yet.');
+    const graph = this.connectivityEntry?.kind === 'READY' ? this.connectivityEntry.value : this.connectivityGraph;
+    if (!graph) throw new Error('concrete_wall_connectivity.json is not loaded yet.');
     if (!this.cachedFracturedConcreteBundle) {
-      this.cachedFracturedConcreteBundle = extractFracturedConcreteBundle(this.app, container, this.connectivityGraph);
+      this.cachedFracturedConcreteBundle = extractFracturedConcreteBundle(this.app, container, graph);
     }
     return {
       ...this.cachedFracturedConcreteBundle,
@@ -223,16 +291,18 @@ export class GlbModelRegistry {
   }
 
   public destroy(): void {
-    for (const asset of this.containerAssets.values()) {
-      this.app.assets.remove(asset);
-      asset.unload();
+    this.registryState = { kind: 'DESTROYED', epoch: this.registryState.epoch + 1 };
+    for (const entry of this.containerEntries.values()) {
+      if (entry.asset) {
+        this.app.assets.remove(entry.asset);
+        entry.asset.unload();
+      }
     }
-    this.containerAssets.clear();
-    this.loadingPromises.clear();
+    this.containerEntries.clear();
     this.detachedHeadgearCache.clear();
     this.cachedFracturedConcreteBundle = null;
     this.cachedDebrisPackBundle = null;
+    this.connectivityEntry = null;
     this.connectivityGraph = null;
-    this.connectivityPromise = null;
   }
 }
