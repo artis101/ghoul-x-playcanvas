@@ -21,7 +21,7 @@ import {
   type WeaponGlbInstance,
 } from '../assets/glbLoader.ts';
 import { getPreferredPrimaryHand, isArmChainIntactAndFunctional } from '../ai/combatantArmEvaluation.ts';
-import { CombatantSupportGrip } from './combatantSupportGrip.ts';
+import { CombatantWeaponHands } from './combatantWeaponHands.ts';
 import { CombatantWeaponGrip } from './combatantWeaponGrip.ts';
 import {
   createPropAttachmentState,
@@ -34,7 +34,7 @@ export class CombatantWeaponMount {
   public heldWeaponNode: pc.Entity | null = null;
   public heldWeaponGlb: WeaponGlbInstance | null = null;
   public attachmentState: PropAttachmentState<'LEFT' | 'RIGHT'> = createPropAttachmentState('ATTACHED');
-  private readonly supportGrip = new CombatantSupportGrip();
+  private hands: CombatantWeaponHands | null = null;
   private readonly grip = new CombatantWeaponGrip();
 
   public get wasWeaponHeld(): boolean {
@@ -66,6 +66,7 @@ export class CombatantWeaponMount {
         wInst.animComponent.playing = false;
       }
       this.heldWeaponGlb = wInst;
+      this.hands = new CombatantWeaponHands(wInst);
       this.heldWeaponNode = wInst.rootEntity;
       this.heldWeaponNode.enabled = this.attachmentState.kind === 'ATTACHED';
       rootEntity.addChild(this.heldWeaponNode);
@@ -169,7 +170,7 @@ export class CombatantWeaponMount {
       }
 
       this.grip.align(this.heldWeaponNode, this.heldWeaponNode, weaponId, palmTrig, gunFwd);
-      if (glb && canUseSupport) this.supportGrip.sync(glb, supportHand, this.heldWeaponNode, weaponId);
+      if (glb) this.hands?.sync(glb, triggerHand, canUseSupport);
     }
   }
 
@@ -184,5 +185,6 @@ export class CombatantWeaponMount {
     this.heldWeaponGlb?.destroy();
     this.heldWeaponGlb = null;
     this.heldWeaponNode = null;
+    this.hands = null;
   }
 }

@@ -19,7 +19,13 @@ export type GlbAssetKey =
 export type CombatantAnimationClipName =
   | 'CombatReadyIdle'
   | 'UnsuspectingIdle'
-  | 'UnsuspectingIdle_Kimodo'
+  | 'LongGunAim'
+  | 'PistolAim'
+  | 'Walk'
+  | 'Run'
+  | 'WalkBackward'
+  | 'StrafeLeft'
+  | 'StrafeRight'
   | 'HitStaggerChest'
   | 'DiaphragmDropKneel'
   | 'LegCollapseCrawl';
@@ -27,7 +33,13 @@ export type CombatantAnimationClipName =
 export const COMBATANT_ANIMATION_CLIPS: readonly CombatantAnimationClipName[] = [
   'CombatReadyIdle',
   'UnsuspectingIdle',
-  'UnsuspectingIdle_Kimodo',
+  'LongGunAim',
+  'PistolAim',
+  'Walk',
+  'Run',
+  'WalkBackward',
+  'StrafeLeft',
+  'StrafeRight',
   'HitStaggerChest',
   'DiaphragmDropKneel',
   'LegCollapseCrawl',

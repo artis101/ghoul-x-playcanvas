@@ -3,7 +3,7 @@ import type { Vec3Like } from '../../contracts/ballistics.ts';
 import type { WeaponAssetId } from '../assets/glbLoader.ts';
 
 // Palm centers in the weapon model's authored coordinates.
-const TRIGGER_GRIPS: Record<WeaponAssetId, pc.Vec3> = {
+export const TRIGGER_GRIPS: Readonly<Record<WeaponAssetId, pc.Vec3>> = {
   m4a1_carbine: new pc.Vec3(0, -0.05, 0.023),
   m590_shotgun: new pc.Vec3(0, -0.016, 0.068),
   msg90_sniper: new pc.Vec3(0, -0.06, 0.027),

@@ -111,13 +111,14 @@ export class PlayerCameraRig {
     this.swayPitchOffset = Math.max(-2.2, Math.min(2.2, this.swayPitchOffset - deltaPitch * 0.24 * swayScale));
   }
 
-  public applyRecoilKick(recoilKickDeg: number): void {
+  public applyRecoilKick(recoilKickDeg: number, applyViewmodelKick = true): void {
     const adsBrace = this.isAimingDownSights ? 0.68 : 1.0;
     this.recoilShotSign = -this.recoilShotSign;
     this.recoilPitch = Math.min(8.0, this.recoilPitch + recoilKickDeg * 0.72 * adsBrace);
     this.recoilYaw = Math.max(-2.2, Math.min(2.2, this.recoilYaw + this.recoilShotSign * recoilKickDeg * 0.11 * adsBrace));
     this.recoilCameraRoll = Math.max(-2.4, Math.min(2.4, this.recoilCameraRoll + this.recoilShotSign * recoilKickDeg * 0.16 * adsBrace));
 
+    if (!applyViewmodelKick) return;
     const kickNorm = Math.min(1.6, Math.max(0.45, recoilKickDeg / 3.2));
     this.recoilOffsetZ = Math.min(0.105, Math.max(this.recoilOffsetZ, 0.058 * kickNorm * adsBrace));
     this.vmRecoilPitchDeg = Math.min(11.5, this.vmRecoilPitchDeg + recoilKickDeg * 1.18 * adsBrace);

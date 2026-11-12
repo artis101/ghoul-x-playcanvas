@@ -2,7 +2,6 @@
 
 import json
 import struct
-from copy import deepcopy
 from pathlib import Path
 
 from mathutils import Quaternion
@@ -25,15 +24,54 @@ class CombatantGlbAnimation:
     def clip(self, name):
         return next(clip for clip in self.doc["animations"] if clip["name"] == name)
 
-    def add_variant(self, base_name, variant_name):
-        base = self.clip(base_name)
-        for clip in self.doc["animations"]:
-            if clip["name"] == variant_name:
-                raise ValueError(f"{variant_name} already exists. Start from the original combatant GLB.")
-        variant = deepcopy(base)
-        variant["name"] = variant_name
-        self.doc["animations"].append(variant)
-        return variant
+    def clear_animations(self):
+        # This asset uses standard glTF mesh, skin and image references.
+        accessor_refs = []
+        for mesh in self.doc["meshes"]:
+            for primitive in mesh["primitives"]:
+                accessor_refs.append((primitive, "indices"))
+                for attrs in [primitive["attributes"], *primitive.get("targets", [])]:
+                    accessor_refs.extend((attrs, key) for key in attrs)
+        accessor_refs.extend((skin, "inverseBindMatrices") for skin in self.doc["skins"])
+        accessor_refs = [(obj, key) for obj, key in accessor_refs if key in obj]
+        accessors = self.retain_referenced(self.doc["accessors"], accessor_refs)
+        view_refs = [(accessor, "bufferView") for accessor in accessors]
+        view_refs.extend((image, "bufferView") for image in self.doc["images"])
+        views = self.retain_referenced(self.doc["bufferViews"], view_refs)
+        packed = bytearray()
+        for view in views:
+            start = view.get("byteOffset", 0)
+            packed.extend(b"\0" * (-len(packed) % 4))
+            view["byteOffset"] = len(packed)
+            packed.extend(self.binary[start:start + view["byteLength"]])
+        packed.extend(b"\0" * (-len(packed) % 4))
+        self.doc.update(animations=[], accessors=accessors, bufferViews=views)
+        self.binary = packed
+
+    @staticmethod
+    def retain_referenced(items, refs):
+        indices = sorted({obj[key] for obj, key in refs})
+        mapping = {index: new for new, index in enumerate(indices)}
+        for obj, key in refs:
+            obj[key] = mapping[obj[key]]
+        return [items[index] for index in indices]
+
+    def add_clip(self, name, times, frames):
+        clip = {"name": name, "channels": [], "samplers": []}
+        time_sampler = {}
+        self.replace_times(time_sampler, times)
+        node_indices = {node["name"]: index for index, node in enumerate(self.doc["nodes"])}
+        for bone, path in frames[0]:
+            sampler = {"input": time_sampler["input"], "interpolation": "LINEAR"}
+            clip["channels"].append({"sampler": len(clip["samplers"]),
+                                     "target": {"node": node_indices[bone], "path": path}})
+            clip["samplers"].append(sampler)
+            values = [frame[bone, path] for frame in frames]
+            if path == "rotation":
+                self.replace_rotations(sampler, values)
+            else:
+                self.replace_vectors(sampler, values)
+        self.doc["animations"].append(clip)
 
     def rotation_channels(self, clip):
         for name, node, path, sampler in self.channels(clip):

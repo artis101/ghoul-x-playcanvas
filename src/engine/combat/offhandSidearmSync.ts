@@ -100,6 +100,15 @@ export class OffhandSidearmSync {
     }
     const aimDir = normalize(vec3(horizDir.x * Math.sqrt(1 - clampedY * clampedY), clampedY, horizDir.z * Math.sqrt(1 - clampedY * clampedY)));
 
+    const glb = target.combatantGlb;
+    const animatedHand = glb?.boneNodes.get(handZone);
+    if (target.isPlayingPistolAim && glb && animatedHand && rig.glbInstance) {
+      const palm = add(animatedHand.getPosition(), scale(animatedHand.up, 0.052));
+      this.grip.align(rig.holderEntity, rig.glbInstance.rootEntity, 'silver_talon_50ae', palm, aimDir);
+      rig.hands?.sync(glb, activeHand, false);
+      return true;
+    }
+
     const drawProgress = Math.max(0, Math.min(1, sidearmState?.drawProgress ?? 1.0));
     const smoothDraw = drawProgress * drawProgress * (3 - 2 * drawProgress);
     const holsterDir = normalize(add(scale(charFwd, 0.26), vec3(charRight.x * sideSign * 0.22, -0.86, charRight.z * sideSign * 0.22)));
@@ -159,7 +168,9 @@ export class OffhandSidearmSync {
         ? add(glbHand.getPosition(), scale(glbHand.up, 0.052))
         : add(pHand, scale(armAimDir, 0.052));
       this.grip.align(rig.holderEntity, rig.glbInstance.rootEntity, 'silver_talon_50ae', palm, armAimDir);
+      if (glb && !hs.isRagdollActive) rig.hands?.sync(glb, activeHand, false);
     }
     return true;
   }
+
 }

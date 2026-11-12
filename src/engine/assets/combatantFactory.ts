@@ -6,6 +6,14 @@ import { findEntityByName, upgradeEntityHierarchyPbr } from './materialUpgrade.t
 
 export { instantiateDetachedHeadgearProp } from './headgearFactory.ts';
 
+const LOOPING_COMBATANT_CLIPS = new Set([
+  'CombatReadyIdle', 'UnsuspectingIdle', 'Walk', 'Run', 'WalkBackward', 'StrafeLeft', 'StrafeRight',
+]);
+
+function isLoopingClip(name: string): boolean {
+  return LOOPING_COMBATANT_CLIPS.has(name.replace(/_Southpaw$/, ''));
+}
+
 export function instantiateCombatantGlb(
   app: pc.AppBase,
   container: pc.ContainerResource,
@@ -100,8 +108,7 @@ export function instantiateCombatantGlb(
       const track = animAsset.resource;
       if (!track) continue;
       const clipName = track.name || animAsset.name;
-      const isLooping = clipName.startsWith('CombatReadyIdle') || clipName.startsWith('UnsuspectingIdle');
-      animComponent.assignAnimation(clipName, track, undefined, 1.0, isLooping);
+      animComponent.assignAnimation(clipName, track, undefined, 1.0, isLoopingClip(clipName));
       availableClips.add(clipName);
     }
     const baseClip = options?.initialClip ?? 'CombatReadyIdle';
@@ -131,7 +138,7 @@ export function instantiateCombatantGlb(
       animComponent.playing = true;
       if (animComponent.baseLayer.activeState !== resolved) {
         animComponent.baseLayer.transition(resolved, transitionSeconds);
-      } else if (!resolved.startsWith('CombatReadyIdle') && !resolved.startsWith('UnsuspectingIdle')) {
+      } else if (!isLoopingClip(resolved)) {
         animComponent.baseLayer.activeStateCurrentTime = 0;
       }
       animComponent.baseLayer.playing = true;

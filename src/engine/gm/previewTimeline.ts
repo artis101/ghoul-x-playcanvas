@@ -28,6 +28,10 @@ export class PreviewTimeline {
     this.time.value = `${this.seconds.toFixed(2)} / ${this.duration.toFixed(2)} s`;
   }
 
+  public resample(): void {
+    if (this.layer) this.layer.activeStateCurrentTime = this.seconds;
+  }
+
   public advance(dt: number, loop: boolean): boolean {
     const duration = this.duration;
     if (!duration || (!loop && !this.canAdvance)) return false;

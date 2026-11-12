@@ -8,7 +8,7 @@ import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
 import type { GlbZoneMaterialPair, ZoneMeshBundle } from './types.ts';
 import { TOPOLOGICAL_GHOUL_ZONES } from './combatantPoseConstants.ts';
 import { setupCombatantGlbInstance } from './combatantGlbSetup.ts';
-import { CombatantAnimController } from './combatantAnimController.ts';
+import { CombatantAnimController, type CombatantAimPose } from './combatantAnimController.ts';
 import { CombatantLocomotion } from './combatantLocomotion.ts';
 import { CombatantBoneSync } from './combatantBoneSync.ts';
 import { CombatantDismemberment } from './combatantDismemberment.ts';
@@ -129,8 +129,11 @@ export class GhoulMannequinEntity {
     );
   }
 
-  public syncFromHealthState(dt: number, elapsedTime: number, guarding = false): void {
+  public syncFromHealthState(dt: number, elapsedTime: number, guarding = false, aim?: CombatantAimPose): void {
     this.driveState = resolveMannequinDriveState(this.healthState);
+    const movement = this.locomotion.sample(
+      this.healthState.worldPosition, this.healthState.yawRad, dt, this.driveState.mode === 'ANIM_STANDING'
+    );
     const headgearAttached = this.dismemberment.syncHeadgear(this.healthState, this.fxManager);
     const glb = this.combatantGlb;
 
@@ -152,17 +155,13 @@ export class GhoulMannequinEntity {
         }
         case 'ANIM_STANDING':
         case 'ANIM_WOUNDED_POSTURE': {
-          this.animController.syncAnimation(glb, this.healthState, guarding);
+          this.animController.syncAnimation(glb, this.healthState, guarding, movement, aim);
           glb.rootEntity.setPosition(
             this.healthState.worldPosition.x,
             this.healthState.worldPosition.y,
             this.healthState.worldPosition.z
           );
           glb.rootEntity.setEulerAngles(0, (this.healthState.yawRad * 180) / Math.PI, 0);
-          if (glb.animComponent) {
-            this.locomotion.sync(glb, this.healthState, dt, this.driveState.mode === 'ANIM_STANDING');
-          }
-
           this.deadLimbOverlay.sync(glb, this.healthState, this.boneSync, dt);
           if (this.healthState.severedZones.size > 0) {
             for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
@@ -216,6 +215,10 @@ export class GhoulMannequinEntity {
 
   public playWeaponFire(): Vec3Like | undefined {
     return this.weaponMount.playFire();
+  }
+
+  public get isPlayingPistolAim(): boolean {
+    return this.animController.clipState.kind === 'PLAYING' && this.animController.clipState.clip === 'PistolAim';
   }
 
   public destroy(): void {

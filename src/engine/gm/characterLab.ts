@@ -26,9 +26,8 @@ const items: Record<WeaponAssetId, string> = {
 };
 
 function clipLabel(clip: string): string {
-  if (clip === 'UnsuspectingIdle_Kimodo') return 'Guard Idle (Kimodo)';
-  if (clip === 'UnsuspectingIdle_Kimodo_Southpaw') return 'Guard Idle (Kimodo, left hand)';
-  return clip.replace('_Southpaw', ' (left hand)').replace(/([a-z])([A-Z])/g, '$1 $2');
+  return clip.replace('UnsuspectingIdle', 'GuardIdle')
+    .replace('_Southpaw', ' (left hand)').replace(/([a-z])([A-Z])/g, '$1 $2');
 }
 
 function setClipOptions(select: HTMLSelectElement, clips: Iterable<string>, empty: string): void {
@@ -92,14 +91,25 @@ export async function openCharacterLab(): Promise<void> {
     }
 
     function syncGrip(): void {
+      characterTimeline.resample();
       mount.syncWeaponPosition(health, character, undefined, view.characterClip.value.startsWith('UnsuspectingIdle'));
     }
 
     function selectCharacterClip(): void {
       const clip = view.characterClip.value;
       health.isLeftHanded = clip.endsWith('_Southpaw');
-      health.posture = clip.includes('Idle') ? 'COMBAT_READY' : 'STAGGERED';
+      health.posture = /^(HitStagger|DiaphragmDrop|LegCollapse)/.test(clip) ? 'STAGGERED' : 'COMBAT_READY';
       characterTimeline.select(character.animComponent, clip);
+      if (clip.startsWith('PistolAim') && view.item.value !== 'silver_talon_50ae') {
+        view.item.value = 'silver_talon_50ae';
+        selectItem();
+        return;
+      }
+      if (clip.startsWith('LongGunAim') && !/^(m4a1_carbine|m590_shotgun|msg90_sniper)$/.test(view.item.value)) {
+        view.item.value = 'm4a1_carbine';
+        selectItem();
+        return;
+      }
       syncGrip();
     }
 
@@ -141,6 +151,7 @@ export async function openCharacterLab(): Promise<void> {
     view.item.addEventListener('change', selectItem, options);
     view.itemClip.addEventListener('change', () => {
       itemTimeline.select(mount.heldWeaponGlb?.animComponent ?? null, view.itemClip.value);
+      syncGrip();
     }, options);
     view.speed.addEventListener('change', () => { speed = Number(view.speed.value); }, options);
 
@@ -148,7 +159,7 @@ export async function openCharacterLab(): Promise<void> {
       input.addEventListener('input', () => {
         setPlaying(false);
         timeline.seek(input.valueAsNumber);
-        if (timeline === characterTimeline) syncGrip();
+        syncGrip();
       }, options);
     }
 
@@ -169,8 +180,9 @@ export async function openCharacterLab(): Promise<void> {
       if (!playing) return;
       const elapsed = dt * speed;
       const loop = view.loop.checked;
-      if (characterTimeline.advance(elapsed, loop)) syncGrip();
-      itemTimeline.advance(elapsed, loop);
+      const characterAdvanced = characterTimeline.advance(elapsed, loop);
+      const itemAdvanced = itemTimeline.advance(elapsed, loop);
+      if (characterAdvanced || itemAdvanced) syncGrip();
       if (!loop && !characterTimeline.canAdvance && !itemTimeline.canAdvance) setPlaying(false);
     });
 

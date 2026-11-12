@@ -1,57 +1,55 @@
-import * as pc from 'playcanvas';
-import type { TargetHealthState } from '../../contracts/ballistics.ts';
-import type { CombatantGlbInstance } from '../assets/glbLoader.ts';
+import type { Vec3Like } from '../../contracts/ballistics.ts';
+
+export interface CombatantMovementClip {
+  readonly clip: 'Walk' | 'Run' | 'WalkBackward' | 'StrafeLeft' | 'StrafeRight';
+  readonly playbackSpeed: number;
+}
 
 export class CombatantLocomotion {
-  private readonly previousPosition = new pc.Vec3();
-  private readonly travel = new pc.Vec3();
-  private readonly travelDirection = new pc.Vec3();
-  private readonly axis = new pc.Vec3();
-  private readonly swing = new pc.Quat();
-  private readonly rotation = new pc.Quat();
-  private hasPreviousPosition = false;
-  private phase = 0;
-  private strideWeight = 0;
+  private previousX = 0;
+  private previousZ = 0;
+  private sampled = false;
+  private speed = 0;
+  private movement: CombatantMovementClip | undefined;
 
-  public sync(glb: CombatantGlbInstance, state: TargetHealthState, dt: number, standing: boolean): void {
-    const { x, y, z } = state.worldPosition;
-    this.travel.set(x - this.previousPosition.x, 0, z - this.previousPosition.z);
-    this.previousPosition.set(x, y, z);
-    const distance = this.hasPreviousPosition ? this.travel.length() : 0;
-    this.hasPreviousPosition = true;
+  public sample(position: Vec3Like, yaw: number, dt: number, standing: boolean): CombatantMovementClip | undefined {
+    const dx = position.x - this.previousX;
+    const dz = position.z - this.previousZ;
+    this.previousX = position.x;
+    this.previousZ = position.z;
+    const distance = this.sampled ? Math.hypot(dx, dz) : 0;
+    this.sampled = true;
 
-    if (!standing || dt <= 0 || distance > 0.8) {
-      this.strideWeight = 0;
-      this.phase = 0;
+    if (!standing || distance > 0.8) {
+      this.speed = 0;
+      this.movement = undefined;
       return;
     }
+    if (dt <= 0) return this.movement;
 
-    const weight = Math.min(1, distance / dt / 1.6);
-    const blend = 1 - Math.exp(-12 * dt);
-    this.strideWeight += (weight - this.strideWeight) * blend;
-    if (distance > 1e-4) {
-      this.travelDirection.copy(this.travel).mulScalar(1 / distance);
-      this.phase = (this.phase + distance * (2 * Math.PI / 0.82)) % (2 * Math.PI);
+    this.speed += (distance / dt - this.speed) * (1 - Math.exp(-16 * dt));
+    if (this.speed < (this.movement ? 0.22 : 0.42)) {
+      this.movement = undefined;
+      return;
     }
-    if (this.strideWeight < 0.002) return;
+    if (distance < 1e-4) return this.movement;
 
-    // Layer a stride over the sampled idle while the root moves, including strafes.
-    this.axis.cross(this.travelDirection, pc.Vec3.UP);
-    const stride = Math.sin(this.phase);
-    for (const side of ['LEFT', 'RIGHT'] as const) {
-      const swing = side === 'LEFT' ? stride : -stride;
-      const thigh = glb.boneNodes.get(`THIGH_${side}`);
-      if (thigh) {
-        this.swing.setFromAxisAngle(this.axis, swing * this.strideWeight * 22);
-        this.rotation.mul2(this.swing, thigh.getRotation());
-        thigh.setRotation(this.rotation);
-      }
-      const knee = glb.boneNodes.get(`KNEE_${side}`);
-      if (knee) {
-        this.swing.setFromAxisAngle(glb.rootEntity.right, Math.max(0, swing) * this.strideWeight * 16);
-        this.rotation.mul2(this.swing, knee.getRotation());
-        knee.setRotation(this.rotation);
-      }
+    const side = dx * Math.cos(yaw) - dz * Math.sin(yaw);
+    const forward = dx * Math.sin(yaw) + dz * Math.cos(yaw);
+    let clip: CombatantMovementClip['clip'];
+    let nominalSpeed = 1.7;
+    if (Math.abs(side) > Math.abs(forward) * 1.1) {
+      clip = side < 0 ? 'StrafeRight' : 'StrafeLeft';
+      nominalSpeed = 2.6;
+    } else if (forward < 0) {
+      clip = 'WalkBackward';
+    } else if (this.speed > (this.movement?.clip === 'Run' ? 2.05 : 2.35)) {
+      clip = 'Run';
+      nominalSpeed = 2.7;
+    } else {
+      clip = 'Walk';
     }
+    this.movement = { clip, playbackSpeed: Math.max(0.45, Math.min(1.5, this.speed / nominalSpeed)) };
+    return this.movement;
   }
 }

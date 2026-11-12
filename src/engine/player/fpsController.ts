@@ -105,8 +105,8 @@ export class FpsController {
     return new pc.Vec3(this.playerPos.x, this.playerPos.y + this.rig.lastCamHeadBobY, this.playerPos.z);
   }
 
-  public applyRecoilKick(recoilKickDeg: number): void {
-    this.rig.applyRecoilKick(recoilKickDeg);
+  public applyRecoilKick(recoilKickDeg: number, applyViewmodelKick = true): void {
+    this.rig.applyRecoilKick(recoilKickDeg, applyViewmodelKick);
   }
 
   public applyCameraShake(intensityDeg: number, durationS = 0.36): void {

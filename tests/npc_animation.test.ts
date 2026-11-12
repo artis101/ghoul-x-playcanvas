@@ -1,9 +1,10 @@
 import * as pc from 'playcanvas';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createTargetHealthState } from '../src/core/ghoul/anatomy.ts';
 import { solveTwoBoneIk } from '../src/core/ghoul/anatomy/twoBoneIk.ts';
 import { length, sub, vec3 } from '../src/core/ballistics/vec3.ts';
 import { CombatantAnimController } from '../src/engine/mannequin/combatantAnimController.ts';
+import { CombatantLocomotion } from '../src/engine/mannequin/combatantLocomotion.ts';
 import { CombatantWeaponGrip } from '../src/engine/mannequin/combatantWeaponGrip.ts';
 
 describe('NPC animation and weapon grips', () => {
@@ -22,27 +23,45 @@ describe('NPC animation and weapon grips', () => {
     expect(controller.resolveDesiredClip(state)).toBe('LegCollapseCrawl');
   });
 
-  it('selects the Kimodo guard clip only when the matching handed variant is available', () => {
+  it('selects directional locomotion from movement relative to the NPC heading', () => {
+    const locomotion = new CombatantLocomotion();
+    expect(locomotion.sample(vec3(), 0, 0.1, true)).toBeUndefined();
+    expect(locomotion.sample(vec3(0, 0, 0.2), 0, 0.1, true)?.clip).toBe('Walk');
+    expect(locomotion.sample(vec3(0, 0, 0.5), 0, 0.1, true)?.clip).toBe('Run');
+    expect(locomotion.sample(vec3(0.2, 0, 0.5), 0, 0.1, true)?.clip).toBe('StrafeLeft');
+    expect(locomotion.sample(vec3(0, 0, 0.5), 0, 0.1, true)?.clip).toBe('StrafeRight');
+    expect(locomotion.sample(vec3(0, 0, 0.3), 0, 0.1, true)?.clip).toBe('WalkBackward');
+    expect(locomotion.sample(vec3(0, 0, 0.1), 0, 0.1, false)).toBeUndefined();
+  });
+
+  it('updates gait playback speed without restarting and prioritizes injury clips', () => {
     const state = createTargetHealthState('npc', 'NPC', vec3());
     const controller = new CombatantAnimController();
-    const availableClips = new Set(['UnsuspectingIdle_Kimodo']);
-    const glb = {
-      animComponent: { playing: true } as pc.AnimComponent,
-      availableClips,
-      playClip: () => true,
-    };
-
+    const playClip = vi.fn(() => true);
+    const glb = { animComponent: { playing: true, speed: 1 } as pc.AnimComponent, playClip };
     state.isLeftHanded = false;
-    controller.syncAnimation(glb, state, true);
-    expect(controller.clipState).toMatchObject({ clip: 'UnsuspectingIdle_Kimodo', isSouthpaw: false });
+    controller.syncAnimation(glb, state, false, { clip: 'Walk', playbackSpeed: 0.7 });
+    expect(playClip).toHaveBeenLastCalledWith('Walk', 0.12, 0.7, false);
+    controller.syncAnimation(glb, state, false, { clip: 'Walk', playbackSpeed: 0.85 });
+    expect(playClip).toHaveBeenCalledTimes(1);
+    expect(glb.animComponent.speed).toBe(0.85);
+    state.activeReaction.type = 'CHEST_STAGGER';
+    controller.syncAnimation(glb, state, false, { clip: 'Walk', playbackSpeed: 0.85 });
+    expect(playClip).toHaveBeenLastCalledWith('HitStaggerChest', 0.12, 1, false);
+  });
 
-    state.isLeftHanded = true;
-    controller.syncAnimation(glb, state, true);
-    expect(controller.clipState).toMatchObject({ clip: 'UnsuspectingIdle', isSouthpaw: true });
-
-    availableClips.add('UnsuspectingIdle_Kimodo_Southpaw');
-    controller.syncAnimation(glb, state, true);
-    expect(controller.clipState).toMatchObject({ clip: 'UnsuspectingIdle_Kimodo', isSouthpaw: true });
+  it('plays a distinct aim clip and mirrors the pistol pose for the actual firing hand', () => {
+    const state = createTargetHealthState('npc', 'NPC', vec3());
+    const controller = new CombatantAnimController();
+    const playClip = vi.fn(() => true);
+    const glb = { animComponent: { playing: true, speed: 1 } as pc.AnimComponent, playClip };
+    state.isLeftHanded = false;
+    controller.syncAnimation(glb, state, false, undefined, { clip: 'LongGunAim' });
+    expect(playClip).toHaveBeenLastCalledWith('LongGunAim', 0.12, 1, false);
+    controller.syncAnimation(glb, state, false, undefined, { clip: 'PistolAim', hand: 'RIGHT' });
+    expect(playClip).toHaveBeenLastCalledWith('PistolAim', 0.12, 1, true);
+    controller.syncAnimation(glb, state, true, undefined, { clip: 'LongGunAim' });
+    expect(playClip).toHaveBeenLastCalledWith('UnsuspectingIdle', 0.12, 1, false);
   });
 
   it('points the authored negative Z muzzle toward the aim while holding the scaled pistol at the palm', () => {

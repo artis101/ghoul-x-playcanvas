@@ -2,6 +2,7 @@ import * as pc from 'playcanvas';
 import type { GlbModelRegistry, WeaponGlbInstance } from '../assets/glbLoader.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
 import { createPropAttachmentState } from '../mannequin/propAttachmentState.ts';
+import { CombatantWeaponHands } from '../mannequin/combatantWeaponHands.ts';
 import type { OffhandSidearmRig } from './offhandSidearmTypes.ts';
 
 export function createOffhandSidearmRig(
@@ -68,6 +69,7 @@ export function createOffhandSidearmRig(
     targetId: id,
     holderEntity,
     glbInstance,
+    hands: glbInstance ? new CombatantWeaponHands(glbInstance) : undefined,
     isGlbModel,
     attachmentState: createPropAttachmentState('HIDDEN_TEMP'),
     wasHeldLastFrame: false,
@@ -83,6 +85,7 @@ export function destroyOffhandSidearmRig(rig: OffhandSidearmRig): void {
   if (rig.glbInstance) {
     rig.glbInstance.destroy();
     rig.glbInstance = null;
+    rig.hands = undefined;
   }
   rig.holderEntity.destroy();
   rig.cachedBoneEntities.clear();

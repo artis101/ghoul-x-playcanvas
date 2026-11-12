@@ -17,6 +17,8 @@ import { stepBlastFlashes } from './blastVisualFx.ts';
 import { syncPhysiologyToHealthState } from './physiologySyncAdapter.ts';
 import { createOffhandSidearmRig } from './offhandSidearmRig.ts';
 import { OffhandSidearmSync } from './offhandSidearmSync.ts';
+import { getArchetypeWeaponAssetId } from '../assets/glbLoader.ts';
+import type { CombatantAimPose } from '../mannequin/combatantAnimController.ts';
 import { HudTargetTracker } from './hudTargetTracker.ts';
 import { GRENADE_BLAST_RADIUS_M, GRENADE_PEAK_ENERGY_J, GRENADE_PEAK_IMPULSE_NS } from './fragGrenadeTypes.ts';
 
@@ -105,7 +107,15 @@ export function stepCombatDirectorLoop(
       effectiveDt = 0;
     }
     stepRagdollPhysics(hs, effectiveDt, 0.0);
-    t.syncFromHealthState(effectiveDt, totalElapsedTimeS, ctx.tacticalAi?.isGuarding(hs.targetId));
+    const agent = ctx.tacticalAi?.getAgent(hs.targetId);
+    const sidearm = ctx.tacticalAi?.getSidearmVisualState(hs.targetId);
+    let aim: CombatantAimPose | undefined;
+    if (sidearm?.visible && sidearm.hand) {
+      aim = { clip: 'PistolAim', hand: sidearm.hand };
+    } else if (!hs.weaponDropped && agent?.state === 'ALERTED_ENGAGING' && agent.isPeekingOut) {
+      aim = { clip: getArchetypeWeaponAssetId(hs.archetype) === 'silver_talon_50ae' ? 'PistolAim' : 'LongGunAim' };
+    }
+    t.syncFromHealthState(effectiveDt, totalElapsedTimeS, agent?.state === 'PATROL_GUARD', aim);
     let rig = ctx.offhandSidearmRigs.get(hs.targetId);
     if (!rig) {
       rig = createOffhandSidearmRig(t, ctx.glbRegistry);

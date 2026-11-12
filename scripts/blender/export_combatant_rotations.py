@@ -1,4 +1,4 @@
-"""Write selected Blender guard-idle bone rotations back into the game GLB."""
+"""Write selected Blender combatant bone rotations back into the game GLB."""
 
 import argparse
 import math
@@ -57,15 +57,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("game_glb", type=Path)
     parser.add_argument("output_glb", type=Path)
-    parser.add_argument("--southpaw", action="store_true")
+    parser.add_argument("--clip", required=True, help="Exact Blender action name")
     parser.add_argument("--bones", nargs="+", required=True, help="Exact Blender bone names")
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:])
     arm = bpy.data.objects.get("GhoulArmature")
     if arm is None or arm.type != "ARMATURE":
-        raise ValueError("Open the guard-idle authoring blend before running this script")
+        raise ValueError("Open the combatant authoring blend before running this script")
     glb = CombatantGlbAnimation(args.game_glb)
-    clip = "UnsuspectingIdle_Kimodo" + ("_Southpaw" if args.southpaw else "")
-    export_rotations(glb, arm, clip, args.bones)
+    export_rotations(glb, arm, args.clip, args.bones)
     glb.write(args.output_glb)
 
 

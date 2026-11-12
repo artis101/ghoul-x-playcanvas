@@ -26,6 +26,7 @@ export class ArsenalManager {
   public readonly weaponViewmodelEntity: pc.Entity;
   public muzzleFlashEntity: pc.Entity;
   public activeWeaponGlb: WeaponGlbInstance | null = null;
+  public lastShotPlayedViewmodelClip = false;
   public currentWeaponIndex = 0;
   public currentWeapon: WeaponSpec = WEAPON_M590;
   public currentAmmo: AmmoSpec = WEAPON_M590.defaultAmmo;
@@ -179,7 +180,7 @@ export class ArsenalManager {
     const weapon = this.activeWeaponGlb;
     const fireDuration = weapon?.getClipDuration(weapon.fireClipName) ?? 0;
     const fireSpeed = Math.max(1, fireDuration / cooldownS);
-    weapon?.playFire(fireSpeed);
+    this.lastShotPlayedViewmodelClip = weapon?.playFire(fireSpeed) ?? false;
     const animReturnS = Math.max(0.22, fireDuration / fireSpeed);
 
     this.actionState = transitionViewmodelAction(
