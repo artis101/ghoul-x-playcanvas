@@ -5,6 +5,15 @@ import type {
 } from '../../../contracts/ballistics.ts';
 import { ALL_AUX_PARTICLES, ALL_GHOUL_ZONES } from '../../ghoul/anatomy.ts';
 import { copyVec3, lengthSq } from '../vec3.ts';
+import { releaseMuscleTone } from './ragdollMuscleDrive.ts';
+
+const RESTING_ON_FLOOR_SLACK_M = 0.008;
+const LIMIT_SOFTEN_S = 0.15;
+const LIMIT_RELEASE_S = 0.6;
+const FALLING_LIMIT_ACCEL_MS2 = 5000;
+// A little over gravity: enough to swing a limb back into range, not to hoist the body.
+const SETTLED_LIMIT_ACCEL_MS2 = 14;
+const LIVING_LIMIT_ACCEL_MS2 = 60;
 
 export function freezeCorpseParticles(target: TargetHealthState): void {
   for (const z of ALL_GHOUL_ZONES) {
@@ -38,6 +47,26 @@ export function deriveCorpseSleepPhase(phase: RagdollPhaseState): CorpseSleepPha
 }
 
 /**
+ * How hard joint limits act on this body right now.
+ *
+ * A limit that could push without bound keeps a tumbling body in human shape, but once the body
+ * is down it can lever against a planted foot and jack a corpse back up off the floor. So limits
+ * are stiff while a body falls, drop to muscle strength as it starts to settle, and stop pushing
+ * altogether once it has lain still for a moment. The living keep a firm but bounded push.
+ */
+export function jointLimitEffort(target: TargetHealthState): { recovery: number; accelMs2: number } {
+  if (target.alive || target.ragdollPhase.kind !== 'CORPSE_DYNAMIC') {
+    return { recovery: 1, accelMs2: LIVING_LIMIT_ACCEL_MS2 };
+  }
+  const settled = target.ragdollPhase.settleAccumS;
+  const stiffness = Math.max(0, 1 - settled / LIMIT_SOFTEN_S);
+  return {
+    recovery: Math.max(0, 1 - settled / LIMIT_RELEASE_S),
+    accelMs2: SETTLED_LIMIT_ACCEL_MS2 + (FALLING_LIMIT_ACCEL_MS2 - SETTLED_LIMIT_ACCEL_MS2) * stiffness,
+  };
+}
+
+/**
  * Updates `target.ragdollPhase` before stepping PBD physics.
  * Returns `true` if the target is a sleeping corpse with no waking impulse (solver can return early).
  */
@@ -67,6 +96,7 @@ export function stepRagdollPhasePreSolve(
     target.ragdollPhase.kind === 'INACTIVE' ||
     target.ragdollPhase.kind === 'LIVING_AGONY'
   ) {
+    if (target.ragdollPhase.kind === 'LIVING_AGONY') releaseMuscleTone(target);
     target.ragdollPhase = {
       kind: 'CORPSE_DYNAMIC',
       settleAccumS: 0,
@@ -112,7 +142,8 @@ export function stepRagdollPhasePreSolve(
 export function stepCorpseSettleAndSleep(
   target: TargetHealthState,
   dt: number,
-  finalGroundedCount: number
+  finalGroundedCount: number,
+  floorY = 0
 ): void {
   if (target.alive || !target.isRagdollActive || finalGroundedCount < 4) {
     return;
@@ -123,6 +154,8 @@ export function stepCorpseSettleAndSleep(
   const wokenWarmStart =
     target.ragdollPhase.kind === 'CORPSE_DYNAMIC' ? target.ragdollPhase.wokenWarmStart : false;
 
+  // Only the parts already lying on the floor are slowed. A limb or torso still coming down
+  // falls at full speed, so a corpse finishes collapsing instead of sinking in slow motion.
   const settleDamp = Math.exp(-4.2 * dt * (1.0 + currentAccum * 2.8));
   let maxSpeedSq = 0;
   for (const z of ALL_GHOUL_ZONES) {
@@ -130,14 +163,17 @@ export function stepCorpseSettleAndSleep(
     if (b.attachmentState === 'OBLITERATED_HIDDEN' || b.goreMode === 'CRANIAL_POP') {
       continue;
     }
-    b.velocity.x *= settleDamp;
-    b.velocity.y *= settleDamp;
-    b.velocity.z *= settleDamp;
+    if (b.grounded) {
+      b.velocity.x *= settleDamp;
+      b.velocity.y *= settleDamp;
+      b.velocity.z *= settleDamp;
+    }
     const spSq = lengthSq(b.velocity);
     if (spSq > maxSpeedSq) maxSpeedSq = spSq;
   }
   for (const aId of ALL_AUX_PARTICLES) {
     const a = target.auxParticles[aId];
+    if (a.position.y > floorY + a.radiusM + RESTING_ON_FLOOR_SLACK_M) continue;
     a.velocity.x *= settleDamp;
     a.velocity.y *= settleDamp;
     a.velocity.z *= settleDamp;
@@ -146,11 +182,12 @@ export function stepCorpseSettleAndSleep(
   const maxSpeed = Math.sqrt(maxSpeedSq);
   let nextAccum = currentAccum;
   if (maxSpeed < 0.15) {
-    nextAccum += dt * 2.2;
+    nextAccum += dt;
   } else if (maxSpeed < 0.75) {
     nextAccum += dt;
   } else {
-    nextAccum = Math.max(0, nextAccum - dt * 0.5);
+    // Still lively, but on the floor: count it slowly, so nothing can keep a corpse awake for good.
+    nextAccum += dt * 0.25;
   }
 
   if (

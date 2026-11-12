@@ -5,7 +5,7 @@ import type { GlbModelRegistry, CombatantGlbInstance } from '../assets/glbLoader
 import type { EngineMaterialPalette } from '../materials.ts';
 import { type ArchetypeRetroMaterialSet, getArchetypeRetroMaterials } from '../retroTextures.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
-import type { GlbZoneMaterialPair, ZoneMeshBundle } from './types.ts';
+import type { GlbZoneMaterialPair, StumpCap, ZoneMeshBundle } from './types.ts';
 import { TOPOLOGICAL_GHOUL_ZONES } from './combatantPoseConstants.ts';
 import { setupCombatantGlbInstance } from './combatantGlbSetup.ts';
 import { CombatantAnimController, type CombatantAimPose } from './combatantAnimController.ts';
@@ -18,7 +18,7 @@ import { CombatantWoundDecals } from './combatantWoundDecals.ts';
 import { CombatantWeaponMount } from './combatantWeaponMount.ts';
 import { CombatantDeadLimbOverlay } from './combatantDeadLimbOverlay.ts';
 import { CombatantCrawlOverlay } from './combatantCrawlOverlay.ts';
-import { buildDistalParentSocketStumps, buildProximalLimbStump } from './combatantStumpBuilder.ts';
+import { buildStumpCaps } from './combatantStumpCaps.ts';
 import {
   resolveMannequinDriveState,
   type MannequinDriveMode,
@@ -35,6 +35,7 @@ export class GhoulMannequinEntity {
 
   public combatantGlb: CombatantGlbInstance | null = null;
   public zoneBundles: Map<GhoulZoneId, ZoneMeshBundle> = new Map();
+  private stumpCaps: Map<GhoulZoneId, StumpCap> = new Map();
   public isXRayActive = false;
   public driveState: MannequinDriveState;
 
@@ -92,9 +93,6 @@ export class GhoulMannequinEntity {
       const zoneNode = new pc.Entity(`Zone_${zone}`);
       this.rootEntity.addChild(zoneNode);
 
-      const proximalStumpNode = buildProximalLimbStump(zone, zoneNode, this.materials);
-      const distalChildStumps = buildDistalParentSocketStumps(zone, zoneNode, this.materials);
-
       this.zoneBundles.set(zone, {
         zone,
         zoneNode,
@@ -104,8 +102,6 @@ export class GhoulMannequinEntity {
         woundDecalNodes: [],
         boneNodes: [],
         organNodes: [],
-        proximalStumpNode,
-        distalChildStumps,
       });
     }
   }
@@ -122,6 +118,7 @@ export class GhoulMannequinEntity {
     if (!inst) return false;
 
     this.combatantGlb = inst;
+    this.stumpCaps = buildStumpCaps(inst, this.materials);
     this.rootEntity.addChild(inst.rootEntity);
     this.syncFromHealthState(0, 0);
     return true;
@@ -192,7 +189,7 @@ export class GhoulMannequinEntity {
       this.healthState, glb, this.fxManager, guarding, dt, aim?.clip === 'PistolAim'
     );
     this.syncPoseAttachments();
-    this.dismemberment.syncStumps(this.zoneBundles, this.healthState);
+    this.dismemberment.syncStumps(this.stumpCaps, this.healthState);
     this.woundDecals.syncSurfaceWounds(this.healthState, this.zoneBundles, this.materials);
     this.visualGoreSync.refreshIfDirty(
       this.healthState,

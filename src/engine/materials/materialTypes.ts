@@ -23,6 +23,7 @@ export interface EngineMaterialPalette {
 
   // Soldier of Fortune Gore
   goreStumpMat: pc.StandardMaterial;
+  stumpFleshMat: pc.StandardMaterial;
   exposedBoneMat: pc.StandardMaterial;
   bloodPoolMat: pc.StandardMaterial;
   bloodDropMat: pc.StandardMaterial;

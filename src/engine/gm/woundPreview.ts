@@ -35,11 +35,13 @@ export interface WoundSpec {
   readonly bleeding: boolean;
 }
 
+// LostLimb names the character's own left and right. Zone ids are named the other way round:
+// the body faces +z with its `_LEFT` zones at -x, which is the character's right-hand side.
 const SEVER_ZONE: Record<LostLimb, GhoulZoneId> = {
-  ARM_LEFT: 'UPPER_ARM_LEFT',
-  ARM_RIGHT: 'UPPER_ARM_RIGHT',
-  LEG_LEFT: 'THIGH_LEFT',
-  LEG_RIGHT: 'THIGH_RIGHT',
+  ARM_LEFT: 'UPPER_ARM_RIGHT',
+  ARM_RIGHT: 'UPPER_ARM_LEFT',
+  LEG_LEFT: 'THIGH_RIGHT',
+  LEG_RIGHT: 'THIGH_LEFT',
 };
 const STAND_BEFORE_WOUND_S = 0.6;
 const MAX_STEP_S = 1 / 30;
@@ -116,7 +118,8 @@ export class WoundPreview {
         detachedSubtree: getSubtreeZones(zone),
         stumpWorldPosition: hs.ragdollBones[zone].position,
         arterialSprayDirection: vec3(0, 1, 0),
-        severedLimbVelocity: vec3(zone.endsWith('LEFT') ? 1.6 : -1.6, 1.8, -0.6),
+        // Thrown outward, away from the side of the body it came off.
+        severedLimbVelocity: vec3(zone.endsWith('LEFT') ? -1.6 : 1.6, 1.8, -0.6),
         severedLimbAngularVelocity: vec3(3, 2, -4),
         gibCount: 0,
       };

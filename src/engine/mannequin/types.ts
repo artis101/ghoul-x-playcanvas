@@ -10,9 +10,14 @@ export type {
   PropAttachmentTransitionResult,
 } from './propAttachmentState.ts';
 
-export interface ChildSocketStump {
-  childZone: GhoulZoneId;
-  node: pc.Entity;
+/** The pair of wound caps shown when a zone is cut away from its parent. */
+export interface StumpCap {
+  zone: GhoulZoneId;
+  parent: GhoulZoneId;
+  /** On the body, over the socket the zone came out of. */
+  socket: pc.Entity;
+  /** On the severed end of the zone itself. */
+  limb: pc.Entity;
 }
 
 export interface ZoneMeshBundle {
@@ -25,8 +30,6 @@ export interface ZoneMeshBundle {
   woundDecalNodes: pc.Entity[];
   boneNodes: pc.Entity[];
   organNodes: pc.Entity[];
-  proximalStumpNode?: pc.Entity;
-  distalChildStumps: ChildSocketStump[];
   intactAbdomenNode?: pc.Entity;
   evisceratedAbdomenNode?: pc.Entity;
 }

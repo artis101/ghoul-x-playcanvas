@@ -38,6 +38,16 @@ function clampParticleWorldBoundsXZ(pos: Vec3Like, prevPos: Vec3Like, radiusM: n
   }
 }
 
+/**
+ * Keeps a particle on or above the floor. A guard or joint limit that presses a resting particle
+ * downward also drags its previous position down; left below the floor, that would read as the
+ * particle having shot upward this step.
+ */
+function clampParticleToFloor(pos: Vec3Like, prevPos: Vec3Like, minY: number): void {
+  if (pos.y < minY) pos.y = minY;
+  if (prevPos.y < minY) prevPos.y = minY;
+}
+
 function applyDampedGuardShift(bone: RagdollBoneState, delta: Vec3Like, prevFollow = 0.78): void {
   bone.position.x += delta.x;
   bone.position.y += delta.y;
@@ -90,45 +100,8 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
     const thorax = target.ragdollBones.TORSO_UPPER_THORAX;
     const shL = target.ragdollBones.SHOULDER_LEFT;
     const shR = target.ragdollBones.SHOULDER_RIGHT;
-    const tL = target.ragdollBones.THIGH_LEFT;
-    const tR = target.ragdollBones.THIGH_RIGHT;
 
-    // 1. Symmetric Momentum-Conserving Torso Axial Anti-Twist Guard
-    if (
-      pelvis.componentId === 'BODY' && abdomen.componentId === 'BODY' && thorax.componentId === 'BODY' &&
-      shL.componentId === 'BODY' && shR.componentId === 'BODY' && tL.componentId === 'BODY' && tR.componentId === 'BODY'
-    ) {
-      const spineAxis = normalize(sub(thorax.position, pelvis.position));
-      const hipVec = sub(tR.position, tL.position);
-      const hipOrtho = sub(hipVec, scale(spineAxis, dot(hipVec, spineAxis)));
-      const shVec = sub(shR.position, shL.position);
-      const shOrtho = sub(shVec, scale(spineAxis, dot(shVec, spineAxis)));
-
-      const hipLen = length(hipOrtho);
-      const shLen = length(shOrtho);
-      if (hipLen > 0.08 && shLen > 0.12) {
-        const hipDir = scale(hipOrtho, 1 / hipLen);
-        const shDir = scale(shOrtho, 1 / shLen);
-        if (dot(hipDir, shDir) < 0.55) {
-          const targetDir = normalize(add(shDir, hipDir));
-          const shHalf = shLen * 0.5;
-          const midSh = scale(add(shL.position, shR.position), 0.5);
-          const desShL = add(midSh, scale(targetDir, -shHalf));
-          const desShR = add(midSh, scale(targetDir, shHalf));
-          applyDampedGuardShift(shL, scale(sub(desShL, shL.position), 0.28));
-          applyDampedGuardShift(shR, scale(sub(desShR, shR.position), 0.28));
-
-          const hipHalf = hipLen * 0.5;
-          const midHip = scale(add(tL.position, tR.position), 0.5);
-          const desHipL = add(midHip, scale(targetDir, -hipHalf));
-          const desHipR = add(midHip, scale(targetDir, hipHalf));
-          applyDampedGuardShift(tL, scale(sub(desHipL, tL.position), 0.16));
-          applyDampedGuardShift(tR, scale(sub(desHipR, tR.position), 0.16));
-        }
-      }
-    }
-
-    // 2. Symmetric Head / Jaw Anti-Spin Guard
+    // 1. Symmetric Head / Jaw Anti-Spin Guard
     const cranium = target.ragdollBones.HEAD_CRANIUM;
     const jaw = target.ragdollBones.HEAD_FACE_JAW;
     if (cranium.componentId === 'BODY' && jaw.componentId === 'BODY' && cranium.goreMode !== 'CRANIAL_POP' && shL.componentId === 'BODY' && shR.componentId === 'BODY') {
@@ -154,34 +127,7 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
       }
     }
 
-    // 3. Momentum-Conserving Anatomical Knee Anti-Hyperextension Check
-    if (tL.componentId === pelvis.componentId && tR.componentId === pelvis.componentId && abdomen.componentId === pelvis.componentId) {
-      const pUp = normalize(sub(abdomen.position, pelvis.position));
-      const pRight = sub(tR.position, tL.position);
-      const pFwd = normalize(cross(pRight, pUp));
-
-      if (length(pFwd) > 0.5) {
-        for (const side of ['LEFT', 'RIGHT'] as const) {
-          const thigh = target.ragdollBones[side === 'LEFT' ? 'THIGH_LEFT' : 'THIGH_RIGHT'];
-          const knee = target.ragdollBones[side === 'LEFT' ? 'KNEE_LEFT' : 'KNEE_RIGHT'];
-          const shin = target.ragdollBones[side === 'LEFT' ? 'SHIN_LEFT' : 'SHIN_RIGHT'];
-          if (knee.componentId === thigh.componentId && shin.componentId === knee.componentId) {
-            const mid = scale(add(thigh.position, shin.position), 0.5);
-            const kneeOffset = sub(knee.position, mid);
-            const fwdProj = dot(kneeOffset, pFwd);
-            if (fwdProj < -0.015) {
-              const pushMag = (-0.015 - fwdProj) * 0.48;
-              const push = scale(pFwd, pushMag);
-              applyDampedGuardShift(knee, scale(push, 0.55), 0.85);
-              applyDampedGuardShift(thigh, scale(push, -0.225), 0.85);
-              applyDampedGuardShift(shin, scale(push, -0.225), 0.85);
-            }
-          }
-        }
-      }
-    }
-
-    // 4. Gentle Elbow Anti-Hyperextension + Forearm/Hand vs Torso Self-Collision Pushout
+    // 2. Gentle Elbow Anti-Hyperextension + Forearm/Hand vs Torso Self-Collision Pushout
     if (pelvis.componentId === 'BODY' && thorax.componentId === 'BODY') {
       const shRight = normalize(sub(shR.position, shL.position));
       const spUp = normalize(sub(thorax.position, pelvis.position));
@@ -231,26 +177,20 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
     }
   }
 
-  // 5. Floor & World XZ Safety Boundary Projection
+  // 3. Floor & World XZ Safety Boundary Projection
   for (const z of ALL_GHOUL_ZONES) {
     const b = target.ragdollBones[z];
     const active = (target.isRagdollActive || b.componentId !== 'BODY') && b.goreMode !== 'CRANIAL_POP';
     if (!active) continue;
 
-    const minFloor = floorY + b.radiusM;
-    if (b.position.y < minFloor) {
-      b.position.y = minFloor;
-    }
+    clampParticleToFloor(b.position, b.prevPosition, floorY + b.radiusM);
     clampParticleWorldBoundsXZ(b.position, b.prevPosition, b.radiusM);
   }
 
   for (const aId of ALL_AUX_PARTICLES) {
     const a = target.auxParticles[aId];
     if (!target.isRagdollActive && a.componentId === 'BODY') continue;
-    const minFloor = floorY + a.radiusM;
-    if (a.position.y < minFloor) {
-      a.position.y = minFloor;
-    }
+    clampParticleToFloor(a.position, a.prevPosition, floorY + a.radiusM);
     clampParticleWorldBoundsXZ(a.position, a.prevPosition, a.radiusM);
   }
 }

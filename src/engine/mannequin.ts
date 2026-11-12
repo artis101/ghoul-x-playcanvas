@@ -1,4 +1,4 @@
-export type { ChildSocketStump, ZoneMeshBundle, RestRagdollBoneFrame, GlbZoneMaterialPair } from './mannequin/types.ts';
+export type { StumpCap, ZoneMeshBundle, RestRagdollBoneFrame, GlbZoneMaterialPair } from './mannequin/types.ts';
 export { TOPOLOGICAL_GHOUL_ZONES, REST_RAGDOLL_FRAMES, basisToQuat } from './mannequin/combatantPoseConstants.ts';
 export { CombatantAnimController } from './mannequin/combatantAnimController.ts';
 export { CombatantBoneSync } from './mannequin/combatantBoneSync.ts';
@@ -6,6 +6,6 @@ export { CombatantDismemberment, getParentZone } from './mannequin/combatantDism
 export { CombatantVisualGoreSync } from './mannequin/combatantVisualGoreSync.ts';
 export { CombatantWoundDecals } from './mannequin/combatantWoundDecals.ts';
 export { CombatantWeaponMount } from './mannequin/combatantWeaponMount.ts';
-export { createStumpAssembly, buildDistalParentSocketStumps, buildProximalLimbStump } from './mannequin/combatantStumpBuilder.ts';
+export { buildStumpCaps } from './mannequin/combatantStumpCaps.ts';
 export { CombatantMannequinScript } from './mannequin/combatantMannequinScript.ts';
 export { GhoulMannequinEntity } from './mannequin/ghoulMannequinEntity.ts';

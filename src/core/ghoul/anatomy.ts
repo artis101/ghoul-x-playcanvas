@@ -16,6 +16,7 @@ export * from './anatomy/legColliders';
 export * from './anatomy/anatomicalColliders';
 export * from './anatomy/ragdollConstraints';
 export * from './anatomy/ragdollBasisMath';
+export * from './anatomy/ragdollBodyFrames';
 export * from './anatomy/ragdollBasis';
 export * from './anatomy/combatPose';
 export * from './anatomy/deadArmVerlet';

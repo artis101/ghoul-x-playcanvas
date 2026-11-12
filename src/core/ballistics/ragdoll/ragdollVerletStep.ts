@@ -21,10 +21,13 @@ import {
   Vec3Like,
 } from '../vec3.ts';
 import {
+  jointLimitEffort,
   stepCorpseSettleAndSleep,
   stepRagdollPhasePreSolve,
 } from './corpseSleepFsm.ts';
 import { projectConstraintsAndAnatomyOnce } from './ragdollConstraintsProjector.ts';
+import { applyAnatomicalJointLimits } from './ragdollJointLimits.ts';
+import { computeMuscleDrive } from './ragdollMuscleDrive.ts';
 import {
   getRagdollParticleRef,
   isRagdollBoneParticleActive,
@@ -33,6 +36,12 @@ import {
 const MAX_PARTICLE_SPEED_MS = 11.0;
 const MAX_PARTICLE_SPEED_SQ = MAX_PARTICLE_SPEED_MS * MAX_PARTICLE_SPEED_MS;
 const MAX_GROUNDED_UPWARD_POP_MS = 4.0;
+const GROUND_FRICTION_COEFF = 0.6;
+// A resting particle grips the floor until something moves it faster than this. The living brace
+// themselves, so writhing in place never ratchets a downed body across the ground.
+const CORPSE_GRIP_SPEED_MS = 0.1;
+const LIVING_GRIP_SPEED_MS = 0.3;
+const JOINT_LIMIT_PASSES = 3;
 
 function clampParticleVelocity(vel: Vec3Like, grounded: boolean): void {
   if (grounded && vel.y > MAX_GROUNDED_UPWARD_POP_MS) {
@@ -45,6 +54,26 @@ function clampParticleVelocity(vel: Vec3Like, grounded: boolean): void {
     vel.y *= s;
     vel.z *= s;
   }
+}
+
+/**
+ * Slows a particle resting on the floor. Dry friction takes a fixed bite out of the sliding
+ * speed each step and holds the particle still once that bite is all that is left, so a weak
+ * steady push can never creep a body across the ground.
+ */
+function applyGroundFriction(vel: Vec3Like, viscousDamp: number, h: number, gripSpeed: number): void {
+  vel.x *= viscousDamp;
+  vel.z *= viscousDamp;
+  const speed = Math.hypot(vel.x, vel.z);
+  const bite = GROUND_FRICTION_COEFF * 9.81 * h;
+  if (speed <= Math.max(bite, gripSpeed)) {
+    vel.x = 0;
+    vel.z = 0;
+    return;
+  }
+  const keep = (speed - bite) / speed;
+  vel.x *= keep;
+  vel.z *= keep;
 }
 
 /**
@@ -84,10 +113,14 @@ export function stepRagdollPhysics(
     ? Math.max(0.22, target.consciousness * (1.0 - 0.55 * target.painShock))
     : 0.0;
 
+  const gripSpeed = target.alive ? LIVING_GRIP_SPEED_MS : CORPSE_GRIP_SPEED_MS;
   let finalGroundedCount = 0;
   for (let step = 0; step < subSteps; step++) {
     const activePoseTargets =
       muscleTone > 0.01 ? buildLivingGroundedPoseTargets(target, floorY, agonyClockS) : null;
+    const muscleDrive = activePoseTargets
+      ? computeMuscleDrive(target, activePoseTargets, muscleTone)
+      : null;
 
     // A. Symplectic Euler Prediction Step
     for (const z of ALL_GHOUL_ZONES) {
@@ -98,25 +131,11 @@ export function stepRagdollPhysics(
       b.prevPosition = copyVec3(b.position);
       b.velocity.y += gravity * h;
 
-      if (activePoseTargets && b.componentId === 'BODY') {
-        const desiredPos = activePoseTargets[z];
-        if (desiredPos) {
-          b.velocity.y += -gravity * muscleTone * h;
-          const posErr = sub(desiredPos, b.position);
-          let pdAx = posErr.x * 42.0 * muscleTone - b.velocity.x * 8.5 * muscleTone;
-          let pdAy = posErr.y * 42.0 * muscleTone - b.velocity.y * 8.5 * muscleTone;
-          let pdAz = posErr.z * 42.0 * muscleTone - b.velocity.z * 8.5 * muscleTone;
-          const aMag = Math.sqrt(pdAx * pdAx + pdAy * pdAy + pdAz * pdAz);
-          if (aMag > 28.0) {
-            const s = 28.0 / aMag;
-            pdAx *= s;
-            pdAy *= s;
-            pdAz *= s;
-          }
-          b.velocity.x += pdAx * h;
-          b.velocity.y += pdAy * h;
-          b.velocity.z += pdAz * h;
-        }
+      const pull = muscleDrive?.[z];
+      if (pull) {
+        b.velocity.x += pull.x * h;
+        b.velocity.y += pull.y * h;
+        b.velocity.z += pull.z * h;
       }
 
       const airDamp = Math.exp(-0.45 * h);
@@ -171,9 +190,11 @@ export function stepRagdollPhysics(
         b.grounded = true;
         if (b.componentId === 'BODY') groundedCount++;
 
-        const slideFriction = Math.exp(-8.5 * h);
-        newVel.x *= slideFriction;
-        newVel.z *= slideFriction;
+        applyGroundFriction(newVel, Math.exp(-8.5 * h), h, gripSpeed);
+        if (newVel.x === 0 && newVel.z === 0) {
+          b.position.x = b.prevPosition.x;
+          b.position.z = b.prevPosition.z;
+        }
 
         if (preImpactVy < -1.8) {
           newVel.y = Math.max(newVel.y, -preImpactVy * 0.14);
@@ -208,9 +229,7 @@ export function stepRagdollPhysics(
       const newVel = scale(sub(a.position, a.prevPosition), 1 / h);
       const auxGrounded = a.position.y <= floorY + a.radiusM + 0.006;
       if (auxGrounded) {
-        const slideFriction = Math.exp(-9.5 * h);
-        newVel.x *= slideFriction;
-        newVel.z *= slideFriction;
+        applyGroundFriction(newVel, Math.exp(-9.5 * h), h, gripSpeed);
         if (length(newVel) < 0.08) {
           newVel.x = 0;
           newVel.y = 0;
@@ -221,7 +240,14 @@ export function stepRagdollPhysics(
       a.velocity = newVel;
     }
 
-    // D. Momentum-Conserving Passive Joint Viscosity
+    // D. Anatomical joint limits
+    if (target.isRagdollActive) {
+      const { recovery, accelMs2 } = jointLimitEffort(target);
+      const effort = { recovery, maxKickMs: (accelMs2 * h) / JOINT_LIMIT_PASSES };
+      for (let pass = 0; pass < JOINT_LIMIT_PASSES; pass++) applyAnatomicalJointLimits(target, effort);
+    }
+
+    // E. Momentum-Conserving Passive Joint Viscosity
     for (const c of target.ragdollConstraints) {
       if (c.maxLength - c.minLength > 0.005) continue;
       const pA = getRagdollParticleRef(target, c.nodeA);
@@ -252,7 +278,7 @@ export function stepRagdollPhysics(
   }
 
   // 4. Progressive Corpse Settle Damping & Permanent Sleep Lock
-  stepCorpseSettleAndSleep(target, dt, finalGroundedCount);
+  stepCorpseSettleAndSleep(target, dt, finalGroundedCount, floorY);
   syncTargetLifecycleDerivedState(target);
 
   // 5. Sync Root Position/Velocity & Recompute Exact 3D Orthonormal Bone Bases

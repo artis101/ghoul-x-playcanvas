@@ -7,7 +7,7 @@ import {
   transitionPropAttachment,
   type PropAttachmentState,
 } from './propAttachmentState.ts';
-import type { ZoneMeshBundle } from './types.ts';
+import type { StumpCap } from './types.ts';
 
 const PARENT_ZONE_MAP: Partial<Record<GhoulZoneId, GhoulZoneId>> = {
   HEAD_CRANIUM: 'NECK_CERVICAL',
@@ -111,25 +111,13 @@ export class CombatantDismemberment {
     if (glb.punkMohawk) glb.punkMohawk.enabled = showMohawk;
   }
 
-  public syncStumps(zoneBundles: Map<GhoulZoneId, ZoneMeshBundle>, healthState: TargetHealthState): void {
-    const isCranialPopped = healthState.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP';
-
-    for (const [zone, bundle] of zoneBundles) {
-      const isSevered = healthState.severedZones.has(zone);
-      const boneState = healthState.ragdollBones[zone];
-
-      if (bundle.proximalStumpNode) {
-        const parentZone = getParentZone(zone);
-        const parentComp = parentZone ? healthState.ragdollBones[parentZone].componentId : 'BODY';
-        const separatedFromParent = isSevered && boneState.componentId !== parentComp;
-        bundle.proximalStumpNode.enabled = separatedFromParent;
-      }
-
-      for (const socketStump of bundle.distalChildStumps) {
-        const childBone = healthState.ragdollBones[socketStump.childZone];
-        const childPopped = socketStump.childZone === 'HEAD_CRANIUM' && isCranialPopped;
-        socketStump.node.enabled = childPopped || childBone.componentId !== boneState.componentId;
-      }
+  public syncStumps(stumpCaps: ReadonlyMap<GhoulZoneId, StumpCap>, healthState: TargetHealthState): void {
+    const bones = healthState.ragdollBones;
+    for (const cap of stumpCaps.values()) {
+      const popped = cap.zone === 'HEAD_CRANIUM' && healthState.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP';
+      const separated = bones[cap.zone].componentId !== bones[cap.parent].componentId;
+      cap.socket.enabled = popped || separated;
+      cap.limb.enabled = separated && !popped && bones[cap.zone].attachmentState !== 'OBLITERATED_HIDDEN';
     }
   }
 }

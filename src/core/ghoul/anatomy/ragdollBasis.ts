@@ -12,6 +12,7 @@ import {
   safeOrthonormalBasis,
   basisFromRightAndUp,
 } from './ragdollBasisMath';
+import { computePelvisFrame } from './ragdollBodyFrames';
 import { recomputeLimbAndFootBases } from './ragdollLimbBasis';
 
 /**
@@ -26,17 +27,13 @@ export function recomputeRagdollBasisVectors(target: TargetHealthState): void {
   // 1. Pelvis Basis
   const pelvis = target.ragdollBones.PELVIS_GROIN;
   const abdomen = target.ragdollBones.TORSO_LOWER_ABDOMEN;
-  const thighL = target.ragdollBones.THIGH_LEFT;
-  const thighR = target.ragdollBones.THIGH_RIGHT;
 
   const pelvisUp =
     abdomen.componentId === pelvis.componentId
       ? sub(abdomen.position, pelvis.position)
       : pelvis.basisUp;
-  const hipRight =
-    thighL.componentId === pelvis.componentId && thighR.componentId === pelvis.componentId
-      ? sub(thighR.position, thighL.position)
-      : pelvis.basisRight;
+  // A lost leg takes its hip particle with it, so the hip line comes from whatever is left.
+  const hipRight = computePelvisFrame(target)?.right ?? pelvis.basisRight;
   const pBasis = basisFromRightAndUp(hipRight, pelvisUp, pelvis.basisForward || defaultForward);
   pelvis.basisRight = pBasis.right;
   pelvis.basisUp = pBasis.up;

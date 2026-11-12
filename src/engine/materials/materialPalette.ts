@@ -89,7 +89,12 @@ export function getOrCreateMaterials(): EngineMaterialPalette {
     configurePbrDielectric(m, [0.55, 0.04, 0.05], 0.86, [0.24, 0.06, 0.08]);
     m.emissive = new pc.Color(0.18, 0.01, 0.02);
   });
-  const exposedBoneMat = createMat('exposedBoneMat', (m) => configurePbrDielectric(m, [0.88, 0.84, 0.76], 0.42, [0.12, 0.12, 0.10]));
+  // Raw meat on a severed end: dark and matte, so it reads as a cut rather than a glossy ball.
+  const stumpFleshMat = createMat('stumpFleshMat', (m) => {
+    configurePbrDielectric(m, [0.3, 0.035, 0.04], 0.35, [0.05, 0.02, 0.02]);
+    m.emissive = new pc.Color(0.05, 0.0, 0.005);
+  });
+  const exposedBoneMat = createMat('exposedBoneMat', (m) => configurePbrDielectric(m, [0.74, 0.66, 0.56], 0.42, [0.12, 0.12, 0.10]));
   const bloodPoolMat = createMat('bloodPoolMat', (m) => {
     configurePbrDielectric(m, [0.28, 0.01, 0.02], 0.96, [0.40, 0.08, 0.10]);
     m.opacity = 0.94;
@@ -152,6 +157,7 @@ export function getOrCreateMaterials(): EngineMaterialPalette {
     liverGutMat,
     arteryMat,
     goreStumpMat,
+    stumpFleshMat,
     exposedBoneMat,
     bloodPoolMat,
     bloodDropMat,
