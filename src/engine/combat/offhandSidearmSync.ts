@@ -1,3 +1,4 @@
+import { oppositeSide } from '../../core/ghoul/anatomy/handedness.ts';
 import * as pc from 'playcanvas';
 import type { GhoulZoneId, Vec3Like } from '../../contracts/ballistics.ts';
 import { add, copyVec3, dot, length, normalize, scale, sub, vec3 } from '../../core/ballistics/vec3.ts';
@@ -109,7 +110,12 @@ export class OffhandSidearmSync {
 
     const glb = target.combatantGlb;
     const animatedHand = glb?.boneNodes.get(handZone);
-    if (target.isPlayingPistolAim && glb && animatedHand && rig.glbInstance) {
+    // The aim clip is a two-handed stance: the gun arm reaches across to meet a support hand.
+    // With that hand gone, or while the pistol is still coming out of the holster, the arm is
+    // posed here instead, straight out from its own shoulder.
+    const supportHand: ActiveFiringHand = oppositeSide(activeHand);
+    const twoHanded = isArmChainIntactAndFunctional(hs, supportHand) && (sidearmState?.drawProgress ?? 1) >= 1;
+    if (twoHanded && target.isPlayingPistolAim && glb && animatedHand && rig.glbInstance) {
       const palm = add(animatedHand.getPosition(), scale(animatedHand.up, 0.052));
       this.grip.align(rig.holderEntity, rig.glbInstance.rootEntity, 'silver_talon_50ae', palm, aimDir);
       rig.hands?.sync(glb, activeHand, false);
