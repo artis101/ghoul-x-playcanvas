@@ -22,6 +22,29 @@ describe('NPC animation and weapon grips', () => {
     expect(controller.resolveDesiredClip(state)).toBe('LegCollapseCrawl');
   });
 
+  it('selects the Kimodo guard clip only when the matching handed variant is available', () => {
+    const state = createTargetHealthState('npc', 'NPC', vec3());
+    const controller = new CombatantAnimController();
+    const availableClips = new Set(['UnsuspectingIdle_Kimodo']);
+    const glb = {
+      animComponent: { playing: true } as pc.AnimComponent,
+      availableClips,
+      playClip: () => true,
+    };
+
+    state.isLeftHanded = false;
+    controller.syncAnimation(glb, state, true);
+    expect(controller.clipState).toMatchObject({ clip: 'UnsuspectingIdle_Kimodo', isSouthpaw: false });
+
+    state.isLeftHanded = true;
+    controller.syncAnimation(glb, state, true);
+    expect(controller.clipState).toMatchObject({ clip: 'UnsuspectingIdle', isSouthpaw: true });
+
+    availableClips.add('UnsuspectingIdle_Kimodo_Southpaw');
+    controller.syncAnimation(glb, state, true);
+    expect(controller.clipState).toMatchObject({ clip: 'UnsuspectingIdle_Kimodo', isSouthpaw: true });
+  });
+
   it('points the authored negative Z muzzle toward the aim while holding the scaled pistol at the palm', () => {
     const holder = new pc.GraphNode();
     const weapon = new pc.GraphNode();

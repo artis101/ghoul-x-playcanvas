@@ -139,7 +139,10 @@ export function applyArmoredImpact(
     if (prevStage === ARMORED_CHUNK_DETACHED) return;
 
     const canDetach = allowDetach && !bluntImpactOnly;
-    const minAllowed = canDetach ? 0 : 0.16;
+    // Direct impacts chew through structural polycarbonate backing; radial halo & crack tendrils craze outer glass visually while keeping >= 0.92 backing integrity (and never healing prior direct damage)
+    const minAllowed = canDetach
+      ? 0
+      : Math.min(pane.integrity[idx], bluntImpactOnly ? 0.45 : 0.92);
     const nextIntegrity = Math.max(minAllowed, pane.integrity[idx] - dmg);
     pane.integrity[idx] = nextIntegrity;
     pane.crazedIntensity[idx] = Math.min(

@@ -31,7 +31,14 @@ function resolveBounceCoefficients(material: DestructibleMaterialKind): {
 
 function orientOutwardNormal(rawNormal: Vec3Like, moveDir: Vec3Like): Vec3Like {
   const n = normalize(rawNormal);
-  return dot(moveDir, n) <= 0 ? n : scale(n, -1);
+  if (length(n) < 0.5) {
+    return scale(moveDir, -1);
+  }
+  const d = dot(moveDir, n);
+  if (Math.abs(d) < 0.02) {
+    return scale(moveDir, -1);
+  }
+  return d < 0 ? n : scale(n, -1);
 }
 
 /**
@@ -70,7 +77,10 @@ export function resolveGrenadeSweepStep(
     const rayOrigin = sub(curPos, scale(moveDir, GRENADE_RAY_BACKOFF_M));
     const maxRayDist = GRENADE_RAY_BACKOFF_M + stepDist + grenadeRadiusM;
     const hits = ctx.rapierWorld.castPenetrationRay(rayOrigin, moveDir, maxRayDist);
-    if (hits.length === 0) break;
+    if (hits.length === 0) {
+      curPos = targetPos;
+      break;
+    }
 
     let solidHit: PenetrationRayHit | null = null;
     let solidDistFromCur = 0;

@@ -127,7 +127,8 @@ function createUnifiedArenaHarness(): UnifiedArenaHarness {
     energyJ,
     speedMs,
     caliberDiameterM,
-    isAp
+    isAp,
+    armorPenetrationFactor
   ) =>
     destructionManager.interceptRaySegment(
       origin,
@@ -136,8 +137,12 @@ function createUnifiedArenaHarness(): UnifiedArenaHarness {
       energyJ,
       speedMs,
       caliberDiameterM,
-      isAp
+      isAp,
+      armorPenetrationFactor
     );
+
+  combatDirector.grenadeSweepInterceptor = (prevPos, nextPos, velocity, crossedGlassIds) =>
+    destructionManager.resolveGrenadeStep(prevPos, nextPos, velocity, crossedGlassIds);
 
   combatDirector.onExplosionBlast = (center, radiusM, peakImpulseNs, peakEnergyJ) => {
     const blast = { centerWorld: center, radiusM, peakImpulseNs, peakEnergyJ };
@@ -279,16 +284,26 @@ describe('Phase 3 Grand Unified Max Mayhem Arena Integration', () => {
       expect(marchingWin!.isBrokenAtWorldPoint(vec3(-5.5, 1.385, -6.5))).toBe(false);
       expect(voronoiWin!.shattered).toBe(false);
 
-      // West lane: shoot through Marching-Squares window (x = -5.5, z = -6.5) into target_2 (x = -5.5, z = -7.9)
+      // West lane: Armored Glass window (x = -5.5, z = -6.5) stops first 2 M4A1 M855 shots (crazing visually with 0 fragments),
+      // then Shot 3 punches through the weakened laminate and wounds target_2 behind it!
       const target2 = arena.combatDirector.targets[2];
       const t2InitialHp = target2.healthState.currentHp;
       const westOrigin = vec3(-5.5, 1.38, -2.5);
       const westDir = normalize(sub(vec3(-5.5, 1.39, -7.9), westOrigin));
 
       arena.combatDirector.fireWeapon(WEAPON_M4A1, AMMO_556_NATO_M855, westOrigin, westDir);
+      expect(marchingWin!.crazedChunkCount).toBeGreaterThan(0);
+      expect(marchingWin!.detachedChunkCount).toBe(0);
+      expect(target2.healthState.currentHp).toBe(t2InitialHp);
 
-      expect(marchingWin!.isBrokenAtWorldPoint(vec3(-5.5, 1.385, -6.5))).toBe(true);
-      expect(arena.destructionManager.glassSystem.activeInstancedTriangleCount).toBeGreaterThan(0);
+      arena.combatDirector.fireWeapon(WEAPON_M4A1, AMMO_556_NATO_M855, westOrigin, westDir);
+      expect(marchingWin!.detachedChunkCount).toBe(0);
+      expect(target2.healthState.currentHp).toBe(t2InitialHp);
+
+      arena.combatDirector.fireWeapon(WEAPON_M4A1, AMMO_556_NATO_M855, westOrigin, westDir);
+      expect(marchingWin!.detachedChunkCount).toBeGreaterThanOrEqual(1);
+      expect(arena.destructionManager.glassSystem.activeVoronoiShardCount).toBe(0);
+      expect(arena.destructionManager.glassSystem.activeInstancedTriangleCount).toBe(0);
       expect(target2.healthState.currentHp).toBeLessThan(t2InitialHp);
 
       // East lane: shoot through Voronoi window (x = 5.5, z = -6.5) into target_3's unarmored head/neck (x = 5.5, y = 1.62, z = -8.1)

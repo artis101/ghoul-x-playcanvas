@@ -50,21 +50,23 @@ describe('Grenade Wall Bounce & Glass / Armored Glass Impact Physics', () => {
       expect(gBrick.position.z).toBeGreaterThan(brickPos.z);
       expect(gBrick.velocity.z).toBeGreaterThan(0);
 
-      // 2. Punch a breach hole through the brick wall at (brickPos.x, 1.0, brickPos.z) and throw a grenade through it!
-      for (let shot = 0; shot < 3; shot++) {
-        dm.interceptRaySegment(
-          { x: brickPos.x, y: 1.0, z: brickPos.z + 2.0 },
-          { x: 0, y: 0, z: -1 },
-          6.0,
-          3800,
-          820,
-          0.0078,
-          true,
-          2.35
-        );
+      // 2. Punch a 2-course breach hole through the brick wall at (brickPos.x, y=0.96..1.04) and throw a grenade through it!
+      for (const hitY of [0.95, 1.03]) {
+        for (let shot = 0; shot < 3; shot++) {
+          dm.interceptRaySegment(
+            { x: brickPos.x, y: hitY, z: brickPos.z + 2.0 },
+            { x: 0, y: 0, z: -1 },
+            6.0,
+            3800,
+            820,
+            0.0078,
+            true,
+            2.35
+          );
+        }
       }
       const gThroughHole = spawnLiveFragGrenade(
-        { x: brickPos.x, y: 1.0, z: brickPos.z + 0.9 },
+        { x: brickPos.x, y: 1.08, z: brickPos.z + 0.9 }, // spawnPos.y = 1.08 - 0.08 = 1.00m
         { x: 0, y: -0.175, z: -0.985 }, // Cancels upward throw loft so flight stays level at y = 1.0m
         null,
         fxRoot

@@ -26,6 +26,8 @@ const items: Record<WeaponAssetId, string> = {
 };
 
 function clipLabel(clip: string): string {
+  if (clip === 'UnsuspectingIdle_Kimodo') return 'Guard Idle (Kimodo)';
+  if (clip === 'UnsuspectingIdle_Kimodo_Southpaw') return 'Guard Idle (Kimodo, left hand)';
   return clip.replace('_Southpaw', ' (left hand)').replace(/([a-z])([A-Z])/g, '$1 $2');
 }
 

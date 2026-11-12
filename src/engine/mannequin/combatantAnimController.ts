@@ -46,7 +46,7 @@ export class CombatantAnimController {
   }
 
   public syncAnimation(
-    glb: CombatantGlbInstance,
+    glb: Pick<CombatantGlbInstance, 'animComponent' | 'availableClips' | 'playClip'>,
     healthState: TargetHealthState,
     guarding = false
   ): void {
@@ -57,7 +57,11 @@ export class CombatantAnimController {
     }
 
     const isSouthpaw = healthState.isLeftHanded;
-    const desiredClip = this.resolveDesiredClip(healthState, guarding);
+    const baseClip = this.resolveDesiredClip(healthState, guarding);
+    const guardVariant = isSouthpaw ? 'UnsuspectingIdle_Kimodo_Southpaw' : 'UnsuspectingIdle_Kimodo';
+    const desiredClip = baseClip === 'UnsuspectingIdle' && glb.availableClips.has(guardVariant)
+      ? 'UnsuspectingIdle_Kimodo'
+      : baseClip;
     const clipKey = `${desiredClip}_${isSouthpaw ? 'L' : 'R'}`;
 
     const reaction = healthState.activeReaction;
