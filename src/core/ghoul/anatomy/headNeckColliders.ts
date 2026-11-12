@@ -133,7 +133,7 @@ export const HEAD_NECK_COLLIDERS: AnatomicalColliderVolume[] = [
     densityKgM3: 1050,
     stoppingPowerFactor: 1.1,
     fractureThresholdJ: 60,
-    severThresholdJ: 1050,
+    severThresholdJ: 520,
     vitalityMultiplier: 2.5,
     limbMassKg: 2.5,
     parentZone: 'TORSO_UPPER_THORAX',

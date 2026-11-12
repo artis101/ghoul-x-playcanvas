@@ -171,11 +171,13 @@ describe('Destroyed Surfaces Let Bullets, Enemy Fire, and Visual Tracers Through
     }
   });
 
-  it('dislodges off-center struck bricks on >1,400 J hits and clears blasted concrete chunks so bullets pass through breaches', () => {
+  it('progressively damages struck bricks before punching holes through, and clears blasted concrete chunks so bullets pass through breaches', () => {
     const arena = createHeadlessArena();
     try {
-      // 1. Off-center (+0.08m near right edge!) .50 AE FMJ hit (2,200 J > 1,400 J) on masonry brick wall
+      // 1. Off-center (+0.08m near right edge!) .50 AE FMJ hits (2,200 J) on solid masonry brick wall:
+      //    Shot 1 gouges & cracks the brick; Shot 2 shatters it out & over-penetrates!
       const brickId = DESTRUCTION_ZONE_LAYOUT.instancedBrickWall.id;
+      const brickWall = arena.destructionManager.brickWalls.getWall(brickId)!;
       const brickCenter = arena.destructionManager.brickWalls.getBrickWorldCenter(brickId, 14 * 13 + 6)!;
       expect(brickCenter).not.toBeNull();
 
@@ -192,14 +194,28 @@ describe('Destroyed Surfaces Let Bullets, Enemy Fire, and Visual Tracers Through
         0.0127,
         false
       );
-      expect(firstHeavy.blocked).toBe(false);
+      expect(firstHeavy.blocked).toBe(true);
+      expect(brickWall.damagedBrickCount).toBeGreaterThan(0);
+      expect(brickWall.destroyedBrickCount).toBe(0);
 
-      // Step physics so dislodged brick clears the hole
-      for (let i = 0; i < 35; i++) {
-        arena.destructionManager.update(1 / 60);
-      }
+      const secondHeavy = arena.destructionManager.interceptRaySegment(
+        shotOrigin,
+        shotDir,
+        6.0,
+        2200,
+        470,
+        0.0127,
+        false
+      );
+      expect(secondHeavy.blocked).toBe(false);
+      expect(brickWall.destroyedBrickCount).toBeGreaterThanOrEqual(1);
 
-      // Weak 500 J pistol round AND enemy shot now pass cleanly through the dislodged brick opening!
+      // Zero mid-air impact sparks when firing visual tracers through the punched brick hole!
+      arena.mayhemDirector.impactSparkPool.clear();
+      arena.mayhemDirector.onPlayerWeaponFired(shotOrigin, shotDir, WEAPON_M4A1, AMMO_556_NATO_M855);
+      expect(arena.mayhemDirector.impactSparkPool.activeCount).toBe(0);
+
+      // Weak 500 J pistol round AND enemy shot immediately pass cleanly through the punched brick hole!
       const pistolFollowUp = arena.destructionManager.interceptRaySegment(
         shotOrigin,
         shotDir,

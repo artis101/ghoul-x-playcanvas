@@ -23,6 +23,7 @@ import {
   COMBATANT_ANIMATION_CLIPS,
   GlbModelRegistry,
   parseConnectivityGraphJson,
+  WEAPON_ASSET_IDS,
 } from '../src/engine/assets/glbLoader.ts';
 import { GoreAndBallisticsFxManager } from '../src/engine/goreFx.ts';
 import { GhoulMannequinEntity } from '../src/engine/mannequin.ts';
@@ -196,7 +197,7 @@ function readVec4AccessorRow(
 }
 
 describe('Headless Blender 5.2.1 LTS GLB & Voronoi Fracture Asset Pipeline', () => {
-  it('exports all 8 valid glTF 2.0 binaries within runtime budgets plus native .blend sources', () => {
+  it('exports valid glTF 2.0 binaries within runtime budgets plus native .blend sources', () => {
     for (const key of ALL_GLB_ASSET_KEYS) {
       const parsed = readAndParseGlb(`${key}.glb`);
       expect(parsed.byteLength).toBeGreaterThan(15 * 1024);
@@ -215,6 +216,16 @@ describe('Headless Blender 5.2.1 LTS GLB & Voronoi Fracture Asset Pipeline', () 
       const stat = fs.statSync(blendPath);
       expect(stat.size).toBeGreaterThan(50 * 1024);
     }
+  });
+
+  it('exports a baked viewmodel arm for each grip used by the runtime', () => {
+    const { gltf } = readAndParseGlb('viewmodel_arms.glb');
+    const expected = WEAPON_ASSET_IDS.flatMap((weapon) =>
+      weapon === 'frag_grenade' ? [`${weapon}_r`] : [`${weapon}_r`, `${weapon}_l`]
+    );
+    const armNodes = (gltf.nodes ?? []).filter((node) => node.mesh !== undefined);
+    expect(armNodes.map((node) => node.name).sort()).toEqual(expected.sort());
+    expect(armNodes.every((node) => node.skin === undefined)).toBe(true);
   });
 
   it('ghoul_combatant.glb contains 35 sculpted submeshes, single-bone severable weights, and 10 right-handed + southpaw NLA animations', () => {

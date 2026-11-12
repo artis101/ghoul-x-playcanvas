@@ -139,7 +139,7 @@ describe('GHOUL-X Pre-Loader, Shader Warm-Up & Deferred Application Start', () =
     });
   });
 
-  it('GlbModelRegistry.preloadAll reports all 9 asset progress events and warmExtractedBundles caches steps', async () => {
+  it('GlbModelRegistry.preloadAll reports all asset progress events and warmExtractedBundles caches steps', async () => {
     const { app } = createHeadlessApp();
     try {
       const registry = new GlbModelRegistry(app);
@@ -152,8 +152,8 @@ describe('GHOUL-X Pre-Loader, Shader Warm-Up & Deferred Application Start', () =
 
       const events: AssetLoadProgressEvent[] = [];
       await registry.preloadAll((ev) => events.push(ev));
-      expect(events.map((e) => e.loadedCount)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-      expect(events.every((e) => e.totalCount === 9)).toBe(true);
+      expect(events.map((e) => e.loadedCount)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      expect(events.every((e) => e.totalCount === 10)).toBe(true);
 
       const warmLabels: string[] = [];
       registry.warmExtractedBundles((label) => warmLabels.push(label));
@@ -274,9 +274,9 @@ describe('GHOUL-X Pre-Loader, Shader Warm-Up & Deferred Application Start', () =
         vi.spyOn(preloadedRegistry, 'preloadAll').mockImplementation(async (onAssetLoaded) => {
           for (let i = 0; i < ALL_GLB_ASSET_KEYS.length; i++) {
             const key = ALL_GLB_ASSET_KEYS[i];
-            onAssetLoaded?.({ assetKey: key, url: `/models/${key}.glb`, loadedCount: i + 1, totalCount: 9 });
+            onAssetLoaded?.({ assetKey: key, url: `/models/${key}.glb`, loadedCount: i + 1, totalCount: ALL_GLB_ASSET_KEYS.length + 1 });
           }
-          onAssetLoaded?.({ assetKey: 'concrete_wall_connectivity', url: '/models/concrete_wall_connectivity.json', loadedCount: 9, totalCount: 9 });
+          onAssetLoaded?.({ assetKey: 'concrete_wall_connectivity', url: '/models/concrete_wall_connectivity.json', loadedCount: ALL_GLB_ASSET_KEYS.length + 1, totalCount: ALL_GLB_ASSET_KEYS.length + 1 });
         });
 
         const phases: PreloadPhaseId[] = [];

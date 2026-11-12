@@ -131,6 +131,7 @@ export class CombatDirector {
   public fireWeapon(weapon: WeaponSpec, ammo: AmmoSpec, origin: Vec3Like, aimDir: Vec3Like): void {
     this.losCacheEpoch++;
     this.lastInternalBallisticsReport = routeWeaponFire(weapon, ammo, origin, aimDir, this.targets, this.environment, this.fxManager, this.environmentRayInterceptor, {
+      app: this.app,
       physiologySystem: this.physiologySystem,
       anatomicalBvh: this.anatomicalBvh,
       hudController: this.hudController,
@@ -158,6 +159,7 @@ export class CombatDirector {
       this.onCameraShake, () => this.getViewerPosVec3(),
       (c, r) => spawnBlastVisualFx(c, r, this.app, this.materials, this.blastFireballMat, this.activeBlastFlashes),
       {
+        app: this.app,
         physiologySystem: this.physiologySystem,
         anatomicalBvh: this.anatomicalBvh,
         hudController: this.hudController,

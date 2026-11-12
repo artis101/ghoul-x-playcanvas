@@ -24,7 +24,11 @@ import {
 import { hashCombatantTargetId, resolveDefaultCombatantProfile } from './archetypeTuning.ts';
 import { isArmChainIntactAndFunctional } from './combatantArmEvaluation.ts';
 import {
-  createDefaultPlayerVitals, grantBrutalKillReward, notifyWaveCleared, stepPlayerVitalsRegen,
+  type BrutalKillVitalsDelta,
+  createDefaultPlayerVitals,
+  grantBrutalKillReward,
+  notifyWaveCleared,
+  stepPlayerVitalsRegen,
 } from './playerVitalsController.ts';
 import { getSidearmVisualState, syncAgentArmamentAndSidearm } from './agentArmamentController.ts';
 import { computeEnemyAimProfile } from './tacticalAimProfileCalculator.ts';
@@ -34,8 +38,14 @@ import { isSightBlockedBySolidCover, resolveExposedPlayerAimPoint } from './tact
 import type { PeekPlanCacheEntry } from './tacticalCoverFinder.ts';
 import { type TacticalFsmContext, stepSingleEnemyAgent } from './tacticalAgentFsm.ts';
 import {
-  buildAllSquadMateSummaries, buildSquadMateSummary, createEnemyTracerPool,
-  triggerHitTraumaBark, triggerStateTransitionBark, updateSquadTokensAndFrustum,
+  broadcastWitnessedBrutality,
+  buildAllSquadMateSummaries,
+  buildSquadMateSummary,
+  createEnemyTracerPool,
+  relocateAgentToAlternateCover,
+  triggerHitTraumaBark,
+  triggerStateTransitionBark,
+  updateSquadTokensAndFrustum,
 } from './tacticalSquadOrchestrator.ts';
 
 export type {
@@ -217,8 +227,21 @@ export class TacticalCombatAiSystem {
     return computeEnemyAimProfile(target, agent, externalAccuracyMultiplier);
   }
 
-  public grantBrutalKillReward(kind: BrutalKillRewardKind): void {
-    grantBrutalKillReward(this.playerVitals, kind);
+  public grantBrutalKillReward(kind: BrutalKillRewardKind): BrutalKillVitalsDelta {
+    return grantBrutalKillReward(this.playerVitals, kind);
+  }
+
+  public notifyWitnessedBrutality(victim: TargetHealthState, kind: BrutalKillRewardKind): number {
+    return broadcastWitnessedBrutality(
+      victim,
+      kind,
+      this.agents,
+      this.targetStateById,
+      this.barkCoordinator,
+      this.elapsedClockS,
+      (ag, next) => this.transitionState(ag, next),
+      (bark) => this.emitBark(bark)
+    );
   }
 
   public notifyWaveCleared(): void {
@@ -302,6 +325,17 @@ export class TacticalCombatAiSystem {
         );
       },
       onAgentSidearmDrawStart: (hs) => this.notifyAgentSidearmDraw(hs),
+      onAgentCoverRetreat: (hs) => {
+        this.barkCoordinator.notifyCoverRetreat(
+          hs.targetId,
+          hs.archetype,
+          hs.worldPosition,
+          this.elapsedClockS,
+          (bark) => this.emitBark(bark)
+        );
+      },
+      tryRelocateCoverAnchor: (hs, ag) =>
+        relocateAgentToAlternateCover(hs, ag, this.agents, this.peekPlanCache, this.elapsedClockS),
     };
 
     for (const hs of targets) {

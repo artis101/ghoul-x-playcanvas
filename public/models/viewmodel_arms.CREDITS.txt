@@ -1,0 +1,8 @@
+FREE FPS Arms with glove by BURNER (Alexander_Ovelar)
+https://sketchfab.com/3d-models/free-fps-arms-with-glove-453e0248925c4c3e807d3d36fe1b916a
+Licensed under Creative Commons Attribution 4.0 International
+https://creativecommons.org/licenses/by/4.0/
+
+Adapted for GHOUL-X. Reposed the arms and fingers for the first-person viewmodels,
+resized the textures, toned down the skin color, adjusted the material, and
+baked the poses into a GLB.

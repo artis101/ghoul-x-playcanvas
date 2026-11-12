@@ -1,11 +1,9 @@
-import type * as pc from 'playcanvas';
 import type { WeaponGlbInstance } from '../assets/glbLoader.ts';
 
 export const GRENADE_GESTURE_SECONDS = 0.24;
 
 export interface GrenadeGestureResources {
   readonly model: WeaponGlbInstance;
-  readonly materials: pc.StandardMaterial[];
   readonly release: () => void;
 }
 
@@ -42,9 +40,6 @@ export function transitionViewmodelAction(
     (next.kind !== 'THROWING_GRENADE' || next.resources !== current.resources)
   ) {
     current.resources.model.destroy();
-    for (const mat of current.resources.materials) {
-      mat.destroy();
-    }
     if (activeWeaponGlb) {
       activeWeaponGlb.rootEntity.enabled = true;
     }

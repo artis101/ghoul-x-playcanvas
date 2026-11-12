@@ -1,4 +1,5 @@
 import type * as pc from 'playcanvas';
+import type { BrutalRewardEventPayload } from '../../contracts/ai/aiContracts.ts';
 import type { DestructibleMaterialKind } from '../../contracts/destruction.ts';
 import { scale, vec3 } from '../../core/ballistics/vec3.ts';
 import { getOrCreateMaterials, type EngineMaterialPalette } from '../materials.ts';
@@ -56,6 +57,7 @@ export class GhoulXApplication implements IGhoulXApp {
 
   public totalElapsedTimeS = 0;
   public lifecycleState: AppLifecycleState = { kind: 'INITIALIZED' };
+  private readonly onBrutalRewardHandler: (payload: BrutalRewardEventPayload) => void;
 
   constructor(
     canvas?: HTMLCanvasElement,
@@ -258,6 +260,26 @@ export class GhoulXApplication implements IGhoulXApp {
     this.combatDirector.spawnAllTargets();
     this.hudController.updatePlayerVitals(this.tacticalAi.playerVitals, 0);
 
+    this.onBrutalRewardHandler = (payload: BrutalRewardEventPayload): void => {
+      if (payload.bonusRoundsGranted > 0) {
+        this.arsenalManager.grantActiveWeaponBonusRounds(payload.bonusRoundsGranted);
+      }
+      this.hudController.updatePlayerVitals(this.tacticalAi.playerVitals, this.totalElapsedTimeS);
+      const rewardLabel =
+        payload.kind === 'DECAPITATION'
+          ? 'SURGICAL DECAPITATION'
+          : payload.kind === 'CRANIAL_POP'
+            ? 'POINT-BLANK CRANIAL POP'
+            : payload.kind === 'SURGICAL_SEVER'
+              ? 'SURGICAL JOINT SEVER'
+              : payload.kind === 'MULTI_KILL_BLAST'
+                ? 'MULTI-KILL BLAST'
+                : 'HIGH-IMPACT SEVER';
+      const bonusMsg = `+${Math.round(payload.armorRestored)} ARMOR • +${Math.round(payload.healthRestored)} HP • +${payload.bonusRoundsGranted} MAG`;
+      this.hudController.pushSystemToast(rewardLabel, bonusMsg);
+    };
+    this.app.on('combat:brutal_reward', this.onBrutalRewardHandler);
+
     if (options?.autoStart !== false) {
       this.start();
     }
@@ -280,6 +302,7 @@ export class GhoulXApplication implements IGhoulXApp {
     if (this.lifecycleState.kind === 'RUNNING') {
       this.app.off('update', this.lifecycleState.updateHandler);
     }
+    this.app.off('combat:brutal_reward', this.onBrutalRewardHandler);
     this.lifecycleState = { kind: 'DESTROYED' };
     unbindPlayCanvasAppResize(this.app);
     this.fpsController.destroy();

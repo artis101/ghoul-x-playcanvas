@@ -211,9 +211,14 @@ export function processShotSimulationReport(
     }
   }
 
-  let sawCranialPop = false;
+  let sawHeadLoss = false;
+  let sawDismemberment = false;
   for (const dism of report.dismembermentEvents) {
-    if (dism.goreMode === 'CRANIAL_POP') sawCranialPop = true;
+    if (dism.goreMode === 'CRANIAL_POP' || dism.zone === 'NECK_CERVICAL') {
+      sawHeadLoss = true;
+    } else if (dism.goreMode === 'CLEAN_SEVER' || dism.goreMode === 'EVISCERATED') {
+      sawDismemberment = true;
+    }
     if (dism.goreMode === 'CRANIAL_POP' || dism.goreMode === 'CLEAN_SEVER') {
       totalDecals += projectBloodSplatter(
         ctx,
@@ -229,8 +234,10 @@ export function processShotSimulationReport(
     }
   }
 
-  if (sawCranialPop) {
+  if (sawHeadLoss) {
     ctx.bulletTime.triggerKillPunch(0.35, 0.16, 'CRANIAL_POP');
+  } else if (sawDismemberment) {
+    ctx.bulletTime.triggerKillPunch('DISMEMBERMENT', 0.22);
   }
   return totalDecals;
 }

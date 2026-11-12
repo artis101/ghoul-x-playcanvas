@@ -37,7 +37,7 @@ export function buildWeaponViewmodel(
       });
       parentEntity.addChild(glbInst.rootEntity);
       upgradeViewmodelMaterials(glbInst.rootEntity, weapon.id, device, activeMaterials);
-      if (device) mountViewmodelHands(glbInst, device, activeMaterials);
+      mountViewmodelHands(glbInst, glbRegistry.getContainer('viewmodel_arms'));
       const { flashRoot, baseScale } = createMuzzleFlashStarEntity(device, weapon.role);
       glbInst.muzzleNode.addChild(flashRoot);
       return { activeGlb: glbInst, flashEntity: flashRoot, baseScale };

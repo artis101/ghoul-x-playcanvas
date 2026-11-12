@@ -62,6 +62,9 @@ export function updateWorldPlateEntry(
     : statusTag === 'SIDEARM_DRAWING' ? `${baseLabel} • DRAWING M9`
     : statusTag === 'DISARMED' ? 'DISARMED'
     : statusTag === 'LAST_STAND' ? `${baseLabel} • LAST STAND`
+    : statusTag === 'PANIC_SHAKEN' ? `${baseLabel} • SHAKEN`
+    : statusTag === 'JUGGERNAUT' ? `${baseLabel} • ARMORED PUSH`
+    : statusTag === 'RUSHING' ? `${baseLabel} • RUSHING`
     : baseLabel;
 
   const colorCls = triageColorClass(status);

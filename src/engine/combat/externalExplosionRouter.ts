@@ -48,6 +48,7 @@ export function routeExternalExplosionTrauma(
   }
 
   let newlyKilledCount = 0;
+  let lastKilledHs: GhoulMannequinEntity['healthState'] | null = null;
   for (const target of targets) {
     const hs = target.healthState;
     const wasAlive = hs.alive;
@@ -58,7 +59,10 @@ export function routeExternalExplosionTrauma(
     const blastReport = buildFragBlastReportForTarget(hs, center, distM, blastRadiusM, peakImpulseNs, peakEnergyJ);
     applyImpactFxAndState(target, blastReport, sourceLabel, impactCtx, SYNTHETIC_SHRAPNEL_AMMO);
 
-    if (wasAlive && !hs.alive) newlyKilledCount++;
+    if (wasAlive && !hs.alive) {
+      newlyKilledCount++;
+      lastKilledHs = hs;
+    }
 
     if (distM < 4.5 && hs.isRagdollActive) {
       const corpseScale = wasAlive ? 1.0 : 0.28;
@@ -86,8 +90,22 @@ export function routeExternalExplosionTrauma(
   }
 
   if (newlyKilledCount >= 2) {
-    tacticalAi?.grantBrutalKillReward('MULTI_KILL_BLAST');
+    const delta = tacticalAi?.grantBrutalKillReward('MULTI_KILL_BLAST') ?? {
+      armorRestored: 0,
+      healthRestored: 0,
+    };
+    if (lastKilledHs) tacticalAi?.notifyWitnessedBrutality(lastKilledHs, 'MULTI_KILL_BLAST');
     mayhemDirector?.bulletTime.triggerKillPunch(0.35, 0.16, 'MULTI_KILL_BLAST');
+    impactCtx.app?.fire('combat:brutal_reward', {
+      kind: 'MULTI_KILL_BLAST',
+      targetId: lastKilledHs?.targetId ?? 'blast_multi',
+      targetName: `${newlyKilledCount}x HOSTILES`,
+      weaponLabel: sourceLabel,
+      isLethal: true,
+      armorRestored: delta.armorRestored,
+      healthRestored: delta.healthRestored,
+      bonusRoundsGranted: 2,
+    });
   }
 
   return newlyKilledCount;

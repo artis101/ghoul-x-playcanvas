@@ -40,7 +40,22 @@ const ALLY_DOWN_LINES = [
   'They got him! Pour fire on that angle!',
   'Squadmate KIA—stay sharp!',
 ];
-const BERSERKER_LINES = ['BLEED HIM DRY! PUSH!', 'NO COVER! RUSH HIM NOW!'];
+const BERSERKER_LINES = ['BLEED HIM DRY! PUSH!', 'NO COVER! RUSH HIM NOW!', 'CARVE HIM OPEN—CHARGE!'];
+const HORROR_HEAD_LINES = [
+  "OH GOD—HIS HEAD'S GONE!",
+  'HE BLEW HIS DAMN HEAD CLEAN OFF!',
+  'CHRIST ALMIGHTY—STAY DOWN!',
+];
+const HORROR_LIMB_LINES = [
+  'HE TORE HIM APART! FALL BACK!',
+  'HIS ARM—HE SHOT IT CLEAN OFF!',
+  'JESUS, HE SHREDDED HIM! GET BACK!',
+];
+const VETERAN_BRUTAL_CALLOUTS = [
+  'Shooter is working joints—shift your angles!',
+  'Heavy CQB butcher! Check spacing and hard cover!',
+  'Sniper taking clean severs—do not hold static peeks!',
+];
 
 const VOCAL_CUE_TEXT: Record<Exclude<VocalTraumaCue, 'NONE'>, string> = {
   SHARP_GASP: '*sharp pleural gasp*',
@@ -243,6 +258,50 @@ export class SquadBarkCoordinator {
       vocalCue,
       durationS: 1.75,
     });
+  }
+
+  public notifyWitnessedBrutality(
+    speakerId: string,
+    archetype: EnemyArchetypeId,
+    worldPos: Vec3Like,
+    category: AiBarkCategory,
+    isHeadLoss: boolean,
+    elapsedClockS: number,
+    onBark: (bark: AiBarkPayload) => void
+  ): void {
+    const pool =
+      category === 'BERSERKER_CHARGE'
+        ? BERSERKER_LINES
+        : category === 'TACTICAL_CALLOUT'
+          ? VETERAN_BRUTAL_CALLOUTS
+          : isHeadLoss
+            ? HORROR_HEAD_LINES
+            : HORROR_LIMB_LINES;
+    const text = pool[this.lineCounter++ % pool.length];
+    const emitted = this.tryEmitRadioBark(
+      speakerId,
+      archetype,
+      category,
+      text,
+      worldPos,
+      elapsedClockS,
+      onBark
+    );
+    if (!emitted && category === 'HORROR_SHOCK') {
+      const nextAllowed = this.speakerNextTraumaS.get(speakerId) ?? 0;
+      if (elapsedClockS >= nextAllowed) {
+        this.speakerNextTraumaS.set(speakerId, elapsedClockS + this.perSpeakerTraumaCooldownS);
+        onBark({
+          speakerId,
+          callsign: this.resolveCallsign(speakerId, archetype),
+          category: 'HORROR_SHOCK',
+          text,
+          worldPos: copyVec3(worldPos),
+          isRadio: false,
+          durationS: 2.1,
+        });
+      }
+    }
   }
 
   public cancelPendingForAgent(targetId: string): void {

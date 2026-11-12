@@ -2,6 +2,7 @@ import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import { distance, length, scale, sub, vec3 } from '../../../core/ballistics/vec3.ts';
 import { computePanelRemainingAreaM2, isPointInOpenHole } from '../../../core/destruction/woodPolygonClipper.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
+import type { BrickWallSystem } from '../brickWallSystem.ts';
 import type { GlassSystem } from '../glassSystem.ts';
 import type { WoodWallSystem } from '../woodWallSystem.ts';
 
@@ -9,6 +10,7 @@ export interface DestructionCollisionContext {
   readonly rapierWorld: RapierPhysicsWorld;
   readonly woodWalls: WoodWallSystem;
   readonly glassSystem: GlassSystem;
+  readonly brickWalls?: BrickWallSystem;
 }
 
 export function isHorizontalStepBlocked(
@@ -69,6 +71,12 @@ export function isHorizontalStepBlocked(
           (w) => w.id === h.surface.objectId
         );
         if (marWin && marWin.isPlayerPassable(h.pointWorld)) {
+          continue;
+        }
+      }
+
+      if (h.surface.material === 'BRICK_MASONRY' && ctx.brickWalls) {
+        if (ctx.brickWalls.isPlayerPassableAtWorldPoint(h.surface.objectId, h.pointWorld, radiusM)) {
           continue;
         }
       }

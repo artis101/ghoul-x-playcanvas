@@ -78,4 +78,16 @@ export class AmmoInventory {
     inv.mag += loaded;
     inv.reserve -= loaded;
   }
+
+  public grantBonusRounds(weaponId: string, count = 1): number {
+    if (!Number.isFinite(count) || count <= 0) return 0;
+    const inv = this.states.get(weaponId);
+    if (!inv) return 0;
+    const whole = Math.max(1, Math.floor(count));
+    const intoMag = Math.min(whole, Math.max(0, inv.magCap - inv.mag));
+    const intoReserve = whole - intoMag;
+    inv.mag += intoMag;
+    inv.reserve += intoReserve;
+    return whole;
+  }
 }

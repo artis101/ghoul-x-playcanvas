@@ -13,7 +13,29 @@ export type AiBarkCategory =
   | 'SIDEARM_TRANSITION'
   | 'ALLY_DOWN'
   | 'WOUNDED_TRAUMA'
-  | 'BERSERKER_CHARGE';
+  | 'BERSERKER_CHARGE'
+  | 'HORROR_SHOCK'
+  | 'TACTICAL_CALLOUT';
+
+export type BrutalKillRewardKind =
+  | 'CRANIAL_POP'
+  | 'DECAPITATION'
+  | 'SURGICAL_SEVER'
+  | 'CLEAN_SEVER'
+  | 'EVISCERATED'
+  | 'MULTI_KILL_BLAST'
+  | 'STANDARD_KILL';
+
+export interface BrutalRewardEventPayload {
+  readonly kind: Exclude<BrutalKillRewardKind, 'STANDARD_KILL'>;
+  readonly targetId: string;
+  readonly targetName: string;
+  readonly weaponLabel: string;
+  readonly isLethal: boolean;
+  readonly armorRestored: number;
+  readonly healthRestored: number;
+  readonly bonusRoundsGranted: number;
+}
 
 export interface AiBarkPayload {
   readonly speakerId: string;

@@ -4,6 +4,8 @@ import type {
   AiBarkCategory,
   AiBarkPayload,
   ArterialBleedState,
+  BrutalKillRewardKind,
+  BrutalRewardEventPayload,
   EnemyFireMode,
   HealthGateState,
   PlayerCombatVitals,
@@ -28,6 +30,8 @@ export type {
   AiBarkPayload,
   AlertedEngagementSubstate,
   ArterialBleedState,
+  BrutalKillRewardKind,
+  BrutalRewardEventPayload,
   CombatantTriageStatus,
   EnemyArmamentState,
   EnemyFireMode,
@@ -58,13 +62,6 @@ export type CombatantResolveProfile =
   | 'FANATIC_BERSERKER'
   | 'GRITTY_REGULAR'
   | 'PANICKED_SCRAPPER';
-
-export type BrutalKillRewardKind =
-  | 'CRANIAL_POP'
-  | 'CLEAN_SEVER'
-  | 'EVISCERATED'
-  | 'MULTI_KILL_BLAST'
-  | 'STANDARD_KILL';
 
 export interface TacticalCoverStation {
   readonly stationId: string;
@@ -207,6 +204,10 @@ export interface EnemyAiAgentRuntime {
   alertReactionTimerS?: number;
   hasFiredWarningShot?: boolean;
   timeWithoutLosS?: number;
+  moraleShockTimerS?: number;
+  berserkerFrenzyTimerS?: number;
+  lastRelocationClockS?: number;
+  lastObservedBurstCount?: number;
 
   armamentState?: EnemyArmamentState;
   burstState?: WeaponBurstState;

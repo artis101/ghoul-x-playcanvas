@@ -1,13 +1,11 @@
+import type { AlertedEngagementSubstate } from './tacticalDoctrine.ts';
+
+export type { AlertedEngagementSubstate };
+
 export type WeaponBurstState =
   | { readonly kind: 'REACTION_HOLD'; readonly remainingS: number; readonly cooldownRemainingS: number }
   | { readonly kind: 'COOLDOWN'; readonly remainingS: number }
   | { readonly kind: 'BURSTING'; readonly shotsRemaining: number; readonly interShotS: number };
-
-export type AlertedEngagementSubstate =
-  | 'CLUTCHING_RETREAT'
-  | 'BERSERKER_CHARGE'
-  | 'COVER_SHELTER'
-  | 'COVER_PEEK';
 
 export type TraumaShockState =
   | { readonly kind: 'CLEAR' }

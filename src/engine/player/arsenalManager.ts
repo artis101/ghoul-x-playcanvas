@@ -213,16 +213,14 @@ export class ArsenalManager {
       return;
     }
 
-    const materials: pc.StandardMaterial[] = [];
     let model: WeaponGlbInstance | null = null;
     try {
       model = this.glbRegistry.instantiateWeapon('frag_grenade');
-      mountViewmodelHands(model, device, materials);
+      mountViewmodelHands(model, this.glbRegistry.getContainer('viewmodel_arms'));
       model.rootEntity.setLocalPosition(0.24, -0.35, -0.47);
       this.cameraEntity.addChild(model.rootEntity);
     } catch {
       model?.destroy();
-      for (const material of materials) material.destroy();
       release();
       return;
     }
@@ -233,7 +231,7 @@ export class ArsenalManager {
         kind: 'THROWING_GRENADE',
         elapsedS: 0,
         durationS: GRENADE_GESTURE_SECONDS,
-        resources: { model, materials, release },
+        resources: { model, release },
       },
       this.activeWeaponGlb
     );
@@ -264,6 +262,12 @@ export class ArsenalManager {
       inv.reserve,
       this.actionState.kind === 'RELOADING'
     );
+  }
+
+  public grantActiveWeaponBonusRounds(count = 1): number {
+    const granted = this.inventory.grantBonusRounds(this.currentWeapon.id, count);
+    if (granted > 0) this.syncWeaponHud();
+    return granted;
   }
 
   public update(dt: number): void {

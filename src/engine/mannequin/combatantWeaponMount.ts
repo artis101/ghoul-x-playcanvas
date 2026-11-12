@@ -17,6 +17,7 @@ import {
   getArchetypeWeaponAssetId,
   type CombatantGlbInstance,
   type GlbModelRegistry,
+  type WeaponAssetId,
   type WeaponGlbInstance,
 } from '../assets/glbLoader.ts';
 import { getPreferredPrimaryHand, isArmChainIntactAndFunctional } from '../ai/combatantArmEvaluation.ts';
@@ -50,10 +51,10 @@ export class CombatantWeaponMount {
   public attachGlbWeaponIfReady(
     glbRegistry: GlbModelRegistry,
     healthState: TargetHealthState,
-    rootEntity: pc.Entity
+    rootEntity: pc.Entity,
+    weaponAssetId: WeaponAssetId = getArchetypeWeaponAssetId(healthState.archetype)
   ): void {
     if (this.heldWeaponGlb) return;
-    const weaponAssetId = getArchetypeWeaponAssetId(healthState.archetype);
     if (!glbRegistry.isLoaded(weaponAssetId)) return;
 
     try {
@@ -142,6 +143,7 @@ export class CombatantWeaponMount {
 
       const canUseSupport =
         healthState.posture === 'COMBAT_READY' && healthState.activeReaction.type === 'NONE' &&
+        weaponId !== 'frag_grenade' &&
         isArmChainIntactAndFunctional(healthState, supportHand);
       if (glbTrigNode) {
         const pT = glbTrigNode.getPosition();

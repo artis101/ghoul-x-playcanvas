@@ -1,34 +1,28 @@
-import type * as RAPIER from '@dimforge/rapier3d-compat';
 import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import type {
   BallisticPenetrationResult,
   BallisticSegmentImpact,
   BlastEvent,
-  ChunkConnectivityNode,
 } from '../../../contracts/destruction.ts';
 import {
-  findDetachedChunkIndices,
-  findDetachedSubgraphs,
+  applyBallisticHitToBrickGrid,
+  applyBlastToBrickGrid,
+  findBrickAtLocalUV,
+  findFirstSolidBrickAlongLocalRay,
+  isPlayerPassableInBrickGrid,
+} from '../../../core/destruction/brickWallMesh.ts';
+import {
   localToWorldPoint,
   rotateVec3ByQuat,
-  severEdgesAtPoint,
-  severEdgesFromBlast,
   worldToLocalPoint,
 } from '../../../core/destruction/connectivityGraph.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
-import {
-  convertBrickIslandToCompoundBody,
-  convertBrickToDynamicBody,
-} from './brickColliders.ts';
+import { syncBrickWallMeshAndState } from './brickColliders.ts';
 import type { BrickDynamicPool } from './brickDynamicPool.ts';
 import {
-  BRICK_HEAVY_PENETRATOR_THRESHOLD_J,
-  BrickPhase,
   type BrickWallInstanceState,
   IDENTITY_QUAT,
 } from './brickWallTypes.ts';
-
-const LOOSE_BRICK_DEFLECTION_LOSS_J = 180;
 
 function normalizeDir(dir: Vec3Like): Vec3Like {
   const len = Math.hypot(dir.x, dir.y, dir.z);
@@ -38,29 +32,52 @@ function normalizeDir(dir: Vec3Like): Vec3Like {
   return { x: dir.x / len, y: dir.y / len, z: dir.z / len };
 }
 
-function severDirectHitBrickBonds(
-  wall: BrickWallInstanceState,
-  brickIdx: number,
-  kineticEnergyJ: number
-): void {
-  const nodes = (wall.graph.nodes ?? []) as ChunkConnectivityNode[];
-  if (brickIdx < 0 || brickIdx >= nodes.length) return;
-  const node = nodes[brickIdx];
-  if (node.isAnchored && kineticEnergyJ >= 1800) {
-    node.isAnchored = false;
+export function isBrickWallOpenAlongRay(
+  wall: BrickWallInstanceState | undefined,
+  rayOriginWorld: Vec3Like,
+  unitDirWorld: Vec3Like,
+  maxDistM: number,
+  fallbackPointWorld?: Vec3Like
+): boolean {
+  if (!wall) return false;
+  if (wall.intactBrickCount <= 0 || wall.lastMeshStats.indexCount <= 0) {
+    return true;
   }
-  for (let e = 0; e < node.edges.length; e++) {
-    const edge = node.edges[e];
-    edge.severed = true;
-    const neighbor = nodes[edge.neighborIndex];
-    if (!neighbor) continue;
-    for (let k = 0; k < neighbor.edges.length; k++) {
-      if (neighbor.edges[k].neighborIndex === brickIdx) {
-        neighbor.edges[k].severed = true;
-        break;
-      }
+
+  const localOrigin = worldToLocalPoint(rayOriginWorld, wall.transform);
+  const localDir = rotateVec3ByQuat(unitDirWorld, wall.invRotation);
+  const solidHit = findFirstSolidBrickAlongLocalRay(
+    wall.grid,
+    localOrigin,
+    localDir,
+    maxDistM + wall.grid.thicknessM
+  );
+  if (solidHit !== null) {
+    return false;
+  }
+
+  if (fallbackPointWorld) {
+    const lp = worldToLocalPoint(fallbackPointWorld, wall.transform);
+    const u = lp.x + wall.grid.widthM * 0.5;
+    const v = lp.y;
+    const idx = findBrickAtLocalUV(wall.grid, u, v);
+    if (idx >= 0) {
+      return wall.grid.hp[idx] <= 0;
     }
   }
+
+  return true;
+}
+
+export function isBrickWallPlayerPassable(
+  wall: BrickWallInstanceState | undefined,
+  worldPoint: Vec3Like,
+  playerRadiusM = 0.36
+): boolean {
+  if (!wall) return false;
+  if (wall.intactBrickCount <= 0) return true;
+  const localPt = worldToLocalPoint(worldPoint, wall.transform);
+  return isPlayerPassableInBrickGrid(wall.grid, localPt.x, playerRadiusM);
 }
 
 export function handleBrickRaySegment(
@@ -74,170 +91,99 @@ export function handleBrickRaySegment(
     return null;
   }
 
+  const dirNorm = normalizeDir(seg.directionWorld);
   const hits = rapierWorld.castPenetrationRay(
     seg.originWorld,
-    seg.directionWorld,
+    dirNorm,
     seg.maxDistanceM
   );
 
-  let matchedHit: (typeof hits)[number] | null = null;
-  let matchedWall: BrickWallInstanceState | undefined;
   for (let i = 0; i < hits.length; i++) {
     const h = hits[i];
-    if (h.surface.material === 'BRICK_MASONRY') {
-      const w = wallsById.get(h.surface.objectId);
-      if (w) {
-        matchedHit = h;
-        matchedWall = w;
-        break;
-      }
+    if (h.surface.material !== 'BRICK_MASONRY') continue;
+    const wall = wallsById.get(h.surface.objectId);
+    if (!wall || wall.intactBrickCount <= 0) continue;
+
+    const localOrigin = worldToLocalPoint(seg.originWorld, wall.transform);
+    const localDir = rotateVec3ByQuat(dirNorm, wall.invRotation);
+    const solidHit = findFirstSolidBrickAlongLocalRay(
+      wall.grid,
+      localOrigin,
+      localDir,
+      seg.maxDistanceM + wall.grid.thicknessM
+    );
+
+    // Ray passed cleanly through an open punched-out hole in the brick wall!
+    if (!solidHit) {
+      continue;
     }
-  }
 
-  if (!matchedHit || !matchedWall) {
-    return null;
-  }
+    const outcome = applyBallisticHitToBrickGrid(
+      wall.grid,
+      solidHit.brickIndex,
+      seg.kineticEnergyJ,
+      seg.isArmorPiercing,
+      solidHit.hitFromFront
+    );
 
-  const dirNorm = normalizeDir(seg.directionWorld);
-  const hitChunkIdx = matchedHit.surface.chunkIndex ?? -1;
-  const hitPhase =
-    hitChunkIdx >= 0
-      ? (matchedWall.brickPhase[hitChunkIdx] as BrickPhase)
-      : BrickPhase.INTACT_STATIC;
-  const isAlreadyDetachedBrick =
-    hitChunkIdx >= 0 &&
-    (hitPhase !== BrickPhase.INTACT_STATIC || matchedWall.graph.detached[hitChunkIdx] === 1);
+    const rot = wall.transform.rotation ?? IDENTITY_QUAT;
+    const hitNormalWorld = rotateVec3ByQuat(
+      { x: 0, y: 0, z: solidHit.hitFromFront ? 1 : -1 },
+      rot
+    );
+    const hitPointWorld = localToWorldPoint(solidHit.hitLocal, wall.transform);
 
-  dynamicPool.spawnMortarChips(
-    matchedHit.pointWorld,
-    matchedHit.normalWorld,
-    seg.kineticEnergyJ > BRICK_HEAVY_PENETRATOR_THRESHOLD_J ? 9 : 5,
-    seg.kineticEnergyJ > BRICK_HEAVY_PENETRATOR_THRESHOLD_J ? 1.25 : 0.75,
-    nextRandom
-  );
+    // Always emit fine clay & mortar dust chips when a brick suffers impact damage
+    const chipCount = outcome.brickBrokeOut ? 11 : seg.kineticEnergyJ >= 1200 ? 7 : 4;
+    const chipSpeed = outcome.brickBrokeOut ? 1.35 : seg.kineticEnergyJ >= 1200 ? 1.0 : 0.72;
+    dynamicPool.spawnMortarChips(
+      hitPointWorld,
+      hitNormalWorld,
+      chipCount,
+      chipSpeed,
+      nextRandom
+    );
 
-  if (isAlreadyDetachedBrick) {
-    const dynBodyHandle = matchedWall.dynamicBodyHandles[hitChunkIdx];
-    if (dynBodyHandle >= 0) {
-      const body = rapierWorld.world.getRigidBody(dynBodyHandle) as RAPIER.RigidBody | undefined;
-      if (body) {
-        const kickNs = Math.min(18, 2.5 + seg.kineticEnergyJ * 0.004);
-        body.applyImpulse(
-          { x: dirNorm.x * kickNs, y: dirNorm.y * kickNs + 1.2, z: dirNorm.z * kickNs },
-          true
+    // When a brick finally shatters out completely, eject kinematic broken-brick chunks out the exit side
+    if (outcome.brickBrokeOut && outcome.newlyDestroyedIndices.length > 0) {
+      const exitNormalWorld = {
+        x: -hitNormalWorld.x,
+        y: -hitNormalWorld.y,
+        z: -hitNormalWorld.z,
+      };
+      const maxBursts = Math.min(outcome.newlyDestroyedIndices.length, 6);
+      for (let d = 0; d < maxBursts; d++) {
+        const bIdx = outcome.newlyDestroyedIndices[d];
+        const brickWorld = localToWorldPoint(wall.grid.cells[bIdx].localCenter, wall.transform);
+        dynamicPool.spawnBrokenBrickRubble(
+          brickWorld,
+          d === 0 ? dirNorm : exitNormalWorld,
+          d === 0 ? 3 : 2,
+          d === 0 ? 1.15 : 0.65,
+          nextRandom
         );
       }
     }
-    const remJ = Math.max(0, seg.kineticEnergyJ - LOOSE_BRICK_DEFLECTION_LOSS_J);
-    const stopped = remJ <= 25;
-    const ratio = seg.kineticEnergyJ > 1e-6 ? remJ / seg.kineticEnergyJ : 0;
+
+    syncBrickWallMeshAndState(wall, rapierWorld);
+
+    const ratio =
+      seg.kineticEnergyJ > 1e-6 ? outcome.remainingEnergyJ / seg.kineticEnergyJ : 0;
+    const remainingSpeedMs = outcome.stopped
+      ? 0
+      : seg.speedMs * Math.sqrt(Math.max(0, ratio));
+
     return {
-      remainingEnergyJ: stopped ? 0 : remJ,
-      remainingSpeedMs: stopped ? 0 : seg.speedMs * Math.sqrt(Math.max(0, ratio)),
-      stopped,
-      impactPointWorld: matchedHit.pointWorld,
-      impactNormalWorld: matchedHit.normalWorld,
+      remainingEnergyJ: outcome.stopped ? 0 : outcome.remainingEnergyJ,
+      remainingSpeedMs,
+      stopped: outcome.stopped,
+      impactPointWorld: hitPointWorld,
+      impactNormalWorld: hitNormalWorld,
       hitMaterial: 'BRICK_MASONRY',
     };
   }
 
-  if (seg.kineticEnergyJ > BRICK_HEAVY_PENETRATOR_THRESHOLD_J) {
-    const localImpact = worldToLocalPoint(matchedHit.pointWorld, matchedWall.transform);
-    const localOrigin = worldToLocalPoint(seg.originWorld, matchedWall.transform);
-    const exitLocalZ = localOrigin.z >= 0 ? -1 : 1;
-    const rot = matchedWall.transform.rotation ?? IDENTITY_QUAT;
-    const wallExitNormal = rotateVec3ByQuat({ x: 0, y: 0, z: exitLocalZ }, rot);
-    const severRadius = Math.max(matchedWall.brickW * 0.85, matchedWall.brickH * 1.65);
-
-    severEdgesAtPoint(
-      matchedWall.graph,
-      localImpact,
-      seg.kineticEnergyJ * 1.25,
-      severRadius
-    );
-    severDirectHitBrickBonds(matchedWall, hitChunkIdx, seg.kineticEnergyJ);
-
-    const subgraphs = findDetachedSubgraphs(matchedWall.graph, undefined, 10);
-
-    for (let i = 0; i < subgraphs.length; i++) {
-      const island = subgraphs[i];
-      const brickIdx = island[0];
-      const isPrimaryHit = island.length === 1 && brickIdx === hitChunkIdx;
-      const speedKick = isPrimaryHit
-        ? Math.min(9.5, 3.0 + (seg.kineticEnergyJ - BRICK_HEAVY_PENETRATOR_THRESHOLD_J) * 0.0022)
-        : 2.2;
-
-      const linVel: Vec3Like = isPrimaryHit
-        ? {
-            x: dirNorm.x * speedKick + (nextRandom() - 0.5) * 0.9,
-            y: dirNorm.y * speedKick + 0.15 + nextRandom() * 0.25,
-            z: dirNorm.z * speedKick + (nextRandom() - 0.5) * 0.9,
-          }
-        : {
-            x: wallExitNormal.x * speedKick + (nextRandom() - 0.5) * 0.45,
-            y: -0.25,
-            z: wallExitNormal.z * speedKick + (nextRandom() - 0.5) * 0.45,
-          };
-
-      const angVel: Vec3Like = isPrimaryHit
-        ? {
-            x: (nextRandom() - 0.5) * 11,
-            y: (nextRandom() - 0.5) * 11,
-            z: (nextRandom() - 0.5) * 11,
-          }
-        : {
-            x: (nextRandom() - 0.5) * 2.2,
-            y: (nextRandom() - 0.5) * 2.2,
-            z: (nextRandom() - 0.5) * 2.2,
-          };
-
-      const clearDistM = matchedWall.brickD * (isPrimaryHit ? 1.08 : 1.02);
-      const spawnOffset: Vec3Like = {
-        x: wallExitNormal.x * clearDistM,
-        y: 0,
-        z: wallExitNormal.z * clearDistM,
-      };
-
-      convertBrickIslandToCompoundBody(
-        matchedWall,
-        island,
-        linVel,
-        angVel,
-        rapierWorld,
-        dynamicPool,
-        spawnOffset
-      );
-    }
-
-    dynamicPool.uploadAllVariantPools();
-
-    const remainingEnergyJ = Math.max(
-      0,
-      seg.kineticEnergyJ - BRICK_HEAVY_PENETRATOR_THRESHOLD_J
-    );
-    const energyRatio =
-      seg.kineticEnergyJ > 1e-6 ? remainingEnergyJ / seg.kineticEnergyJ : 0;
-    const remainingSpeedMs = seg.speedMs * Math.sqrt(Math.max(0, energyRatio));
-    const stopped = remainingEnergyJ <= 25;
-
-    return {
-      remainingEnergyJ: stopped ? 0 : remainingEnergyJ,
-      remainingSpeedMs: stopped ? 0 : remainingSpeedMs,
-      stopped,
-      impactPointWorld: matchedHit.pointWorld,
-      impactNormalWorld: matchedHit.normalWorld,
-      hitMaterial: 'BRICK_MASONRY',
-    };
-  }
-
-  return {
-    remainingEnergyJ: 0,
-    remainingSpeedMs: 0,
-    stopped: true,
-    impactPointWorld: matchedHit.pointWorld,
-    impactNormalWorld: matchedHit.normalWorld,
-    hitMaterial: 'BRICK_MASONRY',
-  };
+  return null;
 }
 
 export function applyBrickBlast(
@@ -251,100 +197,47 @@ export function applyBrickBlast(
     return;
   }
 
-  let anyBrickDetached = false;
-
   for (const wall of wallsById.values()) {
-    severEdgesFromBlast(wall.graph, wall.transform, blast);
-    const subgraphs = findDetachedSubgraphs(wall.graph, undefined, 10);
-    if (subgraphs.length === 0) {
+    const localBlast = worldToLocalPoint(blast.centerWorld, wall.transform);
+    const outcome = applyBlastToBrickGrid(
+      wall.grid,
+      localBlast,
+      blast.radiusM,
+      blast.peakEnergyJ
+    );
+    if (!outcome.changed) {
       continue;
     }
 
-    anyBrickDetached = true;
-    const localBlast = worldToLocalPoint(blast.centerWorld, wall.transform);
-    const awayLocalZ = localBlast.z >= 0 ? -1 : 1;
     const rot = wall.transform.rotation ?? IDENTITY_QUAT;
+    const awayLocalZ = localBlast.z >= 0 ? -1 : 1;
     const wallAwayWorld = rotateVec3ByQuat({ x: 0, y: 0, z: awayLocalZ }, rot);
-    const nodes = wall.graph.nodes ?? (wall.graph as { chunks?: ChunkConnectivityNode[] }).chunks ?? [];
-    let totalDetachedCount = 0;
 
-    for (let i = 0; i < subgraphs.length; i++) {
-      const island = subgraphs[i];
-      totalDetachedCount += island.length;
-      const brickIdx = island[0];
-      const node = nodes[brickIdx];
-      const worldPos = localToWorldPoint(node.localCenter, wall.transform);
-
-      const dx = worldPos.x - blast.centerWorld.x;
-      const dy = worldPos.y - blast.centerWorld.y;
-      const dz = worldPos.z - blast.centerWorld.z;
-      const dist = Math.hypot(dx, dy, dz);
-
-      let linVel: Vec3Like;
-      let angVel: Vec3Like;
-      const outPush = 1.6 + nextRandom() * 0.9;
-
-      if (dist <= blast.radiusM * 1.15) {
-        const falloff = Math.max(0.12, 1 - dist / (blast.radiusM * 1.15));
-        const speed = Math.min(
-          18,
-          Math.max(3.2 * falloff, (blast.peakImpulseNs / Math.max(0.4, node.massKg)) * falloff)
-        );
-        const invD = dist > 1e-4 ? 1 / dist : 0;
-        const rx = dist > 1e-4 ? dx * invD : 0;
-        const ry = dist > 1e-4 ? dy * invD : 1;
-        const rz = dist > 1e-4 ? dz * invD : 0;
-
-        linVel = {
-          x: rx * speed + wallAwayWorld.x * outPush,
-          y: Math.max(0.85, (ry + 0.45) * speed * 0.85),
-          z: rz * speed + wallAwayWorld.z * outPush,
-        };
-        angVel = {
-          x: (-rz + (nextRandom() - 0.5)) * speed * 0.85,
-          y: (nextRandom() - 0.5) * speed * 0.9,
-          z: (rx + (nextRandom() - 0.5)) * speed * 0.85,
-        };
-      } else {
-        const sideSign = i % 2 === 0 ? 1 : -1;
-        linVel = {
-          x: wallAwayWorld.x * (1.25 * sideSign) + (nextRandom() - 0.5) * 0.6,
-          y: -0.25,
-          z: wallAwayWorld.z * (1.25 * sideSign) + (nextRandom() - 0.5) * 0.6,
-        };
-        angVel = {
-          x: (nextRandom() - 0.5) * 2.4,
-          y: (nextRandom() - 0.5) * 1.6,
-          z: (nextRandom() - 0.5) * 2.4,
-        };
-      }
-
-      const blastClearDistM = wall.brickD * 0.95;
-      convertBrickIslandToCompoundBody(
-        wall,
-        island,
-        linVel,
-        angVel,
-        rapierWorld,
-        dynamicPool,
-        {
-          x: wallAwayWorld.x * blastClearDistM,
-          y: 0,
-          z: wallAwayWorld.z * blastClearDistM,
-        }
-      );
+    const destroyedCount = outcome.newlyDestroyedIndices.length;
+    const sampleStride = Math.max(1, Math.ceil(destroyedCount / 14));
+    for (let i = 0; i < destroyedCount; i += sampleStride) {
+      const bIdx = outcome.newlyDestroyedIndices[i];
+      const brickWorld = localToWorldPoint(wall.grid.cells[bIdx].localCenter, wall.transform);
+      const dx = brickWorld.x - blast.centerWorld.x;
+      const dy = brickWorld.y - blast.centerWorld.y;
+      const dz = brickWorld.z - blast.centerWorld.z;
+      const dist = Math.hypot(dx, dy, dz) || 1;
+      const ejectDir: Vec3Like = {
+        x: (dx / dist) * 0.65 + wallAwayWorld.x * 0.65,
+        y: Math.max(0.25, dy / dist),
+        z: (dz / dist) * 0.65 + wallAwayWorld.z * 0.65,
+      };
+      dynamicPool.spawnBrokenBrickRubble(brickWorld, ejectDir, 2, 1.35, nextRandom);
     }
 
     dynamicPool.spawnMortarChips(
       blast.centerWorld,
       { x: 0, y: 1, z: 0 },
-      Math.min(20, totalDetachedCount * 2),
-      1.7,
+      Math.min(24, Math.max(6, destroyedCount * 2 + outcome.damagedBrickCount)),
+      1.6,
       nextRandom
     );
-  }
 
-  if (anyBrickDetached) {
-    dynamicPool.uploadAllVariantPools();
+    syncBrickWallMeshAndState(wall, rapierWorld);
   }
 }

@@ -1,4 +1,5 @@
 import type { TargetHealthState } from '../../contracts/ballistics.ts';
+import { computeMoraleSpreadMultiplier } from '../../core/ai/tacticalDoctrine.ts';
 import { computeCombatantTriageStatus } from '../../core/ballistics/solver.ts';
 import { evaluateTargetArmamentState } from './agentArmamentController.ts';
 import type { EnemyAimProfile, EnemyAiAgentRuntime } from './tacticalAiTypes.ts';
@@ -145,6 +146,10 @@ export function computeEnemyAimProfile(
       (agent?.suppression ?? 0) > 0.45)
   ) {
     spreadMultiplier *= 1.32;
+  }
+
+  if ((agent?.moraleShockTimerS ?? 0) > 0) {
+    spreadMultiplier *= computeMoraleSpreadMultiplier(agent!.moraleShockTimerS!);
   }
 
   if (externalAccuracyMultiplier !== undefined && externalAccuracyMultiplier > 0) {

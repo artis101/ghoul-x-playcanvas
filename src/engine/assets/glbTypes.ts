@@ -13,7 +13,8 @@ export type GlbAssetKey =
   | 'ghoul_combatant'
   | WeaponAssetId
   | 'concrete_wall_fractured'
-  | 'debris_pack';
+  | 'debris_pack'
+  | 'viewmodel_arms';
 
 export type CombatantAnimationClipName =
   | 'CombatReadyIdle'
@@ -47,6 +48,7 @@ export const ALL_GLB_ASSET_KEYS: readonly GlbAssetKey[] = [
   'frag_grenade',
   'concrete_wall_fractured',
   'debris_pack',
+  'viewmodel_arms',
 ] as const;
 
 export interface NamedChunkConnectivityNode extends ChunkConnectivityNode {

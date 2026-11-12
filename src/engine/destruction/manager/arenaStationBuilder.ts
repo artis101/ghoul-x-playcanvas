@@ -131,7 +131,7 @@ export function buildBreachingArenaStations(
     Math.max(0.2, layout.glassVoronoiWindow.center.y - layout.glassVoronoiWindow.heightM * 0.5)
   );
 
-  // 4. Staggered Running-Bond Instanced Masonry Brick Wall (base flush at y = 0)
+  // 4. Solid Running-Bond Masonry Brick Wall (base flush at y = 0)
   ctx.brickWalls.addBrickWall({
     wallId: layout.instancedBrickWall.id,
     position: {
@@ -143,7 +143,7 @@ export function buildBreachingArenaStations(
     rows: 26,
     brickW: 0.215,
     brickH: 0.072,
-    brickD: 0.14,
+    brickD: 0.18,
     mortarBreakJ: 650,
     mortarGapM: 0.008,
   });

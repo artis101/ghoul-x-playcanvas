@@ -311,10 +311,11 @@ describe('Pillar 2: Concrete & Bricks Destruction (BFS + Instancing + MultiDraw 
     });
   });
 
-  describe('3. BrickWallSystem (3 Instanced Draw Calls + Heavy Slug Penetration & Blast Collapse)', () => {
-    it('renders brick wall in 3 hardware-instanced pools, stops 9mm rounds, and dislodges bricks on >1,400 J slugs & blasts', () => {
+  describe('3. BrickWallSystem (Solid Wall Mesh + Progressive Brick Damage + Zero Rigid Bodies)', () => {
+    it('renders solid masonry wall with 1 collider & 0 rigid bodies, progressively chips/cracks bricks before punching holes through, and passes bullets cleanly through breaches', () => {
       const { app } = createHeadlessPlayCanvasApp();
       const rapier = new RapierPhysicsWorld();
+      const collidersBefore = rapier.world.colliders.len();
       const brickSystem = new BrickWallSystem(app, rapier);
 
       try {
@@ -326,21 +327,19 @@ describe('Pillar 2: Concrete & Bricks Destruction (BFS + Instancing + MultiDraw 
           mortarBreakJ: 600,
         });
 
-        expect(brickSystem.totalDrawCallPoolCount).toBe(3);
+        // Entire 36-brick solid wall uses ONLY 1 static Rapier box collider and 0 dynamic bodies!
+        expect(rapier.world.colliders.len() - collidersBefore).toBe(1);
+        expect(rapier.activeDynamicBodyCount).toBe(0);
         expect(wall.intactBrickCount).toBe(36);
-        const totalInstancedSlots =
-          brickSystem.variantPools[0].activeCount +
-          brickSystem.variantPools[1].activeCount +
-          brickSystem.variantPools[2].activeCount;
-        expect(totalInstancedSlots).toBe(36);
-
-        // Zero per-brick pc.Entity: app.root only holds the 3 variant pool entities + 1 chip pool entity
-        expect(app.root.children.length).toBe(4);
+        expect(wall.damagedBrickCount).toBe(0);
+        expect(wall.destroyedBrickCount).toBe(0);
 
         rapier.step(1 / 60);
 
-        // 1) Low-energy 9mm pistol shot (520 J <= 1,400 J) -> stops cleanly, 0 detached bricks
-        const targetPos = brickSystem.getBrickWorldCenter('masonry_cover_01', 2 * 6 + 3)!;
+        const targetIdx = 2 * 6 + 3;
+        const targetPos = brickSystem.getBrickWorldCenter('masonry_cover_01', targetIdx)!;
+
+        // 1) 9mm pistol shot (520 J) -> chips brick progressively (does NOT destroy it), stops cleanly
         const pistolRes = brickSystem.handleRaySegment({
           originWorld: { x: targetPos.x, y: targetPos.y, z: 0 },
           directionWorld: { x: 0, y: 0, z: -1 },
@@ -352,10 +351,28 @@ describe('Pillar 2: Concrete & Bricks Destruction (BFS + Instancing + MultiDraw 
         });
         expect(pistolRes).not.toBeNull();
         expect(pistolRes!.stopped).toBe(true);
-        expect(wall.detachedBrickCount).toBe(0);
+        expect(wall.damagedBrickCount).toBeGreaterThanOrEqual(1);
+        expect(wall.destroyedBrickCount).toBe(0);
+        expect(wall.grid.hp[targetIdx]).toBeLessThan(wall.grid.cells[targetIdx].maxHp);
+        expect(wall.grid.hp[targetIdx]).toBeGreaterThan(50);
         expect(brickSystem.mortarChipPool.activeCount).toBeGreaterThan(0);
 
-        // 2) Heavy 12g slug / .338 round (2,600 J > 1,400 J) -> dislodges hit brick into Rapier dynamic box & overpenetrates!
+        // 2) M4A1 5.56 rifle round (1,550 J) into the chipped brick -> gouges & cracks deeply, still standing!
+        const rifleRes = brickSystem.handleRaySegment({
+          originWorld: { x: targetPos.x, y: targetPos.y, z: 0 },
+          directionWorld: { x: 0, y: 0, z: -1 },
+          maxDistanceM: 20,
+          kineticEnergyJ: 1550,
+          speedMs: 880,
+          caliberRadiusM: 0.00285,
+          isArmorPiercing: false,
+        });
+        expect(rifleRes).not.toBeNull();
+        expect(rifleRes!.stopped).toBe(true);
+        expect(wall.destroyedBrickCount).toBe(0);
+        expect(wall.grid.frontGouge[targetIdx]).toBeGreaterThan(0.4);
+
+        // 3) Finishing heavy hit (2,600 J) -> shatters weakened brick out, punches hole through & over-penetrates!
         const slugRes = brickSystem.handleRaySegment({
           originWorld: { x: targetPos.x, y: targetPos.y, z: 0 },
           directionWorld: { x: 0, y: 0, z: -1 },
@@ -367,30 +384,51 @@ describe('Pillar 2: Concrete & Bricks Destruction (BFS + Instancing + MultiDraw 
         });
         expect(slugRes).not.toBeNull();
         expect(slugRes!.stopped).toBe(false);
-        expect(slugRes!.remainingEnergyJ).toBeCloseTo(1200, 3);
-        expect(wall.detachedBrickCount).toBeGreaterThanOrEqual(1);
-        expect(rapier.activeDynamicBodyCount).toBe(wall.detachedBrickCount);
+        expect(slugRes!.remainingEnergyJ).toBeGreaterThan(1000);
+        expect(wall.destroyedBrickCount).toBeGreaterThanOrEqual(1);
+        // Zero Rapier dynamic rigid bodies spawned — only lightweight kinematic rubble particles!
+        expect(rapier.activeDynamicBodyCount).toBe(0);
 
-        // 3) Grenade blast detaches multiple bricks and updates their 4x4 matrices in-place inside HardwareInstancedPool
+        // Follow-up pistol round aimed through the punched hole passes straight through (returns null)!
+        const throughHoleRes = brickSystem.handleRaySegment({
+          originWorld: { x: targetPos.x, y: targetPos.y, z: 0 },
+          directionWorld: { x: 0, y: 0, z: -1 },
+          maxDistanceM: 20,
+          kineticEnergyJ: 450,
+          speedMs: 350,
+          caliberRadiusM: 0.0045,
+          isArmorPiercing: false,
+        });
+        expect(throughHoleRes).toBeNull();
+        expect(
+          brickSystem.isWallOpenAlongRay(
+            'masonry_cover_01',
+            { x: targetPos.x, y: targetPos.y, z: 0 },
+            { x: 0, y: 0, z: -1 },
+            20
+          )
+        ).toBe(true);
+
+        // 4) Grenade blast punches a breach hole AND leaves a damaged ring of cracked bricks around it
         brickSystem.applyBlast({
           centerWorld: { x: 0, y: 0.25, z: -7.9 },
           radiusM: 0.85,
           peakImpulseNs: 45,
           peakEnergyJ: 8500,
         });
-        expect(wall.detachedBrickCount).toBeGreaterThan(4);
+        expect(wall.destroyedBrickCount).toBeGreaterThan(4);
+        expect(rapier.activeDynamicBodyCount).toBe(0);
 
         for (let step = 0; step < 20; step++) {
           rapier.step(1 / 60);
           brickSystem.update(1 / 60);
         }
 
-        // All 36 bricks remain accounted for in the 3 instanced draw-call pools (intact static + dynamic Rapier)
-        const postBlastSlots =
-          brickSystem.variantPools[0].activeCount +
-          brickSystem.variantPools[1].activeCount +
-          brickSystem.variantPools[2].activeCount;
-        expect(postBlastSlots).toBe(36);
+        // Reset restores intact 36-brick solid wall cleanly
+        brickSystem.reset();
+        expect(wall.intactBrickCount).toBe(36);
+        expect(wall.damagedBrickCount).toBe(0);
+        expect(wall.destroyedBrickCount).toBe(0);
       } finally {
         brickSystem.destroy();
         rapier.destroy();

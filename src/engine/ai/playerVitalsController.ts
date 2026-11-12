@@ -127,16 +127,54 @@ export function stepPlayerVitalsRegen(vitals: PlayerCombatVitals, dt: number): v
   }
 }
 
-export function grantBrutalKillReward(vitals: PlayerCombatVitals, kind: BrutalKillRewardKind): void {
+export interface BrutalKillVitalsDelta {
+  readonly armorRestored: number;
+  readonly healthRestored: number;
+}
+
+export function grantBrutalKillReward(
+  vitals: PlayerCombatVitals,
+  kind: BrutalKillRewardKind
+): BrutalKillVitalsDelta {
   if (vitals.health <= 0 || vitals.survivalPhase?.kind === 'DEAD') {
     syncPlayerVitalsFsm(vitals);
-    return;
+    return { armorRestored: 0, healthRestored: 0 };
+  }
+
+  const prevArmor = vitals.armor;
+  const prevHealth = vitals.health;
+
+  if (kind === 'STANDARD_KILL') {
+    vitals.armor = Math.min(vitals.maxArmor, vitals.armor + 4);
+    vitals.health = Math.min(vitals.maxHealth, vitals.health + 2);
+    if (vitals.health >= 35) vitals.healthGateReady = true;
+    syncPlayerVitalsFsm(vitals);
+    return {
+      armorRestored: vitals.armor - prevArmor,
+      healthRestored: vitals.health - prevHealth,
+    };
   }
 
   const armorGain =
-    kind === 'MULTI_KILL_BLAST' ? 22 : kind === 'CRANIAL_POP' ? 16 : kind === 'CLEAN_SEVER' || kind === 'EVISCERATED' ? 14 : 6;
+    kind === 'MULTI_KILL_BLAST'
+      ? 22
+      : kind === 'DECAPITATION'
+        ? 18
+        : kind === 'CRANIAL_POP'
+          ? 16
+          : kind === 'CLEAN_SEVER' || kind === 'EVISCERATED'
+            ? 14
+            : 12;
   const hpGain =
-    kind === 'MULTI_KILL_BLAST' ? 18 : kind === 'CRANIAL_POP' ? 12 : kind === 'CLEAN_SEVER' || kind === 'EVISCERATED' ? 10 : 4;
+    kind === 'MULTI_KILL_BLAST'
+      ? 18
+      : kind === 'DECAPITATION'
+        ? 14
+        : kind === 'CRANIAL_POP'
+          ? 12
+          : kind === 'CLEAN_SEVER' || kind === 'EVISCERATED'
+            ? 10
+            : 9;
 
   vitals.armor = Math.min(vitals.maxArmor, vitals.armor + armorGain);
   vitals.health = Math.min(vitals.maxHealth, vitals.health + hpGain);
@@ -144,6 +182,10 @@ export function grantBrutalKillReward(vitals: PlayerCombatVitals, kind: BrutalKi
   vitals.urgentBleedRemainingS = 0;
   if (vitals.health >= 20) vitals.healthGateReady = true;
   syncPlayerVitalsFsm(vitals);
+  return {
+    armorRestored: vitals.armor - prevArmor,
+    healthRestored: vitals.health - prevHealth,
+  };
 }
 
 export function notifyWaveCleared(vitals: PlayerCombatVitals): void {

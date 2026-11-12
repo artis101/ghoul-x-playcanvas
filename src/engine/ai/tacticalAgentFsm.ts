@@ -1,8 +1,10 @@
 import type { CombatantPostureState, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
 import {
   type AlertedEngagementSubstate,
+  evaluateTacticalEngagementSubstate,
+} from '../../core/ai/tacticalDoctrine.ts';
+import {
   cancelActiveBurst,
-  evaluateAlertedEngagementSubstate,
   tickAlertReactionHold,
   tickNeurogenicShockRecovery,
 } from '../../core/ai/weaponBurstFsm.ts';
@@ -36,6 +38,7 @@ export interface TacticalFsmContext {
   onAgentFlankShift?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => void;
   onAgentSidearmDrawStart?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => void;
   onAgentCoverRetreat?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => void;
+  tryRelocateCoverAnchor?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => boolean;
 }
 
 export function stepSingleEnemyAgent(
@@ -79,12 +82,18 @@ export function stepSingleEnemyAgent(
 
   tickNeurogenicShockRecovery(dt, agent, hs);
   agent.suppression = Math.max(0, agent.suppression - 0.28 * dt);
+  if ((agent.moraleShockTimerS ?? 0) > 0) {
+    agent.moraleShockTimerS = Math.max(0, agent.moraleShockTimerS! - dt);
+  }
+  if ((agent.berserkerFrenzyTimerS ?? 0) > 0) {
+    agent.berserkerFrenzyTimerS = Math.max(0, agent.berserkerFrenzyTimerS! - dt);
+  }
 
   if (agent.state !== 'PATROL_GUARD') {
     tickAlertReactionHold(agent, dt);
     if (
       agent.resolveProfile === 'FANATIC_BERSERKER' &&
-      (hs.currentHp < hs.maxHp * 0.95 || hs.painShock > 0.15)
+      (hs.currentHp < hs.maxHp * 0.95 || hs.painShock > 0.15 || (agent.berserkerFrenzyTimerS ?? 0) > 0)
     ) {
       agent.adrenaline = 1.0;
     } else {
@@ -140,6 +149,9 @@ export function stepSingleEnemyAgent(
 
     case 'SUPPRESSED_STAGGERED': {
       if (agent.staggerTimerS > 0) agent.staggerTimerS = Math.max(0, agent.staggerTimerS - dt);
+      if (hs.combatantStatusTag === null && (agent.moraleShockTimerS ?? 0) > 0) {
+        hs.combatantStatusTag = 'PANIC_SHAKEN';
+      }
       if (agent.resolveProfile !== 'FANATIC_BERSERKER') {
         moveHorizontalClamped(hs, agent.coverAnchorWorld.x, agent.coverAnchorWorld.z, 0.75 * dt, ctx.rapierWorld);
       }
@@ -194,21 +206,67 @@ function stepAlertedEngagingState(
 ): void {
   const tuning = ARCHETYPE_TUNING[hs.archetype];
   const isWounded = hs.currentHp < hs.maxHp * 0.92 || hs.painShock > 0.15 || hs.rupturedOrgans.size > 0;
-  const cycleRate = agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded ? 1.55 : 1.0;
+  const moraleShockS = agent.moraleShockTimerS ?? 0;
+  const cycleRate =
+    agent.resolveProfile === 'PANICKED_SCRAPPER' && (isWounded || moraleShockS > 0) ? 1.58 : 1.0;
   const previousPeekTime = agent.peekCycleTimerS;
   agent.peekCycleTimerS += dt * cycleRate;
 
   const cyclePeriodS =
-    agent.resolveProfile === 'HARDENED_VETERAN' ? 2.85 : agent.resolveProfile === 'PANICKED_SCRAPPER' ? 2.35 : 3.1;
+    hs.archetype === 'SNIPER_OPERATIVE'
+      ? 3.35
+      : agent.resolveProfile === 'HARDENED_VETERAN'
+        ? 2.85
+        : agent.resolveProfile === 'PANICKED_SCRAPPER'
+          ? 2.35
+          : 3.1;
   const phase = (agent.peekCycleTimerS % cyclePeriodS) / cyclePeriodS;
-
-  const substate = evaluateAlertedEngagementSubstate(
-    aimProfile.clutchingWound,
-    agent.resolveProfile === 'FANATIC_BERSERKER',
-    isWounded,
-    phase
+  const playerDistM = Math.hypot(
+    playerEyeWorldPos.x - hs.worldPosition.x,
+    playerEyeWorldPos.z - hs.worldPosition.z
   );
+
+  // Sniper tactical discipline: automatically shift peek side after completing a precision shot
+  const prevBurstCount = agent.lastObservedBurstCount ?? agent.completedBurstCount;
+  if (hs.archetype === 'SNIPER_OPERATIVE' && agent.completedBurstCount > prevBurstCount) {
+    agent.peekSign = agent.peekSign === 1 ? -1 : 1;
+    ctx.onAgentFlankShift?.(hs, agent);
+  }
+  agent.lastObservedBurstCount = agent.completedBurstCount;
+
+  // Probe cover blockage first so rush/juggernaut maneuvers respect solid opaque barriers
+  const prelimPeek = computeAlertedPeekTarget(
+    hs,
+    agent,
+    playerEyeWorldPos,
+    ctx.elapsedClockS,
+    ctx.peekPlanCache,
+    ctx.isSightBlocked,
+    ctx.hasCoverQueries
+  );
+
+  const substate = evaluateTacticalEngagementSubstate({
+    archetype: hs.archetype,
+    resolveProfile: agent.resolveProfile,
+    clutchingWound: aimProfile.clutchingWound,
+    isWounded,
+    cyclePhase01: phase,
+    playerDistanceM: playerDistM,
+    hasChestArmor: hs.hasChestArmor,
+    chestArmorIntegrity: hs.chestArmorIntegrity,
+    primaryWeaponIntact: !aimProfile.usingBackupSidearm && !aimProfile.sidearmDrawing && !hs.weaponDropped,
+    suppression: agent.suppression,
+    moraleShockTimerS: moraleShockS,
+    berserkerFrenzyTimerS: agent.berserkerFrenzyTimerS ?? 0,
+    anchorBlockedByCover: prelimPeek.anchorBlockedByCover,
+  });
   agent.engagementSubstate = substate;
+
+  if (hs.combatantStatusTag === null) {
+    if (moraleShockS > 0) hs.combatantStatusTag = 'PANIC_SHAKEN';
+    else if (substate === 'JUGGERNAUT_PRESS') hs.combatantStatusTag = 'JUGGERNAUT';
+    else if (substate === 'BERSERKER_CHARGE' || substate === 'FLANKING_RUSH') hs.combatantStatusTag = 'RUSHING';
+  }
 
   const prevPeekSign = agent.peekSign;
   if (substate === 'CLUTCHING_RETREAT') {
@@ -225,18 +283,33 @@ function stepAlertedEngagingState(
     return;
   }
 
-  if (substate === 'BERSERKER_CHARGE') {
+  if (substate === 'BERSERKER_CHARGE' || substate === 'FLANKING_RUSH') {
     agent.isPeekingOut = true;
-    agent.berserkerAdvanceOffsetM = Math.min(2.6, agent.berserkerAdvanceOffsetM + 1.25 * dt);
+    const maxAdv = substate === 'FLANKING_RUSH' ? 3.4 : 2.9;
+    agent.berserkerAdvanceOffsetM = Math.min(maxAdv, agent.berserkerAdvanceOffsetM + 1.32 * dt);
+  } else if (substate === 'JUGGERNAUT_PRESS') {
+    agent.isPeekingOut = true;
+    agent.berserkerAdvanceOffsetM = Math.min(3.2, agent.berserkerAdvanceOffsetM + 0.78 * dt);
+  } else if (substate === 'EVASIVE_BACKPEDAL') {
+    agent.isPeekingOut = true;
+    agent.berserkerAdvanceOffsetM = Math.max(-2.6, agent.berserkerAdvanceOffsetM - 1.15 * dt);
+  } else if (substate === 'PANIC_SCRAMBLE') {
+    agent.isPeekingOut = true;
   } else {
-    if (
-      agent.resolveProfile === 'GRITTY_REGULAR' &&
-      agent.suppression > 0.62 &&
-      Math.floor(previousPeekTime / cyclePeriodS) !== Math.floor(agent.peekCycleTimerS / cyclePeriodS)
-    ) {
-      agent.peekSign = agent.peekSign === 1 ? -1 : 1;
+    const completedCycle =
+      Math.floor(previousPeekTime / cyclePeriodS) !== Math.floor(agent.peekCycleTimerS / cyclePeriodS);
+    if (completedCycle && agent.suppression > 0.62) {
+      if (
+        ctx.hasCoverQueries &&
+        (agent.resolveProfile === 'GRITTY_REGULAR' || agent.resolveProfile === 'HARDENED_VETERAN') &&
+        ctx.tryRelocateCoverAnchor?.(hs, agent)
+      ) {
+        ctx.onAgentCoverRetreat?.(hs, agent);
+      } else if (agent.resolveProfile === 'GRITTY_REGULAR' || agent.resolveProfile === 'HARDENED_VETERAN') {
+        agent.peekSign = agent.peekSign === 1 ? -1 : 1;
+      }
     }
-    agent.isPeekingOut = substate === 'COVER_PEEK';
+    agent.isPeekingOut = substate === 'COVER_PEEK' || substate === 'SNIPER_SNAP_PEEK';
   }
 
   const peekPlan = computeAlertedPeekTarget(
@@ -250,13 +323,23 @@ function stepAlertedEngagingState(
   );
   if (agent.peekSign !== prevPeekSign) ctx.onAgentFlankShift?.(hs, agent);
 
-  const deltaOffset = peekPlan.targetOffset - agent.currentLateralOffsetM;
+  const weaveOffset =
+    substate === 'FLANKING_RUSH' || substate === 'BERSERKER_CHARGE'
+      ? Math.sin(agent.peekCycleTimerS * 3.8) * 0.42
+      : substate === 'PANIC_SCRAMBLE'
+        ? Math.sin(agent.peekCycleTimerS * 5.2) * 0.62
+        : 0;
+  const desiredLateral = peekPlan.targetOffset + weaveOffset;
+  const deltaOffset = desiredLateral - agent.currentLateralOffsetM;
+
   const profileSpeedMul =
-    agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded
-      ? 1.38
-      : substate === 'BERSERKER_CHARGE'
-        ? 1.25
-        : 1.0;
+    substate === 'PANIC_SCRAMBLE' || (agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded)
+      ? 1.42
+      : substate === 'BERSERKER_CHARGE' || substate === 'FLANKING_RUSH'
+        ? 1.28
+        : substate === 'JUGGERNAUT_PRESS'
+          ? 0.92
+          : 1.0;
   const baseStrafeSpeed = tuning.strafeSpeedMs * profileSpeedMul;
   const effectiveStrafeSpeed = Math.abs(deltaOffset) > 1.0 ? Math.max(baseStrafeSpeed, 2.35) : baseStrafeSpeed;
   const maxStrideStep = effectiveStrafeSpeed * dt;
@@ -264,13 +347,23 @@ function stepAlertedEngagingState(
     Math.abs(deltaOffset) <= maxStrideStep ? deltaOffset : Math.sign(deltaOffset) * maxStrideStep;
 
   const goalX = agent.coverAnchorWorld.x + agent.currentLateralOffsetM;
-  const goalZ =
-    substate === 'BERSERKER_CHARGE'
-      ? Math.min(playerEyeWorldPos.z - 2.4, peekPlan.goalZ + agent.berserkerAdvanceOffsetM)
-      : peekPlan.goalZ;
+  let goalZ = peekPlan.goalZ;
+  if (
+    substate === 'BERSERKER_CHARGE' ||
+    substate === 'FLANKING_RUSH' ||
+    substate === 'JUGGERNAUT_PRESS'
+  ) {
+    const minStandOff = substate === 'JUGGERNAUT_PRESS' ? 3.2 : 2.4;
+    goalZ = Math.min(playerEyeWorldPos.z - minStandOff, peekPlan.goalZ + agent.berserkerAdvanceOffsetM);
+  } else if (substate === 'EVASIVE_BACKPEDAL') {
+    goalZ = Math.max(-21.5, peekPlan.goalZ + agent.berserkerAdvanceOffsetM);
+  } else if (substate === 'PANIC_SCRAMBLE') {
+    goalZ = Math.max(-21.5, peekPlan.goalZ - 0.32);
+  }
+
   moveHorizontalClamped(hs, goalX, goalZ, effectiveStrafeSpeed * dt, ctx.rapierWorld);
 
-  turnTowardPlayer(5.4);
+  turnTowardPlayer(substate === 'SNIPER_SNAP_PEEK' ? 6.8 : 5.4);
   if (!hs.isRagdollActive) {
     hs.posture =
       hs.rupturedOrgans.size > 0 && hs.zoneIntegrity.TORSO_LOWER_ABDOMEN < 65

@@ -113,6 +113,7 @@ export class DestructionManager {
       debrisBundle.brickMeshes.length >= 3
         ? {
             ...options.brickOptions,
+            rubbleMaterial: options.brickOptions?.rubbleMaterial ?? debrisBundle.brickMaterial,
             variantMeshes: [
               debrisBundle.brickMeshes[0],
               debrisBundle.brickMeshes[1],
@@ -245,6 +246,7 @@ export class DestructionManager {
       rapierWorld: this.rapierWorld,
       woodWalls: this.woodWalls,
       glassSystem: this.glassSystem,
+      brickWalls: this.brickWalls,
     };
     return resolvePlayerHorizontalCollision(ctx, prevPos, desiredPos, playerRadiusM);
   }

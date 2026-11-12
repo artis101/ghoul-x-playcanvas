@@ -190,6 +190,9 @@ export interface TargetHealthState {
     | 'SIDEARM_DRAWING'
     | 'LAST_STAND'
     | 'DISARMED'
+    | 'PANIC_SHAKEN'
+    | 'JUGGERNAUT'
+    | 'RUSHING'
     | null;
   hasChestArmor: boolean;
   chestArmorIntegrity: number;

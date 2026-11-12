@@ -17,6 +17,7 @@ import {
   stepPlayerVitalsRegen,
 } from '../src/engine/ai/playerVitalsController.ts';
 import { TacticalCombatAiSystem } from '../src/engine/ai/tacticalCombatAi.ts';
+import { AmmoInventory } from '../src/engine/player/ammoInventory.ts';
 
 function makeCandidate(
   overrides: Partial<AttackTokenCandidate> & { targetId: string }
@@ -303,5 +304,105 @@ describe('TacticalCombatAiSystem — Off-Screen Frustum Nerf & Dead Zero-Motion 
     expect(target.worldPosition).toEqual(frozenPos);
     expect(target.yawRad).toBe(frozenYaw);
     expect(target.posture).toBe('AIRBORNE_RAGDOLL');
+  });
+
+  it('drives distinct archetype combat maneuvers (Juggernaut Press, Flanking Rush, Sniper Snap-Peek & Backpedal)', () => {
+    const ai = new TacticalCombatAiSystem({
+      resolveProfileOverrides: {
+        punk_rusher: 'FANATIC_BERSERKER',
+      },
+    });
+    const enforcer = createTargetHealthState('heavy_1', 'Enforcer', { x: -3, y: 0, z: -12 }, 0, 'HEAVY_ENFORCER');
+    const punk = createTargetHealthState('punk_rusher', 'Punk', { x: 0, y: 0, z: -12 }, 0, 'SKINHEAD_PUNK');
+    const sniper = createTargetHealthState('sniper_1', 'Sniper', { x: 3, y: 0, z: -7.5 }, 0, 'SNIPER_OPERATIVE');
+
+    ai.registerWaveTargets([enforcer, punk, sniper], false);
+    ai.notifyGunshotOrExplosion({ x: 0, y: 1.65, z: 0 }, 35);
+
+    for (let i = 0; i < 20; i++) {
+      ai.update(0.05, [enforcer, punk, sniper], { x: 0, y: 1.65, z: 0 });
+    }
+
+    // 1. Intact-armor Heavy Enforcer presses forward in JUGGERNAUT_PRESS; Punk rushes in FLANKING_RUSH; pressured Sniper (<8.8m) backpedals!
+    expect(ai.getAgent('heavy_1')!.engagementSubstate).toBe('JUGGERNAUT_PRESS');
+    expect(enforcer.combatantStatusTag).toBe('JUGGERNAUT');
+    expect(enforcer.worldPosition.z).toBeGreaterThan(-12);
+
+    expect(ai.getAgent('punk_rusher')!.engagementSubstate).toBe('FLANKING_RUSH');
+    expect(punk.combatantStatusTag).toBe('RUSHING');
+    expect(punk.worldPosition.z).toBeGreaterThan(-12);
+
+    expect(ai.getAgent('sniper_1')!.engagementSubstate).toBe('EVASIVE_BACKPEDAL');
+    expect(sniper.worldPosition.z).toBeLessThan(-7.5);
+
+    // 2. Cracking the Heavy Enforcer's chest plate stops Juggernaut march -> falls back to veteran cover discipline
+    enforcer.chestArmorIntegrity = 0.15;
+    ai.update(0.05, [enforcer, punk, sniper], { x: 0, y: 1.65, z: 0 });
+    expect(['COVER_PEEK', 'COVER_SHELTER']).toContain(ai.getAgent('heavy_1')!.engagementSubstate);
+    ai.destroy();
+  });
+
+  it('keeps STANDARD_KILL ordinary while rewarding DECAPITATION / SURGICAL_SEVER with staunch, mag rounds & witness morale shock', () => {
+    const vitals = createDefaultPlayerVitals({ initialPlayerHealth: 18, initialPlayerArmor: 10 });
+    vitals.healthGateReady = false;
+    vitals.urgentBleedHpPerSec = 3.5;
+    vitals.urgentBleedRemainingS = 3.0;
+
+    // Ordinary kill: tiny sustain, does NOT staunch arterial bleed or re-arm low-HP gate
+    grantBrutalKillReward(vitals, 'STANDARD_KILL');
+    expect(vitals.urgentBleedHpPerSec).toBe(3.5);
+    expect(vitals.healthGateReady).toBe(false);
+
+    // Surgical sever / decapitation: staunches bleed, surges armor/HP, re-arms gate & chambers bonus round
+    const delta = grantBrutalKillReward(vitals, 'DECAPITATION');
+    expect(delta.armorRestored).toBe(18);
+    expect(delta.healthRestored).toBe(14);
+    expect(vitals.urgentBleedHpPerSec).toBe(0);
+    expect(vitals.healthGateReady).toBe(true);
+
+    const inv = new AmmoInventory();
+    inv.consumeShot('msg90_sniper');
+    inv.consumeShot('msg90_sniper');
+    const magBefore = inv.get('msg90_sniper')!.mag;
+    inv.grantBonusRounds('msg90_sniper', 2);
+    expect(inv.get('msg90_sniper')!.mag).toBe(magBefore + 2);
+
+    // Witness morale shock: STANDARD_KILL shocks nobody; DECAPITATION horrifies Panicked Scrapper, frenzies Berserker & shifts Veteran angle
+    const barks: string[] = [];
+    const ai = new TacticalCombatAiSystem({
+      resolveProfileOverrides: {
+        victim: 'GRITTY_REGULAR',
+        scrapper: 'PANICKED_SCRAPPER',
+        berserker: 'FANATIC_BERSERKER',
+        veteran: 'HARDENED_VETERAN',
+      },
+      onAiBark: (b) => barks.push(b.category),
+    });
+
+    const victim = createTargetHealthState('victim', 'Victim', { x: 0, y: 0, z: -12 }, 0, 'MILITIA_GUNNER');
+    const scrapper = createTargetHealthState('scrapper', 'Scrapper', { x: -2.5, y: 0, z: -12.5 }, 0, 'SKINHEAD_PUNK');
+    const berserker = createTargetHealthState('berserker', 'Berserker', { x: 2.5, y: 0, z: -12.5 }, 0, 'SKINHEAD_PUNK');
+    const veteran = createTargetHealthState('veteran', 'Veteran', { x: 4.5, y: 0, z: -13 }, 0, 'MILITIA_GUNNER');
+
+    ai.registerWaveTargets([victim, scrapper, berserker, veteran], false);
+    ai.notifyGunshotOrExplosion({ x: 0, y: 1.65, z: 0 }, 35);
+    const vetStartPeek = ai.getAgent('veteran')!.peekSign;
+    const baselineScrapperSpread = ai.computeEnemyAimProfile(scrapper, ai.getAgent('scrapper')).spreadMultiplier;
+
+    expect(ai.notifyWitnessedBrutality(victim, 'STANDARD_KILL')).toBe(0);
+
+    const affected = ai.notifyWitnessedBrutality(victim, 'DECAPITATION');
+    expect(affected).toBe(3);
+    expect(ai.getAgent('scrapper')!.moraleShockTimerS).toBeGreaterThan(2.5);
+    expect(ai.getAgent('scrapper')!.state).toBe('SUPPRESSED_STAGGERED');
+    expect(ai.computeEnemyAimProfile(scrapper, ai.getAgent('scrapper')).spreadMultiplier).toBeGreaterThan(
+      baselineScrapperSpread * 1.35
+    );
+    expect(ai.getAgent('berserker')!.berserkerFrenzyTimerS).toBeGreaterThan(4.0);
+    expect(ai.getAgent('berserker')!.adrenaline).toBe(1.0);
+    expect(ai.getAgent('veteran')!.moraleShockTimerS ?? 0).toBe(0);
+    expect(ai.getAgent('veteran')!.peekSign).toBe(-vetStartPeek);
+    expect(barks).toContain('HORROR_SHOCK');
+    ai.destroy();
   });
 });

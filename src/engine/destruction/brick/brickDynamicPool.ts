@@ -4,6 +4,13 @@ import { HardwareInstancedPool } from '../../physics/instancedPool.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 import { createBeveledBrickMeshVariant } from './brickMaterial.ts';
 
+/**
+ * Zero-Rigid-Body Kinematic Debris & Mortar Chip Pool for `BrickWallSystem`.
+ *
+ * Uses `debris_pack.glb` `Brick_0..2` variants ONLY for transient flying broken-brick fragments
+ * ejected when bricks shatter out of the solid wall, plus fine mortar/clay chips on bullet impacts.
+ * Zero Rapier rigid bodies are ever spawned per brick.
+ */
 export class BrickDynamicPool {
   public readonly variantPools: readonly [
     HardwareInstancedPool,
@@ -17,12 +24,12 @@ export class BrickDynamicPool {
 
   constructor(
     app: pc.Application,
-    brickMaterial: pc.StandardMaterial,
+    rubbleMaterial: pc.Material,
     variantMeshes: readonly [pc.Mesh, pc.Mesh, pc.Mesh],
-    maxBricksPerVariantPool = 1024,
+    maxBricksPerVariantPool = 256,
     maxMortarChips = 1024
   ) {
-    const maxBricks = Math.max(64, maxBricksPerVariantPool);
+    const maxRubble = Math.max(32, maxBricksPerVariantPool);
     this.variantNormScales = [0, 1, 2].map((i) => {
       const he = variantMeshes[i].aabb.halfExtents;
       return {
@@ -36,26 +43,26 @@ export class BrickDynamicPool {
       new HardwareInstancedPool(
         app,
         variantMeshes[0],
-        brickMaterial,
-        maxBricks,
-        'BrickVariantPool_0',
-        true
+        rubbleMaterial,
+        maxRubble,
+        'BrickRubblePool_0',
+        false
       ),
       new HardwareInstancedPool(
         app,
         variantMeshes[1],
-        brickMaterial,
-        maxBricks,
-        'BrickVariantPool_1',
-        true
+        rubbleMaterial,
+        maxRubble,
+        'BrickRubblePool_1',
+        false
       ),
       new HardwareInstancedPool(
         app,
         variantMeshes[2],
-        brickMaterial,
-        maxBricks,
-        'BrickVariantPool_2',
-        true
+        rubbleMaterial,
+        maxRubble,
+        'BrickRubblePool_2',
+        false
       ),
     ];
 
@@ -63,7 +70,7 @@ export class BrickDynamicPool {
     this.chipMesh = createBeveledBrickMeshVariant(device, 0);
     this.chipMaterial = new pc.StandardMaterial();
     this.chipMaterial.name = 'MortarBrickChipMaterial';
-    this.chipMaterial.diffuse = new pc.Color(0.68, 0.44, 0.36);
+    this.chipMaterial.diffuse = new pc.Color(0.72, 0.48, 0.38);
     this.chipMaterial.gloss = 0.16;
     this.chipMaterial.update();
 
@@ -77,33 +84,58 @@ export class BrickDynamicPool {
     );
   }
 
-  public uploadAllVariantPools(): void {
+  public syncFromPhysics(rapierWorld: RapierPhysicsWorld, dt: number): void {
+    this.variantPools[0].syncFromPhysics(rapierWorld, dt);
+    this.variantPools[1].syncFromPhysics(rapierWorld, dt);
+    this.variantPools[2].syncFromPhysics(rapierWorld, dt);
+    this.mortarChipPool.syncFromPhysics(rapierWorld, dt);
+  }
+
+  public spawnBrokenBrickRubble(
+    originWorld: Vec3Like,
+    ejectDirWorld: Vec3Like,
+    chunkCount: number,
+    speedScale: number,
+    nextRandom: () => number
+  ): void {
+    for (let i = 0; i < chunkCount; i++) {
+      const variant = Math.floor(nextRandom() * 3) % 3;
+      const norm = this.variantNormScales[variant];
+      const speed = (1.6 + nextRandom() * 3.8) * speedScale;
+      const vx = (ejectDirWorld.x + (nextRandom() - 0.5) * 0.95) * speed;
+      const vy = 0.65 + nextRandom() * 2.1 * speedScale;
+      const vz = (ejectDirWorld.z + (nextRandom() - 0.5) * 0.95) * speed;
+
+      const sizeW = 0.055 + nextRandom() * 0.055;
+      const sizeH = 0.036 + nextRandom() * 0.028;
+      const sizeD = 0.048 + nextRandom() * 0.042;
+
+      this.variantPools[variant].spawnKinematicParticle(
+        {
+          x: originWorld.x + (nextRandom() - 0.5) * 0.08,
+          y: Math.max(0.04, originWorld.y + (nextRandom() - 0.5) * 0.05),
+          z: originWorld.z + (nextRandom() - 0.5) * 0.08,
+        },
+        { x: vx, y: vy, z: vz },
+        {
+          x: (nextRandom() - 0.5) * 14,
+          y: (nextRandom() - 0.5) * 14,
+          z: (nextRandom() - 0.5) * 14,
+        },
+        {
+          x: sizeW * norm.x,
+          y: sizeH * norm.y,
+          z: sizeD * norm.z,
+        },
+        -9.81,
+        0.24,
+        1.8 + nextRandom() * 1.1
+      );
+    }
+
     this.variantPools[0].upload();
     this.variantPools[1].upload();
     this.variantPools[2].upload();
-  }
-
-  public syncFromPhysics(
-    rapierWorld: RapierPhysicsWorld,
-    dt: number,
-    onVariantSlotExpired?: (variant: number, slotId: number, bodyHandle: number) => void
-  ): void {
-    this.variantPools[0].syncFromPhysics(
-      rapierWorld,
-      dt,
-      onVariantSlotExpired ? (s, b) => onVariantSlotExpired(0, s, b) : undefined
-    );
-    this.variantPools[1].syncFromPhysics(
-      rapierWorld,
-      dt,
-      onVariantSlotExpired ? (s, b) => onVariantSlotExpired(1, s, b) : undefined
-    );
-    this.variantPools[2].syncFromPhysics(
-      rapierWorld,
-      dt,
-      onVariantSlotExpired ? (s, b) => onVariantSlotExpired(2, s, b) : undefined
-    );
-    this.mortarChipPool.syncFromPhysics(rapierWorld, dt);
   }
 
   public spawnMortarChips(
@@ -118,7 +150,7 @@ export class BrickDynamicPool {
       const vx = (normalWorld.x + (nextRandom() - 0.5) * 1.4) * speed;
       const vy = (Math.abs(normalWorld.y) * 0.5 + 0.45 + nextRandom() * 0.7) * speed;
       const vz = (normalWorld.z + (nextRandom() - 0.5) * 1.4) * speed;
-      const s = 0.016 + nextRandom() * 0.022;
+      const s = 0.014 + nextRandom() * 0.020;
 
       this.mortarChipPool.spawnKinematicParticle(
         {
@@ -135,13 +167,16 @@ export class BrickDynamicPool {
         { x: s * 1.3, y: s * 0.7, z: s },
         -9.81,
         0.28,
-        1.2 + nextRandom() * 0.8
+        1.1 + nextRandom() * 0.8
       );
     }
     this.mortarChipPool.upload();
   }
 
   public clear(): void {
+    this.variantPools[0].clear();
+    this.variantPools[1].clear();
+    this.variantPools[2].clear();
     this.mortarChipPool.clear();
   }
 

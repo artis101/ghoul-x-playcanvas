@@ -40,6 +40,7 @@ export function buildProximalLimbStump(
 ): pc.Entity | undefined {
   const specs: Partial<Record<GhoulZoneId, { radius: number; boneLen: number; dirY: number }>> = {
     HEAD_CRANIUM: { radius: 0.095, boneLen: 0.05, dirY: -1 },
+    NECK_CERVICAL: { radius: 0.088, boneLen: 0.048, dirY: -1 },
     UPPER_ARM_LEFT: { radius: 0.095, boneLen: 0.065, dirY: 1 },
     UPPER_ARM_RIGHT: { radius: 0.095, boneLen: 0.065, dirY: 1 },
     FOREARM_LEFT: { radius: 0.082, boneLen: 0.055, dirY: 1 },
@@ -76,6 +77,7 @@ export function buildDistalParentSocketStumps(
       Array<{ childZone: GhoulZoneId; offset: [number, number, number]; radius: number; boneLen: number; dirY: number }>
     >
   > = {
+    TORSO_UPPER_THORAX: [{ childZone: 'NECK_CERVICAL', offset: [0, 0.205, 0], radius: 0.115, boneLen: 0.065, dirY: 1 }],
     NECK_CERVICAL: [{ childZone: 'HEAD_CRANIUM', offset: [0, 0.085, 0], radius: 0.115, boneLen: 0.065, dirY: 1 }],
     SHOULDER_LEFT: [{ childZone: 'UPPER_ARM_LEFT', offset: [-0.045, -0.085, 0], radius: 0.11, boneLen: 0.065, dirY: -1 }],
     SHOULDER_RIGHT: [{ childZone: 'UPPER_ARM_RIGHT', offset: [0.045, -0.085, 0], radius: 0.11, boneLen: 0.065, dirY: -1 }],

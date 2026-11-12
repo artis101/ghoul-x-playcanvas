@@ -135,8 +135,27 @@ export class HudTriageFeed {
     if (!this.killfeedEl || !report.hitTarget || typeof document === 'undefined') return;
     const cleanTarget = targetName.split(' (')[0];
     const killedNow = wasAliveBefore && !isAliveAfter;
-    const detail = killedNow ? 'NEUTRALIZED' : 'HIT';
-    this.addFeedRow(cleanTarget, weaponCode, detail, killedNow);
+    const decapitated = wasAliveBefore && report.dismembermentEvents.some((d) => d.zone === 'NECK_CERVICAL');
+    const cranialPop = wasAliveBefore && report.dismembermentEvents.some((d) => d.goreMode === 'CRANIAL_POP');
+    const eviscerated = wasAliveBefore && report.dismembermentEvents.some((d) => d.goreMode === 'EVISCERATED');
+    const cleanSever = wasAliveBefore && report.dismembermentEvents.some((d) => d.goreMode === 'CLEAN_SEVER');
+    const surgicalJoint = cleanSever && report.combatantEffects.some((e) => e.startsWith('JOINT SHATTERED'));
+
+    const detail = decapitated
+      ? 'HEAD SEVERED +REWARD'
+      : cranialPop
+        ? 'CRANIAL POP +REWARD'
+        : surgicalJoint
+          ? 'SURGICAL SEVER +REWARD'
+          : cleanSever
+            ? 'DISMEMBERED +REWARD'
+            : eviscerated
+              ? 'EVISCERATED +REWARD'
+              : killedNow
+                ? 'NEUTRALIZED'
+                : 'HIT';
+    const isHighlight = killedNow || decapitated || cranialPop || cleanSever || eviscerated;
+    this.addFeedRow(cleanTarget, weaponCode, detail, isHighlight);
   }
 
   public pushSystemToast(tag: string, message: string): void {

@@ -1,5 +1,5 @@
 import * as pc from 'playcanvas';
-import type { AiBarkPayload } from '../../contracts/ai/aiContracts.ts';
+import type { AiBarkCategory, AiBarkPayload, BrutalKillRewardKind } from '../../contracts/ai/aiContracts.ts';
 import type { TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
 import type { VocalTraumaCue } from '../../contracts/physiology/entityStateTypes.ts';
 import {
@@ -10,15 +10,22 @@ import {
   SquadBarkCoordinator,
   type SquadMateSummary,
 } from '../../core/ai/squadBarkCoordinator.ts';
+import {
+  evaluateWitnessedBrutalityReaction,
+  isBrutalFeatKind,
+  selectCoverRelocationStation,
+} from '../../core/ai/tacticalDoctrine.ts';
 import { cancelActiveBurst, enterAlertReactionHold } from '../../core/ai/weaponBurstFsm.ts';
-import { distance, dot, length, normalize, sub } from '../../core/ballistics/vec3.ts';
+import { copyVec3, distance, dot, length, normalize, sub } from '../../core/ballistics/vec3.ts';
 import { HardwareInstancedPool } from '../physics/instancedPool.ts';
+import type { PeekPlanCacheEntry } from './tacticalCoverFinder.ts';
 import {
   type EnemyAimProfile,
   type EnemyAiAgentRuntime,
   type EnemyHitNotification,
   type EnemyTacticalAiState,
   MIN_CONSCIOUSNESS_TO_FIGHT,
+  TACTICAL_COVER_STATIONS,
 } from './tacticalAiTypes.ts';
 
 export function createEnemyTracerPool(app: pc.Application | null): HardwareInstancedPool | null {
@@ -205,4 +212,113 @@ export function triggerStateTransitionBark(
       emitBark
     );
   }
+}
+
+export function broadcastWitnessedBrutality(
+  victim: TargetHealthState,
+  kind: BrutalKillRewardKind,
+  agents: ReadonlyMap<string, EnemyAiAgentRuntime>,
+  targetStateById: ReadonlyMap<string, TargetHealthState>,
+  barkCoordinator: SquadBarkCoordinator,
+  elapsedClockS: number,
+  transitionState: (agent: EnemyAiAgentRuntime, next: EnemyTacticalAiState) => void,
+  emitBark: (bark: AiBarkPayload) => void
+): number {
+  if (!isBrutalFeatKind(kind)) return 0;
+
+  let affectedCount = 0;
+  let closestWitness: { hs: TargetHealthState; category: AiBarkCategory; dist: number } | null = null;
+  const isHeadLoss = kind === 'CRANIAL_POP' || kind === 'DECAPITATION';
+
+  for (const [id, agent] of agents.entries()) {
+    if (id === victim.targetId || agent.state === 'DEAD') continue;
+    const hs = targetStateById.get(id);
+    if (!hs || !hs.alive || hs.currentHp <= 0 || hs.consciousness <= MIN_CONSCIOUSNESS_TO_FIGHT) {
+      continue;
+    }
+
+    const d = distance(hs.worldPosition, victim.worldPosition);
+    const reaction = evaluateWitnessedBrutalityReaction(
+      agent.resolveProfile,
+      kind,
+      d,
+      agent.adrenaline,
+      agent.suppression
+    );
+    if (!reaction) continue;
+
+    affectedCount++;
+    agent.adrenaline = reaction.nextAdrenaline;
+    agent.suppression = reaction.nextSuppression;
+    if (reaction.moraleShockTimerS > 0) {
+      agent.moraleShockTimerS = Math.max(agent.moraleShockTimerS ?? 0, reaction.moraleShockTimerS);
+    }
+    if (reaction.berserkerFrenzyTimerS > 0) {
+      agent.berserkerFrenzyTimerS = Math.max(
+        agent.berserkerFrenzyTimerS ?? 0,
+        reaction.berserkerFrenzyTimerS
+      );
+    }
+    if (reaction.flipPeekSign) {
+      agent.peekSign = agent.peekSign === 1 ? -1 : 1;
+    }
+    if (agent.state === 'PATROL_GUARD') {
+      transitionState(agent, 'ALERTED_ENGAGING');
+    }
+    if (reaction.staggerDurationS > 0 && agent.state === 'ALERTED_ENGAGING') {
+      agent.staggerTimerS = Math.max(agent.staggerTimerS, reaction.staggerDurationS);
+      transitionState(agent, 'SUPPRESSED_STAGGERED');
+    }
+
+    if (reaction.barkCategory && (!closestWitness || d < closestWitness.dist)) {
+      closestWitness = { hs, category: reaction.barkCategory, dist: d };
+    }
+  }
+
+  if (closestWitness) {
+    barkCoordinator.notifyWitnessedBrutality(
+      closestWitness.hs.targetId,
+      closestWitness.hs.archetype,
+      closestWitness.hs.worldPosition,
+      closestWitness.category,
+      isHeadLoss,
+      elapsedClockS,
+      emitBark
+    );
+  }
+
+  return affectedCount;
+}
+
+export function relocateAgentToAlternateCover(
+  hs: TargetHealthState,
+  agent: EnemyAiAgentRuntime,
+  agents: ReadonlyMap<string, EnemyAiAgentRuntime>,
+  peekPlanCache: Map<string, PeekPlanCacheEntry>,
+  elapsedClockS: number
+): boolean {
+  const lastReloc = agent.lastRelocationClockS ?? -99;
+  if (elapsedClockS - lastReloc < 6.5) return false;
+
+  const occupied: Vec3Like[] = [];
+  for (const [id, other] of agents.entries()) {
+    if (id === hs.targetId || other.state === 'DEAD') continue;
+    occupied.push(other.coverAnchorWorld);
+  }
+
+  const nextStation = selectCoverRelocationStation(
+    agent.coverAnchorWorld,
+    occupied,
+    TACTICAL_COVER_STATIONS
+  );
+  if (!nextStation) return false;
+
+  agent.coverAnchorWorld = copyVec3(nextStation.coverAnchorWorld);
+  agent.peekSign = nextStation.peekSign;
+  agent.peekStrideM = nextStation.peekStrideM;
+  agent.currentLateralOffsetM = 0;
+  agent.berserkerAdvanceOffsetM = 0;
+  agent.lastRelocationClockS = elapsedClockS;
+  peekPlanCache.delete(hs.targetId);
+  return true;
 }

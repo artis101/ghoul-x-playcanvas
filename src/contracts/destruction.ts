@@ -71,6 +71,16 @@ export interface BallisticSegmentImpact {
   speedMs: number;
   caliberRadiusM: number;
   isArmorPiercing: boolean;
+  armorPenetrationFactor?: number;
+}
+
+export interface GrenadeSweepStepResult {
+  readonly position: Vec3Like;
+  readonly velocity: Vec3Like;
+  readonly bounced: boolean;
+  readonly brokeGlass: boolean;
+  readonly crazedArmoredGlass: boolean;
+  readonly hitMaterial?: DestructibleMaterialKind;
 }
 
 export interface BallisticPenetrationResult {

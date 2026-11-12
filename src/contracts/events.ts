@@ -2,6 +2,8 @@ import type { AmmoSpec, GhoulZoneId, Vec3Like, WeaponSpec } from './ballistics.t
 import type {
   AiBarkCategory,
   AiBarkPayload,
+  BrutalKillRewardKind,
+  BrutalRewardEventPayload,
   EnemyFireMode,
   PlayerCombatVitals,
   PlayerNearMissGrazeKind,
@@ -19,6 +21,8 @@ export type {
   AiBarkCategory,
   AiBarkPayload,
   AssetLoadProgressEvent,
+  BrutalKillRewardKind,
+  BrutalRewardEventPayload,
   EnemyFireMode,
   PlayerCombatVitals,
   PlayerNearMissGrazeKind,
@@ -137,6 +141,7 @@ export interface AppEventMap {
   'ai:bark': AiBarkPayload;
   'combat:shot_fired': CombatShotFiredPayload;
   'combat:target_hit': CombatTargetHitPayload;
+  'combat:brutal_reward': BrutalRewardEventPayload;
   'combat:wave_spawn': CombatWaveEventPayload;
   'combat:wave_cleared': CombatWaveEventPayload;
   'combat:xray_toggle': CombatXRayTogglePayload;

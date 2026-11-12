@@ -1,3 +1,5 @@
+import type * as pc from 'playcanvas';
+import type { BrutalRewardEventPayload } from '../../contracts/ai/aiContracts.ts';
 import type { AmmoSpec, ShotSimulationReport, Vec3Like } from '../../contracts/ballistics.ts';
 import type { InternalBallisticsReport } from '../../contracts/physiology.ts';
 import { copyVec3, normalize, scale, sub, vec3 } from '../../core/ballistics/vec3.ts';
@@ -15,6 +17,7 @@ import { SYNTHETIC_SHRAPNEL_AMMO } from './combatTargetConfigs.ts';
 import { syncPhysiologyToHealthState } from './physiologySyncAdapter.ts';
 
 export interface ImpactDispatcherContext {
+  app?: pc.AppBase | null;
   physiologySystem: PhysiologyEcsSystem;
   anatomicalBvh: AnatomicalBvh;
   hudController: HudController;
@@ -25,6 +28,25 @@ export interface ImpactDispatcherContext {
   getViewerPosVec3: () => Vec3Like;
   lastHitClockByTarget?: Map<string, number>;
   lastUpdateClockS?: number;
+}
+
+export function classifyBrutalFeatFromReport(
+  report: ShotSimulationReport
+): Exclude<BrutalKillRewardKind, 'STANDARD_KILL' | 'MULTI_KILL_BLAST'> | null {
+  if (report.dismembermentEvents.some((d) => d.zone === 'NECK_CERVICAL')) {
+    return 'DECAPITATION';
+  }
+  if (report.dismembermentEvents.some((d) => d.goreMode === 'CRANIAL_POP')) {
+    return 'CRANIAL_POP';
+  }
+  if (report.dismembermentEvents.some((d) => d.goreMode === 'EVISCERATED')) {
+    return 'EVISCERATED';
+  }
+  if (report.dismembermentEvents.some((d) => d.goreMode === 'CLEAN_SEVER')) {
+    const isSurgicalJoint = report.combatantEffects.some((e) => e.startsWith('JOINT SHATTERED'));
+    return isSurgicalJoint ? 'SURGICAL_SEVER' : 'CLEAN_SEVER';
+  }
+  return null;
 }
 
 export function applyImpactFxAndState(
@@ -129,12 +151,25 @@ export function applyImpactFxAndState(
       energyDepositedJ: report.totalEnergyDepositedJ,
       externalAccuracyMultiplier: physio?.readability.aiAccuracyMultiplier,
     });
-    if (wasAlive && !hs.alive) {
-      let rewardKind: BrutalKillRewardKind = 'STANDARD_KILL';
-      if (report.dismembermentEvents.some((d) => d.goreMode === 'CRANIAL_POP')) rewardKind = 'CRANIAL_POP';
-      else if (report.dismembermentEvents.some((d) => d.goreMode === 'EVISCERATED')) rewardKind = 'EVISCERATED';
-      else if (report.dismembermentEvents.some((d) => d.goreMode === 'CLEAN_SEVER')) rewardKind = 'CLEAN_SEVER';
-      ctx.tacticalAi.grantBrutalKillReward(rewardKind);
+
+    const brutalFeat = wasAlive ? classifyBrutalFeatFromReport(report) : null;
+    if (brutalFeat) {
+      const vitalsDelta = ctx.tacticalAi.grantBrutalKillReward(brutalFeat);
+      ctx.tacticalAi.notifyWitnessedBrutality(hs, brutalFeat);
+      const bonusRoundsGranted = brutalFeat === 'DECAPITATION' ? 2 : 1;
+      const payload: BrutalRewardEventPayload = {
+        kind: brutalFeat,
+        targetId: hs.targetId,
+        targetName: hs.name,
+        weaponLabel,
+        isLethal: !hs.alive,
+        armorRestored: vitalsDelta.armorRestored,
+        healthRestored: vitalsDelta.healthRestored,
+        bonusRoundsGranted,
+      };
+      ctx.app?.fire('combat:brutal_reward', payload);
+    } else if (wasAlive && !hs.alive) {
+      ctx.tacticalAi.grantBrutalKillReward('STANDARD_KILL');
     }
   }
 

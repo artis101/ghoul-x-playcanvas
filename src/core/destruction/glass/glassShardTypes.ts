@@ -115,13 +115,20 @@ export interface ArmoredVoronoiImpactOptions {
   hitX: number;
   hitY: number;
   energyJ: number;
+  speedMs?: number;
   radiusM?: number;
   isArmorPiercing?: boolean;
+  armorPenetrationFactor?: number;
+  bluntImpactOnly?: boolean;
+  isBlast?: boolean;
   seed?: number;
 }
 
 export interface ArmoredVoronoiImpactReport {
   alreadyBrokenHole: boolean;
+  perforatedHitChunk: boolean;
+  chunkIntegrityBefore: number;
+  chunkIntegrityAfter: number;
   newlyDetachedIndices: number[];
   chunksCrazed: number;
   survivingChunkCount: number;

@@ -87,6 +87,9 @@ export function isSurfaceHitInOpenBreach(
   if (mat === 'GLASS_MARCHING_256' || mat === 'GLASS_VORONOI') {
     return ctx.glassSystem.isGlassOpenAtWorldPoint(objId, mat, hit.pointWorld);
   }
+  if (mat === 'BRICK_MASONRY') {
+    return ctx.brickWalls.isWallOpenAlongRay(objId, rayOrigin, unitDir, maxDistM, hit.pointWorld);
+  }
   return false;
 }
 
@@ -115,6 +118,9 @@ export function isLineOfSightBlocked(
     }
     if (mat === 'WOOD_DRYWALL') {
       return !isWoodWallRayInOpenHole(ctx.woodWalls, surface.objectId, fromWorld, dir, maxDist, pointWorld);
+    }
+    if (mat === 'BRICK_MASONRY') {
+      return !ctx.brickWalls.isWallOpenAlongRay(surface.objectId, fromWorld, dir, maxDist, pointWorld);
     }
     return true;
   });
@@ -314,6 +320,9 @@ export function interceptEnemyShot(
     }
 
     if (mat === 'BRICK_MASONRY') {
+      if (ctx.brickWalls.isWallOpenAlongRay(objId, origin, normDir, maxDistM, hit.pointWorld)) {
+        continue;
+      }
       const res = ctx.brickWalls.handleRaySegment({
         originWorld: segOrigin,
         directionWorld: normDir,
@@ -329,13 +338,18 @@ export function interceptEnemyShot(
       const impactPt = res.impactPointWorld ?? hit.pointWorld;
       const impactNrm = res.impactNormalWorld ?? hit.normalWorld;
       ctx.combatAudio?.playMaterialImpact('BRICK_MASONRY', impactPt, curEnergyJ, listenerPos);
-      return {
-        blocked: true,
-        impactPointWorld: impactPt,
-        hitPointWorld: impactPt,
-        hitNormalWorld: impactNrm,
-        surfaceTag: 'BRICK_MASONRY',
-      };
+      if (res.stopped || res.remainingEnergyJ <= 20) {
+        return {
+          blocked: true,
+          impactPointWorld: impactPt,
+          hitPointWorld: impactPt,
+          hitNormalWorld: impactNrm,
+          surfaceTag: 'BRICK_MASONRY',
+        };
+      }
+      curEnergyJ = res.remainingEnergyJ;
+      curSpeedMs = res.remainingSpeedMs;
+      continue;
     }
 
     if (mat === 'CONCRETE_CHUNKS' || mat === 'CONCRETE_INTACT') {

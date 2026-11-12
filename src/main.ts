@@ -16,11 +16,3 @@ export async function bootstrap(
     preloaderScreen,
   });
 }
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('DOMContentLoaded', () => {
-    void bootstrap().catch((err: unknown) => {
-      console.error('GHOUL-X bootstrap failed:', err);
-    });
-  });
-}

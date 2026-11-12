@@ -273,7 +273,7 @@ export async function runGamePreloader(
     app.fire('preloader:complete', {
       totalElapsedMs: getElapsedMs(),
       compiledShaders: warmup.warmedVariants,
-      loadedAssets: loadedAssets || 9,
+      loadedAssets,
     });
     await preloaderScreen.completeAndDismiss(options.dismissDelayMs);
 

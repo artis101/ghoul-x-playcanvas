@@ -614,5 +614,49 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       }
       expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeLessThan(0.22);
     });
+
+    it('keeps ordinary cumulative gunfire non-dismembering while rewarding surgical sniper cervical neck shots with clean decapitation', () => {
+      // 1) Ordinary combat: spray mid-bicep with 3x 5.56mm rounds + follow-up 8m .50 AE mid-bicep hit -> gory laceration, ZERO accidental amputation!
+      const ordinaryTarget = createTargetHealthState('ord_target', 'Militia Regular', vec3(0, 0, -8), 0);
+      const midArmAimPt = vec3(-0.29, 1.24, -8); // off-joint bicep shaft
+      const origin8m = vec3(-0.29, 1.24, 0);
+      const dir8m = normalize(sub(midArmAimPt, origin8m));
+
+      for (let i = 0; i < 3; i++) {
+        const rep556 = simulateShot(WEAPON_M4A1, AMMO_556_NATO_SOST_JHP, origin8m, dir8m, ordinaryTarget, DEFAULT_ENVIRONMENT);
+        expect(rep556.dismembermentEvents).toHaveLength(0);
+        applyShotReportToTarget(ordinaryTarget, rep556);
+      }
+      const rep50Mid = simulateShot(WEAPON_SILVER_TALON, AMMO_50AE_JHP, origin8m, dir8m, ordinaryTarget, DEFAULT_ENVIRONMENT);
+      expect(rep50Mid.hitTarget).toBe(true);
+      expect(rep50Mid.dismembermentEvents).toHaveLength(0);
+
+      // 2) Surgical sniper cervical neck shot at 22m -> shoots the head clean off (NECK_CERVICAL subtree detached)!
+      const neckTarget = createTargetHealthState('neck_decap', 'Sniper Target', vec3(0, 0, -22), 0);
+      const neckPivot = neckTarget.ragdollBones.NECK_CERVICAL.position;
+      const sniperOrigin = vec3(neckPivot.x, neckPivot.y, 0);
+      const neckRep = simulateShot(
+        WEAPON_MSG90,
+        AMMO_762_NATO_M118LR,
+        sniperOrigin,
+        normalize(sub(neckPivot, sniperOrigin)),
+        neckTarget,
+        DEFAULT_ENVIRONMENT
+      );
+      expect(neckRep.hitTarget).toBe(true);
+      expect(neckRep.isLethalKill).toBe(true);
+      const neckSever = neckRep.dismembermentEvents.find((d) => d.zone === 'NECK_CERVICAL');
+      expect(neckSever).toBeDefined();
+      expect(neckSever!.goreMode).toBe('CLEAN_SEVER');
+      expect(neckSever!.detachedSubtree).toEqual(
+        expect.arrayContaining(['NECK_CERVICAL', 'HEAD_CRANIUM', 'HEAD_FACE_JAW'])
+      );
+      expect(neckRep.combatantEffects.some((e) => e.includes('CERVICAL DECAPITATION'))).toBe(true);
+
+      applyShotReportToTarget(neckTarget, neckRep);
+      expect(neckTarget.alive).toBe(false);
+      expect(neckTarget.ragdollBones.HEAD_CRANIUM.componentId).not.toBe('BODY');
+      expect(neckTarget.ragdollBones.TORSO_UPPER_THORAX.componentId).toBe('BODY');
+    });
   });
 });
