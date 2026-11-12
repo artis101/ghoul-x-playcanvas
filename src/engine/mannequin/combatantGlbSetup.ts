@@ -24,21 +24,16 @@ export function setupCombatantGlbInstance(
       southpaw: healthState.isLeftHanded,
     });
 
-    const forearmSampleMat =
-      inst.zoneEntities.get('FOREARM_LEFT')?.render?.meshInstances?.[0]?.material ?? null;
-
     for (const [zone, zEnt] of inst.zoneEntities) {
       if (!zEnt.render) continue;
       const pairs: GlbZoneMaterialPair[] = [];
-      zEnt.render.meshInstances.forEach((mi, idx) => {
+      zEnt.render.meshInstances.forEach((mi) => {
         const orig = mi.material;
         if (orig) {
           const { intactMat, laceratedMat } = createArchetypeAndBloodyGlbMaterials(
             orig,
-            zone,
-            idx,
-            forearmSampleMat,
             healthState.archetype,
+            inst.skinMaterials,
             materials
           );
           mi.material = intactMat;
@@ -52,7 +47,7 @@ export function setupCombatantGlbInstance(
       inst.esapiPlateCarrier,
       inst.pasgtHelmet,
       inst.tacticalVisor,
-      inst.spetsnazBeret,
+      inst.boonieHat,
       inst.punkMohawk,
       inst.evisceratedGut,
     ];
@@ -70,7 +65,7 @@ export function setupCombatantGlbInstance(
           let swatGear = sharedSwatGearMatCache.get(gearMat);
           if (!swatGear) {
             swatGear = gearMat.clone();
-            swatGear.diffuse.set(0.55, 0.62, 0.72);
+            swatGear.diffuse.set(0.24, 0.25, 0.28);
             swatGear.update();
             sharedSwatGearMatCache.set(gearMat, swatGear);
           }

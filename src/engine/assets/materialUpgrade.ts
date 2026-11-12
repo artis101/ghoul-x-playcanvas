@@ -30,6 +30,8 @@ const upgradedGlbTextures = new WeakSet<pc.Texture>();
 export function upgradeGlbTexture(tex: pc.Texture | null | undefined, maxAniso: number): void {
   if (!tex || upgradedGlbTextures.has(tex)) return;
   upgradedGlbTextures.add(tex);
+  // Point-sampled textures (the painted character skins) are meant to show their texels.
+  if (tex.magFilter === pc.FILTER_NEAREST) return;
   tex.anisotropy = maxAniso;
   if (tex.mipmaps) {
     tex.minFilter = pc.FILTER_LINEAR_MIPMAP_LINEAR;

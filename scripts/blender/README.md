@@ -60,11 +60,23 @@ blender -b "$work/combatant.blend" --python-exit-code 1 \
 
 Copy the edited GLB to `public/models/ghoul_combatant.glb`, reload Character Lab, and scrub the edited section. The exporter samples each frame inside the clip's range. Use `bake_kimodo_combatant.py` to change a clip's source take or timing.
 
-## Body
+## Body and skins
 
-`build_combatant_rigged.py` builds the whole combatant; `combatant_body.py` holds the torso, neck, arm and leg shapes and `combatant_body_loft.py` turns them into skinned zone meshes. Each chain (spine, arm, leg) is one continuous surface cut into `Zone_*` meshes at shared rings. A zone's vertices are weighted only to its own bone and its parent bone, so joints bend smoothly and the runtime can rebind a severed zone to its own bone (`combatantSeveredSkin.ts`). The skeleton is unchanged.
+`build_combatant_rigged.py` builds the whole combatant. `combatant_body.py` holds the torso, neck, arm and leg shapes and `combatant_body_loft.py` turns them into skinned zone meshes. Each chain (spine, arm, leg) is one continuous surface cut into `Zone_*` meshes at shared rings. A zone's vertices are weighted only to its own bone and its parent bone, so joints bend and the runtime can rebind a severed zone to its own bone (`combatantSeveredSkin.ts`).
 
-To change the body, edit the station tables in `combatant_body.py`, then rebuild and rebake the animations:
+The look is late-90s / early-2000s console: a low polygon count, and one hand-painted 256 px skin page per character with the light painted in, stepped to 15-bit colour and point-sampled. There are no normal or roughness maps. Clothing, muscle, tattoos and faces are all paint, so the four characters share one body.
+
+| File | Holds |
+| --- | --- |
+| `combatant_skin_designs.py` | the four `LOOKS` (one per archetype) and `paint_page` |
+| `combatant_skin_body.py`, `combatant_skin_head.py` | what gets painted on each body part |
+| `combatant_skin_paint.py` | brushes: anatomy, cloth folds, pockets, belts, tattoos |
+| `combatant_skin_atlas.py` | where each part sits on the page, and the final dither |
+| `combatant_skin_uv.py` | puts the head, hands, boots and hat on the page |
+
+The body meshes carry the `MILITIA_GUNNER` page. The hidden `Skin_Library` mesh carries all four as `Mat_Skin_<archetype>`, and the runtime swaps in the right one (`combatantGlbMaterials.ts`).
+
+To change a character, edit its `Look` or the painters. To change the body, edit the station tables in `combatant_body.py`. Then rebuild and rebake the animations:
 
 ```sh
 GHOUL_COMBATANT_OUT="$work" blender -b --python-exit-code 1 --python scripts/blender/build_combatant_rigged.py
@@ -72,4 +84,6 @@ blender -b --python-exit-code 1 --python scripts/blender/bake_kimodo_combatant.p
   scripts/blender/motion "$work/ghoul_combatant.glb" "$work/baked.glb"
 ```
 
-Copy `baked.glb` to `public/models/ghoul_combatant.glb` and `ghoul_combatant.blend` to `public/models/blend_sources/`. The baked GLB must stay under 2 MB; it currently has about 12 KB to spare, so lower `sides` or raise `spacing` in `build_body_zones` when adding detail.
+Copy `baked.glb` to `public/models/ghoul_combatant.glb` and `ghoul_combatant.blend` to `public/models/blend_sources/`. The baked GLB must stay under 2 MB; it is about 1.9 MB.
+
+While working on the paint, add `GHOUL_SKIP_ANIMATION=1` to skip the placeholder animation bake and `GHOUL_SKIN_PREVIEW=<dir>` to also write each skin page as a PNG.

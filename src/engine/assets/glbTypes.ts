@@ -104,9 +104,11 @@ export interface CombatantGlbInstance {
   esapiPlateCarrier: pc.Entity | null;
   pasgtHelmet: pc.Entity | null;
   tacticalVisor: pc.Entity | null;
-  spetsnazBeret: pc.Entity | null;
+  boonieHat: pc.Entity | null;
   punkMohawk: pc.Entity | null;
   evisceratedGut: pc.Entity | null;
+  /** Painted skin page per archetype, keyed by archetype id (from the GLB's Skin_Library mesh). */
+  skinMaterials: ReadonlyMap<string, pc.Material>;
   internalAnatomyEntities: {
     organBrain: pc.Entity | null;
     organHeart: pc.Entity | null;

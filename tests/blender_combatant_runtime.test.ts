@@ -213,7 +213,7 @@ describe('Blender combatant runtime', () => {
             'Gear_ESAPI_PlateCarrier',
             'Gear_PASGT_Helmet',
             'Gear_TacticalVisor',
-            'Gear_SpetsnazBeret',
+            'Gear_BoonieHat',
             'Gear_PunkMohawk',
             'Gear_EvisceratedGut',
             'Organ_Brain',
@@ -291,7 +291,7 @@ describe('Blender combatant runtime', () => {
         glbRegistry
       );
       app.root.addChild(southpawMannequin.rootEntity);
-      expect(southpawMannequin.combatantGlb!.spetsnazBeret!.enabled).toBe(true);
+      expect(southpawMannequin.combatantGlb!.boonieHat!.enabled).toBe(true);
       expect(southpawMannequin.combatantGlb!.pasgtHelmet!.enabled).toBe(false);
       expect(southpawMannequin.combatantGlb!.animComponent!.baseLayer!.activeState).toBe(
         'CombatReadyIdle_Southpaw'

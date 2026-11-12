@@ -12,11 +12,10 @@ export function instantiateDetachedHeadgearProp(
   const gearNames: string[] =
     archetype === 'HEAVY_ENFORCER'
       ? ['Gear_PASGT_Helmet', 'Gear_TacticalVisor']
-      : archetype === 'MILITIA_GUNNER'
-        ? ['Gear_PASGT_Helmet']
-        : archetype === 'SNIPER_OPERATIVE'
-          ? ['Gear_SpetsnazBeret']
-          : ['Gear_TacticalVisor'];
+      : archetype === 'SNIPER_OPERATIVE'
+        ? ['Gear_BoonieHat']
+        : [];
+  if (gearNames.length === 0) return null;
 
   const cacheKey = gearNames.join('+');
   let primitives = cache.get(cacheKey);

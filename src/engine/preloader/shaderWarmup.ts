@@ -233,7 +233,7 @@ export async function compileAllGameShaders(
         stagingRoot.addChild(tempCombatant.rootEntity);
         tempCombatant.rootEntity.setPosition(0, -250.8, -3.2);
         if (tempCombatant.tacticalVisor) tempCombatant.tacticalVisor.enabled = true;
-        if (tempCombatant.spetsnazBeret) tempCombatant.spetsnazBeret.enabled = true;
+        if (tempCombatant.boonieHat) tempCombatant.boonieHat.enabled = true;
         if (tempCombatant.punkMohawk) tempCombatant.punkMohawk.enabled = true;
         if (tempCombatant.evisceratedGut) tempCombatant.evisceratedGut.enabled = true;
 

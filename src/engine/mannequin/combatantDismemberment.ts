@@ -98,15 +98,16 @@ export class CombatantDismemberment {
   ): void {
     const arch = healthState.archetype;
     const isCranialPopped = healthState.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP';
-    const showPlate = !isXRayActive && arch !== 'SKINHEAD_PUNK';
-    const showHelmet = !isXRayActive && headgearAttached && (arch === 'HEAVY_ENFORCER' || arch === 'MILITIA_GUNNER');
-    const showVisor = !isXRayActive && headgearAttached && (arch === 'HEAVY_ENFORCER' || arch === 'SKINHEAD_PUNK');
-    const showBeret = !isXRayActive && headgearAttached && arch === 'SNIPER_OPERATIVE';
+    // Only the enforcer wears armour over his painted clothes.
+    const showPlate = !isXRayActive && arch === 'HEAVY_ENFORCER';
+    const showHelmet = !isXRayActive && headgearAttached && arch === 'HEAVY_ENFORCER';
+    const showVisor = !isXRayActive && headgearAttached && arch === 'HEAVY_ENFORCER';
+    const showBoonie = !isXRayActive && headgearAttached && arch === 'SNIPER_OPERATIVE';
     const showMohawk = !isXRayActive && !isCranialPopped && arch === 'SKINHEAD_PUNK';
 
     glb.setArmorVisible(showPlate, showHelmet);
     if (glb.tacticalVisor) glb.tacticalVisor.enabled = showVisor;
-    if (glb.spetsnazBeret) glb.spetsnazBeret.enabled = showBeret;
+    if (glb.boonieHat) glb.boonieHat.enabled = showBoonie;
     if (glb.punkMohawk) glb.punkMohawk.enabled = showMohawk;
   }
 

@@ -10,6 +10,9 @@ const LOOPING_COMBATANT_CLIPS = new Set([
   'CombatReadyIdle', 'UnsuspectingIdle', 'Walk', 'Run', 'WalkBackward', 'StrafeLeft', 'StrafeRight', 'Crawl',
 ]);
 
+/** Skin page materials in the combatant GLB are named `Mat_Skin_<archetype id>`. */
+export const SKIN_MATERIAL_PREFIX = 'Mat_Skin_';
+
 /** True for clips that repeat. The rest play once and hold their last frame. */
 export function isLoopingClip(name: string): boolean {
   return LOOPING_COMBATANT_CLIPS.has(name.replace(/_Southpaw$/, ''));
@@ -55,12 +58,24 @@ export function instantiateCombatantGlb(
   const esapiPlateCarrier = findEntityByName(rootEntity, 'Gear_ESAPI_PlateCarrier');
   const pasgtHelmet = findEntityByName(rootEntity, 'Gear_PASGT_Helmet');
   const tacticalVisor = findEntityByName(rootEntity, 'Gear_TacticalVisor');
-  const spetsnazBeret = findEntityByName(rootEntity, 'Gear_SpetsnazBeret');
+  const boonieHat = findEntityByName(rootEntity, 'Gear_BoonieHat');
   const punkMohawk = findEntityByName(rootEntity, 'Gear_PunkMohawk');
   const evisceratedGut = findEntityByName(rootEntity, 'Gear_EvisceratedGut');
 
+  // Skin_Library is a hidden mesh whose only job is to carry one material per character skin.
+  const skinMaterials = new Map<string, pc.Material>();
+  const skinLibrary = findEntityByName(rootEntity, 'Skin_Library');
+  if (skinLibrary) {
+    for (const mi of skinLibrary.render?.meshInstances ?? []) {
+      if (mi.material?.name.startsWith(SKIN_MATERIAL_PREFIX)) {
+        skinMaterials.set(mi.material.name.slice(SKIN_MATERIAL_PREFIX.length), mi.material);
+      }
+    }
+    skinLibrary.enabled = false;
+  }
+
   if (tacticalVisor) tacticalVisor.enabled = false;
-  if (spetsnazBeret) spetsnazBeret.enabled = false;
+  if (boonieHat) boonieHat.enabled = false;
   if (punkMohawk) punkMohawk.enabled = false;
   if (evisceratedGut) evisceratedGut.enabled = false;
 
@@ -89,7 +104,7 @@ export function instantiateCombatantGlb(
     esapiPlateCarrier,
     pasgtHelmet,
     tacticalVisor,
-    spetsnazBeret,
+    boonieHat,
     punkMohawk,
     evisceratedGut,
     ...Object.values(internalAnatomyEntities),
@@ -126,9 +141,10 @@ export function instantiateCombatantGlb(
     esapiPlateCarrier,
     pasgtHelmet,
     tacticalVisor,
-    spetsnazBeret,
+    boonieHat,
     punkMohawk,
     evisceratedGut,
+    skinMaterials,
     internalAnatomyEntities,
     availableClips,
     playClip(clipName: CombatantAnimationClipName, transitionSeconds = 0.12, speed = 1.0, southpaw = false): boolean {

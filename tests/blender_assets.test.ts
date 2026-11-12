@@ -39,7 +39,7 @@ describe('Blender combatant and weapon assets', () => {
     expect(armNodes.every((node) => node.skin === undefined)).toBe(true);
   });
 
-  it('ghoul_combatant.glb contains 35 sculpted submeshes, parent-only joint blending, and Kimodo clips for both hands', () => {
+  it('ghoul_combatant.glb contains 36 low-poly submeshes, parent-only joint blending, and Kimodo clips for both hands', () => {
     const { gltf, binChunk } = readAndParseGlb('ghoul_combatant.glb');
     const nodes = gltf.nodes ?? [];
     const meshes = gltf.meshes ?? [];
@@ -113,7 +113,7 @@ describe('Blender combatant and weapon assets', () => {
           }
         }
       }
-      expect(totalVertsInZone, `${zoneMeshName} must be sculpted (>40 verts)`).toBeGreaterThan(40);
+      expect(totalVertsInZone, `${zoneMeshName} must be modelled (>24 verts)`).toBeGreaterThan(24);
     }
 
     // Grounded flat at y ≈ 0.00m and ~1.80m tall
@@ -127,7 +127,7 @@ describe('Blender combatant and weapon assets', () => {
       'Gear_ESAPI_PlateCarrier',
       'Gear_PASGT_Helmet',
       'Gear_TacticalVisor',
-      'Gear_SpetsnazBeret',
+      'Gear_BoonieHat',
       'Gear_PunkMohawk',
       'Gear_EvisceratedGut',
       'Organ_Brain',
@@ -137,17 +137,22 @@ describe('Blender combatant and weapon assets', () => {
       'Skelet_Skull',
       'Skelet_RibcageSpine',
       'Skelet_Pelvis',
+      'Skin_Library',
     ];
     for (const extraName of requiredExtraMeshes) {
       expect(nodeNames.has(extraName), `Missing node ${extraName}`).toBe(true);
       expect(meshByName.has(extraName), `Missing mesh ${extraName}`).toBe(true);
     }
-    expect(meshes.length).toBe(35);
+    expect(meshes.length).toBe(36);
 
-    for (const name of ['Mat_Skin_Tactical', 'Mat_Head_Sculpted']) {
-      const material = gltf.materials?.find((entry) => entry.name === name);
-      expect(material?.pbrMetallicRoughness?.baseColorTexture).toBeDefined();
+    // One hand-painted, point-sampled skin page per archetype, diffuse only.
+    for (const archetype of ['SKINHEAD_PUNK', 'MILITIA_GUNNER', 'HEAVY_ENFORCER', 'SNIPER_OPERATIVE']) {
+      const material = gltf.materials?.find((entry) => entry.name === `Mat_Skin_${archetype}`);
+      const texture = material?.pbrMetallicRoughness?.baseColorTexture as { index: number } | undefined;
+      expect(texture, `Missing skin page for ${archetype}`).toBeDefined();
       expect(material?.normalTexture).toBeUndefined();
+      const sampler = gltf.samplers?.[gltf.textures?.[texture!.index]?.sampler ?? -1];
+      expect(sampler?.magFilter).toBe(9728);
     }
 
     // 3. 22-Bone Armature skinning

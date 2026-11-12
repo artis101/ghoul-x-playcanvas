@@ -43,11 +43,20 @@ from mathutils import Euler, Matrix, Quaternion, Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from combatant_body import build_body_zones  # noqa: E402
+from combatant_skin_atlas import EXPORT  # noqa: E402
+from combatant_skin_designs import DEFAULT_LOOK, LOOKS, paint_page  # noqa: E402
+from combatant_skin_uv import (  # noqa: E402
+    build_boonie, build_skin_library, project_boot, project_hand, remap_faces, swatch_faces,
+)
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 # Set GHOUL_COMBATANT_OUT to a directory to build somewhere other than the repository.
 _OUT_DIR = os.environ.get("GHOUL_COMBATANT_OUT")
+# Set to write each skin page as a PNG next to the build, for looking at the paint on its own.
+PREVIEW_DIR = os.environ.get("GHOUL_SKIN_PREVIEW")
+# Set to skip the placeholder animation bake when only the look is being checked.
+SKIP_ANIMATION = bool(os.environ.get("GHOUL_SKIP_ANIMATION"))
 OUT_GLB = os.path.join(_OUT_DIR or os.path.join(REPO_ROOT, "public", "models"), "ghoul_combatant.glb")
 OUT_BLEND = os.path.join(
     _OUT_DIR or os.path.join(REPO_ROOT, "public", "models", "blend_sources"), "ghoul_combatant.blend")
@@ -66,20 +75,12 @@ def clamp01(v: float) -> float:
     return 0.0 if v < 0.0 else (1.0 if v > 1.0 else v)
 
 
-def hash2f(ix: int, iy: int, seed: int) -> float:
-    n = ((ix * 374761393) + (iy * 668265263) + (seed * 1442695041)) & 0xFFFFFFFF
-    n = ((n ^ (n >> 13)) * 1274126177) & 0xFFFFFFFF
-    return ((n ^ (n >> 16)) & 0xFFFF) / 65535.0
-
-
 # ---------------------------------------------------------------------------
 # Procedural NumPy PBR Texture Suite (Albedo + Tangent-Space Normal + ORM) & Materials
 # ---------------------------------------------------------------------------
 # All textures are generated procedurally with NumPy, packed into the .blend and exported
 # as JPEG inside the GLB (keeps ghoul_combatant.glb well below the 2 MB runtime budget).
 # glTF/OpenGL tangent-space convention: +G = +V (pixel rows grow with V).
-
-SKIN_RGB = (0.735, 0.535, 0.425)
 
 
 def _uvgrid(size: int):
@@ -138,10 +139,6 @@ def fbm(size: int, base_cells: int, octaves: int, seed: int, gain: float = 0.5):
     return out / tot
 
 
-def white_noise(size: int, seed: int):
-    return np.random.default_rng(seed).random((size, size)).astype(np.float32)
-
-
 def height_to_normal(h, strength: float):
     """Converts a tileable height field into an OpenGL/glTF tangent-space normal map (RGB 0..1)."""
     dx = (np.roll(h, -1, axis=1) - np.roll(h, 1, axis=1)) * 0.5
@@ -151,12 +148,6 @@ def height_to_normal(h, strength: float):
     nz = np.ones_like(h)
     inv = 1.0 / np.sqrt(nx * nx + ny * ny + nz * nz)
     return np.stack((nx * inv * 0.5 + 0.5, ny * inv * 0.5 + 0.5, nz * inv * 0.5 + 0.5), axis=-1)
-
-
-def orm_from_roughness(rough, metal=None):
-    r = np.clip(rough, 0.02, 1.0).astype(np.float32)
-    m = np.zeros_like(r) if metal is None else np.clip(metal, 0.0, 1.0).astype(np.float32)
-    return np.stack((np.ones_like(r), r, m), axis=-1)
 
 
 def make_image_from_array(name: str, rgb, non_color: bool = False) -> bpy.types.Image:
@@ -170,71 +161,31 @@ def make_image_from_array(name: str, rgb, non_color: bool = False) -> bpy.types.
     return img
 
 
-def make_pbr_material(
+def make_flat_material(
     name: str,
     base_color: Tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
-    roughness: float = 0.65,
+    roughness: float = 0.9,
     metallic: float = 0.0,
     emission_color: Optional[Tuple[float, float, float, float]] = None,
     emission_strength: float = 0.0,
     albedo_image: Optional[bpy.types.Image] = None,
-    normal_image: Optional[bpy.types.Image] = None,
-    orm_image: Optional[bpy.types.Image] = None,
-    normal_strength: float = 1.0,
-    subsurface: float = 0.0,
-    coat: float = 0.0,
+    point_sampled: bool = False,
 ) -> bpy.types.Material:
-    """Principled BSDF with Albedo -> Base Color, NormalMap -> Normal, ORM(G=Roughness, B=Metallic)."""
+    """A diffuse-only material: one colour or one painted texture, no normal or roughness maps."""
     mat = bpy.data.materials.new(name=name)
     if mat.node_tree is None:
         mat.use_nodes = True
-    nt = mat.node_tree
-    nodes = nt.nodes
-    links = nt.links
-    bsdf = nodes.get("Principled BSDF")
-    if bsdf is None:
-        bsdf = nodes.new(type="ShaderNodeBsdfPrincipled")
+    nodes = mat.node_tree.nodes
+    bsdf = nodes.get("Principled BSDF") or nodes.new(type="ShaderNodeBsdfPrincipled")
     bsdf.inputs["Base Color"].default_value = base_color
     bsdf.inputs["Roughness"].default_value = roughness
     bsdf.inputs["Metallic"].default_value = metallic
-
     if albedo_image is not None:
         tex = nodes.new(type="ShaderNodeTexImage")
+        tex.name = "Albedo"
         tex.image = albedo_image
-        tex.interpolation = "Linear"
-        tex.location = (-620, 260)
-        links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
-
-    if normal_image is not None:
-        ntex = nodes.new(type="ShaderNodeTexImage")
-        ntex.image = normal_image
-        ntex.interpolation = "Linear"
-        ntex.location = (-620, -320)
-        nmap = nodes.new(type="ShaderNodeNormalMap")
-        nmap.location = (-300, -320)
-        nmap.inputs["Strength"].default_value = normal_strength
-        links.new(ntex.outputs["Color"], nmap.inputs["Color"])
-        links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
-
-    if orm_image is not None:
-        otex = nodes.new(type="ShaderNodeTexImage")
-        otex.image = orm_image
-        otex.interpolation = "Linear"
-        otex.location = (-620, -40)
-        sep = nodes.new(type="ShaderNodeSeparateColor")
-        sep.location = (-300, -40)
-        links.new(otex.outputs["Color"], sep.inputs["Color"])
-        links.new(sep.outputs["Green"], bsdf.inputs["Roughness"])
-        links.new(sep.outputs["Blue"], bsdf.inputs["Metallic"])
-
-    if subsurface > 0.0 and "Subsurface Weight" in bsdf.inputs:
-        bsdf.inputs["Subsurface Weight"].default_value = subsurface
-        bsdf.inputs["Subsurface Radius"].default_value = (1.0, 0.36, 0.18)
-        bsdf.inputs["Subsurface Scale"].default_value = 0.006
-    if coat > 0.0 and "Coat Weight" in bsdf.inputs:
-        bsdf.inputs["Coat Weight"].default_value = coat
-        bsdf.inputs["Coat Roughness"].default_value = 0.08
-
+        tex.interpolation = "Closest" if point_sampled else "Linear"
+        mat.node_tree.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
     if emission_color is not None and "Emission Color" in bsdf.inputs:
         bsdf.inputs["Emission Color"].default_value = emission_color
         bsdf.inputs["Emission Strength"].default_value = emission_strength
@@ -242,64 +193,6 @@ def make_pbr_material(
 
 
 # ----- Individual procedural painters (return albedo, normal, roughness arrays) -----
-
-def paint_skin_body(size: int, seed: int):
-    mott = fbm(size, 4, 4, seed)
-    pores = fbm(size, 64, 2, seed + 7)
-    fine = white_noise(size, seed + 9)
-    alb = _rgb(*SKIN_RGB)[None, None, :] * (0.93 + 0.14 * mott[..., None])
-    alb = alb + _rgb(0.05, -0.012, -0.02) * (fbm(size, 6, 3, seed + 3)[..., None] - 0.5)
-    h = 0.55 * pores + 0.12 * fine
-    rough = 0.50 + 0.10 * pores
-    return alb, height_to_normal(h, size * 0.010), rough
-
-
-def paint_shirt_charcoal(size: int, seed: int):
-    u, v = _uvgrid(size)
-    du = np.abs(u - 0.5)
-    n = fbm(size, 8, 4, seed)
-    idx = np.arange(size)
-    rip = (((idx % 12) == 0)[None, :] | ((idx % 12) == 0)[:, None]).astype(np.float32)
-    weave = 0.5 + 0.5 * np.sin(idx[None, :] * np.pi * 0.5) * np.sin(idx[:, None] * np.pi * 0.5)
-    warp = (fbm(size, 4, 3, seed + 1) - 0.5) * 7.0
-    folds = (np.sin(v * 2.0 * np.pi * 7.0 + warp * 1.8 + du * 9.0) * 0.5 + 0.5) ** 3
-    folds = folds * _smooth(0.35, 0.70, fbm(size, 5, 2, seed + 21))
-    seams = _gauss(du - 0.25, 0.0045) + _gauss(u, 0.004) + _gauss(u - 1.0, 0.004) + _gauss(v - 0.55, 0.003) * _smooth(0.26, 0.24, du)
-    stitch = seams * (((idx[:, None] + idx[None, :]) % 6) < 3)
-    gusset = _smooth(0.205, 0.215, du) * (1.0 - _smooth(0.285, 0.295, du))
-    mesh_holes = gusset * (((idx[:, None] % 4) < 2) & ((idx[None, :] % 4) < 2))
-    base = _mix(_rgb(0.135, 0.145, 0.158), _rgb(0.092, 0.10, 0.112), gusset)
-    alb = base * (0.88 + 0.22 * n[..., None]) * (1.0 - 0.04 * rip[..., None]) * (1.0 - 0.18 * folds[..., None] * 0.5)
-    alb = alb * (1.0 - 0.25 * seams[..., None])
-    h = 0.28 * folds + 0.07 * rip + 0.10 * weave - 0.55 * seams + 0.25 * stitch - 0.35 * mesh_holes
-    rough = 0.78 + 0.08 * n - 0.04 * folds
-    return alb, height_to_normal(h, size * 0.012), rough
-
-
-def paint_bdu_olive(size: int, seed: int):
-    u, v = _uvgrid(size)
-    n = fbm(size, 8, 4, seed)
-    idx = np.arange(size)
-    rip = (((idx % 10) == 0)[None, :] | ((idx % 10) == 0)[:, None]).astype(np.float32)
-    weave = 0.5 + 0.5 * np.sin(idx[None, :] * np.pi * 0.5 + idx[:, None] * np.pi * 0.5)
-    warp = (fbm(size, 4, 3, seed + 2) - 0.5) * 8.0
-    creases = (np.sin(v * 2.0 * np.pi * 9.0 + warp * 1.8) * 0.5 + 0.5) ** 4
-    creases = creases * _smooth(0.35, 0.70, fbm(size, 5, 2, seed + 21))
-    pleats = (np.sin(v * 2.0 * np.pi * 24.0) * 0.5 + 0.5) * _gauss(v - 0.5, 0.06) * _gauss(u - 0.5, 0.16)
-    seams = _gauss(np.abs(u - 0.5) - 0.25, 0.0045) + _gauss(u, 0.004) + _gauss(u - 1.0, 0.004)
-    stitch = seams * ((idx[:, None] % 6) < 3)
-    blotch = fbm(size, 3, 3, seed + 11)
-    # Woodland camouflage: brown, khaki and near-black shapes over the olive ground.
-    ground = np.broadcast_to(_rgb(0.235, 0.265, 0.165), (size, size, 3))
-    ground = _mix(ground, _rgb(0.25, 0.175, 0.10), _smooth(0.52, 0.55, fbm(size, 3, 3, seed + 31)))
-    ground = _mix(ground, _rgb(0.43, 0.40, 0.27), _smooth(0.61, 0.64, fbm(size, 4, 3, seed + 47)))
-    ground = _mix(ground, _rgb(0.05, 0.06, 0.05), _smooth(0.62, 0.65, fbm(size, 5, 3, seed + 59)))
-    base = ground * (0.86 + 0.26 * n[..., None]) * (0.92 + 0.12 * blotch[..., None])
-    alb = base * (1.0 - 0.035 * rip[..., None]) * (1.0 - 0.10 * creases[..., None]) * (1.0 - 0.22 * seams[..., None])
-    h = 0.24 * creases + 0.30 * pleats + 0.06 * rip + 0.08 * weave - 0.5 * seams + 0.22 * stitch
-    rough = 0.84 + 0.06 * n
-    return alb, height_to_normal(h, size * 0.012), rough
-
 
 def paint_cordura(size: int, seed: int, rgb: Tuple[float, float, float], molle: bool):
     u, v = _uvgrid(size)
@@ -332,65 +225,13 @@ def paint_kevlar_coating(size: int, seed: int):
     return alb, height_to_normal(h, size * 0.016), rough
 
 
-def paint_glove(size: int, seed: int):
-    u, v = _uvgrid(size)
-    idx = np.arange(size)
-    grain = fbm(size, 48, 2, seed)
-    n = fbm(size, 6, 3, seed + 1)
-    stitches = (_gauss(np.abs(u - 0.5) - 0.24, 0.004) + _gauss(u - 0.5, 0.004)) * ((idx[:, None] % 5) < 3)
-    flex = (np.sin(v * 2.0 * np.pi * 14.0) * 0.5 + 0.5) ** 6
-    alb = _rgb(0.058, 0.062, 0.066) * (0.85 + 0.30 * n[..., None]) + 0.03 * stitches[..., None]
-    h = 0.45 * grain + 0.35 * flex + 0.3 * stitches
-    rough = 0.62 + 0.12 * grain
-    return alb, height_to_normal(h, size * 0.012), rough
-
-
-def paint_boot_leather(size: int, seed: int):
-    u, v = _uvgrid(size)
-    idx = np.arange(size)
-    suede = fbm(size, 64, 2, seed)
-    n = fbm(size, 5, 4, seed + 2)
-    crease = (np.sin(v * 2.0 * np.pi * 11.0 + (n - 0.5) * 5.0) * 0.5 + 0.5) ** 6
-    stitch = (_gauss(v - 0.30, 0.004) + _gauss(v - 0.62, 0.004)) * ((idx[None, :] % 6) < 3)
-    alb = _rgb(0.40, 0.31, 0.205) * (0.82 + 0.30 * n[..., None]) * (0.94 + 0.10 * suede[..., None])
-    alb = alb * (1.0 - 0.12 * crease[..., None])
-    h = 0.4 * suede + 0.45 * crease + 0.35 * stitch
-    rough = 0.70 + 0.12 * suede
-    return alb, height_to_normal(h, size * 0.012), rough
-
-
-def paint_rubber(size: int, seed: int):
-    idx = np.arange(size)
-    n = fbm(size, 16, 3, seed)
-    lug = ((((idx[:, None] // 8) + (idx[None, :] // 8)) % 2) == 0).astype(np.float32)
-    alb = _rgb(0.045, 0.045, 0.048) * (0.85 + 0.3 * n[..., None])
-    h = 0.6 * lug + 0.2 * n
-    rough = 0.82 + 0.08 * n
-    return alb, height_to_normal(h, size * 0.02), rough
-
-
-def paint_carbon(size: int):
-    idx = np.arange(size)
-    tw = (((idx[:, None] // 4) + (idx[None, :] // 4)) % 2).astype(np.float32)
-    ph = (idx[None, :] % 4) / 4.0
-    h = np.where(tw > 0.5, np.sin(ph * np.pi), np.sin(((idx[:, None] % 4) / 4.0) * np.pi))
-    alb = _rgb(0.05, 0.052, 0.058) * (0.8 + 0.4 * tw[..., None])
-    rough = 0.48 + 0.10 * tw
-    return alb, height_to_normal(h, size * 0.008), rough
-
-
-def paint_polymer_normal(size: int, seed: int):
-    h = fbm(size, 48, 2, seed)
-    return height_to_normal(h, size * 0.010)
-
-
 def paint_eye(size: int):
     """Eyeball texture: V = sqrt(polar / pi) from cornea apex (V=0) to the back (V=1); U = azimuth."""
     u, v = _uvgrid(size)
     polar = (v ** 2) * np.pi
     n = fbm(size, 16, 3, 41)
     striae = 0.5 + 0.5 * np.sin(u * 2.0 * np.pi * 38.0 + n * 6.0)
-    sclera = _rgb(0.86, 0.82, 0.78) * (0.97 + 0.04 * n[..., None])
+    sclera = _rgb(0.66, 0.63, 0.60) * (0.97 + 0.04 * n[..., None])
     veins = _smooth(0.55, 0.85, polar) * _smooth(0.62, 0.70, fbm(size, 24, 2, 77))
     sclera = _mix(sclera, _rgb(0.74, 0.38, 0.36), veins * 0.55)
     iris_t = np.clip(polar / 0.42, 0.0, 1.0)
@@ -403,168 +244,40 @@ def paint_eye(size: int):
     return col
 
 
-def paint_head_textures(size_a: int, size_r: int):
-    """Albedo + normal + roughness for the unified head UV (u = head azimuth param, v = head ring param)."""
-    K = HEAD_KEYS.shape[0] - 1
-
-    def grid(size):
-        u, v = _uvgrid(size)
-        x, y, z, nx, nz, c, sn = head_base(v.astype(np.float64) * K, u.astype(np.float64))
-        th = head_theta(u.astype(np.float64))
-        return u, v, x, y, z, c, sn, th
-
-    def masks(x, y, c, th):
-        ax = np.abs(x)
-        ath = np.abs(th)
-        yhl = np.interp(ath, [0.0, 0.50, 0.80, 1.00, 1.14, 1.30, 1.80, 2.30, np.pi],
-                        [1.751, 1.747, 1.738, 1.716, 1.700, 1.707, 1.709, 1.660, 1.624])
-        hair = _smooth(yhl - 0.0025, yhl + 0.0055, y)
-        brow_c = 1.7005 + 0.0042 * _gauss(ax - 0.035, 0.014) - 0.002 * _smooth(0.045, 0.055, ax)
-        brow_t = 0.0040 * (1.0 - 0.45 * _smooth(0.030, 0.052, ax)) + 0.0010
-        brow = np.clip(1.0 - np.abs(y - brow_c) / brow_t, 0.0, 1.0) ** 0.7
-        brow = brow * _smooth(0.010, 0.016, ax) * (1.0 - _smooth(0.049, 0.056, ax)) * (c > 0.3)
-        lw_up = 0.0210 * np.sqrt(np.clip(1.0 - ((y - 1.6115) / 0.0100) ** 2, 0.0, 1.0))
-        bow = 0.0011 * _gauss(ax - 0.0055, 0.0035) - 0.0008 * _gauss(ax, 0.002)
-        lips = _smooth(lw_up, lw_up - 0.0032, ax) * _smooth(1.6010, 1.6040, y) * (1.0 - _smooth(1.6195 + bow, 1.6218 + bow, y))
-        lips = lips * (c > 0.5)
-        btop_f = np.where(ax < 0.021, 1.6330, 1.6330 + (ax - 0.021) * 0.50)
-        side_t = _smooth(0.60, 0.15, c)
-        btop = btop_f * (1.0 - side_t) + 1.690 * side_t
-        beard = (1.0 - _smooth(btop - 0.006, btop + 0.002, y)) * (1.0 - lips) * _smooth(-0.45, -0.05, c)
-        return ax, hair, brow, lips, beard
-
-    # ---- Albedo + normal at size_a ----
-    u, v, x, y, z, c, sn, th = grid(size_a)
-    ax, hair, brow, lips, beard = masks(x, y, c, th)
-    S = size_a
-    mott = fbm(S, 5, 4, 1201)
-    pores = fbm(S, 128, 2, 1203)
-    dots = white_noise(S, 1207)
-    strands = 0.5 + 0.5 * np.sin(y * 5200.0 + x * 900.0 + fbm(S, 32, 2, 1209) * 9.0)
-
-    skin = _rgb(*SKIN_RGB) * (0.93 + 0.14 * mott[..., None])
-    redness = _gauss(ax - 0.042, 0.016) * _gauss(y - 1.660, 0.012) + 0.8 * _gauss(x, 0.010) * _gauss(y - 1.652, 0.010)
-    skin = skin + _rgb(0.06, -0.015, -0.02) * redness[..., None]
-    undereye = _gauss(ax - 0.032, 0.012) * _gauss(y - 1.6795, 0.0042) * (c > 0.3)
-    skin = skin * (1.0 - _rgb(0.10, 0.13, 0.10) * undereye[..., None])
-    socket = _gauss(ax - 0.032, 0.0115) * _gauss(y - 1.688, 0.0062) * (c > 0.3)
-    skin = _mix(skin, _rgb(0.52, 0.30, 0.26), socket * 0.55)
-
-    stubble_col = _rgb(0.43, 0.36, 0.33)
-    stubble_amt = beard * (0.35 + 0.30 * (dots > 0.55)) * (0.75 + 0.5 * fbm(S, 12, 2, 1211))
-    col = _mix(skin, stubble_col, np.clip(stubble_amt * 0.45, 0.0, 1.0))
-
-    lip_col = _rgb(0.64, 0.40, 0.37) * (0.95 + 0.1 * mott[..., None])
-    col = _mix(col, lip_col, lips * 0.70)
-    mouth_line = _gauss(y - 1.6115, 0.00070) * (1.0 - _smooth(0.0185, 0.0215, ax)) * (c > 0.5)
-    col = _mix(col, _rgb(0.20, 0.08, 0.08), mouth_line * 0.85)
-    nostril = _gauss(ax - 0.0085, 0.0026) * _gauss(y - 1.6392, 0.0012) * (c > 0.5)
-    col = _mix(col, _rgb(0.30, 0.15, 0.13), np.clip(nostril * 0.75, 0, 1))
-
-    hair_col = _rgb(0.085, 0.070, 0.058) * (0.85 + 0.3 * strands[..., None])
-    buzz = hair * (0.72 + 0.22 * (dots > 0.45))
-    col = _mix(col, hair_col, buzz)
-    brow_col = _rgb(0.075, 0.058, 0.045) * (0.8 + 0.4 * strands[..., None])
-    col = _mix(col, brow_col, np.clip(brow * (0.75 + 0.35 * strands), 0, 1))
-
-    wrinkles = (np.sin(y * 1900.0 + fbm(S, 6, 2, 1215) * 4.0) * 0.5 + 0.5) * _gauss(y - 1.734, 0.008) * (c > 0.4) * 0.10
-    lip_lines = (np.sin(x * 3800.0 + fbm(S, 24, 2, 1217) * 5.0) * 0.5 + 0.5) * lips * 0.12
-    h = 0.42 * pores + 0.30 * stubble_amt * dots + 0.45 * hair * strands * 0.6 + 0.55 * brow * strands + wrinkles + lip_lines
-    nrm = height_to_normal(h, S * 0.0065)
-    alb = col
-
-    # ---- Roughness at size_r ----
-    u2, v2, x2, y2, z2, c2, sn2, th2 = grid(size_r)
-    ax2, hair2, brow2, lips2, beard2 = masks(x2, y2, c2, th2)
-    tzone = (_gauss(x2, 0.012) * _gauss(y2 - 1.665, 0.035) + _gauss(x2, 0.04) * _gauss(y2 - 1.735, 0.015)) * (c2 > 0.4)
-    rough = 0.54 - 0.12 * tzone - 0.16 * lips2 + 0.22 * hair2 + 0.08 * beard2 + 0.05 * fbm(size_r, 32, 2, 1301)
-    return alb, nrm, rough
-
-
 def build_palette() -> Dict[str, bpy.types.Material]:
-    S = 256
+    def albedo(name: str, painted) -> bpy.types.Image:
+        return make_image_from_array(f"Tex_Combatant_{name}_Albedo", painted[0])
 
-    def tex_set(prefix: str, alb, nrm, rough=None, metal=None):
-        a = make_image_from_array(f"Tex_Combatant_{prefix}_Albedo", alb)
-        n = make_image_from_array(f"Tex_Combatant_{prefix}_Normal", nrm, non_color=True)
-        o = make_image_from_array(f"Tex_Combatant_{prefix}_ORM", orm_from_roughness(rough, metal), non_color=True) if rough is not None else None
-        return a, n, o
-
-    h_alb, h_nrm, h_rough = paint_head_textures(512, 256)
-    head_a, head_n, head_o = tex_set("Head", h_alb, h_nrm, h_rough)
-    head_mat = make_pbr_material(
-        "Mat_Head_Sculpted", roughness=0.52, albedo_image=head_a, normal_image=head_n, orm_image=head_o,
-        normal_strength=0.9, subsurface=0.12,
-    )
-
-    sk = paint_skin_body(S, 501)
-    skin_a, skin_n, skin_o = tex_set("Skin", sk[0], sk[1], sk[2])
-    sh = paint_shirt_charcoal(S, 601)
-    shirt_a, shirt_n, shirt_o = tex_set("Shirt", sh[0], sh[1], sh[2])
-    bd = paint_bdu_olive(S, 701)
-    bdu_a, bdu_n, bdu_o = tex_set("BDU", bd[0], bd[1], bd[2])
-    wb = paint_cordura(S, 801, (0.44, 0.37, 0.25), molle=False)
-    web_a, web_n, web_o = tex_set("Webbing", wb[0], wb[1], wb[2])
-    pc_ = paint_cordura(S, 811, (0.42, 0.355, 0.24), molle=True)
-    pcar_a, pcar_n, pcar_o = tex_set("PlateCarrier", pc_[0], pc_[1], pc_[2])
-    kv = paint_kevlar_coating(S, 901)
-    kev_a, kev_n, kev_o = tex_set("Helmet", kv[0], kv[1], kv[2])
-    gl = paint_glove(S, 1001)
-    glove_a, glove_n, glove_o = tex_set("Glove", gl[0], gl[1], gl[2])
-    bt = paint_boot_leather(S, 1101)
-    boot_a, boot_n, boot_o = tex_set("Boot", bt[0], bt[1], bt[2])
-    rb = paint_rubber(128, 1151)
-    rub_a, rub_n, rub_o = tex_set("Rubber", rb[0], rb[1], rb[2])
-    cf = paint_carbon(128)
-    carb_a, carb_n, carb_o = tex_set("Carbon", cf[0], cf[1], cf[2])
-    poly_n = make_image_from_array("Tex_Combatant_Polymer_Normal", paint_polymer_normal(128, 1171), non_color=True)
-    eye_a = make_image_from_array("Tex_Combatant_Eye_Albedo", paint_eye(128))
+    # One skin page per character. The pages are painted once the body exists (see build_all_combatant_submeshes).
+    skins = {}
+    for name in LOOKS:
+        blank = bpy.data.images.new(f"Tex_Skin_{name}_blank", EXPORT, EXPORT)
+        skins[f"skin_{name}"] = make_flat_material(f"Mat_Skin_{name}", albedo_image=blank, point_sampled=True)
+    skins["skin_page"] = skins[f"skin_{DEFAULT_LOOK}"]
 
     return {
-        "head_skin": head_mat,
-        "jaw_skin": head_mat,  # identical material on cranium + jaw -> zero shading / colour seam
-        "skin_tone": make_pbr_material("Mat_Skin_Tactical", roughness=0.52, albedo_image=skin_a, normal_image=skin_n, orm_image=skin_o, normal_strength=0.8, subsurface=0.12),
-        "eye": make_pbr_material("Mat_Eye_Cornea", roughness=0.06, albedo_image=eye_a, coat=0.6),
-        "bdu_olive": make_pbr_material("Mat_BDU_OliveDrab", roughness=0.84, albedo_image=bdu_a, normal_image=bdu_n, orm_image=bdu_o),
-        "shirt_charcoal": make_pbr_material("Mat_CombatShirt_Charcoal", roughness=0.78, albedo_image=shirt_a, normal_image=shirt_n, orm_image=shirt_o),
-        "webbing_tan": make_pbr_material("Mat_TacticalWebbing_Coyote", roughness=0.80, albedo_image=web_a, normal_image=web_n, orm_image=web_o),
-        "boot_leather": make_pbr_material("Mat_CombatBoot_Leather", roughness=0.70, albedo_image=boot_a, normal_image=boot_n, orm_image=boot_o),
-        "boot_rubber": make_pbr_material("Mat_CombatBoot_VibramRubber", roughness=0.84, albedo_image=rub_a, normal_image=rub_n, orm_image=rub_o),
-        "polymer_dark": make_pbr_material("Mat_Polymer_ArmorPad", (0.042, 0.045, 0.048, 1.0), roughness=0.66, metallic=0.0, normal_image=poly_n, normal_strength=0.5),
-        "carbon": make_pbr_material("Mat_CarbonFiber_KnuckleGuard", roughness=0.50, albedo_image=carb_a, normal_image=carb_n, orm_image=carb_o, normal_strength=0.35),
-        "metal_hw": make_pbr_material("Mat_Gunmetal_Hardware", (0.075, 0.078, 0.082, 1.0), roughness=0.48, metallic=0.70),
-        "visor_glass": make_pbr_material("Mat_EyePro_Visor", (0.025, 0.035, 0.05, 1.0), roughness=0.05, metallic=0.65),
-        "glove_leather": make_pbr_material("Mat_Glove_NomexLeather", roughness=0.64, albedo_image=glove_a, normal_image=glove_n, orm_image=glove_o),
-        "esapi_plate": make_pbr_material("Mat_ESAPI_PlateCarrier", roughness=0.80, albedo_image=pcar_a, normal_image=pcar_n, orm_image=pcar_o),
-        "helmet_kevlar": make_pbr_material("Mat_PASGT_Kevlar", roughness=0.74, albedo_image=kev_a, normal_image=kev_n, orm_image=kev_o),
-        "beret_crimson": make_pbr_material("Mat_Spetsnaz_Beret", (0.30, 0.03, 0.045, 1.0), roughness=0.88, normal_image=bdu_n, normal_strength=0.5),
-        "mohawk_punk": make_pbr_material("Mat_Punk_Mohawk", (0.62, 0.035, 0.04, 1.0), roughness=0.62, normal_image=poly_n, normal_strength=1.0),
-        "gore_viscera": make_pbr_material(
-            "Mat_Gore_Viscera", (0.42, 0.025, 0.035, 1.0), roughness=0.18, normal_image=skin_n, normal_strength=1.4,
-            emission_color=(0.18, 0.01, 0.01, 1.0), emission_strength=0.10, coat=0.5,
-        ),
-        "organ_brain": make_pbr_material(
-            "Mat_Organ_Brain", (0.80, 0.50, 0.54, 1.0), roughness=0.32, normal_image=skin_n, normal_strength=1.2,
-            emission_color=(0.35, 0.10, 0.14, 1.0), emission_strength=0.18,
-        ),
-        "organ_heart": make_pbr_material(
-            "Mat_Organ_Heart", (0.66, 0.06, 0.08, 1.0), roughness=0.26, normal_image=skin_n, normal_strength=1.0,
-            emission_color=(0.45, 0.03, 0.04, 1.0), emission_strength=0.25,
-        ),
-        "organ_lungs": make_pbr_material(
-            "Mat_Organ_Lungs", (0.74, 0.32, 0.36, 1.0), roughness=0.42, normal_image=skin_n, normal_strength=1.0,
-            emission_color=(0.25, 0.07, 0.09, 1.0), emission_strength=0.15,
-        ),
-        "organ_liver": make_pbr_material(
-            "Mat_Organ_Liver", (0.40, 0.09, 0.07, 1.0), roughness=0.30, normal_image=skin_n, normal_strength=0.8,
-            emission_color=(0.22, 0.04, 0.03, 1.0), emission_strength=0.15,
-        ),
-        "bone_cortical": make_pbr_material(
-            "Mat_Bone_Cortical", (0.86, 0.83, 0.74, 1.0), roughness=0.46, normal_image=poly_n, normal_strength=0.8,
-            emission_color=(0.20, 0.19, 0.16, 1.0), emission_strength=0.10,
-        ),
+        **skins,
+        "eye": make_flat_material("Mat_Eye_Painted", albedo_image=make_image_from_array("Tex_Combatant_Eye_Albedo", paint_eye(64)), point_sampled=True),
+        "webbing_tan": make_flat_material("Mat_TacticalWebbing_Coyote", albedo_image=albedo("Webbing", paint_cordura(128, 801, (0.44, 0.37, 0.25), molle=False)), point_sampled=True),
+        "esapi_plate": make_flat_material("Mat_ESAPI_PlateCarrier", albedo_image=albedo("PlateCarrier", paint_cordura(128, 811, (0.42, 0.355, 0.24), molle=True)), point_sampled=True),
+        "helmet_kevlar": make_flat_material("Mat_PASGT_Kevlar", albedo_image=albedo("Helmet", paint_kevlar_coating(128, 901)), point_sampled=True),
+        "polymer_dark": make_flat_material("Mat_Polymer_ArmorPad", (0.042, 0.045, 0.048, 1.0), roughness=0.8),
+        "metal_hw": make_flat_material("Mat_Gunmetal_Hardware", (0.075, 0.078, 0.082, 1.0), roughness=0.55, metallic=0.6),
+        "visor_glass": make_flat_material("Mat_EyePro_Visor", (0.025, 0.035, 0.05, 1.0), roughness=0.2, metallic=0.6),
+        "mohawk_punk": make_flat_material("Mat_Punk_Mohawk", (0.62, 0.035, 0.04, 1.0), roughness=0.7),
+        "gore_viscera": make_flat_material("Mat_Gore_Viscera", (0.42, 0.025, 0.035, 1.0), roughness=0.3,
+                                           emission_color=(0.18, 0.01, 0.01, 1.0), emission_strength=0.10),
+        "organ_brain": make_flat_material("Mat_Organ_Brain", (0.80, 0.50, 0.54, 1.0), roughness=0.4,
+                                          emission_color=(0.35, 0.10, 0.14, 1.0), emission_strength=0.18),
+        "organ_heart": make_flat_material("Mat_Organ_Heart", (0.66, 0.06, 0.08, 1.0), roughness=0.35,
+                                          emission_color=(0.45, 0.03, 0.04, 1.0), emission_strength=0.25),
+        "organ_lungs": make_flat_material("Mat_Organ_Lungs", (0.74, 0.32, 0.36, 1.0), roughness=0.45,
+                                          emission_color=(0.25, 0.07, 0.09, 1.0), emission_strength=0.15),
+        "organ_liver": make_flat_material("Mat_Organ_Liver", (0.40, 0.09, 0.07, 1.0), roughness=0.35,
+                                          emission_color=(0.22, 0.04, 0.03, 1.0), emission_strength=0.15),
+        "bone_cortical": make_flat_material("Mat_Bone_Cortical", (0.86, 0.83, 0.74, 1.0), roughness=0.5,
+                                            emission_color=(0.20, 0.19, 0.16, 1.0), emission_strength=0.10),
     }
-
 
 
 # ---------------------------------------------------------------------------
@@ -1188,8 +901,9 @@ HEAD_KEYS = np.array([
     (1.8015, 1.8015, 0.012, 0.018, 0.014),  # 16 crown apex ring
 ], dtype=np.float64)
 HEAD_SEAM_KEY = 6
-HEAD_SUBDIV = [3, 3, 4, 6, 6, 4, 5, 5, 5, 5, 4, 3, 3, 3, 2, 2]
-HEAD_SIDES = 64
+# Coarse on purpose: a faceted, low-polygon head.
+HEAD_SUBDIV = [1, 1, 1, 2, 2, 1, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1]
+HEAD_SIDES = 20
 HEAD_Z0 = -0.006
 HEAD_APEX = (0.0, 1.8040, -0.0075)
 EYE_CENTER_X = 0.0320
@@ -1317,7 +1031,6 @@ def head_uk_at_front_y(y_target: float) -> float:
     grid = np.linspace(0.0, HEAD_KEYS.shape[0] - 1.0, 4001)
     _x, y, _z, _nx, _nz, _c, _sn = head_base(grid, np.full_like(grid, 0.5))
     return float(grid[int(np.argmin(np.abs(y - y_target)))])
-
 
 
 # ---------------------------------------------------------------------------
@@ -1617,9 +1330,15 @@ def build_head_zone_meshes(
     normals[apex] = Vector((0.0, 1.0, 0.0))
     # Recessed internal cut cap tucked deep inside the skull (never visible while the jaw is attached)
     fan(bm, rows[0], (0.0, 1.664, -0.012), float(V[seam_row]), 0, upward=False)
+    remap_faces(bm, bm.faces[:], "HEAD")
 
+    def added_since(count: int):
+        return bm.faces[:][count:]
+
+    count = len(bm.faces)
     for sx in (-1.0, 1.0):
-        add_anatomical_ear(bm, sx, mat_index=1)
+        add_anatomical_ear(bm, sx, mat_index=0)
+    swatch_faces(bm, added_since(count), "SWATCH_EAR")
 
     uk_eye = head_uk_at_front_y(EYE_CENTER_Y)
     s_grid = np.linspace(0.5, 0.8, 6001)
@@ -1629,13 +1348,15 @@ def build_head_zone_meshes(
     eye_z = z_eye_base - 0.0035 - EYE_RADIUS
     for sx in (-1.0, 1.0):
         ec = Vector((sx * EYE_CENTER_X, EYE_CENTER_Y, eye_z))
-        add_eyeball(bm, ec, EYE_RADIUS, Vector((sx * 0.05, -0.02, 1.0)), mat_index=2)
-        add_eyelid(bm, ec, EYE_RADIUS, 0.17, 1.25, mat_index=1)    # upper lid
-        add_eyelid(bm, ec, EYE_RADIUS, -0.38, -1.15, mat_index=1)  # lower lid
+        add_eyeball(bm, ec, EYE_RADIUS, Vector((sx * 0.05, -0.02, 1.0)), mat_index=1)
+        count = len(bm.faces)
+        add_eyelid(bm, ec, EYE_RADIUS, 0.17, 1.25, mat_index=0)    # upper lid
+        add_eyelid(bm, ec, EYE_RADIUS, -0.38, -1.15, mat_index=0)  # lower lid
+        swatch_faces(bm, added_since(count), "SWATCH_LID")
 
     objs.append(finalize_skinned_mesh_object(
         "Zone_HEAD_CRANIUM", bm,
-        [pal["head_skin"], pal["skin_tone"], pal["eye"]],
+        [pal["skin_page"], pal["eye"]],
         arm_obj, [("Bone_HEAD_CRANIUM", 1.0)], collection,
         custom_normals_pc=normals,
     ))
@@ -1645,9 +1366,10 @@ def build_head_zone_meshes(
     rows, normals = build_section(bm, 0, seam_row, 0)
     fan(bm, rows[0], (0.0, 1.592, 0.010), 0.0, 0, upward=False)   # submental cap hidden inside the throat
     fan(bm, rows[-1], (0.0, 1.611, 0.004), float(V[seam_row]), 0, upward=True)  # internal cut cap inside the mouth
+    remap_faces(bm, bm.faces[:], "HEAD")
     objs.append(finalize_skinned_mesh_object(
         "Zone_HEAD_FACE_JAW", bm,
-        [pal["jaw_skin"]],
+        [pal["skin_page"]],
         arm_obj, [("Bone_HEAD_FACE_JAW", 1.0)], collection,
         custom_normals_pc=normals,
     ))
@@ -1683,13 +1405,13 @@ def build_tactical_glove(bm: bmesh.types.BMesh, sx: float) -> None:
         (P(-0.026, 0.0, 0.0), T, N, 0.0335, 0.0290),
         (P(-0.004, 0.0, 0.0), T, N, 0.0320, 0.0255),
         (P(0.008, 0.0, 0.0), T, N, 0.0285, 0.0200),
-    ], sides=16, mat_index=0, dome_start=0.10, dome_end=0.10)
+    ], sides=8, mat_index=0, dome_start=0.10, dome_end=0.10)
 
     # Palm / metacarpal block (rounded-rectangle cross-section)
     palm = [(0.000, 0.0255, 0.0170, 0.000), (0.024, 0.0345, 0.0185, 0.001), (0.058, 0.0420, 0.0168, 0.001),
             (0.082, 0.0432, 0.0140, 0.000), (0.094, 0.0395, 0.0110, -0.001)]
     add_frame_loft(bm, [(P(a, 0.0, c), T, N, ra, rb) for a, ra, rb, c in palm],
-                   sides=16, mat_index=0, dome_start=0.20, dome_end=0.40, exponent=0.85)
+                   sides=8, mat_index=0, dome_start=0.20, dome_end=0.40, exponent=0.85)
 
     # Four curled fingers (index straighter for trigger discipline)
     fingers = [
@@ -1738,7 +1460,7 @@ def build_tactical_glove(bm: bmesh.types.BMesh, sx: float) -> None:
     add_frame_loft(bm, [
         (P(0.002, 0.0, 0.0), T, N, 0.0300, 0.0222),
         (P(0.020, 0.0, 0.0), T, N, 0.0315, 0.0222),
-    ], sides=16, mat_index=2, dome_start=0.05, dome_end=0.05, exponent=0.9)
+    ], sides=8, mat_index=2, dome_start=0.05, dome_end=0.05, exponent=0.9)
     add_oriented_box(bm, P(0.011, -0.006, -0.0222), T, Y, -N, (0.012, 0.0085, 0.0020), 0.0010, mat_index=2)
 
 
@@ -1764,7 +1486,7 @@ def build_combat_boot(bm: bmesh.types.BMesh, sx: float) -> None:
     for z, w in zip(zs, ws):
         rb = 0.0135 * min(1.0, (w / 0.026) ** 0.5)
         sole_st.append((Vector((xc(z), 0.005 + rb, z)), Xv, Yv, w + 0.002, rb))
-    add_frame_loft(bm, sole_st, sides=14, mat_index=1, dome_start=0.25, dome_end=0.25, exponent=0.45)
+    add_frame_loft(bm, sole_st, sides=8, mat_index=1, dome_start=0.25, dome_end=0.25, exponent=0.45)
 
     # Lugged tread (chevron lugs y = 0.000 .. 0.006)
     z = -0.060
@@ -1794,15 +1516,15 @@ def build_combat_boot(bm: bmesh.types.BMesh, sx: float) -> None:
         return la, (lb if lb > 0.0 else lb * 0.15)
 
     up_st = [(Vector((xc(z), 0.031, z)), Xv, Yv, max(0.006, w - 0.003), h) for z, w, h in zip(zs, ws, hu)]
-    add_frame_loft(bm, up_st, sides=16, mat_index=0, dome_start=0.25, dome_end=0.30, exponent=0.9, sculpt_fn=flat_bottom)
+    add_frame_loft(bm, up_st, sides=8, mat_index=0, dome_start=0.25, dome_end=0.30, exponent=0.9, sculpt_fn=flat_bottom)
 
     # Rubber toe cap & heel counter overlays
     toe = [(Vector((xc(z), 0.031, z)), Xv, Yv, max(0.006, w_at(z) - 0.001), float(np.interp(z, zs, hu)) * 0.62 + 0.0015)
            for z in (0.128, 0.150, 0.168, 0.180, 0.1895)]
-    add_frame_loft(bm, toe, sides=14, mat_index=1, dome_start=0.05, dome_end=0.35, exponent=0.9, sculpt_fn=flat_bottom)
+    add_frame_loft(bm, toe, sides=8, mat_index=1, dome_start=0.05, dome_end=0.35, exponent=0.9, sculpt_fn=flat_bottom)
     heel = [(Vector((xc(z), 0.031, z)), Xv, Yv, max(0.008, w_at(z) - 0.001), min(0.034, float(np.interp(z, zs, hu)) + 0.0015))
             for z in (-0.0755, -0.068, -0.052, -0.034)]
-    add_frame_loft(bm, heel, sides=14, mat_index=1, dome_start=0.30, dome_end=0.05, exponent=0.9, sculpt_fn=flat_bottom)
+    add_frame_loft(bm, heel, sides=8, mat_index=1, dome_start=0.30, dome_end=0.05, exponent=0.9, sculpt_fn=flat_bottom)
 
     # 8-inch shaft (upper part tucks into the bloused BDU cuff) + padded collar
     add_sculpted_loft(
@@ -1813,7 +1535,7 @@ def build_combat_boot(bm: bmesh.types.BMesh, sx: float) -> None:
             (0.80, 0.0420, 0.0460, 0.0, 0.0),
             (1.00, 0.0440, 0.0480, 0.0, 0.0),
         ],
-        sides=14, mat_index=0, start_dome_scale=0.05, end_dome_scale=0.10,
+        sides=8, mat_index=0, start_dome_scale=0.05, end_dome_scale=0.10,
     )
 
     # Gusseted tongue + crossed laces + gunmetal eyelets following the instep / shaft front
@@ -2030,48 +1752,6 @@ def build_visor(arm_obj, pal, collection) -> bpy.types.Object:
     )
 
 
-def build_beret(arm_obj, pal, collection) -> bpy.types.Object:
-    """Felted Spetsnaz beret draped to one side over a leather sweatband with a cap badge."""
-    bm = bmesh.new()
-    C, R = 32, 7
-    Kmax = float(HEAD_KEYS.shape[0] - 1)
-    s_cols = [c / C for c in range(C)]
-    rims = []
-    for s in s_cols:
-        th = float(head_theta(s))
-        rims.append(11.30 - 1.00 * max(0.0, math.sin(th)) ** 2)
-    outer_rings, inner_rings, band = [], [], []
-    for r in range(R):
-        f = (r / R) ** 0.8
-        o_ring, i_ring = [], []
-        for c, s in enumerate(s_cols):
-            th = float(head_theta(s))
-            uk = rims[c] + (Kmax - rims[c]) * f
-            puff = 0.030 * max(0.0, math.sin(th)) ** 1.2 * math.sin(math.pi * min(1.0, f * 1.15)) + 0.010 * math.sin(math.pi * f)
-            o_ring.append(_hp(uk, s, 0.0085 + puff))
-            i_ring.append(_hp(uk, s, 0.0040))
-            if r == 0:
-                band.append(_hp(uk, s, 0.0068))
-        outer_rings.append(o_ring)
-        inner_rings.append(i_ring)
-    apex = Vector(HEAD_APEX)
-    add_wrapped_dome_slab(bm, outer_rings, inner_rings, apex + Vector((0.016, 0.020, 0.0)), apex + Vector((0.0, 0.004, 0.0)), mat_index=0)
-    add_tube_path(bm, band, (0.0046, 0.0034), sides=6, mat_index=1, closed=True,
-                  up_fn=lambda p: (p - Vector((0.0, 1.70, -0.006))).normalized())
-    s_b = head_s_of_theta(-0.55)
-    nb = _hn(11.7, s_b)
-    add_oriented_box(bm, _hp(11.7, s_b, 0.0125), Yaxis_cross(nb), Vector((0.0, 1.0, 0.0)), nb, (0.0075, 0.0095, 0.0020), 0.0015, mat_index=2)
-    return finalize_skinned_mesh_object(
-        "Gear_SpetsnazBeret", bm, [pal["beret_crimson"], pal["polymer_dark"], pal["metal_hw"]],
-        arm_obj, [("Bone_HEAD_CRANIUM", 1.0)], collection,
-    )
-
-
-def Yaxis_cross(n: Vector) -> Vector:
-    v = Vector((0.0, 1.0, 0.0)).cross(n)
-    return v.normalized() if v.length > 1e-6 else Vector((1.0, 0.0, 0.0))
-
-
 def build_mohawk(arm_obj, pal, collection) -> bpy.types.Object:
     """Gelled punk mohawk: shaved-in crest strip + 7 swept liberty spikes along the sagittal midline."""
     bm = bmesh.new()
@@ -2110,6 +1790,18 @@ def build_mohawk(arm_obj, pal, collection) -> bpy.types.Object:
 # Build All 22 Sculpted GHOUL Zone Submeshes + 13 Gear/Gore/Internal Submeshes
 # ---------------------------------------------------------------------------
 
+HEAD_SCALED = {
+    "Zone_HEAD_CRANIUM", "Zone_HEAD_FACE_JAW", "Gear_PASGT_Helmet", "Gear_TacticalVisor", "Gear_BoonieHat",
+    "Gear_PunkMohawk", "Organ_Brain", "Skelet_Skull",
+}
+
+
+def scale_mesh_about_pc(obj: bpy.types.Object, pivot_pc, factor: float) -> None:
+    pivot = pc_vec_to_bl(_v(pivot_pc))
+    for vert in obj.data.vertices:
+        vert.co = pivot + (vert.co - pivot) * factor
+
+
 def build_all_combatant_submeshes(
     arm_obj: bpy.types.Object,
     pal: Dict[str, bpy.types.Material],
@@ -2118,7 +1810,8 @@ def build_all_combatant_submeshes(
     objs: List[bpy.types.Object] = []
 
     # Torso, neck, arms and legs: continuous skinned surfaces cut into zone meshes.
-    objs.extend(build_body_zones(arm_obj, pal, collection, add_curved_shell_patch_pc))
+    body, chains = build_body_zones(arm_obj, pal["skin_page"], collection)
+    objs.extend(body)
 
     # 5..6. Zone_HEAD_CRANIUM + Zone_HEAD_FACE_JAW — unified analytic anatomical head (seamless maxilla seam,
     #        3D eyes in recessed orbits, eyelids, brow ridge, nose, lips, chin, gonial angle, sculpted ears)
@@ -2129,18 +1822,21 @@ def build_all_combatant_submeshes(
         # Hand — articulated 5-finger Mechanix/Oakley tactical glove (carbon knuckles, velcro wrist strap)
         bm = bmesh.new()
         build_tactical_glove(bm, sx)
+        wrist, tip = _bone_spec(f"Bone_HAND_{side_label}")
+        axis = (tip - wrist).normalized()
+        thumb = (Vector((0.0, 0.0, 1.0)) - axis * axis.z).normalized()
+        project_hand(bm, f"HAND_{side_label}", wrist, axis, thumb, axis.cross(thumb) * sx)
         objs.append(finalize_skinned_mesh_object(
-            f"Zone_HAND_{side_label}", bm,
-            [pal["glove_leather"], pal["carbon"], pal["polymer_dark"]],
+            f"Zone_HAND_{side_label}", bm, [pal["skin_page"]],
             arm_obj, [(f"Bone_HAND_{side_label}", 1.0)], collection,
         ))
 
         # Foot — 8-inch tactical combat boot: Vibram lugs, welt, toe cap, heel counter, tongue & laces
         bm = bmesh.new()
         build_combat_boot(bm, sx)
+        project_boot(bm, f"FOOT_{side_label}")
         objs.append(finalize_skinned_mesh_object(
-            f"Zone_FOOT_{side_label}", bm,
-            [pal["boot_leather"], pal["boot_rubber"], pal["polymer_dark"], pal["metal_hw"]],
+            f"Zone_FOOT_{side_label}", bm, [pal["skin_page"]],
             arm_obj, [(f"Bone_FOOT_{side_label}", 1.0)], collection,
         ))
 
@@ -2150,7 +1846,10 @@ def build_all_combatant_submeshes(
     objs.append(build_plate_carrier(arm_obj, pal, collection))
     objs.append(build_helmet(arm_obj, pal, collection))
     objs.append(build_visor(arm_obj, pal, collection))
-    objs.append(build_beret(arm_obj, pal, collection))
+    objs.append(finalize_skinned_mesh_object(
+        "Gear_BoonieHat", build_boonie(lambda uk, s, offset: _hp(uk, s, offset), pc_vec_to_bl, HEAD_Z0),
+        [pal["skin_SNIPER_OPERATIVE"]], arm_obj, [("Bone_HEAD_CRANIUM", 1.0)], collection,
+    ))
     objs.append(build_mohawk(arm_obj, pal, collection))
 
     # 28. Gear_EvisceratedGut — Sculpted SoF open-stomach visceral crater + broken ribs + entrail coils
@@ -2368,6 +2067,29 @@ def build_all_combatant_submeshes(
         "Skelet_Pelvis", bm, [pal["bone_cortical"]],
         arm_obj, [("Bone_PELVIS_GROIN", 1.0)], collection,
     ))
+
+    # Skin_Library carries every character's skin page; the runtime picks one by archetype.
+    names = list(LOOKS)
+    objs.append(finalize_skinned_mesh_object(
+        "Skin_Library", build_skin_library(len(names), pc_vec_to_bl), [pal[f"skin_{name}"] for name in names],
+        arm_obj, [("Bone_PELVIS_GROIN", 1.0)], collection,
+    ))
+    # Period models carry a slightly large head and hands; the skeleton stays as it is.
+    for obj in objs:
+        if obj.name in HEAD_SCALED:
+            scale_mesh_about_pc(obj, (0.0, 1.578, -0.004), 1.10)
+        elif obj.name.startswith("Zone_HAND_"):
+            scale_mesh_about_pc(obj, _bone_spec(obj.name.replace("Zone_", "Bone_"))[0], 1.10)
+
+    for name in names:
+        page = paint_page(LOOKS[name], chains, head_base, head_theta, HEAD_KEYS.shape[0])
+        image = make_image_from_array(f"Tex_Skin_{name}", page)
+        pal[f"skin_{name}"].node_tree.nodes["Albedo"].image = image
+        if PREVIEW_DIR:
+            image.filepath_raw = os.path.join(PREVIEW_DIR, f"skin_{name}.png")
+            image.file_format = "PNG"
+            image.save()
+            image.pack()
 
     return objs
 
@@ -3037,7 +2759,8 @@ def main() -> None:
     pal = build_palette()
     arm_obj = build_ghoul_armature(combatant_col)
     submeshes = build_all_combatant_submeshes(arm_obj, pal, combatant_col)
-    bake_all_combatant_animations(arm_obj)
+    if not SKIP_ANIMATION:
+        bake_all_combatant_animations(arm_obj)
 
     bpy.context.preferences.filepaths.save_version = 0
     bpy.ops.wm.save_as_mainfile(filepath=OUT_BLEND)
@@ -3050,11 +2773,10 @@ def main() -> None:
         export_texcoords=True,
         export_normals=True,
         export_materials="EXPORT",
-        export_image_format="JPEG",
-        export_jpeg_quality=86,
+        export_image_format="AUTO",
         export_skins=True,
         export_all_influences=False,
-        export_animations=True,
+        export_animations=not SKIP_ANIMATION,
         export_animation_mode="NLA_TRACKS",
         export_rest_position_armature=True,
         export_lights=False,
@@ -3066,7 +2788,7 @@ def main() -> None:
     size_kb = os.path.getsize(OUT_GLB) / 1024.0
     print(
         f"[GHOUL Combatant] Exported {len(submeshes)} submeshes, "
-        f"{len(arm_obj.data.bones)} bones, {len(arm_obj.animation_data.nla_tracks)} NLA clips | "
+        f"{len(arm_obj.data.bones)} bones, {len(arm_obj.animation_data.nla_tracks) if arm_obj.animation_data else 0} NLA clips | "
         f"{total_verts} verts, {total_tris} polys | {size_kb:.1f} KB -> {OUT_GLB}"
     )
 

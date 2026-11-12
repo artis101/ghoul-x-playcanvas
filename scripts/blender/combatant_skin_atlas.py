@@ -11,7 +11,8 @@ from typing import Dict, Tuple
 
 import numpy as np
 
-ATLAS = 512
+ATLAS = 512        # the page is painted at this size...
+EXPORT = 256       # ...and shipped at this size, point-sampled, for chunky period texels
 
 # x, y, width, height in pixels; y counts up from the bottom row of the page.
 RECTS: Dict[str, Tuple[int, int, int, int]] = {
@@ -171,17 +172,22 @@ def camo(shape, palette, seed: int, cells=5) -> np.ndarray:
     col = np.zeros(shape + (3,)) + palette[0]
     for index, color in enumerate(palette[1:]):
         n = noise(shape, cells, cells * 2, seed + 17 * index, 3)
-        col = over(col, color, sm(0.56, 0.60, n))
+        col = over(col, color, sm(0.545, 0.565, n))
     return col
 
 
+BAYER = np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]) / 16.0
+
+
 def finish(page: np.ndarray, seed: int = 7) -> np.ndarray:
-    """Film grain and a coarse colour step, like an 8-bit paletted skin."""
+    """Shrinks the page to its shipped size and steps it down to 15-bit colour with an ordered
+    dither, the way a console of the period stored and showed its textures."""
     rng = np.random.default_rng(seed)
-    grain = rng.random(page.shape[:2])[..., None]
-    page = np.clip(page * (0.965 + 0.07 * grain), 0.0, 1.0)
-    levels = 40.0
-    return np.floor(page * levels + grain * 0.999) / levels
+    page = np.clip(page * (0.975 + 0.05 * rng.random(page.shape[:2])[..., None]), 0.0, 1.0)
+    step = ATLAS // EXPORT
+    page = page.reshape(EXPORT, step, EXPORT, step, 3).mean(axis=(1, 3))
+    threshold = np.tile(BAYER, (EXPORT // 4, EXPORT // 4))[..., None]
+    return np.clip(np.floor(page * 31.0 + threshold) / 31.0, 0.0, 1.0)
 
 
 def paste(page: np.ndarray, name: str, tile: np.ndarray) -> None:

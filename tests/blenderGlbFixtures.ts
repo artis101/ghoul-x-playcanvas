@@ -65,6 +65,8 @@ interface ParsedGltfJson {
   skins?: GltfSkin[];
   animations?: GltfAnimation[];
   materials?: GltfMaterial[];
+  textures?: Array<{ sampler?: number; source?: number }>;
+  samplers?: Array<{ magFilter?: number; minFilter?: number }>;
   accessors?: GltfAccessor[];
   bufferViews?: GltfBufferView[];
 }
