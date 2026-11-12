@@ -1167,6 +1167,7 @@ describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
           return {
             weaponId: weaponId as never,
             rootEntity,
+            boneNodes: new Map<string, pc.GraphNode>(),
             muzzleNode: null,
             ejectionNode: null,
             slideOrBoltNode: null,
