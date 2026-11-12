@@ -91,12 +91,19 @@ export class OffhandSidearmSync {
     let rawAimDir = normalize(sub(aimTarget, pUpper));
     if (length(rawAimDir) < 1e-4) rawAimDir = charFwd;
 
-    const clampedY = Math.max(-0.52, Math.min(0.52, rawAimDir.y));
+    // A combatant lying on the ground has no facing to respect: it points the pistol straight at
+    // the threat, even one standing over it.
+    const downed = hs.isRagdollActive;
+    const clampedY = downed
+      ? Math.max(-0.1, Math.min(0.96, rawAimDir.y))
+      : Math.max(-0.52, Math.min(0.52, rawAimDir.y));
     let horizDir = vec3(rawAimDir.x, 0, rawAimDir.z);
     if (length(horizDir) < 1e-4) horizDir = charFwd;
     else {
       horizDir = normalize(horizDir);
-      if (dot(horizDir, charFwd) < 0.25) horizDir = normalize(add(scale(charFwd, 0.72), scale(horizDir, 0.28)));
+      if (!downed && dot(horizDir, charFwd) < 0.25) {
+        horizDir = normalize(add(scale(charFwd, 0.72), scale(horizDir, 0.28)));
+      }
     }
     const aimDir = normalize(vec3(horizDir.x * Math.sqrt(1 - clampedY * clampedY), clampedY, horizDir.z * Math.sqrt(1 - clampedY * clampedY)));
 

@@ -152,6 +152,22 @@ export function stepEnemyArmamentState(
   }
 
   const intactHand = input.intactHand;
+
+  // A drawn sidearm stays in the fist while the body is thrown through the air, so a downed
+  // combatant that gets knocked about again still has it when it lands.
+  if (input.isAirborneRagdoll && current.kind === 'SIDEARM_ACTIVE') {
+    return {
+      state: { kind: 'SIDEARM_ACTIVE', hand: intactHand },
+      events: [],
+      dropPrimaryWeapon: false,
+      markPrimaryArmDisarmed: false,
+      forceDisarmedPosture: false,
+      cancelBurst: false,
+      clampFireCooldownMaxS: null,
+      statusTag: 'LAST_STAND',
+    };
+  }
+
   const anyArmLost = !input.leftArmIntact || !input.rightArmIntact;
   const primaryDisarmed =
     anyArmLost || input.primaryArmDisarmed || (!input.isRagdollActive && input.weaponDropped);
