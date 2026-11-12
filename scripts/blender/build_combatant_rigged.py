@@ -34,15 +34,23 @@ import math
 import os
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
+import sys
+
 import bmesh
 import bpy
 import numpy as np
 from mathutils import Euler, Matrix, Quaternion, Vector
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from combatant_body import build_body_zones  # noqa: E402
+
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-OUT_GLB = os.path.join(REPO_ROOT, "public", "models", "ghoul_combatant.glb")
-OUT_BLEND = os.path.join(REPO_ROOT, "public", "models", "blend_sources", "ghoul_combatant.blend")
+# Set GHOUL_COMBATANT_OUT to a directory to build somewhere other than the repository.
+_OUT_DIR = os.environ.get("GHOUL_COMBATANT_OUT")
+OUT_GLB = os.path.join(_OUT_DIR or os.path.join(REPO_ROOT, "public", "models"), "ghoul_combatant.glb")
+OUT_BLEND = os.path.join(
+    _OUT_DIR or os.path.join(REPO_ROOT, "public", "models", "blend_sources"), "ghoul_combatant.blend")
 
 
 def pc_to_bl(x: float, y: float, z: float) -> Vector:
@@ -261,9 +269,9 @@ def paint_shirt_charcoal(size: int, seed: int):
     gusset = _smooth(0.205, 0.215, du) * (1.0 - _smooth(0.285, 0.295, du))
     mesh_holes = gusset * (((idx[:, None] % 4) < 2) & ((idx[None, :] % 4) < 2))
     base = _mix(_rgb(0.135, 0.145, 0.158), _rgb(0.092, 0.10, 0.112), gusset)
-    alb = base * (0.88 + 0.22 * n[..., None]) * (1.0 - 0.10 * rip[..., None]) * (1.0 - 0.18 * folds[..., None] * 0.5)
+    alb = base * (0.88 + 0.22 * n[..., None]) * (1.0 - 0.04 * rip[..., None]) * (1.0 - 0.18 * folds[..., None] * 0.5)
     alb = alb * (1.0 - 0.25 * seams[..., None])
-    h = 0.28 * folds + 0.18 * rip + 0.10 * weave - 0.55 * seams + 0.25 * stitch - 0.35 * mesh_holes
+    h = 0.28 * folds + 0.07 * rip + 0.10 * weave - 0.55 * seams + 0.25 * stitch - 0.35 * mesh_holes
     rough = 0.78 + 0.08 * n - 0.04 * folds
     return alb, height_to_normal(h, size * 0.012), rough
 
@@ -281,9 +289,14 @@ def paint_bdu_olive(size: int, seed: int):
     seams = _gauss(np.abs(u - 0.5) - 0.25, 0.0045) + _gauss(u, 0.004) + _gauss(u - 1.0, 0.004)
     stitch = seams * ((idx[:, None] % 6) < 3)
     blotch = fbm(size, 3, 3, seed + 11)
-    base = _rgb(0.235, 0.265, 0.165) * (0.86 + 0.26 * n[..., None]) * (0.92 + 0.12 * blotch[..., None])
-    alb = base * (1.0 - 0.09 * rip[..., None]) * (1.0 - 0.10 * creases[..., None]) * (1.0 - 0.22 * seams[..., None])
-    h = 0.24 * creases + 0.30 * pleats + 0.16 * rip + 0.08 * weave - 0.5 * seams + 0.22 * stitch
+    # Woodland camouflage: brown, khaki and near-black shapes over the olive ground.
+    ground = np.broadcast_to(_rgb(0.235, 0.265, 0.165), (size, size, 3))
+    ground = _mix(ground, _rgb(0.25, 0.175, 0.10), _smooth(0.52, 0.55, fbm(size, 3, 3, seed + 31)))
+    ground = _mix(ground, _rgb(0.43, 0.40, 0.27), _smooth(0.61, 0.64, fbm(size, 4, 3, seed + 47)))
+    ground = _mix(ground, _rgb(0.05, 0.06, 0.05), _smooth(0.62, 0.65, fbm(size, 5, 3, seed + 59)))
+    base = ground * (0.86 + 0.26 * n[..., None]) * (0.92 + 0.12 * blotch[..., None])
+    alb = base * (1.0 - 0.035 * rip[..., None]) * (1.0 - 0.10 * creases[..., None]) * (1.0 - 0.22 * seams[..., None])
+    h = 0.24 * creases + 0.30 * pleats + 0.06 * rip + 0.08 * weave - 0.5 * seams + 0.22 * stitch
     rough = 0.84 + 0.06 * n
     return alb, height_to_normal(h, size * 0.012), rough
 
@@ -1903,6 +1916,10 @@ def build_plate_carrier(arm_obj, pal, collection) -> bpy.types.Object:
     add_oriented_box(bm, Vector((-0.078, 1.468, 0.172)), Vector((1.0, 0.0, 0.0)), Yv, Vector((0.0, 0.0, 1.0)), (0.013, 0.017, 0.0085), 0.003, mat_index=2)
     add_oriented_box(bm, Vector((-0.078, 1.468, 0.181)), Vector((1.0, 0.0, 0.0)), Yv, Vector((0.0, 0.0, 1.0)), (0.008, 0.008, 0.0016), 0.0008, mat_index=3)
 
+    # Let the carrier out to fit the broad chest (Blender X is width, Y is depth).
+    for vert in bm.verts:
+        vert.co.x *= 1.12
+        vert.co.y *= 1.10
     return finalize_skinned_mesh_object(
         "Gear_ESAPI_PlateCarrier", bm,
         [pal["esapi_plate"], pal["webbing_tan"], pal["polymer_dark"], pal["metal_hw"]],
@@ -2100,198 +2117,15 @@ def build_all_combatant_submeshes(
 ) -> List[bpy.types.Object]:
     objs: List[bpy.types.Object] = []
 
-    # 1. Zone_PELVIS_GROIN — Anatomically sculpted hip girdle, glutes, groin taper & tactical rigger belt
-    def sculpt_pelvis(t: float, theta: float, lr: float, lf: float) -> Tuple[float, float, float]:
-        # Gluteal fullness in rear (|theta| > 1.8) + groin crotch dip at bottom center
-        glute = max(0.0, -math.cos(theta)) * math.sin(t * math.pi) * 0.016
-        crotch_lift = -0.022 * (1.0 - t) * max(0.0, 1.0 - abs(math.sin(theta)) * 2.2)
-        hip_cup = 0.010 * math.sin(t * math.pi) * (abs(math.sin(theta)) ** 2)
-        return lr + math.copysign(hip_cup, lr) if abs(lr) > 1e-5 else lr, lf - glute, crotch_lift
-
-    bm = bmesh.new()
-    add_sculpted_loft(
-        bm, (0.0, 0.835, 0.0), (0.0, 1.015, 0.0),
-        [
-            (0.00, 0.148, 0.102, 0.0, -0.006),
-            (0.28, 0.178, 0.118, 0.0, -0.004),
-            (0.62, 0.174, 0.118, 0.0, 0.000),
-            (0.86, 0.164, 0.114, 0.0, 0.002),
-            (1.00, 0.148, 0.104, 0.0, 0.002),
-        ],
-        sides=20, mat_index=0, start_dome_scale=0.18, end_dome_scale=0.10, sculpt_fn=sculpt_pelvis,
-    )
-    # Contoured tactical belt wrap + polymer Cobra buckle + contoured rear IFAK pouch
-    add_curved_shell_patch_pc(bm, 0.964, 1.022, -math.pi * 0.99, math.pi * 0.99, 0.171, 0.118, 0.008, cols=28, rows=2, mat_index=1)
-    add_curved_shell_patch_pc(bm, 0.970, 1.016, -0.16, 0.16, 0.179, 0.126, 0.007, cols=4, rows=2, mat_index=2)
-    add_curved_shell_patch_pc(bm, 0.905, 0.985, math.pi - 0.36, math.pi + 0.36, 0.162, 0.114, 0.032, cols=6, rows=3, mat_index=1)
-    objs.append(finalize_skinned_mesh_object(
-        "Zone_PELVIS_GROIN", bm,
-        [pal["bdu_olive"], pal["webbing_tan"], pal["polymer_dark"]],
-        arm_obj, [("Bone_PELVIS_GROIN", 0.90), ("Bone_TORSO_LOWER_ABDOMEN", 0.10)], collection,
-    ))
-
-    # 2. Zone_TORSO_LOWER_ABDOMEN — Athletic tapered waist, obliques, rectus contour, flush side pouches
-    def sculpt_abdomen(t: float, theta: float, lr: float, lf: float) -> Tuple[float, float, float]:
-        # Subtle rectus abdominis & lumbar curve (zero flat box edges)
-        lumbar_arch = -0.008 * math.sin(t * math.pi) * max(0.0, -math.cos(theta))
-        ab_groove = -0.004 * max(0.0, math.cos(theta)) * math.exp(-((theta / 0.16) ** 2))
-        return lr, lf + lumbar_arch + ab_groove, 0.0
-
-    bm = bmesh.new()
-    add_sculpted_loft(
-        bm, (0.0, 0.995, 0.0), (0.0, 1.235, 0.0),
-        [
-            (0.00, 0.156, 0.108, 0.0, 0.002),
-            (0.25, 0.152, 0.108, 0.0, 0.004),
-            (0.60, 0.156, 0.112, 0.0, 0.006),
-            (0.88, 0.165, 0.118, 0.0, 0.006),
-            (1.00, 0.152, 0.108, 0.0, 0.005),
-        ],
-        sides=20, mat_index=0, start_dome_scale=0.10, end_dome_scale=0.10, sculpt_fn=sculpt_abdomen,
-    )
-    for sx in (-1.0, 1.0):
-        th_c = sx * (math.pi * 0.5)
-        add_curved_shell_patch_pc(bm, 1.02, 1.115, th_c - 0.28, th_c + 0.28, 0.152, 0.108, 0.026, cols=5, rows=3, mat_index=1)
-    objs.append(finalize_skinned_mesh_object(
-        "Zone_TORSO_LOWER_ABDOMEN", bm,
-        [pal["shirt_charcoal"], pal["webbing_tan"]],
-        arm_obj,
-        [("Bone_TORSO_LOWER_ABDOMEN", 0.76), ("Bone_PELVIS_GROIN", 0.12), ("Bone_TORSO_UPPER_THORAX", 0.12)],
-        collection,
-    ))
-
-    # 3. Zone_TORSO_UPPER_THORAX — Sculpted V-taper chest, organic pectoral shelves, sternum cleft, lats & trapezius
-    def sculpt_thorax(t: float, theta: float, lr: float, lf: float) -> Tuple[float, float, float]:
-        # Sculpted pectorals between t=0.25..0.78 on front (+Z, |theta| < 0.85), dipping at sternum (theta=0)
-        pec_band = math.sin(clamp01((t - 0.18) / 0.62) * math.pi)
-        front_mask = max(0.0, math.cos(theta))
-        sternum_cleft = math.exp(-((theta / 0.14) ** 2))
-        pec_swell = 0.018 * pec_band * (front_mask ** 1.6) * (1.0 - 0.55 * sternum_cleft)
-        # Scapula / upper back muscle definition
-        back_muscle = 0.010 * pec_band * (max(0.0, -math.cos(theta)) ** 1.5) * (1.0 - 0.4 * math.exp(-(((abs(theta) - math.pi) / 0.18) ** 2)))
-        return lr, lf + pec_swell - back_muscle, 0.0
-
-    bm = bmesh.new()
-    add_sculpted_loft(
-        bm, (0.0, 1.215, 0.0), (0.0, 1.505, 0.0),
-        [
-            (0.00, 0.164, 0.118, 0.0, 0.006),
-            (0.22, 0.176, 0.126, 0.0, 0.008),
-            (0.52, 0.194, 0.134, 0.0, 0.010),
-            (0.76, 0.200, 0.132, 0.0, 0.006),
-            (0.91, 0.158, 0.104, 0.0, -0.002),
-            (1.00, 0.088, 0.078, 0.0, -0.004),
-        ],
-        sides=22, mat_index=0, start_dome_scale=0.08, end_dome_scale=0.14, sculpt_fn=sculpt_thorax,
-    )
-    objs.append(finalize_skinned_mesh_object(
-        "Zone_TORSO_UPPER_THORAX", bm,
-        [pal["shirt_charcoal"], pal["bdu_olive"]],
-        arm_obj,
-        [("Bone_TORSO_UPPER_THORAX", 0.84), ("Bone_TORSO_LOWER_ABDOMEN", 0.12), ("Bone_SHOULDER_LEFT", 0.02), ("Bone_SHOULDER_RIGHT", 0.02)],
-        collection,
-    ))
-
-    # 4. Zone_NECK_CERVICAL — Sternocleidomastoid V-contour + rolled tactical collar
-    def sculpt_neck(t: float, theta: float, lr: float, lf: float) -> Tuple[float, float, float]:
-        trachea = 0.005 * math.sin(t * math.pi) * math.exp(-((theta / 0.28) ** 2))
-        return lr, lf + trachea, 0.0
-
-    bm = bmesh.new()
-    add_sculpted_loft(
-        bm, (0.0, 1.485, -0.004), (0.0, 1.612, -0.014),
-        [
-            (0.00, 0.076, 0.072, 0.0, 0.0),
-            (0.32, 0.067, 0.064, 0.0, 0.0),
-            (0.70, 0.059, 0.056, 0.0, -0.002),
-            (1.00, 0.054, 0.050, 0.0, -0.004),
-        ],
-        sides=16, mat_index=0, start_dome_scale=0.18, end_dome_scale=0.22, sculpt_fn=sculpt_neck,
-    )
-    # Rolled combat shirt collar at base of neck
-    add_curved_shell_patch_pc(bm, 1.482, 1.522, -math.pi * 0.99, math.pi * 0.99, 0.074, 0.070, 0.012, center_xz=(0.0, -0.003), cols=16, rows=2, mat_index=1)
-    objs.append(finalize_skinned_mesh_object(
-        "Zone_NECK_CERVICAL", bm,
-        [pal["skin_tone"], pal["shirt_charcoal"]],
-        arm_obj, [("Bone_NECK_CERVICAL", 1.0)], collection,
-    ))
+    # Torso, neck, arms and legs: continuous skinned surfaces cut into zone meshes.
+    objs.extend(build_body_zones(arm_obj, pal, collection, add_curved_shell_patch_pc))
 
     # 5..6. Zone_HEAD_CRANIUM + Zone_HEAD_FACE_JAW — unified analytic anatomical head (seamless maxilla seam,
     #        3D eyes in recessed orbits, eyelids, brow ridge, nose, lips, chin, gonial angle, sculpted ears)
     objs.extend(build_head_zone_meshes(arm_obj, pal, collection))
 
-    # 7..14. Left & Right Arms (Deltoid Shoulders, Sleeved Upper Arms, Muscular Forearms, Articulated Tactical Hands)
+    # Hands and boots are rigid caps over the ends of the arm and leg surfaces.
     for side_label, sx in (("LEFT", -1.0), ("RIGHT", 1.0)):
-        # Shoulder Deltoid Cap — cups smoothly over upper chest & humeral head
-        bm = bmesh.new()
-        add_sculpted_loft(
-            bm, (sx * 0.135, 1.445, 0.0), (sx * 0.228, 1.418, 0.004),
-            [
-                (0.00, 0.066, 0.072, 0.0, 0.0),
-                (0.50, 0.076, 0.080, 0.0, 0.002),
-                (1.00, 0.064, 0.068, 0.0, 0.0),
-            ],
-            sides=16, mat_index=0, start_dome_scale=0.35, end_dome_scale=0.38, v_Ascending=False,
-        )
-        objs.append(finalize_skinned_mesh_object(
-            f"Zone_SHOULDER_{side_label}", bm,
-            [pal["bdu_olive"]],
-            arm_obj, [(f"Bone_SHOULDER_{side_label}", 0.82), ("Bone_TORSO_UPPER_THORAX", 0.18)], collection,
-        ))
-
-        # Upper Arm — Spherical humeral ball + sculpted bicep/tricep + rolled BDU sleeve cuff at elbow
-        def sculpt_bicep(t: float, theta: float, lr: float, lf: float) -> Tuple[float, float, float]:
-            bicep = 0.009 * math.sin(t * math.pi) * max(0.0, math.cos(theta))
-            tricep = 0.007 * math.sin(t * math.pi * 0.9) * max(0.0, -math.cos(theta))
-            return lr, lf + bicep - tricep, 0.0
-
-        bm = bmesh.new()
-        add_sculpted_loft(
-            bm, (sx * 0.215, 1.43, 0.0), (sx * 0.325, 1.18, 0.01),
-            [
-                (0.00, 0.056, 0.058, 0.0, 0.0),
-                (0.35, 0.062, 0.066, 0.0, 0.004),
-                (0.72, 0.056, 0.058, 0.0, 0.002),
-                (0.88, 0.058, 0.060, 0.0, 0.0),  # Rolled BDU sleeve cuff fold
-                (1.00, 0.052, 0.054, 0.0, 0.0),
-            ],
-            sides=16, mat_index=0, start_dome_scale=0.48, end_dome_scale=0.22, v_Ascending=False, sculpt_fn=sculpt_bicep,
-        )
-        objs.append(finalize_skinned_mesh_object(
-            f"Zone_UPPER_ARM_{side_label}", bm,
-            [pal["bdu_olive"]],
-            arm_obj, [(f"Bone_UPPER_ARM_{side_label}", 1.0)], collection,
-        ))
-
-        # Forearm — Proximal elbow ball tucked cleanly inside bicep cuff + flush olecranon contour (ZERO floating pad!)
-        def sculpt_forearm(t: float, theta: float, lr: float, lf: float) -> Tuple[float, float, float]:
-            brachioradialis = 0.007 * math.sin(min(1.0, t * 1.4) * math.pi) * (0.4 + 0.6 * abs(math.sin(theta)))
-            return lr * (1.0 + brachioradialis * 4.0), lf, 0.0
-
-        bm = bmesh.new()
-        add_sculpted_loft(
-            bm, (sx * 0.325, 1.18, 0.01), (sx * 0.405, 0.95, 0.08),
-            [
-                (0.00, 0.044, 0.046, 0.0, 0.0),  # Tucked inside sleeve cuff (0.044 < 0.052 -> zero zig-zag!)
-                (0.24, 0.051, 0.053, 0.0, 0.0),
-                (0.62, 0.042, 0.044, 0.0, 0.0),
-                (0.88, 0.035, 0.037, 0.0, 0.0),
-                (1.00, 0.032, 0.034, 0.0, 0.0),
-            ],
-            sides=14, mat_index=0, start_dome_scale=0.45, end_dome_scale=0.35, v_Ascending=False, sculpt_fn=sculpt_forearm,
-        )
-        # Snug wrist glove gauntlet band at distal forearm
-        add_sculpted_loft(
-            bm, (sx * 0.392, 0.988, 0.068), (sx * 0.406, 0.948, 0.081),
-            [(0.0, 0.037, 0.039, 0.0, 0.0), (1.0, 0.035, 0.037, 0.0, 0.0)],
-            sides=14, mat_index=1, start_dome_scale=0.08, end_dome_scale=0.08, v_Ascending=False,
-        )
-        objs.append(finalize_skinned_mesh_object(
-            f"Zone_FOREARM_{side_label}", bm,
-            [pal["skin_tone"], pal["polymer_dark"]],
-            arm_obj, [(f"Bone_FOREARM_{side_label}", 1.0)], collection,
-        ))
-
         # Hand — articulated 5-finger Mechanix/Oakley tactical glove (carbon knuckles, velcro wrist strap)
         bm = bmesh.new()
         build_tactical_glove(bm, sx)
@@ -2299,84 +2133,6 @@ def build_all_combatant_submeshes(
             f"Zone_HAND_{side_label}", bm,
             [pal["glove_leather"], pal["carbon"], pal["polymer_dark"]],
             arm_obj, [(f"Bone_HAND_{side_label}", 1.0)], collection,
-        ))
-
-    # 15..22. Left & Right Legs (Sculpted Thighs, Contoured Kneepads, Calves, Laced Combat Boots)
-    for side_label, sx in (("LEFT", -1.0), ("RIGHT", 1.0)):
-        # Thigh — Rounded hip ball tucked cleanly inside pelvic flare (0.108 + 0.072 = 0.180 <= pelvic hip cup!)
-        def sculpt_thigh(t: float, theta: float, lr: float, lf: float) -> Tuple[float, float, float]:
-            quad = 0.012 * math.sin(t * math.pi * 0.92) * max(0.0, math.cos(theta))
-            hamstring = 0.008 * math.sin(t * math.pi * 0.85) * max(0.0, -math.cos(theta))
-            crease = 0.003 * math.sin(t * 22.0)
-            return lr + (sx * crease * 0.5), lf + quad - hamstring, 0.0
-
-        bm = bmesh.new()
-        add_sculpted_loft(
-            bm, (sx * 0.108, 0.895, 0.0), (sx * 0.115, 0.50, 0.01),
-            [
-                (0.00, 0.072, 0.082, 0.0, -0.004),  # Rounded femoral hip ball tucked inside pelvis!
-                (0.18, 0.088, 0.096, 0.0, 0.002),
-                (0.45, 0.086, 0.094, 0.0, 0.006),
-                (0.78, 0.072, 0.078, 0.0, 0.003),
-                (1.00, 0.062, 0.066, 0.0, 0.0),
-            ],
-            sides=18, mat_index=0, start_dome_scale=0.52, end_dome_scale=0.36, v_Ascending=False, sculpt_fn=sculpt_thigh,
-        )
-        # Flush curved BDU cargo pocket hugging outer thigh (not a brick!)
-        th_out = sx * (math.pi * 0.5)
-        add_curved_shell_patch_pc(
-            bm, 0.60, 0.77, th_out - 0.42, th_out + 0.42,
-            0.078, 0.084, 0.018, center_xz=(sx * 0.112, 0.005), cols=6, rows=4, mat_index=1
-        )
-        objs.append(finalize_skinned_mesh_object(
-            f"Zone_THIGH_{side_label}", bm,
-            [pal["bdu_olive"], pal["webbing_tan"]],
-            arm_obj, [(f"Bone_THIGH_{side_label}", 1.0)], collection,
-        ))
-
-        # Knee — Articulated joint cylinder + curved hard-shell tactical knee cap hugging +Z front!
-        bm = bmesh.new()
-        add_sculpted_loft(
-            bm, (sx * 0.115, 0.51, 0.01), (sx * 0.115, 0.405, 0.012),
-            [
-                (0.00, 0.060, 0.064, 0.0, 0.0),
-                (0.50, 0.061, 0.065, 0.0, 0.003),
-                (1.00, 0.056, 0.060, 0.0, 0.0),
-            ],
-            sides=16, mat_index=0, start_dome_scale=0.38, end_dome_scale=0.35, v_Ascending=False,
-        )
-        add_curved_shell_patch_pc(
-            bm, 0.422, 0.498, -0.68, 0.68,
-            0.059, 0.063, 0.016, center_xz=(sx * 0.115, 0.013), cols=8, rows=4, mat_index=1
-        )
-        objs.append(finalize_skinned_mesh_object(
-            f"Zone_KNEE_{side_label}", bm,
-            [pal["bdu_olive"], pal["polymer_dark"]],
-            arm_obj, [(f"Bone_KNEE_{side_label}", 1.0)], collection,
-        ))
-
-        # Shin — Sculpted gastrocnemius calf belly + bloused BDU trouser cuff over boot collar
-        def sculpt_shin(t: float, theta: float, lr: float, lf: float) -> Tuple[float, float, float]:
-            calf = 0.014 * math.exp(-(((t - 0.28) / 0.22) ** 2)) * max(0.0, -math.cos(theta))
-            blouse = 0.006 * math.exp(-(((t - 0.88) / 0.08) ** 2))
-            return lr * (1.0 + blouse * 6.0), lf - calf + blouse, 0.0
-
-        bm = bmesh.new()
-        add_sculpted_loft(
-            bm, (sx * 0.115, 0.41, 0.012), (sx * 0.115, 0.105, 0.0),
-            [
-                (0.00, 0.055, 0.059, 0.0, 0.0),
-                (0.28, 0.062, 0.068, 0.0, -0.006),
-                (0.68, 0.050, 0.054, 0.0, -0.002),
-                (0.90, 0.055, 0.058, 0.0, 0.0),
-                (1.00, 0.044, 0.048, 0.0, 0.0),
-            ],
-            sides=16, mat_index=0, start_dome_scale=0.35, end_dome_scale=0.25, v_Ascending=False, sculpt_fn=sculpt_shin,
-        )
-        objs.append(finalize_skinned_mesh_object(
-            f"Zone_SHIN_{side_label}", bm,
-            [pal["bdu_olive"]],
-            arm_obj, [(f"Bone_SHIN_{side_label}", 1.0)], collection,
         ))
 
         # Foot — 8-inch tactical combat boot: Vibram lugs, welt, toe cap, heel counter, tongue & laces

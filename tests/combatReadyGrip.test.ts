@@ -78,7 +78,14 @@ function expectM4Grip(
   const expectedPalm = new pc.Vec3(side === 'LEFT' ? 0.027 : -0.027, trigger ? -0.05 : -0.054, trigger ? 0.023 : -0.272);
   const thumb = inverse.transformVector(hand.getRotation().transformVector(pc.Vec3.BACK)).normalize();
   const expectedThumb = trigger ? new pc.Vec3(0, 0.94, -0.342) : pc.Vec3.UP;
-  expect(inverse.transformPoint(palm).distance(expectedPalm), `${side} palm, t=${time}`).toBeLessThan(0.01);
+  const actualPalm = inverse.transformPoint(palm);
+  if (!trigger) {
+    // The support palm slides along the handguard to wherever the arm reaches comfortably.
+    expect(actualPalm.z, `${side} rail, t=${time}`).toBeGreaterThan(-0.36);
+    expect(actualPalm.z, `${side} rail, t=${time}`).toBeLessThan(-0.2);
+    expectedPalm.z = actualPalm.z;
+  }
+  expect(actualPalm.distance(expectedPalm), `${side} palm, t=${time}`).toBeLessThan(0.01);
   expect(thumb.dot(expectedThumb), `${side} thumb, t=${time}`).toBeGreaterThan(0.99);
 }
 
@@ -113,7 +120,10 @@ describe('Combat Ready Idle held prop', () => {
           pose.sample(time);
           mount.syncWeaponPosition(state, pose.glb);
           if (weaponId !== 'silver_talon_50ae') {
-            expect(elbow.getPosition().z - chest.getPosition().z, `${weaponId}, t=${time}`).toBeGreaterThan(0.15);
+            // The support elbow stays clear of the vest: either ahead of it or out beside it.
+            const ahead = elbow.getPosition().z - chest.getPosition().z;
+            const beside = Math.abs(elbow.getPosition().x - chest.getPosition().x);
+            expect(Math.max(ahead - 0.15, beside - 0.2), `${weaponId}, t=${time}`).toBeGreaterThan(0);
           }
           if (weaponId === 'm4a1_carbine') {
             expectM4Grip(holder, supportHand, supportSide, false, time);

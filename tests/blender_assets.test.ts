@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import * as pc from 'playcanvas';
 import { describe, expect, it } from 'vitest';
 import type { GhoulZoneId } from '../src/contracts/ballistics.ts';
-import { ALL_GHOUL_ZONES } from '../src/core/ghoul/anatomy.ts';
+import { ALL_GHOUL_ZONES, GHOUL_ZONE_HIERARCHY } from '../src/core/ghoul/anatomy.ts';
 import { ALL_GLB_ASSET_KEYS, COMBATANT_ANIMATION_CLIPS, WEAPON_ASSET_IDS } from '../src/engine/assets/glbLoader.ts';
 import { BLEND_SOURCES_DIR, readAndParseGlb, readVec4AccessorRow } from './blenderGlbFixtures.ts';
 
@@ -39,7 +39,7 @@ describe('Blender combatant and weapon assets', () => {
     expect(armNodes.every((node) => node.skin === undefined)).toBe(true);
   });
 
-  it('ghoul_combatant.glb contains 35 sculpted submeshes, single-bone severable weights, and Kimodo clips for both hands', () => {
+  it('ghoul_combatant.glb contains 35 sculpted submeshes, parent-only joint blending, and Kimodo clips for both hands', () => {
     const { gltf, binChunk } = readAndParseGlb('ghoul_combatant.glb');
     const nodes = gltf.nodes ?? [];
     const meshes = gltf.meshes ?? [];
@@ -92,23 +92,24 @@ describe('Blender combatant and weapon assets', () => {
           globalMaxY = Math.max(globalMaxY, posAcc.max[1]);
         }
 
-        // Critical Dismemberment Invariant: every severable Zone_* vertex MUST have 100% weight
-        // on `Bone_${zone}` (zero secondary bone weights) so severed GLB limbs never stretch back to BODY!
+        // Dismemberment invariant: a severable zone's vertices are weighted only to `Bone_${zone}` and its
+        // parent bone. The runtime rebinds a severed zone to its own bone, so nothing else may pull on it.
         if (isSeverableOrHeadZone) {
+          const ownBone = `Bone_${zone}`;
+          const parentBone = `Bone_${GHOUL_ZONE_HIERARCHY[zone].parent}`;
+          const scaleFactor =
+            weightsAcc.componentType === 5121 ? 1 / 255 : weightsAcc.componentType === 5123 ? 1 / 65535 : 1;
           for (let vIdx = 0; vIdx < weightsAcc.count; vIdx++) {
             const jRow = readVec4AccessorRow(binChunk, bufferViews, jointsAcc, vIdx);
             const wRow = readVec4AccessorRow(binChunk, bufferViews, weightsAcc, vIdx);
-            const scaleFactor =
-              weightsAcc.componentType === 5121
-                ? 1 / 255
-                : weightsAcc.componentType === 5123
-                  ? 1 / 65535
-                  : 1;
-            const w0 = wRow[0] * scaleFactor;
-            const wSecondary = (wRow[1] + wRow[2] + wRow[3]) * scaleFactor;
-            expect(w0, `${zoneMeshName} v${vIdx} primary weight`).toBeGreaterThan(0.999);
-            expect(wSecondary, `${zoneMeshName} v${vIdx} secondary bleed`).toBeLessThan(0.001);
-            expect(jointNameBySkinIdx[jRow[0]]).toBe(`Bone_${zone}`);
+            let total = 0;
+            for (let slot = 0; slot < 4; slot++) {
+              const weight = wRow[slot] * scaleFactor;
+              if (weight < 0.001) continue;
+              total += weight;
+              expect([ownBone, parentBone], `${zoneMeshName} v${vIdx} influence`).toContain(jointNameBySkinIdx[jRow[slot]]);
+            }
+            expect(total, `${zoneMeshName} v${vIdx} total weight`).toBeGreaterThan(0.999);
           }
         }
       }

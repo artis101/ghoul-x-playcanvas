@@ -1,14 +1,40 @@
 # GHOUL-X combatant animation
 
-Character Lab at `/gm/characters` uses the same combatant GLB as gameplay. Select an animation, equip a prop, pause, and scrub Character time to check the pose and grip. The GLB contains twelve Kimodo-derived actions with a right- and left-handed version of each. PlayCanvas supplies the character's world movement, prop attachment, support-hand IK, and ragdoll transitions.
+Character Lab at `/gm/characters` uses the same combatant GLB as gameplay. Select an animation, equip a prop, pause, and scrub Character time to check the pose and grip. The GLB contains thirteen Kimodo-derived actions with a right- and left-handed version of each. PlayCanvas supplies the character's world movement, prop attachment, support-hand IK, and ragdoll transitions.
 
 Select **Long Gun Aim** or **Pistol Aim** to see the raise and held pose. With that character pose paused, select the held item's fire animation and scrub **Item time**. The held item's animated grip bones drive the NPC's hands through the cycle. The first-person hands use the weapon's animated root and, on the shotgun, the pump bone.
 
 ## Motion sources
 
-`motion/` contains the source SOMA BVH takes. The bake retargets the full skeleton, mirrors the motion for handedness, and closes the movement and idle loops. Walk, run, and strafe combine the generated lower body with the generated combat-ready upper body. Backward walk uses the walk cycle in reverse.
+`motion/` contains the source SOMA BVH takes. The bake retargets the full skeleton and mirrors the motion for handedness. Backward walk uses the walk cycle in reverse.
 
-The [Kimodo demo](http://chonkster.local:7860) and CLI run on chonkster. In a Bash shell, `cd ~/ai/kimodo` and `source env.sh`. Use `Kimodo-SOMA-RP-v1.2`, `--bvh` and `--bvh_standard_tpose` for new takes. The combat-ready, guard, kneel, crawl, strafe, long-gun aim, and pistol aim takes used seeds 55, 27, 17, 41, 81, 61, and 72, respectively. The stagger, walk, and run takes came from `motions/heavy_hit_stagger.npz`, `motions/walk.npz`, and `motions/run.npz`, converted with `kimodo_convert … --bvh_standard_tpose`.
+The [Kimodo demo](http://chonkster.local:7860) and CLI run on chonkster. In a Bash shell, `cd ~/ai/kimodo` and `source env.sh`. Use `Kimodo-SOMA-RP-v1.2`, `--bvh` and `--bvh_standard_tpose` for new takes.
+
+One-shot clips use a single take. The combat-ready, guard, kneel, collapse, strafe, long-gun aim, and pistol aim takes used seeds 55, 27, 17, 41, 81, 61, and 72, respectively. The stagger, walk, and run takes came from `motions/heavy_hit_stagger.npz`, `motions/walk.npz`, and `motions/run.npz`, converted with `kimodo_convert … --bvh_standard_tpose`.
+
+### Looping clips
+
+Every looping clip is generated twice. The first take supplies the motion; pick the frames where one cycle starts and ends. The second take pins the first take's opening pose at both ends with Kimodo keyframe constraints, so it closes exactly and the bake needs no cross-fade. The bake fails if a looping clip is more than 1.5 degrees or 1 cm off at its seam.
+
+```sh
+kimodo_convert motion/walk.bvh walk.npz --bvh_standard_tpose
+python scripts/blender/kimodo_loop_constraints.py walk.npz --start 39 --end 69 --output walk.json
+kimodo_gen "A person walks forward at a steady pace." --model Kimodo-SOMA-RP-v1.2 \
+  --duration 1.08 --constraints walk.json --bvh --bvh_standard_tpose --seed 7 --output walk_loop
+```
+
+Frames are zero-based, the duration is `(end - start + 2.4) / 30`, and idles add `--in-place`. The second take's frames 1 to `end - start + 1` are the loop.
+
+| Clip | First take | Frames | Second take |
+| --- | --- | --- | --- |
+| CombatReadyIdle | `ready.bvh` | 11–104, in place | `ready_loop.bvh` |
+| UnsuspectingIdle | `guard.bvh` | 7–111, in place | `guard_loop.bvh` |
+| Walk, WalkBackward | `walk.bvh` | 39–69 | `walk_loop.bvh` |
+| Run | `run.bvh` | 53–78 | `run_loop.bvh` |
+| StrafeLeft, StrafeRight | `strafe.bvh` | 59–90 | `strafe_loop.bvh` |
+| Crawl | `crawl_cycle.bvh` | 51–119 | `crawl_loop.bvh` |
+
+The crawl's first take used seed 41 with three samples and the prompt "A wounded person lies on their stomach and crawls forward along the ground, pulling with their arms and dragging their legs."; sample 0 is `crawl_cycle.bvh`. Its second take used the same prompt and seed. The other second takes used seed 7.
 
 ## Bake and edit
 
@@ -33,3 +59,17 @@ blender -b "$work/combatant.blend" --python-exit-code 1 \
 ```
 
 Copy the edited GLB to `public/models/ghoul_combatant.glb`, reload Character Lab, and scrub the edited section. The exporter samples each frame inside the clip's range. Use `bake_kimodo_combatant.py` to change a clip's source take or timing.
+
+## Body
+
+`build_combatant_rigged.py` builds the whole combatant; `combatant_body.py` holds the torso, neck, arm and leg shapes and `combatant_body_loft.py` turns them into skinned zone meshes. Each chain (spine, arm, leg) is one continuous surface cut into `Zone_*` meshes at shared rings. A zone's vertices are weighted only to its own bone and its parent bone, so joints bend smoothly and the runtime can rebind a severed zone to its own bone (`combatantSeveredSkin.ts`). The skeleton is unchanged.
+
+To change the body, edit the station tables in `combatant_body.py`, then rebuild and rebake the animations:
+
+```sh
+GHOUL_COMBATANT_OUT="$work" blender -b --python-exit-code 1 --python scripts/blender/build_combatant_rigged.py
+blender -b --python-exit-code 1 --python scripts/blender/bake_kimodo_combatant.py -- \
+  scripts/blender/motion "$work/ghoul_combatant.glb" "$work/baked.glb"
+```
+
+Copy `baked.glb` to `public/models/ghoul_combatant.glb` and `ghoul_combatant.blend` to `public/models/blend_sources/`. The baked GLB must stay under 2 MB; it currently has about 12 KB to spare, so lower `sides` or raise `spacing` in `build_body_zones` when adding detail.

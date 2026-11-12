@@ -17,8 +17,14 @@ interface GripBinding {
 }
 
 // The gloves curl about local Z. Match the thumb axis to each modeled grip.
-const M4A1_TRIGGER_ROTATION = new pc.Quat().setFromEulerAngles(-110, 0, 0);
-const M4A1_SUPPORT_ROTATION = new pc.Quat().setFromEulerAngles(-90, 0, 0);
+const TRIGGER_ROTATION = new pc.Quat().setFromEulerAngles(-110, 0, 0);
+const SUPPORT_ROTATION = new pc.Quat().setFromEulerAngles(-90, 0, 0);
+const M4A1_TRIGGER_ROTATION = TRIGGER_ROTATION;
+const M4A1_SUPPORT_ROTATION = SUPPORT_ROTATION;
+const HANDGUN_PALM_OFFSET_X = 0.022;
+// The support hand cups the trigger hand from the far side, angled in toward the grip.
+const HANDGUN_SUPPORT_OFFSET_X = 0.04;
+const HANDGUN_SUPPORT_ROTATION = new pc.Quat().setFromEulerAngles(-105, 0, 0);
 
 function bindGrip(weapon: WeaponGlbInstance, bone: string): GripBinding {
   const node = weapon.boneNodes.get(bone) ?? weapon.rootEntity;
@@ -35,6 +41,7 @@ export class CombatantWeaponHands {
   private readonly targetRotation = new pc.Quat();
   private readonly baseInverse = new pc.Quat();
   private readonly supportBend = new pc.Vec3();
+  private readonly triggerBend = new pc.Vec3();
 
   public constructor(private readonly weapon: WeaponGlbInstance) {
     this.trigger = bindGrip(weapon, 'Bone_Root');
@@ -68,6 +75,31 @@ export class CombatantWeaponHands {
         twoHandReadyIdle ? this.supportBend : undefined, useM4Grips ? M4A1_SUPPORT_ROTATION : undefined,
       );
     }
+  }
+
+  /** Solves both arms onto a weapon that is already posed in a two-handed hold. */
+  public syncHold(
+    glb: CombatantGlbInstance, triggerHand: ActiveFiringHand, supportGrip: pc.Vec3, oneHanded = false,
+  ): void {
+    const weaponId = this.weapon.weaponId;
+    const side = triggerHand === 'LEFT' ? -1 : 1;
+    const palm = weaponId === 'silver_talon_50ae' ? HANDGUN_PALM_OFFSET_X : M4A1_PALM_OFFSET_X;
+    const yaw = glb.rootEntity.getRotation();
+    // Trigger elbow hangs down and out. Support elbow hangs under the forend.
+    const handgun = weaponId === 'silver_talon_50ae';
+    yaw.transformVector(this.triggerBend.set(side * 0.75, -1, -0.45), this.triggerBend);
+    // A handgun is held with both elbows dropped outside the ribs, never across the body.
+    yaw.transformVector(this.supportBend.set(-side * (handgun ? 0.75 : 0.45), -1, handgun ? -0.45 : 0.25), this.supportBend);
+    this.syncHand(
+      glb, triggerHand, this.trigger, TRIGGER_GRIPS[weaponId], 0.052, -side * palm,
+      this.triggerBend, TRIGGER_ROTATION,
+    );
+    if (oneHanded) return;
+    this.syncHand(
+      glb, triggerHand === 'LEFT' ? 'RIGHT' : 'LEFT', this.support, supportGrip, 0.05,
+      side * (handgun ? HANDGUN_SUPPORT_OFFSET_X : palm),
+      this.supportBend, handgun ? HANDGUN_SUPPORT_ROTATION : SUPPORT_ROTATION,
+    );
   }
 
   private syncHand(

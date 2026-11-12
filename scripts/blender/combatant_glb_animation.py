@@ -48,6 +48,25 @@ class CombatantGlbAnimation:
         self.doc.update(animations=[], accessors=accessors, bufferViews=views)
         self.binary = packed
 
+    def prune_unused_images(self):
+        """Drops textures and images that no material uses. Call before clear_animations."""
+        slots = []
+
+        def visit(value):
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if key.endswith("Texture") and isinstance(child, dict) and "index" in child:
+                        slots.append(child)
+                    visit(child)
+            elif isinstance(value, list):
+                for child in value:
+                    visit(child)
+
+        visit(self.doc["materials"])
+        textures = self.retain_referenced(self.doc["textures"], [(slot, "index") for slot in slots])
+        images = self.retain_referenced(self.doc["images"], [(texture, "source") for texture in textures])
+        self.doc.update(textures=textures, images=images)
+
     @staticmethod
     def retain_referenced(items, refs):
         indices = sorted({obj[key] for obj, key in refs})

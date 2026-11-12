@@ -12,10 +12,12 @@ import { CombatantAnimController, type CombatantAimPose } from './combatantAnimC
 import { CombatantLocomotion } from './combatantLocomotion.ts';
 import { CombatantBoneSync } from './combatantBoneSync.ts';
 import { CombatantDismemberment } from './combatantDismemberment.ts';
+import { CombatantSeveredSkin } from './combatantSeveredSkin.ts';
 import { CombatantVisualGoreSync } from './combatantVisualGoreSync.ts';
 import { CombatantWoundDecals } from './combatantWoundDecals.ts';
 import { CombatantWeaponMount } from './combatantWeaponMount.ts';
 import { CombatantDeadLimbOverlay } from './combatantDeadLimbOverlay.ts';
+import { CombatantCrawlOverlay } from './combatantCrawlOverlay.ts';
 import { buildDistalParentSocketStumps, buildProximalLimbStump } from './combatantStumpBuilder.ts';
 import {
   resolveMannequinDriveState,
@@ -40,10 +42,12 @@ export class GhoulMannequinEntity {
   private readonly locomotion = new CombatantLocomotion();
   private readonly boneSync = new CombatantBoneSync();
   private readonly dismemberment = new CombatantDismemberment();
+  private readonly severedSkin = new CombatantSeveredSkin();
   private readonly visualGoreSync = new CombatantVisualGoreSync();
   private readonly woundDecals = new CombatantWoundDecals();
   private readonly weaponMount = new CombatantWeaponMount();
   private readonly deadLimbOverlay = new CombatantDeadLimbOverlay();
+  private readonly crawlOverlay = new CombatantCrawlOverlay();
 
   private readonly glbZoneMaterialPairs = new Map<GhoulZoneId, GlbZoneMaterialPair[]>();
   private readonly glbGearOriginalMaterials = new Map<pc.MeshInstance, pc.Material>();
@@ -76,6 +80,8 @@ export class GhoulMannequinEntity {
 
   public reset(): void {
     this.dismemberment.reset();
+    this.severedSkin.reset();
+    this.crawlOverlay.reset();
     this.weaponMount.reset();
     this.animController.reset();
     this.driveState = resolveMannequinDriveState(this.healthState);
@@ -140,6 +146,7 @@ export class GhoulMannequinEntity {
     if (glb) {
       glb.rootEntity.enabled = true;
       this.dismemberment.syncGlbSeverances(glb, this.healthState, this.isXRayActive);
+      this.severedSkin.sync(glb, this.healthState);
       this.dismemberment.syncGearVisibility(glb, this.healthState, this.isXRayActive, headgearAttached);
 
       switch (this.driveState.mode) {
@@ -155,7 +162,9 @@ export class GhoulMannequinEntity {
         }
         case 'ANIM_STANDING':
         case 'ANIM_WOUNDED_POSTURE': {
-          this.animController.syncAnimation(glb, this.healthState, guarding, movement, aim);
+          this.animController.syncAnimation(
+            glb, this.healthState, guarding, movement, aim, this.locomotion.groundSpeed
+          );
           glb.rootEntity.setPosition(
             this.healthState.worldPosition.x,
             this.healthState.worldPosition.y,
@@ -163,6 +172,9 @@ export class GhoulMannequinEntity {
           );
           glb.rootEntity.setEulerAngles(0, (this.healthState.yawRad * 180) / Math.PI, 0);
           this.deadLimbOverlay.sync(glb, this.healthState, this.boneSync, dt);
+          this.crawlOverlay.sync(
+            glb, this.healthState, this.animController.isCrawling, dt, elapsedTime, this.fxManager
+          );
           if (this.healthState.severedZones.size > 0) {
             for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
               if (this.healthState.ragdollBones[zone].componentId !== 'BODY') {
@@ -176,7 +188,9 @@ export class GhoulMannequinEntity {
       }
     }
 
-    this.weaponMount.syncWeaponPosition(this.healthState, glb, this.fxManager, guarding);
+    this.weaponMount.syncWeaponPosition(
+      this.healthState, glb, this.fxManager, guarding, dt, aim?.clip === 'PistolAim'
+    );
     this.syncPoseAttachments();
     this.dismemberment.syncStumps(this.zoneBundles, this.healthState);
     this.woundDecals.syncSurfaceWounds(this.healthState, this.zoneBundles, this.materials);

@@ -10,6 +10,7 @@ import {
 } from '../../core/ai/weaponBurstFsm.ts';
 import { add, dot, normalize, sub, vec3 } from '../../core/ballistics/vec3.ts';
 import { updateStandingCombatPose } from '../../core/ghoul/anatomy.ts';
+import { evaluateCrawlCondition } from '../../core/ghoul/anatomy/crawlCondition.ts';
 import { computeCombatantTriageStatus } from '../../core/ballistics/solver.ts';
 import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
 import type {
@@ -21,6 +22,9 @@ import { syncAgentArmamentAndSidearm } from './agentArmamentController.ts';
 import { computeAlertedPeekTarget, type PeekPlanCacheEntry } from './tacticalCoverFinder.ts';
 import { moveHorizontalClamped } from './tacticalLocomotion.ts';
 import { type BurstContext, stepWeaponBurstFire } from './tacticalBurstAndTracers.ts';
+
+// Ground speed of an unhurt crawl.
+const CRAWL_SPEED_MPS = 0.35;
 
 export type { AlertedEngagementSubstate };
 
@@ -180,7 +184,8 @@ export function stepSingleEnemyAgent(
           agent.resolveProfile === 'FANATIC_BERSERKER'
             ? Math.min(playerEyeWorldPos.z - 2.6, hs.worldPosition.z + 0.8)
             : agent.coverAnchorWorld.z - 0.25;
-        moveHorizontalClamped(hs, crawlTargetX, crawlTargetZ, 0.35 * dt, ctx.rapierWorld);
+        const { effort } = evaluateCrawlCondition(hs, ctx.elapsedClockS);
+        moveHorizontalClamped(hs, crawlTargetX, crawlTargetZ, CRAWL_SPEED_MPS * effort * dt, ctx.rapierWorld);
       }
       turnTowardPlayer(2.8);
       if (aimProfile.canReturnFire) {

@@ -44,7 +44,7 @@ def load_soma(path):
 
 
 class CombatantRetarget:
-    def __init__(self, glb, source, first_frame, mirror):
+    def __init__(self, glb, source, first_frame, mirror, travel_frame=None):
         self.source = source
         self.axes = TO_GLTF @ source.matrix_world.to_quaternion()
         self.reflect = mirror
@@ -67,8 +67,15 @@ class CombatantRetarget:
         for root in glb.doc["scenes"][glb.doc.get("scene", 0)]["nodes"]:
             visit(root, None)
 
-        self.seek(first_frame)
-        forward = self.motion_rotation("Hips") @ Vector((0, 0, 1))
+        if travel_frame is None:
+            self.seek(first_frame)
+            forward = self.motion_rotation("Hips") @ Vector((0, 0, 1))
+        else:
+            # A prone body's hips face the floor, so take the heading from where it travels.
+            self.seek(travel_frame)
+            destination = self.position("Hips")
+            self.seek(first_frame)
+            forward = destination - self.position("Hips")
         self.heading = Quaternion((0, 1, 0), -math.atan2(forward.x, forward.z))
         self.origin = self.position("Hips")
         self.height_scale = self.offsets[PELVIS].y / self.rest_position("Hips").y

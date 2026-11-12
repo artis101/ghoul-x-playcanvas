@@ -85,6 +85,14 @@ export class GoreAndBallisticsFxManager {
     spawnBloodBurst(this.fxRoot, this.goreSuite, this.bloodDrops, this.mistPuffs, worldPos, normalDir, energyJ, count);
   }
 
+  /** A small floor stain, such as one left by a body dragged along the ground. */
+  public spawnBloodSmear(worldPos: Vec3Like, radius: number): void {
+    spawnBloodPool(
+      this.fxRoot, this.goreSuite, this.bloodPools, this.poolCounter,
+      new pc.Vec3(worldPos.x, worldPos.y, worldPos.z), radius,
+    );
+  }
+
   public spawnDismembermentGibs(event: DismembermentEvent): void {
     spawnDismembermentGibs(this.fxRoot, this.goreSuite, this.gibChunks, event, {
       spawnBloodBurst: (pos, dir, e, cnt) => this.spawnBloodBurst(pos, dir, e, cnt),

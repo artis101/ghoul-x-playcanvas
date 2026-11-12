@@ -13,7 +13,7 @@ export function createCharacterLabView(root: HTMLElement) {
       <div class="gm-workspace">
         <section class="gm-stage" aria-label="Preview">
           <canvas id="gm-viewport" tabindex="0" aria-label="Character preview" aria-describedby="gm-camera-help"></canvas>
-          <p id="gm-camera-help">Drag to orbit · Scroll to zoom · Arrow keys and + / −</p>
+          <p id="gm-camera-help">Drag to orbit · Scroll to zoom · Arrow keys, + / − and Page Up / Down</p>
           <p id="gm-status" role="status">Loading character and item assets…</p>
         </section>
         <aside class="gm-panel" aria-label="Preview controls">

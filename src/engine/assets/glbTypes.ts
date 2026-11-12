@@ -28,7 +28,8 @@ export type CombatantAnimationClipName =
   | 'StrafeRight'
   | 'HitStaggerChest'
   | 'DiaphragmDropKneel'
-  | 'LegCollapseCrawl';
+  | 'LegCollapseCrawl'
+  | 'Crawl';
 
 export const COMBATANT_ANIMATION_CLIPS: readonly CombatantAnimationClipName[] = [
   'CombatReadyIdle',
@@ -43,6 +44,7 @@ export const COMBATANT_ANIMATION_CLIPS: readonly CombatantAnimationClipName[] = 
   'HitStaggerChest',
   'DiaphragmDropKneel',
   'LegCollapseCrawl',
+  'Crawl',
 ] as const;
 
 export const WEAPON_ASSET_IDS: readonly WeaponAssetId[] = [

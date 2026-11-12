@@ -96,6 +96,8 @@ export function createPreviewStage(
       case '+':
       case '=': distance = Math.max(near, distance - zoomStep); break;
       case '-': distance = Math.min(far, distance + zoomStep); break;
+      case 'PageUp': aim.y += zoomStep * 0.4; break;
+      case 'PageDown': aim.y -= zoomStep * 0.4; break;
       default: return;
     }
     event.preventDefault();

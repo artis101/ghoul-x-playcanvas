@@ -11,6 +11,8 @@ export class CombatantLocomotion {
   private sampled = false;
   private speed = 0;
   private movement: CombatantMovementClip | undefined;
+  /** Smoothed horizontal speed in any posture, in metres per second. */
+  public groundSpeed = 0;
 
   public sample(position: Vec3Like, yaw: number, dt: number, standing: boolean): CombatantMovementClip | undefined {
     const dx = position.x - this.previousX;
@@ -19,6 +21,8 @@ export class CombatantLocomotion {
     this.previousZ = position.z;
     const distance = this.sampled ? Math.hypot(dx, dz) : 0;
     this.sampled = true;
+    if (distance > 0.8) this.groundSpeed = 0;
+    else if (dt > 0) this.groundSpeed += (distance / dt - this.groundSpeed) * (1 - Math.exp(-10 * dt));
 
     if (!standing || distance > 0.8) {
       this.speed = 0;

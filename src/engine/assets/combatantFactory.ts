@@ -7,10 +7,11 @@ import { findEntityByName, upgradeEntityHierarchyPbr } from './materialUpgrade.t
 export { instantiateDetachedHeadgearProp } from './headgearFactory.ts';
 
 const LOOPING_COMBATANT_CLIPS = new Set([
-  'CombatReadyIdle', 'UnsuspectingIdle', 'Walk', 'Run', 'WalkBackward', 'StrafeLeft', 'StrafeRight',
+  'CombatReadyIdle', 'UnsuspectingIdle', 'Walk', 'Run', 'WalkBackward', 'StrafeLeft', 'StrafeRight', 'Crawl',
 ]);
 
-function isLoopingClip(name: string): boolean {
+/** True for clips that repeat. The rest play once and hold their last frame. */
+export function isLoopingClip(name: string): boolean {
   return LOOPING_COMBATANT_CLIPS.has(name.replace(/_Southpaw$/, ''));
 }
 

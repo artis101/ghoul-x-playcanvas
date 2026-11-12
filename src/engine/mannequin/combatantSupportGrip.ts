@@ -15,20 +15,27 @@ export class CombatantSupportGrip {
     glb: CombatantGlbInstance, side: ActiveFiringHand, palm: pc.Vec3, handRotation: pc.Quat, palmOffset: number,
     bendDirection?: pc.Vec3,
   ): void {
+    handRotation.transformVector(pc.Vec3.UP, this.wristGoal);
+    this.wristGoal.mulScalar(-palmOffset).add(palm);
+    if (this.reach(glb, side, this.wristGoal, bendDirection)) {
+      glb.boneNodes.get(`HAND_${side}`)?.setRotation(handRotation);
+    }
+  }
+
+  /** Bends the arm so the wrist lands on the goal. Leaves the hand's own rotation alone. */
+  public reach(glb: CombatantGlbInstance, side: ActiveFiringHand, wrist: pc.Vec3, bendDirection?: pc.Vec3): boolean {
     const upper = glb.boneNodes.get(`UPPER_ARM_${side}`);
     const forearm = glb.boneNodes.get(`FOREARM_${side}`);
     const hand = glb.boneNodes.get(`HAND_${side}`);
-    if (!upper || !forearm || !hand) return;
-    handRotation.transformVector(pc.Vec3.UP, this.wristGoal);
-    this.wristGoal.mulScalar(-palmOffset).add(palm);
-    const pose = solveTwoBoneIk(upper.getPosition(), forearm.getPosition(), hand.getPosition(), this.wristGoal, bendDirection);
-    if (!pose) return;
+    if (!upper || !forearm || !hand) return false;
+    const pose = solveTwoBoneIk(upper.getPosition(), forearm.getPosition(), hand.getPosition(), wrist, bendDirection);
+    if (!pose) return false;
 
     this.elbowGoal.set(pose.elbow.x, pose.elbow.y, pose.elbow.z);
     this.wristGoal.set(pose.wrist.x, pose.wrist.y, pose.wrist.z);
     this.rotateToward(upper, forearm, this.elbowGoal);
     this.rotateToward(forearm, hand, this.wristGoal);
-    hand.setRotation(handRotation);
+    return true;
   }
 
   private rotateToward(joint: pc.GraphNode, child: pc.GraphNode, goal: pc.Vec3): void {

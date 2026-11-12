@@ -1,8 +1,10 @@
 import * as pc from 'playcanvas';
 import type { EnemyArchetypeId } from '../../contracts/ballistics.ts';
 import { createTargetHealthState } from '../../core/ghoul/anatomy.ts';
+import { isLoopingClip } from '../assets/combatantFactory.ts';
 import { GlbModelRegistry, WEAPON_ASSET_IDS, type WeaponAssetId } from '../assets/glbLoader.ts';
 import { getOrCreateMaterials } from '../materials.ts';
+import { CombatantCrawlOverlay } from '../mannequin/combatantCrawlOverlay.ts';
 import { CombatantDismemberment } from '../mannequin/combatantDismemberment.ts';
 import { setupCombatantGlbInstance } from '../mannequin/combatantGlbSetup.ts';
 import { CombatantWeaponMount } from '../mannequin/combatantWeaponMount.ts';
@@ -48,6 +50,7 @@ export async function openCharacterLab(): Promise<void> {
   const listeners = new AbortController();
   const options = { signal: listeners.signal };
   const mount = new CombatantWeaponMount();
+  const crawlOverlay = new CombatantCrawlOverlay();
   let cleanupStage: (() => void) | undefined;
 
   function cleanup(): void {
@@ -92,13 +95,14 @@ export async function openCharacterLab(): Promise<void> {
 
     function syncGrip(): void {
       characterTimeline.resample();
+      crawlOverlay.sync(character, health, view.characterClip.value.startsWith('Crawl'), 0, 0);
       mount.syncWeaponPosition(health, character, undefined, view.characterClip.value.startsWith('UnsuspectingIdle'));
     }
 
     function selectCharacterClip(): void {
       const clip = view.characterClip.value;
       health.isLeftHanded = clip.endsWith('_Southpaw');
-      health.posture = /^(HitStagger|DiaphragmDrop|LegCollapse)/.test(clip) ? 'STAGGERED' : 'COMBAT_READY';
+      health.posture = /^(HitStagger|DiaphragmDrop|LegCollapse|Crawl)/.test(clip) ? 'STAGGERED' : 'COMBAT_READY';
       characterTimeline.select(character.animComponent, clip);
       if (clip.startsWith('PistolAim') && view.item.value !== 'silver_talon_50ae') {
         view.item.value = 'silver_talon_50ae';
@@ -180,10 +184,11 @@ export async function openCharacterLab(): Promise<void> {
       if (!playing) return;
       const elapsed = dt * speed;
       const loop = view.loop.checked;
-      const characterAdvanced = characterTimeline.advance(elapsed, loop);
+      // One-shot clips hold their last frame, as they do in the game.
+      const characterAdvanced = characterTimeline.advance(elapsed, loop && isLoopingClip(view.characterClip.value));
       const itemAdvanced = itemTimeline.advance(elapsed, loop);
       if (characterAdvanced || itemAdvanced) syncGrip();
-      if (!loop && !characterTimeline.canAdvance && !itemTimeline.canAdvance) setPlaying(false);
+      if (!characterTimeline.canAdvance && !itemTimeline.canAdvance) setPlaying(false);
     });
 
     app.start();

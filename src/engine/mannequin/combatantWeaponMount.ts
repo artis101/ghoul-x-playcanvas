@@ -23,6 +23,11 @@ import {
 import { getPreferredPrimaryHand, isArmChainIntactAndFunctional } from '../ai/combatantArmEvaluation.ts';
 import { CombatantWeaponHands } from './combatantWeaponHands.ts';
 import { CombatantWeaponGrip, M4A1_PALM_OFFSET_X } from './combatantWeaponGrip.ts';
+import { CombatantWeaponHold } from './combatantWeaponHold.ts';
+import { isOneHandedStance } from '../../core/ghoul/anatomy/weaponHold.ts';
+import { resolveWeaponHoldStance } from './combatantWeaponStance.ts';
+import { CombatantUnarmedArms } from './combatantUnarmedArms.ts';
+import { CombatantAimHead } from './combatantAimHead.ts';
 import {
   createPropAttachmentState,
   transitionPropAttachment,
@@ -41,6 +46,9 @@ export class CombatantWeaponMount {
   public attachmentState: PropAttachmentState<'LEFT' | 'RIGHT'> = createPropAttachmentState('ATTACHED');
   private hands: CombatantWeaponHands | null = null;
   private readonly grip = new CombatantWeaponGrip();
+  private readonly hold = new CombatantWeaponHold();
+  private readonly unarmed = new CombatantUnarmedArms();
+  private readonly aimHead = new CombatantAimHead();
 
   public get wasWeaponHeld(): boolean {
     return this.attachmentState.kind === 'ATTACHED';
@@ -48,6 +56,8 @@ export class CombatantWeaponMount {
 
   public reset(): void {
     this.attachmentState = createPropAttachmentState('ATTACHED');
+    this.unarmed.reset();
+    this.aimHead.reset();
     if (this.heldWeaponNode) {
       this.heldWeaponNode.enabled = true;
     }
@@ -84,7 +94,9 @@ export class CombatantWeaponMount {
     healthState: TargetHealthState,
     glb: CombatantGlbInstance | null,
     fxManager?: GoreAndBallisticsFxManager,
-    guarding = false
+    guarding = false,
+    dt?: number,
+    sidearmDrawn = false
   ): void {
     const triggerHand = getPreferredPrimaryHand(healthState);
     const supportHand = triggerHand === 'LEFT' ? 'RIGHT' : 'LEFT';
@@ -130,6 +142,9 @@ export class CombatantWeaponMount {
       this.heldWeaponNode.enabled = transition.isVisible;
     }
 
+    const armed = transition.isVisible && this.heldWeaponNode !== null;
+    if (glb && !armed) this.unarmed.sync(glb, healthState, !sidearmDrawn, dt);
+
     if (transition.isVisible && this.heldWeaponNode) {
       const charFwd = vec3(
         Math.sin(healthState.yawRad),
@@ -152,6 +167,20 @@ export class CombatantWeaponMount {
         weaponId !== 'frag_grenade' &&
         isArmChainIntactAndFunctional(healthState, supportHand);
       const clip = glb?.animComponent?.baseLayer?.activeState;
+      const stance = canUseSupport ? resolveWeaponHoldStance(weaponId, clip, guarding) : null;
+      const supportGrip = glb && stance
+        ? this.hold.place(this.heldWeaponNode, glb, weaponId, stance, triggerHand, dt)
+        : null;
+      const oneHanded = stance !== null && isOneHandedStance(stance);
+      if (glb) this.unarmed.sync(glb, healthState, oneHanded, dt, supportHand);
+      if (glb && supportGrip) {
+        this.hands?.syncHold(glb, triggerHand, supportGrip, oneHanded);
+        const aiming = stance === 'SHOULDERED' || stance === 'PISTOL_AIM';
+        this.aimHead.sync(glb, aiming ? this.heldWeaponNode.forward : null, dt);
+        return;
+      }
+      this.hold.release();
+      if (glb) this.aimHead.sync(glb, null, dt);
       const twoHandReadyIdle = canUseSupport && weaponId !== 'silver_talon_50ae' &&
         (clip === 'CombatReadyIdle' || clip === 'CombatReadyIdle_Southpaw');
       if (glbTrigNode) {
