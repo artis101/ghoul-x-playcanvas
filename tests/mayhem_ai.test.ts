@@ -244,20 +244,21 @@ describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
       }
     });
 
-    it('triggers chain-reaction detonations across close barrels while strictly preventing infinite recursion', () => {
+    it('chains only tightly clustered pallet barrels without recursion while keeping separated station barrels intact', () => {
       const world = new RapierPhysicsWorld();
       const detonationOrder: string[] = [];
 
       try {
-        // Place 3 barrels 3.2m apart (well inside 6.5m blast radius) with synchronous chain fuse (0s)
-        // AND cyclic re-entry inside onBarrelDetonated -> applyBlast to stress-test recursion safety!
+        // Barrels 0..2 sit 1.4m apart in a tight pallet cluster; Barrel 3 sits 3.4m away at another station
+        // AND cyclic re-entry inside onBarrelDetonated -> applyBlast stress-tests recursion safety!
         const manager = new ExplosiveBarrelManager({
           rapierWorld: world,
           sympatheticChainFuseS: 0,
           barrelPositions: [
-            { x: -3.2, y: 0, z: -10.0 },
+            { x: -1.4, y: 0, z: -10.0 },
             { x: 0.0, y: 0, z: -10.0 },
-            { x: 3.2, y: 0, z: -10.0 },
+            { x: 1.4, y: 0, z: -10.0 },
+            { x: 4.8, y: 0, z: -10.0 },
           ],
           onBarrelDetonated: (barrel, blast) => {
             detonationOrder.push(barrel.objectId);
@@ -268,7 +269,7 @@ describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
 
         // Shoot barrel 0 via handleRaySegment with a high-energy rifle round
         const segRes = manager.handleRaySegment({
-          originWorld: { x: -3.2, y: 0.45, z: -6.0 },
+          originWorld: { x: -1.4, y: 0.45, z: -6.0 },
           directionWorld: { x: 0, y: 0, z: -1 },
           maxDistanceM: 8.0,
           kineticEnergyJ: 3400,
@@ -279,7 +280,7 @@ describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
         expect(segRes).not.toBeNull();
         expect(manager.barrels[0].state).toBe('IGNITED_HISSING');
 
-        // Advance past 0.18s fuse -> Barrel 0 detonates -> chains to Barrel 1 -> chains to Barrel 2!
+        // Advance past 0.18s fuse -> Barrel 0 detonates -> chains across pallet cluster (1, 2), leaving separated Barrel 3 intact!
         manager.update(0.2);
 
         expect(detonationOrder).toEqual([
@@ -287,7 +288,10 @@ describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
           'hazard_barrel_1',
           'hazard_barrel_2',
         ]);
-        expect(manager.barrels.every((b) => b.state === 'DETONATED')).toBe(true);
+        expect(manager.barrels[0].state).toBe('DETONATED');
+        expect(manager.barrels[1].state).toBe('DETONATED');
+        expect(manager.barrels[2].state).toBe('DETONATED');
+        expect(manager.barrels[3].state).toBe('INTACT');
 
         manager.destroy();
       } finally {

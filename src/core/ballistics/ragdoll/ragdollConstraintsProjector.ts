@@ -17,7 +17,26 @@ import {
 } from '../vec3.ts';
 import { getRagdollParticleRef } from './ragdollParticles.ts';
 
-const WAREHOUSE_BOUND_XZ_M = 28.0;
+const RAGDOLL_WORLD_BOUND_XZ_M = 320.0;
+
+function clampParticleWorldBoundsXZ(pos: Vec3Like, prevPos: Vec3Like, radiusM: number): void {
+  const minBound = -RAGDOLL_WORLD_BOUND_XZ_M + radiusM;
+  const maxBound = RAGDOLL_WORLD_BOUND_XZ_M - radiusM;
+  if (pos.x < minBound) {
+    pos.x = minBound;
+    if (prevPos.x < minBound) prevPos.x = minBound;
+  } else if (pos.x > maxBound) {
+    pos.x = maxBound;
+    if (prevPos.x > maxBound) prevPos.x = maxBound;
+  }
+  if (pos.z < minBound) {
+    pos.z = minBound;
+    if (prevPos.z < minBound) prevPos.z = minBound;
+  } else if (pos.z > maxBound) {
+    pos.z = maxBound;
+    if (prevPos.z > maxBound) prevPos.z = maxBound;
+  }
+}
 
 function applyDampedGuardShift(bone: RagdollBoneState, delta: Vec3Like, prevFollow = 0.78): void {
   bone.position.x += delta.x;
@@ -212,7 +231,7 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
     }
   }
 
-  // 5. Floor & Warehouse Boundary Collision Projection (preserving prevPosition delta on XZ clamp)
+  // 5. Floor & World XZ Safety Boundary Projection
   for (const z of ALL_GHOUL_ZONES) {
     const b = target.ragdollBones[z];
     const active = (target.isRagdollActive || b.componentId !== 'BODY') && b.goreMode !== 'CRANIAL_POP';
@@ -222,24 +241,7 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
     if (b.position.y < minFloor) {
       b.position.y = minFloor;
     }
-    if (b.position.x < -WAREHOUSE_BOUND_XZ_M) {
-      const dx = -WAREHOUSE_BOUND_XZ_M - b.position.x;
-      b.position.x = -WAREHOUSE_BOUND_XZ_M;
-      b.prevPosition.x += dx;
-    } else if (b.position.x > WAREHOUSE_BOUND_XZ_M) {
-      const dx = WAREHOUSE_BOUND_XZ_M - b.position.x;
-      b.position.x = WAREHOUSE_BOUND_XZ_M;
-      b.prevPosition.x += dx;
-    }
-    if (b.position.z < -WAREHOUSE_BOUND_XZ_M) {
-      const dz = -WAREHOUSE_BOUND_XZ_M - b.position.z;
-      b.position.z = -WAREHOUSE_BOUND_XZ_M;
-      b.prevPosition.z += dz;
-    } else if (b.position.z > WAREHOUSE_BOUND_XZ_M) {
-      const dz = WAREHOUSE_BOUND_XZ_M - b.position.z;
-      b.position.z = WAREHOUSE_BOUND_XZ_M;
-      b.prevPosition.z += dz;
-    }
+    clampParticleWorldBoundsXZ(b.position, b.prevPosition, b.radiusM);
   }
 
   for (const aId of ALL_AUX_PARTICLES) {
@@ -249,23 +251,6 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
     if (a.position.y < minFloor) {
       a.position.y = minFloor;
     }
-    if (a.position.x < -WAREHOUSE_BOUND_XZ_M) {
-      const dx = -WAREHOUSE_BOUND_XZ_M - a.position.x;
-      a.position.x = -WAREHOUSE_BOUND_XZ_M;
-      a.prevPosition.x += dx;
-    } else if (a.position.x > WAREHOUSE_BOUND_XZ_M) {
-      const dx = WAREHOUSE_BOUND_XZ_M - a.position.x;
-      a.position.x = WAREHOUSE_BOUND_XZ_M;
-      a.prevPosition.x += dx;
-    }
-    if (a.position.z < -WAREHOUSE_BOUND_XZ_M) {
-      const dz = -WAREHOUSE_BOUND_XZ_M - a.position.z;
-      a.position.z = -WAREHOUSE_BOUND_XZ_M;
-      a.prevPosition.z += dz;
-    } else if (a.position.z > WAREHOUSE_BOUND_XZ_M) {
-      const dz = WAREHOUSE_BOUND_XZ_M - a.position.z;
-      a.position.z = WAREHOUSE_BOUND_XZ_M;
-      a.prevPosition.z += dz;
-    }
+    clampParticleWorldBoundsXZ(a.position, a.prevPosition, a.radiusM);
   }
 }

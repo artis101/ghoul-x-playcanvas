@@ -5,6 +5,8 @@ import type { HardwareInstancedPool } from '../../physics/instancedPool.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 import {
   BARREL_FUSE_DURATION_S,
+  BARREL_SYMPATHETIC_CHAIN_RADIUS_M,
+  BARREL_SYMPATHETIC_IGNITION_J,
   DEFAULT_HAZARD_BARREL_POSITIONS,
   ExplosiveBarrelHitInput,
   ExplosiveBarrelManagerOptions,
@@ -102,13 +104,14 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
 
   public applyBlast(blast: BlastEvent): void {
     if (this.destroyed || blast.radiusM <= 0 || blast.peakEnergyJ <= 0) return;
+    const maxChainDistM = Math.min(blast.radiusM, BARREL_SYMPATHETIC_CHAIN_RADIUS_M);
     for (const barrel of this.barrels) {
       if (barrel.state !== 'INTACT') continue;
       const drumCenter = { x: barrel.basePosition.x, y: barrel.basePosition.y + 0.45, z: barrel.basePosition.z };
       const distM = distance(blast.centerWorld, drumCenter);
-      if (distM > blast.radiusM) continue;
-      const falloff = Math.max(0, 1 - distM / blast.radiusM);
-      if (blast.peakEnergyJ * falloff < 450) continue;
+      if (distM > maxChainDistM) continue;
+      const falloff = Math.max(0, 1 - distM / maxChainDistM);
+      if (blast.peakEnergyJ * falloff < BARREL_SYMPATHETIC_IGNITION_J) continue;
       barrel.ignitionDamage = Math.max(1.0, barrel.ignitionDamage + 1.0);
       if (this.sympatheticChainFuseS <= 0) this.detonateBarrel(barrel);
       else this.igniteBarrel(barrel, this.sympatheticChainFuseS);

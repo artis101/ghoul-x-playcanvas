@@ -14,7 +14,13 @@ import {
 } from '../src/core/ghoul/anatomy/proceduralTraumaIk.ts';
 import { stepRagdollPhysics } from '../src/core/ballistics/ragdoll/ragdollVerletStep.ts';
 import { stabilizeRagdollPoseForTransition } from '../src/core/ballistics/ragdoll/ragdollPoseStabilizer.ts';
-import { length, vec3 } from '../src/core/ballistics/vec3.ts';
+import { applyShotReportToTarget, simulateShot } from '../src/core/ballistics/solver.ts';
+import {
+  AMMO_762_NATO_M118LR,
+  DEFAULT_ENVIRONMENT,
+  WEAPON_MSG90,
+} from '../src/core/ballistics/weapons.ts';
+import { length, normalize, sub, vec3 } from '../src/core/ballistics/vec3.ts';
 import {
   createJaggedHoleStamp,
   createWoodPanelState,
@@ -100,6 +106,62 @@ describe('Wave 1, Wave 2 & Wave 3 — Ragdoll Stability, Trauma IK, Destruction 
     expect(maxObservedSpeed).toBeLessThanOrEqual(11.0);
     expect(Math.abs(target.ragdollBones.PELVIS_GROIN.position.x - 14.5)).toBeLessThan(1.75);
     expect(Math.abs(target.ragdollBones.PELVIS_GROIN.position.z - -12.0)).toBeLessThan(1.75);
+  });
+
+  it('never teleports or launches the 42m overwatch sniper (z=-42m) or boundary-contacting ragdolls upward when killed', () => {
+    const sniper = createTargetHealthState(
+      'target_6',
+      'SPETSNAZ SNIPER (42m OVERWATCH)',
+      vec3(0.4, 0, -42.0),
+      0,
+      'SNIPER_OPERATIVE',
+      true
+    );
+    const shooterOrigin = vec3(0.4, 1.62, 0);
+    const headPos = sniper.ragdollBones.HEAD_CRANIUM.position;
+    const report = simulateShot(
+      WEAPON_MSG90,
+      AMMO_762_NATO_M118LR,
+      shooterOrigin,
+      normalize(sub(headPos, shooterOrigin)),
+      sniper,
+      DEFAULT_ENVIRONMENT
+    );
+    expect(report.hitTarget).toBe(true);
+    applyShotReportToTarget(sniper, report);
+    expect(sniper.alive).toBe(false);
+    expect(sniper.isRagdollActive).toBe(true);
+
+    // Must remain at the 42m overwatch station rather than teleporting to -28m
+    expect(Math.abs(sniper.ragdollBones.PELVIS_GROIN.position.z - -42.0)).toBeLessThan(0.5);
+
+    let maxPelvisY = sniper.ragdollBones.PELVIS_GROIN.position.y;
+    let maxHeadY = sniper.ragdollBones.HEAD_CRANIUM.position.y;
+    for (let i = 0; i < 120; i++) {
+      stepRagdollPhysics(sniper, 1 / 60, 0.0);
+      maxPelvisY = Math.max(maxPelvisY, sniper.ragdollBones.PELVIS_GROIN.position.y);
+      maxHeadY = Math.max(maxHeadY, sniper.ragdollBones.HEAD_CRANIUM.position.y);
+    }
+
+    expect(maxPelvisY).toBeLessThan(1.1);
+    expect(maxHeadY).toBeLessThan(1.8);
+    expect(Math.abs(sniper.ragdollBones.PELVIS_GROIN.position.z - -42.0)).toBeLessThan(2.5);
+
+    // Also verify XZ world safety boundary contact stops normal velocity without wall suction or vertical launch
+    const edgeCorpse = createTargetHealthState('edge_corpse', 'Edge', vec3(0, 0, -319.7), 0);
+    edgeCorpse.alive = false;
+    edgeCorpse.isRagdollActive = true;
+    stabilizeRagdollPoseForTransition(edgeCorpse, 0.0);
+    for (const z of ALL_GHOUL_ZONES) {
+      edgeCorpse.ragdollBones[z].velocity = vec3(0, 0, -3.2);
+    }
+    let maxEdgePelvisY = edgeCorpse.ragdollBones.PELVIS_GROIN.position.y;
+    for (let i = 0; i < 90; i++) {
+      stepRagdollPhysics(edgeCorpse, 1 / 60, 0.0);
+      maxEdgePelvisY = Math.max(maxEdgePelvisY, edgeCorpse.ragdollBones.PELVIS_GROIN.position.y);
+    }
+    expect(maxEdgePelvisY).toBeLessThan(1.1);
+    expect(edgeCorpse.ragdollBones.PELVIS_GROIN.position.z).toBeGreaterThanOrEqual(-320.0);
   });
 
   it('solves procedural trauma IK: wound clutching, hit-jolt, downed prop-up, and dead-limb pendulum', () => {

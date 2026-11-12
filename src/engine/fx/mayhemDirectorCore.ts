@@ -142,7 +142,7 @@ export class MayhemDirector {
       sympatheticChainFuseS: options.sympatheticChainFuseS,
       onBarrelIgnited: options.onBarrelIgnited,
       onBarrelDetonated: (_b, blast) => {
-        this.triggerExplosionLight(blast.centerWorld, 20.0);
+        this.triggerExplosionLight(blast.centerWorld, Math.max(11.0, blast.radiusM * 4.5));
         this.spawnMultiStageExplosionFx(blast);
         this.lingeringSmokePool.applyBlastSwirl(blast.centerWorld, blast.radiusM, blast.peakImpulseNs);
         this.onExplosionBlast?.(blast);

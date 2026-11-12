@@ -33,6 +33,8 @@ export {
   BARREL_BLAST_PEAK_IMPULSE_NS,
   BARREL_BLAST_RADIUS_M,
   BARREL_FUSE_DURATION_S,
+  BARREL_SYMPATHETIC_CHAIN_RADIUS_M,
+  BARREL_SYMPATHETIC_IGNITION_J,
   DEFAULT_HAZARD_BARREL_POSITIONS,
 } from './barrels/barrelTypes.ts';
 export { HazardBarrelsScript } from './barrels/hazardBarrelScript.ts';

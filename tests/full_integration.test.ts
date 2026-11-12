@@ -325,7 +325,7 @@ describe('Phase 3 Grand Unified Max Mayhem Arena Integration', () => {
     }
   });
 
-  it('chains red hazard barrel explosions into BFS brick/concrete collapse + GHOUL physiology blast trauma, supports [Z] Bullet-Time, and resets cleanly', () => {
+  it('detonates a shot hazard barrel into a localized brick breach + blast trauma without chaining across arena stations, supports [Z] Bullet-Time, and resets cleanly', () => {
     const arena = createUnifiedArenaHarness();
     try {
       const brickId = DESTRUCTION_ZONE_LAYOUT.instancedBrickWall.id;
@@ -338,8 +338,7 @@ describe('Phase 3 Grand Unified Max Mayhem Arena Integration', () => {
       expect(concreteWall!.detachedChunkCount).toBe(0);
 
       // Shoot hazard_barrel_1 at (-2.35, 0, -12.2) with Silver Talon .50 AE FMJ
-      const barrel1 = arena.mayhemDirector.barrels.barrels[1];
-      const barrel2 = arena.mayhemDirector.barrels.barrels[2];
+      const [barrel0, barrel1, barrel2, barrel3] = arena.mayhemDirector.barrels.barrels;
       expect(barrel1.state).toBe('INTACT');
       expect(barrel2.state).toBe('INTACT');
 
@@ -354,25 +353,28 @@ describe('Phase 3 Grand Unified Max Mayhem Arena Integration', () => {
 
       expect(barrel1.state).toBe('IGNITED_HISSING');
 
-      // Step 26 frames (0.43s > 0.18s primary fuse + 0.08s sympathetic chain fuse)
+      // Step 26 frames (0.43s > 0.18s primary fuse + any chain fuse)
       arena.stepFrames(26, 1 / 60);
 
-      // Both barrels detonated via chain reaction!
+      // Only barrel_1 detonates — no arena-wide chain reaction across other stations!
       expect(barrel1.state).toBe('DETONATED');
-      expect(barrel2.state).toBe('DETONATED');
+      expect(barrel0.state).toBe('INTACT');
+      expect(barrel2.state).toBe('INTACT');
+      expect(barrel3.state).toBe('INTACT');
 
-      // Running-bond brick wall & 36-cell MultiDraw Voronoi concrete barrier both suffered BFS chunk detachment!
+      // Running-bond brick wall suffers a localized breach (not total collapse), while concrete wall stays intact!
       expect(brickWall!.detachedBrickCount).toBeGreaterThan(0);
-      expect(concreteWall!.detachedChunkCount).toBeGreaterThan(0);
+      expect(brickWall!.intactBrickCount).toBeGreaterThan(0);
+      expect(concreteWall!.detachedChunkCount).toBe(0);
 
-      // Hostiles 4 (behind brick wall) & 5 (behind concrete wall) suffered blast shrapnel trauma & ragdoll launch!
+      // Hostile 4 (behind brick wall) suffers blast trauma, while Hostile 5 (behind concrete wall) is untouched!
       const target4 = arena.combatDirector.targets[4];
       const target5 = arena.combatDirector.targets[5];
       expect(target4.healthState.currentHp).toBeLessThan(target4.healthState.maxHp);
-      expect(target5.healthState.currentHp).toBeLessThan(target5.healthState.maxHp);
       expect(target4.healthState.isRagdollActive).toBe(true);
-      expect(target5.healthState.isRagdollActive).toBe(true);
-      expect(arena.combatAudio.getDiagnostics().explosionCount).toBeGreaterThanOrEqual(2);
+      expect(target5.healthState.currentHp).toBe(target5.healthState.maxHp);
+      expect(target5.healthState.isRagdollActive).toBe(false);
+      expect(arena.combatAudio.getDiagnostics().explosionCount).toBe(1);
 
       // Toggle [Z] Reflex Bullet-Time and verify timeScale dilates smoothly below 1.0x
       const activated = arena.mayhemDirector.bulletTime.toggleReflex();

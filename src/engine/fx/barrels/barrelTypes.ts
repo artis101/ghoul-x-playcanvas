@@ -26,9 +26,11 @@ export interface HazardBarrelInstance {
 }
 
 export const BARREL_FUSE_DURATION_S = 0.18;
-export const BARREL_BLAST_RADIUS_M = 6.5;
-export const BARREL_BLAST_PEAK_IMPULSE_NS = 1850;
-export const BARREL_BLAST_PEAK_ENERGY_J = 14000;
+export const BARREL_BLAST_RADIUS_M = 2.55;
+export const BARREL_BLAST_PEAK_IMPULSE_NS = 210;
+export const BARREL_BLAST_PEAK_ENERGY_J = 3200;
+export const BARREL_SYMPATHETIC_CHAIN_RADIUS_M = 2.2;
+export const BARREL_SYMPATHETIC_IGNITION_J = 950;
 
 export const DEFAULT_HAZARD_BARREL_POSITIONS: readonly Vec3Like[] = [
   { x: -0.95, y: 0, z: -7.0 },  // Next to Wood Shoot-House Wall (z = -7.2)
