@@ -46,7 +46,7 @@ export function playSlowMoTransition(
       0.015,
     );
 
-    stopHeartbeatBus(state, t0);
+    stopHeartbeatBus(ctx, state, t0);
     const hbBus = g.createGain();
     hbBus.gain.setValueAtTime(0.85, t0);
     hbBus.connect(g.dryBus);
@@ -60,7 +60,7 @@ export function playSlowMoTransition(
     return;
   }
 
-  stopHeartbeatBus(state, t0);
+  stopHeartbeatBus(ctx, state, t0);
 
   spawnPitchDropOsc(
     ctx,
@@ -122,7 +122,7 @@ export function scheduleHeartbeatPair(
   );
 }
 
-export function stopHeartbeatBus(state: SlowMoSynthState, now: number): void {
+export function stopHeartbeatBus(ctx: SynthContext, state: SlowMoSynthState, now: number): void {
   if (!state.heartbeatBus) {
     return;
   }
@@ -131,4 +131,6 @@ export function stopHeartbeatBus(state: SlowMoSynthState, now: number): void {
   oldBus.gain.cancelScheduledValues(now);
   oldBus.gain.setValueAtTime(Math.max(0.0001, oldBus.gain.value), now);
   oldBus.gain.exponentialRampToValueAtTime(0.0001, now + 0.055);
+  oldBus.gain.linearRampToValueAtTime(0, now + 0.065);
+  ctx.registerTransientNodes([oldBus], now + 0.12);
 }

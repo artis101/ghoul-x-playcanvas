@@ -28,18 +28,23 @@ export function synthesizeShotgunFire(
 
   const subShaper = g.createWaveShaper();
   subShaper.curve = g.warmDriveCurve;
-  subShaper.oversample = '2x';
+  subShaper.oversample = 'none';
 
   const subGain = g.createGain();
+  subGain.gain.value = 0;
   subGain.gain.setValueAtTime(0.0001, t0);
-  subGain.gain.linearRampToValueAtTime(0.88, t0 + 0.003);
+  subGain.gain.linearRampToValueAtTime(0.84, t0 + 0.003);
   subGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.24 * stretch);
+  subGain.gain.linearRampToValueAtTime(0, t0 + 0.246 * stretch);
 
-  subOsc.connect(subShaper);
-  subShaper.connect(subGain);
-  subGain.connect(shotBus);
+  const subStopAt = t0 + 0.255 * stretch;
+  subOsc.connect(subGain);
+  subGain.connect(subShaper);
+  subShaper.connect(shotBus);
   subOsc.start(t0);
-  subOsc.stop(t0 + 0.25 * stretch);
+  subOsc.stop(subStopAt);
+  ctx.registerScaledOscillator(subOsc, pScale, subStopAt);
+  ctx.registerTransientNodes([subOsc, subGain, subShaper], subStopAt + 0.05);
 
   spawnNoiseBurst(
     ctx,

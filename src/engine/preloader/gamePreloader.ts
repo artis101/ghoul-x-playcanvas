@@ -190,7 +190,10 @@ export async function runGamePreloader(
     currentPhase = 'AUDIO_DSP';
     emitProgress('AUDIO_DSP', 0.25, 'Synthesizing warehouse impulse response & WebAudio DSP buses...');
     await yieldAnimationFrame(yieldFrames);
-    const combatAudio = new CombatAudioEngine(options.audioOptions);
+    const combatAudio = new CombatAudioEngine({
+      pannerModel: 'equalpower',
+      ...options.audioOptions,
+    });
     const dspWarm = combatAudio.prewarmDspGraph();
     emitProgress(
       'AUDIO_DSP',

@@ -38,6 +38,7 @@ export function playRadioBarkCue(
     const radioBus = g.createGain();
     radioBus.gain.setValueAtTime(0.85, t0);
     radioBus.connect(g.dryBus);
+    ctx.registerTransientNodes([radioBus], t0 + 1.8 * stretch);
 
     // 1. Opening PTT key-click + military two-tone squelch chirp
     spawnNoiseBurst(

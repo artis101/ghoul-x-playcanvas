@@ -15,6 +15,11 @@ export function handleTriggerPull(app: IGhoulXApp): void {
   const muzzleWorld = app.arsenalManager.muzzleFlashEntity.getPosition();
   const muzzleVec = vec3(muzzleWorld.x, muzzleWorld.y, muzzleWorld.z);
 
+  app.combatAudio.updateListener(
+    eyeVec,
+    app.fpsController.cameraYaw,
+    app.fpsController.cameraPitch
+  );
   app.combatAudio.playWeaponFire(weapon.id, ammo.type, app.fpsController.isAimingDownSights);
   app.mayhemDirector.onPlayerWeaponFired(eyeVec, aimVec, weapon, ammo, muzzleVec);
   app.tacticalAi.notifyGunshotOrExplosion(eyeVec, 40.0, 0.24);

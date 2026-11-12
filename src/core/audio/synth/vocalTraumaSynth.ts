@@ -3,7 +3,7 @@ import type { AudioNodeLike } from '../contracts.ts';
 import type { VocalTraumaCueKind } from '../types.ts';
 import type { SynthContext } from './synthPrimitives.ts';
 import { spawnNoiseBurst, spawnPitchDropOsc } from './synthPrimitives.ts';
-import { computeSlowMoAudioFactors } from '../audioMath.ts';
+import { clampNumber, computeSlowMoAudioFactors } from '../audioMath.ts';
 
 export function playVocalTraumaCue(
   ctx: SynthContext,
@@ -125,6 +125,7 @@ export function playVocalTraumaCue(
   }
 
   // PAIN_GRUNT
+  const maxFreqHz = Math.max(2000, Math.min(20000, (g.ctx.sampleRate || 44100) * 0.48));
   const glottal = g.createOscillator();
   glottal.type = 'sawtooth';
   glottal.frequency.setValueAtTime(142 * pScale, t0 + 0.015 * stretch);
@@ -132,18 +133,24 @@ export function playVocalTraumaCue(
 
   const formant1 = g.createBiquadFilter();
   formant1.type = 'bandpass';
-  formant1.frequency.setValueAtTime(590 * factors.lowpassScale, t0);
+  formant1.frequency.setValueAtTime(clampNumber(590 * factors.lowpassScale, 80, maxFreqHz), t0);
   formant1.Q.setValueAtTime(4.8, t0);
 
   const gruntEnv = g.createGain();
+  gruntEnv.gain.value = 0;
+  gruntEnv.gain.setValueAtTime(0.0001, t0);
   gruntEnv.gain.setValueAtTime(0.0001, t0 + 0.015 * stretch);
   gruntEnv.gain.linearRampToValueAtTime(0.14, t0 + 0.038 * stretch);
   gruntEnv.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.20 * stretch);
+  gruntEnv.gain.linearRampToValueAtTime(0, t0 + 0.208 * stretch);
 
+  const stopAt = t0 + 0.218 * stretch;
   glottal.connect(formant1);
   formant1.connect(gruntEnv);
   gruntEnv.connect(targetBus);
 
   glottal.start(t0 + 0.015 * stretch);
-  glottal.stop(t0 + 0.21 * stretch);
+  glottal.stop(stopAt);
+  ctx.registerScaledOscillator(glottal, pScale, stopAt);
+  ctx.registerTransientNodes([glottal, formant1, gruntEnv], stopAt + 0.05);
 }

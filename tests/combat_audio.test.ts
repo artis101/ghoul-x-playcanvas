@@ -7,6 +7,7 @@ import {
   clampTimeScale,
   computeSlowMoAudioFactors,
   computeSpatialAudioParams,
+  createMasterLimiterCurve,
   createSoftClipCurve,
   synthesizeWarehouseImpulseResponse,
   computeImpactEnergyGain,
@@ -87,6 +88,10 @@ class MockAudioParam implements AudioParamLike {
 }
 
 class MockAudioNode implements AudioNodeLike {
+  public channelCount?: number;
+  public channelCountMode?: ChannelCountMode;
+  public channelInterpretation?: ChannelInterpretation;
+  public maxChannelCount?: number;
   public readonly connections: AudioNodeLike[] = [];
   public disconnected = false;
 
@@ -268,6 +273,7 @@ class MockAudioContext implements AudioContextLike<MockAudioBuffer> {
   constructor(initialState: AudioContextState = 'running', sampleRate = 22050) {
     this.state = initialState;
     this.sampleRate = sampleRate;
+    this.destination.maxChannelCount = 6;
   }
 
   public async resume(): Promise<void> {
@@ -891,6 +897,63 @@ describe('AAA 3D Spatial Combat, Destruction & Gore WebAudio Engine', () => {
             o.frequency.events.some((e) => Math.abs(e.value - 178) < 1),
         ),
       ).toBe(true);
+
+      engine.destroy();
+    });
+
+    it('locks stereo bus channels, preserves pitched orthonormal listener basis, throttles 8-pellet bursts, and disconnects finished nodes', () => {
+      const limCurve = createMasterLimiterCurve(4.0, 0.65, 0.97, 1025);
+      const midIdx = 512;
+      expect(limCurve[midIdx]).toBeCloseTo(0, 6);
+      // At x = +0.1 (signal = +0.4 <= 0.65), limiter is strictly unity-linear
+      const idx01 = Math.round(((0.1 + 1) * 0.5) * 1024);
+      const xActual = (idx01 * 2) / 1024 - 1;
+      expect(limCurve[idx01]).toBeCloseTo(xActual * 4.0, 5);
+      // At +12 dBFS (x = +1.0, signal = +4.0), output stays smoothly capped <= 0.97
+      expect(limCurve[1024]).toBeLessThanOrEqual(0.971);
+      expect(limCurve[0]).toBeGreaterThanOrEqual(-0.971);
+
+      const mockCtx = new MockAudioContext('running', 48000);
+      mockCtx.currentTime = 5.0;
+      const engine = new CombatAudioEngine({
+        context: mockCtx,
+        pannerModel: 'equalpower',
+        random: () => 0.5,
+        autoUnlockOnGesture: false,
+      });
+
+      // Multi-channel destination (e.g. 6-speaker MacBook array) & master compressor locked to 2ch stereo
+      expect(mockCtx.destination.channelCount).toBe(2);
+      expect(mockCtx.destination.channelCountMode).toBe('explicit');
+      expect(mockCtx.destination.channelInterpretation).toBe('speakers');
+      expect(mockCtx.compressors[0].channelCount).toBe(2);
+      expect(mockCtx.compressors[0].channelCountMode).toBe('explicit');
+
+      // Update listener with non-zero pitch (-25 deg) and yaw (35 deg) -> forward & up are orthonormal,
+      // and spawning a spatial sound must NOT reset listener pitch back to 0!
+      const listenerPos = { x: 1.0, y: 1.62, z: -2.0 };
+      engine.updateListener(listenerPos, 35, -25);
+      const fyBefore = mockCtx.listener.forwardY.value;
+      expect(fyBefore).toBeLessThan(-0.4);
+
+      // Simulate 8 simultaneous buckshot pellets hitting CONCRETE_INTACT in the same millisecond
+      const pannersBefore = mockCtx.panners.length;
+      for (let p = 0; p < 8; p++) {
+        engine.playMaterialImpact('CONCRETE_INTACT', { x: 3.5, y: 1.4, z: -9.0 }, 260, listenerPos);
+      }
+      expect(engine.getDiagnostics().materialImpactCount).toBe(8);
+      // Capped to 3 staggered spatial chains instead of 8 in-phase clipping chains
+      const spawnedPanners = mockCtx.panners.slice(pannersBefore);
+      expect(spawnedPanners.length).toBe(3);
+      // Stereo wet send taps post-panner (2 connections: dryBus + wetSend)
+      expect(spawnedPanners[0].connections.length).toBe(2);
+      // Listener pitch was preserved (not clobbered to 0)
+      expect(mockCtx.listener.forwardY.value).toBeCloseTo(fyBefore, 6);
+
+      // Advance audio clock past chain & node TTL -> update() disconnects finished transient nodes & panners
+      mockCtx.currentTime = 12.0;
+      engine.update(0.016);
+      expect(spawnedPanners.every((p) => p.disconnected)).toBe(true);
 
       engine.destroy();
     });

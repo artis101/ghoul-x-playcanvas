@@ -137,14 +137,19 @@ export function playExplosion(
 
     const ringGain = g.createGain();
     const peakRing = 0.075 * proximityFactor * Math.min(1.25, clampedIntensity);
+    ringGain.gain.value = 0;
+    ringGain.gain.setValueAtTime(0.0001, t0);
     ringGain.gain.setValueAtTime(0.0001, t0 + 0.02);
     ringGain.gain.linearRampToValueAtTime(peakRing, t0 + 0.08);
     ringGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.45);
+    ringGain.gain.linearRampToValueAtTime(0, t0 + 1.47);
 
+    const ringStopAt = t0 + 1.485;
     ringOsc.connect(ringGain);
     ringGain.connect(g.dryBus);
     ringOsc.start(t0 + 0.02);
-    ringOsc.stop(t0 + 1.48);
+    ringOsc.stop(ringStopAt);
+    ctx.registerTransientNodes([ringOsc, ringGain], ringStopAt + 0.05);
   }
 
   return { triggersTinnitus };

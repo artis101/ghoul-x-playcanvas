@@ -78,7 +78,7 @@ export class GhoulXApplication implements IGhoulXApp {
     );
 
     this.hudController = new HudController();
-    this.combatAudio = options?.combatAudio ?? new CombatAudioEngine();
+    this.combatAudio = options?.combatAudio ?? new CombatAudioEngine({ pannerModel: 'equalpower' });
     this.glbRegistry = glbRegistry ?? new GlbModelRegistry(this.app);
     this.fxManager = new GoreAndBallisticsFxManager(this.app, this.materials, this.glbRegistry);
 

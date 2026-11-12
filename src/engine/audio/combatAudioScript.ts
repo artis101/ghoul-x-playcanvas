@@ -40,10 +40,10 @@ export class CombatAudioScript extends pc.Script {
   /**
    * @attribute
    * @type {string}
-   * @default 'HRTF'
+   * @default 'equalpower'
    * @title Panner Model
    */
-  public pannerModel: PanningModelType = 'HRTF';
+  public pannerModel: PanningModelType = 'equalpower';
 
   public engine!: CombatAudioEngine;
   private appEventHandles: Array<{ name: string; fn: (...args: unknown[]) => void }> = [];

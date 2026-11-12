@@ -12,12 +12,36 @@ import type {
 } from './contracts.ts';
 import type { SpatialCalcOptions } from './types.ts';
 import { clampNumber } from './audioMath.ts';
-import { createSoftClipCurve } from './dspCurves.ts';
+import { createMasterLimiterCurve, createSoftClipCurve } from './dspCurves.ts';
 import { synthesizeWarehouseImpulseResponse } from './reverbSynth.ts';
 import { createPrebakedNoiseBuffers } from './noiseGenerators.ts';
 import { buildSpatialChain, setListenerCoordinates, type SpatialChain } from './spatialChain.ts';
 
 export type { SpatialChain };
+
+const LIMITER_HEADROOM_RANGE = 4.0;
+
+function lockStereoBus(node: AudioNodeLike): void {
+  try {
+    node.channelCount = 2;
+    node.channelCountMode = 'explicit';
+    node.channelInterpretation = 'speakers';
+  } catch {
+    // Ignore on minimal headless mock nodes or fixed-channel nodes
+  }
+}
+
+function configureDestinationStereo(dest: AudioNodeLike): void {
+  try {
+    if (typeof dest.maxChannelCount === 'number' && dest.maxChannelCount >= 2) {
+      dest.channelCount = 2;
+      dest.channelCountMode = 'explicit';
+      dest.channelInterpretation = 'speakers';
+    }
+  } catch {
+    // Hardware destination may lock channelCount on some platforms
+  }
+}
 
 export interface InternalAudioGraph {
   readonly ctx: {
@@ -65,27 +89,47 @@ export function createInternalAudioGraph<TBuffer extends AudioBufferLike>(
   initialMasterVolume: number,
   initialReverbWetMix: number,
   rng: () => number,
+  onChainCreated?: (nodes: readonly AudioNodeLike[], endTime: number) => void,
 ): InternalAudioGraph {
   const sr = Math.max(8000, ctx.sampleRate || 44100);
+  let lastListenerPitchDeg = 0;
+
+  configureDestinationStereo(ctx.destination);
 
   const compressor = ctx.createDynamicsCompressor();
   compressor.threshold.value = -8.0;
-  compressor.knee.value = 10.0;
+  compressor.knee.value = 12.0;
   compressor.ratio.value = 12.0;
-  compressor.attack.value = 0.002;
-  compressor.release.value = 0.14;
+  compressor.attack.value = 0.0005;
+  compressor.release.value = 0.12;
+  lockStereoBus(compressor);
 
   const masterGain = ctx.createGain();
   masterGain.gain.value = clampNumber(initialMasterVolume, 0, 2.0);
+  lockStereoBus(masterGain);
+
+  // Transparent brickwall soft-limiter stage prevents sub-millisecond transients
+  // and multi-pellet bursts from ever hard-clipping [-1, +1] at ctx.destination
+  const preLimiterGain = ctx.createGain();
+  preLimiterGain.gain.value = 1.0 / LIMITER_HEADROOM_RANGE;
+  lockStereoBus(preLimiterGain);
+
+  const masterLimiter = ctx.createWaveShaper();
+  masterLimiter.curve = createMasterLimiterCurve(LIMITER_HEADROOM_RANGE, 0.65, 0.97, 1025);
+  masterLimiter.oversample = 'none';
+  lockStereoBus(masterLimiter);
 
   const dryBus = ctx.createGain();
-  dryBus.gain.value = 0.92;
+  dryBus.gain.value = 0.68;
+  lockStereoBus(dryBus);
 
   const reverbSendBus = ctx.createGain();
   reverbSendBus.gain.value = 1.0;
+  lockStereoBus(reverbSendBus);
 
   const reverbReturnGain = ctx.createGain();
-  reverbReturnGain.gain.value = clampNumber(initialReverbWetMix, 0, 1.2);
+  reverbReturnGain.gain.value = clampNumber(initialReverbWetMix * 0.72, 0, 0.9);
+  lockStereoBus(reverbReturnGain);
 
   const convolver = ctx.createConvolver();
   convolver.normalize = true;
@@ -104,12 +148,14 @@ export function createInternalAudioGraph<TBuffer extends AudioBufferLike>(
   convolver.connect(reverbReturnGain);
   reverbReturnGain.connect(compressor);
   compressor.connect(masterGain);
-  masterGain.connect(ctx.destination);
+  masterGain.connect(preLimiterGain);
+  preLimiterGain.connect(masterLimiter);
+  masterLimiter.connect(ctx.destination);
 
   const { whiteBuf, pinkBuf, crackleBuf } = createPrebakedNoiseBuffers(ctx);
 
   const warmDriveCurve = createSoftClipCurve(2.2, 512);
-  const heavyDriveCurve = createSoftClipCurve(4.6, 512);
+  const heavyDriveCurve = createSoftClipCurve(4.2, 512);
 
   return {
     ctx,
@@ -131,10 +177,26 @@ export function createInternalAudioGraph<TBuffer extends AudioBufferLike>(
       src.playbackRate.value = Math.max(0.04, playbackRate);
       return { source: src, bufferDuration: buf.duration };
     },
-    updateListener: (pos, yaw, pitch) => setListenerCoordinates(ctx, pos, yaw, pitch),
+    updateListener: (pos, yaw, pitch) => {
+      lastListenerPitchDeg = pitch;
+      setListenerCoordinates(ctx, pos, yaw, pitch);
+    },
     createSpatialChain: (wPos, lPos, lYaw, pModel, rMix, opts) => {
       void rng;
-      return buildSpatialChain(ctx as unknown as AudioContextLike, dryBus, reverbSendBus, wPos, lPos, lYaw, pModel, rMix, opts);
+      const chain = buildSpatialChain(
+        ctx as unknown as AudioContextLike,
+        dryBus,
+        reverbSendBus,
+        wPos,
+        lPos,
+        lYaw,
+        pModel,
+        rMix,
+        opts,
+        lastListenerPitchDeg,
+      );
+      onChainCreated?.(chain.nodes, ctx.currentTime + 4.8);
+      return chain;
     },
   };
 }

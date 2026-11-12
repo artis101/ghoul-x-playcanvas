@@ -54,6 +54,14 @@ export class CombatAudioEngine {
   private readonly gunshotState: GunshotSynthState = { m4ShotCounter: 0, lastWeaponPitchJitter: 1.0 };
   private readonly slowMoState: SlowMoSynthState = { slowMoActive: false, heartbeatBus: null, heartbeatNextScheduleTime: 0 };
   private lastVocalCueTime = -10;
+  private lastPruneTime = -10;
+  private impactWindowStart = -10;
+  private impactWindowTotal = 0;
+  private readonly impactWindowByMat = new Map<DestructibleMaterialKind, number>();
+  private casingWindowStart = -10;
+  private casingWindowCount = 0;
+  private goreWindowStart = -10;
+  private goreWindowCount = 0;
   private readonly tracker = new AudioSourceTracker();
   private readonly counters = new AudioCounters();
   private gestureCleanup: (() => void) | null = null;
@@ -64,7 +72,13 @@ export class CombatAudioEngine {
     this.masterVolume = clampNumber(options.masterVolume ?? 0.9, 0, 2.0);
     this.reverbWetMix = clampNumber(options.reverbWetMix ?? 0.34, 0, 1.0);
     this.rng = options.random ?? Math.random;
-    this.contextFactory = createGraphFactory(options, this.masterVolume, this.reverbWetMix, this.rng);
+    this.contextFactory = createGraphFactory(
+      options,
+      this.masterVolume,
+      this.reverbWetMix,
+      this.rng,
+      (nodes, endTime) => this.tracker.registerTransientNodes(nodes, endTime),
+    );
     if (options.context) this.graph = this.contextFactory();
     if (options.autoUnlockOnGesture !== false) {
       this.gestureCleanup = bindGestureUnlock(() => { if (!this.destroyed) void this.unlock(); });
@@ -75,7 +89,11 @@ export class CombatAudioEngine {
     if (this.destroyed) return null;
     if (!this.graph) this.graph = this.contextFactory();
     if (this.graph && this.graph.ctx.state === 'suspended') void this.graph.ctx.resume().catch(() => {});
-    if (this.graph) this.tracker.pruneFinished(this.graph.ctx.currentTime);
+    if (this.graph) {
+      const now = this.graph.ctx.currentTime;
+      this.tracker.pruneFinished(now);
+      this.lastPruneTime = now;
+    }
     return this.graph;
   }
 
@@ -84,6 +102,7 @@ export class CombatAudioEngine {
       graph, timeScale: this.timeScale, rng: this.rng,
       registerScaledSource: (src, rate, end) => this.tracker.registerSource(src, rate, end),
       registerScaledOscillator: (osc, scale, end) => this.tracker.registerOscillator(osc, scale, end),
+      registerTransientNodes: (nodes, end) => this.tracker.registerTransientNodes(nodes, end),
     };
   }
 
@@ -128,7 +147,11 @@ export class CombatAudioEngine {
 
   public setMasterVolume(v: number): void {
     this.masterVolume = clampNumber(v, 0, 2.0);
-    if (this.graph) this.graph.masterGain.gain.setValueAtTime(this.masterVolume, this.graph.ctx.currentTime);
+    if (this.graph) {
+      const now = this.graph.ctx.currentTime;
+      this.graph.masterGain.gain.cancelScheduledValues(now);
+      this.graph.masterGain.gain.setTargetAtTime(this.masterVolume, now, 0.015);
+    }
   }
   public getMasterVolume(): number { return this.masterVolume; }
   public setPannerModel(m: PanningModelType): void { this.pannerModel = m; }
@@ -142,16 +165,24 @@ export class CombatAudioEngine {
   }
 
   public setTimeScale(scale: number): void {
-    this.timeScale = clampTimeScale(scale);
+    const clamped = clampTimeScale(scale);
+    if (Math.abs(clamped - this.timeScale) < 1e-4) return;
+    this.timeScale = clamped;
     if (!this.graph) return;
-    this.tracker.pruneFinished(this.graph.ctx.currentTime);
-    this.tracker.applyTimeScale(this.timeScale);
+    const now = this.graph.ctx.currentTime;
+    this.tracker.pruneFinished(now);
+    this.tracker.applyTimeScale(this.timeScale, now);
   }
   public getTimeScale(): number { return this.timeScale; }
 
   public update(_rawDt: number): void {
-    if (!this.slowMoState.slowMoActive || !this.graph || !this.slowMoState.heartbeatBus) return;
+    if (!this.graph) return;
     const now = this.graph.ctx.currentTime;
+    if (now - this.lastPruneTime >= 0.12) {
+      this.tracker.pruneFinished(now);
+      this.lastPruneTime = now;
+    }
+    if (!this.slowMoState.slowMoActive || !this.slowMoState.heartbeatBus) return;
     if (now + 0.35 >= this.slowMoState.heartbeatNextScheduleTime) {
       scheduleHeartbeatPair(this.getSynthContext(this.graph), this.slowMoState.heartbeatBus, Math.max(now + 0.05, this.slowMoState.heartbeatNextScheduleTime));
       this.slowMoState.heartbeatNextScheduleTime = Math.max(now + 0.05, this.slowMoState.heartbeatNextScheduleTime) + 0.92;
@@ -167,21 +198,62 @@ export class CombatAudioEngine {
   public playShellCasingBounce(c: ShellCasingCaliber, pos: Vec3Like, lPos = this.listenerPos): void {
     this.counters.casingBounceCount += 1;
     const g = this.ensureGraph();
-    if (g) playShellCasingBounce(this.getSynthContext(g), c, pos, lPos, this.listenerYawDeg, this.pannerModel, this.reverbWetMix);
+    if (!g) return;
+    const now = g.ctx.currentTime;
+    if (now - this.casingWindowStart > 0.05) {
+      this.casingWindowStart = now;
+      this.casingWindowCount = 0;
+    }
+    if (this.casingWindowCount >= 4) return;
+    this.casingWindowCount += 1;
+    playShellCasingBounce(this.getSynthContext(g), c, pos, lPos, this.listenerYawDeg, this.pannerModel, this.reverbWetMix);
   }
 
   public playMaterialImpact(m: DestructibleMaterialKind, pos: Vec3Like, energy: number, lPos = this.listenerPos): void {
     this.counters.materialImpactCount += 1;
     const g = this.ensureGraph();
-    if (g) playMaterialImpact(this.getSynthContext(g), m, pos, energy, lPos, this.listenerYawDeg, this.pannerModel, this.reverbWetMix);
+    if (!g) return;
+    const now = g.ctx.currentTime;
+    if (now - this.impactWindowStart > 0.022) {
+      this.impactWindowStart = now;
+      this.impactWindowTotal = 0;
+      this.impactWindowByMat.clear();
+    }
+    const matCount = this.impactWindowByMat.get(m) ?? 0;
+    if (matCount >= 3 || this.impactWindowTotal >= 5) return;
+    this.impactWindowByMat.set(m, matCount + 1);
+    this.impactWindowTotal += 1;
+
+    const startOffsetS = matCount === 0 ? 0 : matCount * 0.0045 + this.rng() * 0.0025;
+    const gainMul = matCount === 0 ? 1.0 : 1.0 / Math.sqrt(matCount + 1);
+    playMaterialImpact(
+      this.getSynthContext(g),
+      m,
+      pos,
+      energy,
+      lPos,
+      this.listenerYawDeg,
+      this.pannerModel,
+      this.reverbWetMix,
+      startOffsetS,
+      gainMul,
+    );
   }
 
   public playGoreImpact(k: GoreImpactAudioKind, pos: Vec3Like, lPos = this.listenerPos): void {
     this.counters.goreImpactCount += 1;
     const g = this.ensureGraph();
-    if (g) playGoreImpact(this.getSynthContext(g), k, pos, lPos, this.listenerYawDeg, this.pannerModel, this.reverbWetMix, {
-      maybeTriggerAutoVocalCue: (cue, wPos, lp, now) => {
-        if (now - this.lastVocalCueTime >= 0.28) this.playVocalTraumaCue(cue, wPos, lp);
+    if (!g) return;
+    const now = g.ctx.currentTime;
+    if (now - this.goreWindowStart > 0.025) {
+      this.goreWindowStart = now;
+      this.goreWindowCount = 0;
+    }
+    if (this.goreWindowCount >= 3) return;
+    this.goreWindowCount += 1;
+    playGoreImpact(this.getSynthContext(g), k, pos, lPos, this.listenerYawDeg, this.pannerModel, this.reverbWetMix, {
+      maybeTriggerAutoVocalCue: (cue, wPos, lp, cueNow) => {
+        if (cueNow - this.lastVocalCueTime >= 0.28) this.playVocalTraumaCue(cue, wPos, lp);
       },
     });
   }

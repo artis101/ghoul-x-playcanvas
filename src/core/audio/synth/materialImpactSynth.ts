@@ -15,13 +15,15 @@ export function playMaterialImpact(
   listenerYawDeg: number,
   pannerModel: PanningModelType,
   reverbWetMix: number,
+  startOffsetS = 0,
+  gainMultiplier = 1.0,
 ): void {
   const g = ctx.graph;
-  const t0 = g.ctx.currentTime;
+  const t0 = g.ctx.currentTime + Math.max(0, startOffsetS);
   const factors = computeSlowMoAudioFactors(ctx.timeScale);
   const pScale = factors.oscillatorPitchScale;
   const stretch = factors.envelopeStretch;
-  const eGain = computeImpactEnergyGain(energyJ);
+  const eGain = computeImpactEnergyGain(energyJ) * clampNumber(gainMultiplier, 0.15, 1.5);
 
   const chain = g.createSpatialChain(
     worldPos,

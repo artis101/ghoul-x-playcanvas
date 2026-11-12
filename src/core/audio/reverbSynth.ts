@@ -22,22 +22,28 @@ export function synthesizeWarehouseImpulseResponse(
   rightOut.fill(0);
 
   // Early concrete & steel truss slapback reflections (timeMs, gainL, gainR)
+  // Balanced L/R Haas energy so centered gunshots stay dead-center while preserving stereo width
   const earlyTaps: ReadonlyArray<readonly [number, number, number]> = [
-    [4.2, 0.42, 0.39],   // Concrete floor bounce
-    [13.6, 0.54, 0.18],  // Left bay wall
-    [17.4, 0.19, 0.52],  // Right bay wall
-    [26.8, 0.34, 0.36],  // Overhead steel roof truss
-    [41.5, 0.31, 0.16],  // Mid-range concrete baffle L
-    [46.9, 0.15, 0.30],  // Mid-range concrete baffle R
-    [74.0, 0.23, 0.25],  // Downrange shooting stall echo
-    [118.5, 0.17, 0.16], // 42m concrete backstop slapback
+    [4.2, 0.34, 0.35],   // Concrete floor bounce
+    [9.8, 0.17, 0.33],   // Near right stall pillar (balances Haas precedence)
+    [13.6, 0.44, 0.18],  // Left bay wall
+    [17.4, 0.18, 0.44],  // Right bay wall
+    [26.8, 0.28, 0.29],  // Overhead steel roof truss
+    [41.5, 0.24, 0.15],  // Mid-range concrete baffle L
+    [46.9, 0.15, 0.24],  // Mid-range concrete baffle R
+    [74.0, 0.19, 0.20],  // Downrange shooting stall echo
+    [118.5, 0.14, 0.14], // 42m concrete backstop slapback
   ];
 
+  const smearLen = Math.max(3, Math.floor(sampleRate * 0.00035));
   for (const [ms, gL, gR] of earlyTaps) {
     const idx = Math.floor((ms * 0.001) * sampleRate);
     if (idx >= 0 && idx < length) {
-      leftOut[idx] += gL;
-      rightOut[idx] += gR;
+      for (let k = 0; k < smearLen && idx + k < length; k++) {
+        const w = k === 0 ? 1.0 : Math.exp(-k * 0.85) * 0.45;
+        leftOut[idx + k] += gL * w;
+        rightOut[idx + k] += gR * w;
+      }
     }
   }
 

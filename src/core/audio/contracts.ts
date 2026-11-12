@@ -13,6 +13,10 @@ export interface AudioParamLike {
 }
 
 export interface AudioNodeLike {
+  channelCount?: number;
+  channelCountMode?: ChannelCountMode;
+  channelInterpretation?: ChannelInterpretation;
+  readonly maxChannelCount?: number;
   connect(destinationNode: AudioNodeLike): unknown;
   disconnect(): void;
 }

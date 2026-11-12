@@ -23,10 +23,11 @@ export function playWeaponFire(
   const t0 = g.ctx.currentTime;
 
   const shotBus = g.createGain();
-  shotBus.gain.setValueAtTime(isAds ? 1.05 : 1.0, t0);
+  shotBus.gain.setValueAtTime(isAds ? 0.92 : 0.88, t0);
   shotBus.connect(g.dryBus);
 
   const warehouseSend = g.createGain();
+  ctx.registerTransientNodes([shotBus, warehouseSend], t0 + 2.4);
   const isAp = ammoType === 'AP';
   const isJhp = ammoType === 'JHP';
 

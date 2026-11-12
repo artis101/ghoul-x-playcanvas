@@ -246,16 +246,20 @@ export function playNearMissGrazeTinnitus(
   ringOsc.frequency.setValueAtTime(ringFreq, t0 + 0.012);
 
   const ringGain = g.createGain();
+  ringGain.gain.value = 0;
+  ringGain.gain.setValueAtTime(0.0001, t0);
   ringGain.gain.setValueAtTime(0.0001, t0 + 0.012);
   ringGain.gain.linearRampToValueAtTime(0.082, t0 + 0.055);
   ringGain.gain.exponentialRampToValueAtTime(0.0001, t0 + ringDur);
+  ringGain.gain.linearRampToValueAtTime(0, t0 + ringDur + 0.012);
 
   ringOsc.connect(ringGain);
   ringGain.connect(g.dryBus);
-  const stopAt = t0 + ringDur + 0.02;
+  const stopAt = t0 + ringDur + 0.025;
   ringOsc.start(t0 + 0.012);
   ringOsc.stop(stopAt);
   ctx.registerScaledOscillator(ringOsc, pScale, stopAt);
+  ctx.registerTransientNodes([ringOsc, ringGain], stopAt + 0.05);
 }
 
 export function playRicochetSnap(

@@ -1,13 +1,13 @@
-import type { AudioBufferLike, AudioContextLike } from '../../core/audio/contracts.ts';
+import type { AudioBufferLike, AudioContextLike, AudioNodeLike } from '../../core/audio/contracts.ts';
 import { createInternalAudioGraph, type InternalAudioGraph } from '../../core/audio/audioGraph.ts';
 import type { CombatAudioEngineOptions } from '../../core/audio/types.ts';
 
 interface WindowWithWebkitAudio {
-  AudioContext?: new () => AudioContext;
-  webkitAudioContext?: new () => AudioContext;
+  AudioContext?: new (options?: AudioContextOptions) => AudioContext;
+  webkitAudioContext?: new (options?: AudioContextOptions) => AudioContext;
 }
 
-export function resolveBrowserAudioContextCtor(): (new () => AudioContext) | null {
+export function resolveBrowserAudioContextCtor(): (new (options?: AudioContextOptions) => AudioContext) | null {
   const scope = globalThis as unknown as WindowWithWebkitAudio;
   if (typeof scope.AudioContext === 'function') return scope.AudioContext;
   if (typeof scope.webkitAudioContext === 'function') return scope.webkitAudioContext;
@@ -45,24 +45,40 @@ export function createGraphFactory(
   masterVolume: number,
   reverbWetMix: number,
   rng: () => number,
+  onChainCreated?: (nodes: readonly AudioNodeLike[], endTime: number) => void,
 ): () => InternalAudioGraph | null {
   if (options.context !== undefined) {
     const p = options.context;
-    return p ? () => createInternalAudioGraph(p, masterVolume, reverbWetMix, rng) : () => null;
+    return p
+      ? () => createInternalAudioGraph(p, masterVolume, reverbWetMix, rng, onChainCreated)
+      : () => null;
   }
   if (options.contextFactory) {
     const f = options.contextFactory;
     return () => {
       const created = f();
-      return created ? createInternalAudioGraph(created, masterVolume, reverbWetMix, rng) : null;
+      return created
+        ? createInternalAudioGraph(created, masterVolume, reverbWetMix, rng, onChainCreated)
+        : null;
     };
   }
   return () => {
     const Ctor = resolveBrowserAudioContextCtor();
     if (!Ctor) return null;
     try {
-      const domCtx = new Ctor();
-      return createInternalAudioGraph<AudioBuffer>(domCtx, masterVolume, reverbWetMix, rng);
+      let domCtx: AudioContext;
+      try {
+        domCtx = new Ctor({ latencyHint: 'interactive' });
+      } catch {
+        domCtx = new Ctor();
+      }
+      return createInternalAudioGraph<AudioBuffer>(
+        domCtx,
+        masterVolume,
+        reverbWetMix,
+        rng,
+        onChainCreated,
+      );
     } catch {
       return null;
     }
