@@ -1,7 +1,7 @@
 import * as pc from 'playcanvas';
 import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import type { ColliderSurfaceTag, QuatLike } from '../../../contracts/destruction.ts';
-import { MarchingGlassPane, createDeterministicPrng } from '../../../core/destruction/glassMarchingTiles.ts';
+import { MarchingGlassPane } from '../../../core/destruction/glassMarchingTiles.ts';
 import {
   ArmoredVoronoiGlassPane,
   GLASS_SHARD_STYLE_ARMORED,
@@ -12,14 +12,12 @@ import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 import {
   DEFAULT_ARMORED_VORONOI_CELL_COUNT,
   INSTANCED_SHARDS_PER_MARCHING_HIT,
-  INSTANCED_SHARD_TTL_S,
   MIN_GLASS_ENERGY_LOSS_J,
   MAX_GLASS_ENERGY_LOSS_J,
   type GlassWindowCreateOptions,
   hashStringSeed,
   inverseRotateVec3ByQuat,
   normalizeQuat,
-  rotateVec3ByQuat,
 } from './glassSystemTypes.ts';
 
 export class MarchingTileGlassWindow {
@@ -49,7 +47,7 @@ export class MarchingTileGlassWindow {
     app: pc.Application,
     private readonly physics: RapierPhysicsWorld,
     material: pc.Material,
-    private readonly instancedPool: HardwareInstancedPool,
+    _instancedPool: HardwareInstancedPool,
     _atlasSizePx: number,
     options: GlassWindowCreateOptions,
     private readonly voronoiShardPool?: GlassShardPool,
@@ -179,15 +177,40 @@ export class MarchingTileGlassWindow {
     return detachedFraction >= 0.55 && this.isBrokenAtWorldPoint(this.centerWorld);
   }
 
+  public crazeFromBluntImpact(pointWorld: Vec3Like, impactRadiusM = 0.24): boolean {
+    const { u, v } = this.worldPointToUv(pointWorld);
+    const hitX = u * this.widthM;
+    const hitY = v * this.heightM;
+    const seed = ++this.hitSeedCounter * 2654435761;
+    const report = this.armoredPane.applyImpact({
+      hitX,
+      hitY,
+      energyJ: 650,
+      radiusM: impactRadiusM,
+      bluntImpactOnly: true,
+      seed,
+    });
+    if (report.alreadyBrokenHole) {
+      return false;
+    }
+    this.pane.syncFromUvSampler((su, sv) => this.armoredPane.sampleCellStateAtUv(su, sv));
+    this.rebuildDynamicMesh();
+    return true;
+  }
+
   public breakAtWorldPoint(
     pointWorld: Vec3Like,
     directionWorld: Vec3Like,
     kineticEnergyJ: number,
     impactRadiusM?: number,
-    instancedCount = INSTANCED_SHARDS_PER_MARCHING_HIT,
+    _instancedCount = INSTANCED_SHARDS_PER_MARCHING_HIT,
     isArmorPiercing = false,
+    speedMs?: number,
+    armorPenetrationFactor?: number,
+    isBlast = false,
   ): {
     alreadyBroken: boolean;
+    stopped: boolean;
     energyAbsorbedJ: number;
     spawnedTriangles: number;
     spawnedVoronoiChunks: number;
@@ -195,21 +218,28 @@ export class MarchingTileGlassWindow {
     const { u, v } = this.worldPointToUv(pointWorld);
     const hitX = u * this.widthM;
     const hitY = v * this.heightM;
-    const hitChunkIdx = this.armoredPane.findChunkAt(hitX, hitY);
-    const wasAlreadyCrazed = hitChunkIdx >= 0 && this.armoredPane.stage[hitChunkIdx] > 0;
 
     const seed = ++this.hitSeedCounter * 2654435761;
     const report = this.armoredPane.applyImpact({
       hitX,
       hitY,
       energyJ: kineticEnergyJ,
+      speedMs,
       radiusM: impactRadiusM,
       isArmorPiercing,
+      armorPenetrationFactor,
+      isBlast,
       seed,
     });
 
     if (report.alreadyBrokenHole) {
-      return { alreadyBroken: true, energyAbsorbedJ: 0, spawnedTriangles: 0, spawnedVoronoiChunks: 0 };
+      return {
+        alreadyBroken: true,
+        stopped: false,
+        energyAbsorbedJ: 0,
+        spawnedTriangles: 0,
+        spawnedVoronoiChunks: 0,
+      };
     }
 
     this.pane.syncFromUvSampler((su, sv) => this.armoredPane.sampleCellStateAtUv(su, sv));
@@ -220,11 +250,10 @@ export class MarchingTileGlassWindow {
       this.colliderHandleValue = -1;
     }
 
-    const spallCount = report.newlyDetachedIndices.length > 0 ? instancedCount : Math.max(6, Math.round(instancedCount * 0.7));
-    const spawnedTriangles = this.emitInstancedTriangles(pointWorld, directionWorld, kineticEnergyJ, spallCount);
-
+    // Armored polycarbonate/PVB laminate retains broken glass in-place on ballistic/blunt impacts;
+    // only high-explosive blasts eject physical chunks out of the frame.
     let spawnedVoronoiChunks = 0;
-    if (this.voronoiShardPool && report.newlyDetachedIndices.length > 0) {
+    if (isBlast && this.voronoiShardPool && report.newlyDetachedIndices.length > 0) {
       spawnedVoronoiChunks = this.voronoiShardPool.spawnShardsSubset(
         this.armoredPane.voronoi,
         report.newlyDetachedIndices,
@@ -241,11 +270,27 @@ export class MarchingTileGlassWindow {
       );
     }
 
-    const energyAbsorbedJ = wasAlreadyCrazed
-      ? Math.max(MIN_GLASS_ENERGY_LOSS_J, this.penetrationResistanceJ * 0.78)
-      : Math.min(MAX_GLASS_ENERGY_LOSS_J, this.penetrationResistanceJ * 1.08);
+    if (!report.perforatedHitChunk && !isBlast) {
+      return {
+        alreadyBroken: false,
+        stopped: true,
+        energyAbsorbedJ: kineticEnergyJ,
+        spawnedTriangles: 0,
+        spawnedVoronoiChunks: 0,
+      };
+    }
 
-    return { alreadyBroken: false, energyAbsorbedJ, spawnedTriangles, spawnedVoronoiChunks };
+    const laminateWorkJ = Math.min(
+      kineticEnergyJ * 0.85,
+      Math.max(260, 340 + report.chunkIntegrityBefore * 1350),
+    );
+    return {
+      alreadyBroken: false,
+      stopped: false,
+      energyAbsorbedJ: laminateWorkJ,
+      spawnedTriangles: 0,
+      spawnedVoronoiChunks,
+    };
   }
 
   public reset(): void {
@@ -303,68 +348,5 @@ export class MarchingTileGlassWindow {
     this.mesh.setColors(this.meshColors, 4, build.vertexCount);
     this.mesh.setIndices(this.meshIndices, build.indexCount);
     this.mesh.update(pc.PRIMITIVE_TRIANGLES, false);
-  }
-
-  private emitInstancedTriangles(
-    originWorld: Vec3Like,
-    directionWorld: Vec3Like,
-    kineticEnergyJ: number,
-    count: number,
-  ): number {
-    const rand = createDeterministicPrng((this.hitSeedCounter * 73856093) ^ Math.round(kineticEnergyJ * 17));
-    const dirLen = Math.hypot(directionWorld.x, directionWorld.y, directionWorld.z);
-    const dx = dirLen > 1e-6 ? directionWorld.x / dirLen : 0;
-    const dy = dirLen > 1e-6 ? directionWorld.y / dirLen : 0;
-    const dz = dirLen > 1e-6 ? directionWorld.z / dirLen : -1;
-    const speedBase = Math.min(6.2, 1.6 + Math.sqrt(Math.max(20, kineticEnergyJ)) * 0.052);
-
-    let spawned = 0;
-    for (let i = 0; i < count; i++) {
-      const angle = (i / Math.max(1, count)) * Math.PI * 2 + (rand() - 0.5) * 0.5;
-      const radialLocal: Vec3Like = { x: Math.cos(angle), y: Math.sin(angle), z: 0 };
-      const radialWorld = rotateVec3ByQuat(radialLocal, this.rotationQuat);
-      const jitterOffset = 0.018 + rand() * 0.042;
-
-      const pos: Vec3Like = {
-        x: originWorld.x + radialWorld.x * jitterOffset + dx * 0.02,
-        y: Math.max(0.03, originWorld.y + radialWorld.y * jitterOffset + dy * 0.02),
-        z: originWorld.z + radialWorld.z * jitterOffset + dz * 0.02,
-      };
-
-      const fwdSpeed = speedBase * (0.55 + rand() * 0.75);
-      const outSpeed = 0.75 + rand() * 1.75;
-      const vel: Vec3Like = {
-        x: dx * fwdSpeed + radialWorld.x * outSpeed,
-        y: dy * fwdSpeed + radialWorld.y * outSpeed + 0.35 + rand() * 0.85,
-        z: dz * fwdSpeed + radialWorld.z * outSpeed,
-      };
-
-      const angVel: Vec3Like = {
-        x: (rand() - 0.5) * 24,
-        y: (rand() - 0.5) * 24,
-        z: (rand() - 0.5) * 24,
-      };
-
-      const shardSize = 0.032 + rand() * 0.040;
-      const scale: Vec3Like = {
-        x: shardSize,
-        y: shardSize * (0.75 + rand() * 0.5),
-        z: 0.012,
-      };
-
-      const slot = this.instancedPool.spawnKinematicParticle(
-        pos,
-        vel,
-        angVel,
-        scale,
-        -9.81,
-        0.28,
-        INSTANCED_SHARD_TTL_S,
-        this.rotationQuat,
-      );
-      if (slot >= 0) spawned++;
-    }
-
-    return spawned;
   }
 }

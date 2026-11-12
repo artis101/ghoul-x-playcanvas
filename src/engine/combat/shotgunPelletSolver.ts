@@ -27,7 +27,16 @@ export function fireMultiPelletShot(
   if (nearTargets.length === 0) {
     for (let pIdx = 0; pIdx < pelletCount; pIdx++) {
       const pelletDir = deterministicConeSpread(normAim, ammo.spreadRadians, pIdx, pelletCount);
-      const intercept = interceptor?.(origin, pelletDir, 80.0, perPelletEnergyJ, muzzleSpeedMs, ammo.diameterM, isAp);
+      const intercept = interceptor?.(
+        origin,
+        pelletDir,
+        80.0,
+        perPelletEnergyJ,
+        muzzleSpeedMs,
+        ammo.diameterM,
+        isAp,
+        ammo.armorPenetrationFactor
+      );
       const traceDistM = Math.max(0.25, intercept?.stoppedDistanceM ?? 45.0);
       const samples = buildSyntheticFlightSamples(origin, pelletDir, muzzleSpeedMs, ammo.massKg, traceDistM, environment.speedOfSoundMs);
       fxManager.spawnFlyingProjectile(samples, true);
@@ -75,7 +84,16 @@ export function fireMultiPelletShot(
         : pelletDir;
 
     if (interceptor) {
-      const intercept = interceptor(origin, interceptDir, earliestHitDistM, perPelletEnergyJ, muzzleSpeedMs, ammo.diameterM, isAp);
+      const intercept = interceptor(
+        origin,
+        interceptDir,
+        earliestHitDistM,
+        perPelletEnergyJ,
+        muzzleSpeedMs,
+        ammo.diameterM,
+        isAp,
+        ammo.armorPenetrationFactor
+      );
       if (intercept.blocked || intercept.remainingSpeedMs <= 25 || intercept.remainingEnergyJ <= 8) {
         blockedPellets.add(pIdx);
         const stopDistM = Math.max(0.25, intercept.stoppedDistanceM ?? earliestHitDistM);

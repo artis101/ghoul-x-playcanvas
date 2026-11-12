@@ -2,9 +2,11 @@ import type { EnvironmentState, Vec3Like } from '../../contracts/ballistics.ts';
 import { vec3 } from '../../core/ballistics/vec3.ts';
 import {
   GRENADE_CRITICAL_FUSE_WARNING_S,
+  GRENADE_RADIUS_M,
   type ActiveFragGrenade,
   type GrenadeFlightState,
   type GrenadeFuseState,
+  type GrenadeSweepInterceptor,
 } from './fragGrenadeTypes.ts';
 
 const GRENADE_FLOOR_Y = 0.05;
@@ -36,13 +38,17 @@ export function stepActiveGrenades(
   activeGrenades: ActiveFragGrenade[],
   dt: number,
   environment: EnvironmentState,
-  onDetonate: (center: Vec3Like) => void
+  onDetonate: (center: Vec3Like) => void,
+  sweepInterceptor?: GrenadeSweepInterceptor
 ): void {
   for (let i = activeGrenades.length - 1; i >= 0; i--) {
     const g = activeGrenades[i];
     g.fuseRemainingS -= dt;
     g.blinkTimerS += dt;
     g.fuseState = resolveGrenadeFuseState(g.fuseRemainingS);
+    if (!g.crossedGlassIds) {
+      g.crossedGlassIds = new Set<string>();
+    }
 
     const flightState: GrenadeFlightState = g.flightState ?? 'BALLISTIC';
     switch (flightState) {
@@ -50,9 +56,36 @@ export function stepActiveGrenades(
         g.velocity.y += environment.gravity.y * dt;
         g.velocity.mulScalar(Math.exp(-GRENADE_AIR_DRAG_PER_S * dt));
 
-        g.position.x += g.velocity.x * dt;
-        g.position.y += g.velocity.y * dt;
-        g.position.z += g.velocity.z * dt;
+        const prevPos: Vec3Like = { x: g.position.x, y: g.position.y, z: g.position.z };
+        const desiredPos: Vec3Like = {
+          x: g.position.x + g.velocity.x * dt,
+          y: g.position.y + g.velocity.y * dt,
+          z: g.position.z + g.velocity.z * dt,
+        };
+
+        if (sweepInterceptor) {
+          const swept = sweepInterceptor(
+            prevPos,
+            desiredPos,
+            { x: g.velocity.x, y: g.velocity.y, z: g.velocity.z },
+            GRENADE_RADIUS_M,
+            g.crossedGlassIds
+          );
+          g.position.set(swept.position.x, swept.position.y, swept.position.z);
+          g.velocity.set(swept.velocity.x, swept.velocity.y, swept.velocity.z);
+          if (swept.bounced) {
+            g.angularVelocity.set(
+              -g.angularVelocity.x * 0.65 + g.velocity.z * 0.45,
+              g.angularVelocity.y * 0.72 + g.velocity.x * 0.35,
+              -g.angularVelocity.z * 0.65
+            );
+          } else if (swept.brokeGlass) {
+            g.angularVelocity.mulScalar(0.75);
+          }
+        } else {
+          g.position.set(desiredPos.x, desiredPos.y, desiredPos.z);
+        }
+
         clampArenaBoundsX(g);
 
         if (g.position.y <= GRENADE_FLOOR_Y) {
@@ -88,8 +121,27 @@ export function stepActiveGrenades(
         g.velocity.z *= rollDamp;
         g.angularVelocity.mulScalar(angDamp);
 
-        g.position.x += g.velocity.x * dt;
-        g.position.z += g.velocity.z * dt;
+        const prevPos: Vec3Like = { x: g.position.x, y: GRENADE_FLOOR_Y, z: g.position.z };
+        const desiredPos: Vec3Like = {
+          x: g.position.x + g.velocity.x * dt,
+          y: GRENADE_FLOOR_Y,
+          z: g.position.z + g.velocity.z * dt,
+        };
+
+        if (sweepInterceptor) {
+          const swept = sweepInterceptor(
+            prevPos,
+            desiredPos,
+            { x: g.velocity.x, y: 0, z: g.velocity.z },
+            GRENADE_RADIUS_M,
+            g.crossedGlassIds
+          );
+          g.position.set(swept.position.x, GRENADE_FLOOR_Y, swept.position.z);
+          g.velocity.set(swept.velocity.x, 0, swept.velocity.z);
+        } else {
+          g.position.x = desiredPos.x;
+          g.position.z = desiredPos.z;
+        }
         clampArenaBoundsX(g);
 
         const horizSpd = Math.hypot(g.velocity.x, g.velocity.z);

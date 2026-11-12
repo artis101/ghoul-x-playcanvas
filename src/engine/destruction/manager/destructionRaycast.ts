@@ -118,7 +118,8 @@ export function interceptRaySegment(
   energyJ: number,
   speedMs: number,
   caliberDiameterM: number,
-  isAp: boolean
+  isAp: boolean,
+  armorPenetrationFactor?: number
 ): EnvironmentRayInterceptResult {
   if (maxDistM <= 0 || energyJ <= 0 || speedMs <= 0) {
     return {
@@ -195,6 +196,7 @@ export function interceptRaySegment(
       speedMs: curSpeedMs,
       caliberRadiusM,
       isArmorPiercing: isAp,
+      armorPenetrationFactor,
     };
 
     const energyBefore = curEnergyJ;

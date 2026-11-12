@@ -1,6 +1,10 @@
 import * as pc from 'playcanvas';
 import type { Vec3Like } from '../../contracts/ballistics.ts';
-import type { BlastEvent, PenetrationRayHit } from '../../contracts/destruction.ts';
+import type {
+  BlastEvent,
+  GrenadeSweepStepResult,
+  PenetrationRayHit,
+} from '../../contracts/destruction.ts';
 import type { GlbModelRegistry } from '../assets/glbLoader.ts';
 import type { CombatAudioEngine } from '../audio/combatAudioEngine.ts';
 import type { EnvironmentRayInterceptResult } from '../combat/combatDirector.ts';
@@ -31,6 +35,7 @@ import {
   type DestructionRaycastContext,
   interceptRaySegment,
 } from './manager/destructionRaycast.ts';
+import { resolveGrenadeSweepStep } from './manager/grenadeCollision.ts';
 import { PomCraterDecalSystem } from './pomCraterDecals.ts';
 import { WoodWallSystem } from './woodWallSystem.ts';
 
@@ -39,6 +44,7 @@ export * from './manager/arenaStationBuilder.ts';
 export * from './manager/destructionRaycast.ts';
 export * from './manager/destructionCoverQueries.ts';
 export * from './manager/destructionCollision.ts';
+export * from './manager/grenadeCollision.ts';
 
 /**
  * Coordinates all Wave-2 destructible cover & hazard subsystems inside the shared `RapierPhysicsWorld`:
@@ -157,7 +163,8 @@ export class DestructionManager {
     energyJ: number,
     speedMs: number,
     caliberDiameterM: number,
-    isAp: boolean
+    isAp: boolean,
+    armorPenetrationFactor?: number
   ): EnvironmentRayInterceptResult {
     if (this.destroyed) {
       return {
@@ -174,7 +181,34 @@ export class DestructionManager {
       energyJ,
       speedMs,
       caliberDiameterM,
-      isAp
+      isAp,
+      armorPenetrationFactor
+    );
+  }
+
+  public resolveGrenadeStep(
+    prevPos: Vec3Like,
+    desiredPos: Vec3Like,
+    velocity: Vec3Like,
+    grenadeRadiusM = 0.045,
+    crossedGlassIds?: Set<string>
+  ): GrenadeSweepStepResult {
+    if (this.destroyed) {
+      return {
+        position: { x: desiredPos.x, y: desiredPos.y, z: desiredPos.z },
+        velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
+        bounced: false,
+        brokeGlass: false,
+        crazedArmoredGlass: false,
+      };
+    }
+    return resolveGrenadeSweepStep(
+      this.getRaycastContext(),
+      prevPos,
+      desiredPos,
+      velocity,
+      grenadeRadiusM,
+      crossedGlassIds
     );
   }
 

@@ -90,13 +90,21 @@ export function handleGlassRaySegment(
         Math.max(0.035, seg.caliberRadiusM * 5.5),
         INSTANCED_SHARDS_PER_MARCHING_HIT,
         seg.isArmorPiercing,
+        seg.speedMs,
+        seg.armorPenetrationFactor,
+        false,
       );
       if (!outcome.alreadyBroken) {
         if (!brokeAnyFreshGlass) {
           primaryHit = hit;
           brokeAnyFreshGlass = true;
         }
-        remainingEnergyJ = Math.max(0, remainingEnergyJ - outcome.energyAbsorbedJ);
+        remainingEnergyJ = outcome.stopped
+          ? 0
+          : Math.max(0, remainingEnergyJ - outcome.energyAbsorbedJ);
+        if (outcome.stopped) {
+          stopped = true;
+        }
         if (outcome.spawnedVoronoiChunks > 0) {
           uploadBatchedMesh();
           voronoiShardPool.clearDirty();
@@ -166,7 +174,17 @@ export function applyGlassRadialBlast(
     const shockEnergyJ = blast.peakEnergyJ * falloff;
     const blastHoleRadiusM = Math.max(0.24, Math.hypot(win.widthM, win.heightM) * (0.35 + 0.65 * falloff));
     const dir = dist > 1e-4 ? { x: dx / dist, y: dy / dist, z: dz / dist } : rotateVec3ByQuat({ x: 0, y: 0, z: 1 }, win.rotationQuat);
-    win.breakAtWorldPoint(closest, dir, shockEnergyJ, blastHoleRadiusM, INSTANCED_SHARDS_PER_MARCHING_HIT * 2);
+    win.breakAtWorldPoint(
+      closest,
+      dir,
+      shockEnergyJ,
+      blastHoleRadiusM,
+      INSTANCED_SHARDS_PER_MARCHING_HIT * 2,
+      true,
+      undefined,
+      undefined,
+      true,
+    );
   }
 
   let shatteredAnyVoronoi = false;

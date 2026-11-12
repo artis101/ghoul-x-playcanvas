@@ -24,7 +24,8 @@ export type EnvironmentRayInterceptor = (
   energyJ: number,
   speedMs: number,
   caliberDiameterM: number,
-  isAp: boolean
+  isAp: boolean,
+  armorPenetrationFactor?: number
 ) => EnvironmentRayInterceptResult;
 
 export type ExplosionBlastHandler = (

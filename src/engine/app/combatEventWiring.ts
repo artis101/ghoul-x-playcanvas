@@ -17,7 +17,8 @@ export function wireCombatDirectorInterceptors(
     energyJ,
     speedMs,
     caliberDiameterM,
-    isAp
+    isAp,
+    armorPenetrationFactor
   ) =>
     destructionManager.interceptRaySegment(
       origin,
@@ -26,7 +27,23 @@ export function wireCombatDirectorInterceptors(
       energyJ,
       speedMs,
       caliberDiameterM,
-      isAp
+      isAp,
+      armorPenetrationFactor
+    );
+
+  combatDirector.grenadeSweepInterceptor = (
+    prevPos,
+    desiredPos,
+    velocity,
+    grenadeRadiusM,
+    crossedGlassIds
+  ) =>
+    destructionManager.resolveGrenadeStep(
+      prevPos,
+      desiredPos,
+      velocity,
+      grenadeRadiusM,
+      crossedGlassIds
     );
 
   mayhemDirector.isSurfaceOpenAtHit = (hit, origin, dir, maxDistM) =>

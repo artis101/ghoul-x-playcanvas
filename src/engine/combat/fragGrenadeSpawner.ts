@@ -45,5 +45,6 @@ export function spawnLiveFragGrenade(
     blinkTimerS: 0,
     flightState: 'BALLISTIC',
     fuseState: 'ARMED',
+    crossedGlassIds: new Set<string>(),
   };
 }

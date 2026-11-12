@@ -98,7 +98,16 @@ export function routeWeaponFire(
   if (!match || !match.report.hitTarget) {
     let stoppedDistM: number | undefined;
     if (interceptor) {
-      const envRes = interceptor(origin, normAim, 150.0, muzzleEnergyJ, muzzleSpeedMs, ammo.diameterM, isAp);
+      const envRes = interceptor(
+        origin,
+        normAim,
+        150.0,
+        muzzleEnergyJ,
+        muzzleSpeedMs,
+        ammo.diameterM,
+        isAp,
+        ammo.armorPenetrationFactor
+      );
       stoppedDistM = envRes.stoppedDistanceM;
       if (envRes.ricochetOriginWorld && envRes.ricochetDirWorld) {
         dispatchSecondaryRicochet(
@@ -134,7 +143,16 @@ export function routeWeaponFire(
       : normAim;
 
   if (interceptor) {
-    const preIntercept = interceptor(origin, interceptDir, hitDistM, muzzleEnergyJ, muzzleSpeedMs, ammo.diameterM, isAp);
+    const preIntercept = interceptor(
+      origin,
+      interceptDir,
+      hitDistM,
+      muzzleEnergyJ,
+      muzzleSpeedMs,
+      ammo.diameterM,
+      isAp,
+      ammo.armorPenetrationFactor
+    );
     if (preIntercept.blocked || preIntercept.remainingSpeedMs <= 25 || preIntercept.remainingEnergyJ <= 10) {
       const stopAtM = Math.max(0.25, preIntercept.stoppedDistanceM ?? hitDistM);
       const stoppedSamples = truncateTrajectorySamples(report.trajectorySamples, origin, stopAtM);
@@ -236,7 +254,16 @@ export function routeWeaponFire(
         let collatBlocked = false;
 
         if (interceptor) {
-          const betweenIntercept = interceptor(exitOrigin, collatInterceptDir, collatDistM, residualEnergyJ, residualSpeedMs, ammo.diameterM, isAp);
+          const betweenIntercept = interceptor(
+            exitOrigin,
+            collatInterceptDir,
+            collatDistM,
+            residualEnergyJ,
+            residualSpeedMs,
+            ammo.diameterM,
+            isAp,
+            ammo.armorPenetrationFactor
+          );
           if (betweenIntercept.blocked || betweenIntercept.remainingSpeedMs <= 25 || betweenIntercept.remainingEnergyJ <= 10) {
             collatBlocked = true;
           } else if (betweenIntercept.remainingSpeedMs < residualSpeedMs * 0.98) {
@@ -250,7 +277,16 @@ export function routeWeaponFire(
           applyImpactFxAndState(collateral.target, collatReport, weapon.codeName, impactCtx, collatAmmo);
         }
       } else if (interceptor) {
-        interceptor(exitOrigin, exitDir, 120.0, residualEnergyJ, residualSpeedMs, ammo.diameterM, isAp);
+        interceptor(
+          exitOrigin,
+          exitDir,
+          120.0,
+          residualEnergyJ,
+          residualSpeedMs,
+          ammo.diameterM,
+          isAp,
+          ammo.armorPenetrationFactor
+        );
       }
     }
   }

@@ -20,7 +20,7 @@ import {
   ActiveBlastFlashFx, CameraShakeCallback, CombatDirectorSubsystems,
   EnvironmentRayInterceptor, EnvironmentRayInterceptResult, ExplosionBlastHandler,
 } from './combatTypes.ts';
-import { ActiveFragGrenade } from './fragGrenadeTypes.ts';
+import { ActiveFragGrenade, type GrenadeSweepInterceptor } from './fragGrenadeTypes.ts';
 import { spawnLiveFragGrenade } from './fragGrenadeSpawner.ts';
 import { createBlastFireballMaterial, spawnBlastVisualFx } from './blastVisualFx.ts';
 import { routeExternalExplosionTrauma } from './externalExplosionRouter.ts';
@@ -58,6 +58,7 @@ export class CombatDirector {
   public lastInternalBallisticsReport: InternalBallisticsReport | null = null;
 
   public environmentRayInterceptor?: EnvironmentRayInterceptor;
+  public grenadeSweepInterceptor?: GrenadeSweepInterceptor;
   public isLineOfSightBlocked?: (fromWorld: Vec3Like, toWorld: Vec3Like) => boolean;
   public onExplosionBlast?: ExplosionBlastHandler;
   public onCameraShake?: CameraShakeCallback;
@@ -187,7 +188,9 @@ export class CombatDirector {
       glbRegistry: this.glbRegistry, fxManager: this.fxManager,
       lastEngagedTarget: this.lastEngagedTarget, losCacheEpoch: this.losCacheEpoch,
       enableXRayInspector: this.enableXRayInspector, lastHitClockByTarget: this.lastHitClockByTarget,
-      isLineOfSightBlocked: this.isLineOfSightBlocked, onExplosionBlast: this.onExplosionBlast,
+      isLineOfSightBlocked: this.isLineOfSightBlocked,
+      grenadeSweepInterceptor: this.grenadeSweepInterceptor,
+      onExplosionBlast: this.onExplosionBlast,
       applyExternalExplosionTrauma: (b, l) => this.applyExternalExplosionTrauma(b, l),
       getViewerPosVec3: () => this.getViewerPosVec3(),
     }, dt, totalElapsedTimeS, camera, hud, this.environment);

@@ -9,7 +9,7 @@ import type { TacticalCombatAiSystem } from '../ai/tacticalCombatAi.ts';
 import type { GlbModelRegistry } from '../assets/glbLoader.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
-import type { ActiveFragGrenade } from './fragGrenadeTypes.ts';
+import type { ActiveFragGrenade, GrenadeSweepInterceptor } from './fragGrenadeTypes.ts';
 import type { ActiveBlastFlashFx } from './combatTypes.ts';
 import type { OffhandSidearmRig } from './offhandSidearmTypes.ts';
 import { stepActiveGrenades } from './fragGrenadePhysics.ts';
@@ -37,6 +37,7 @@ export interface CombatDirectorLoopContext {
   enableXRayInspector: boolean;
   lastHitClockByTarget: Map<string, number>;
   isLineOfSightBlocked?: (from: Vec3Like, to: Vec3Like) => boolean;
+  grenadeSweepInterceptor?: GrenadeSweepInterceptor;
   onExplosionBlast?: (center: Vec3Like, radius: number, impulse: number, energy: number) => void;
   applyExternalExplosionTrauma: (blast: any, label: string) => number;
   getViewerPosVec3: () => Vec3Like;
@@ -50,13 +51,19 @@ export function stepCombatDirectorLoop(
   hud: HudController,
   environment: any
 ): void {
-  stepActiveGrenades(ctx.activeGrenades, dt, environment, (center) => {
-    ctx.applyExternalExplosionTrauma(
-      { centerWorld: center, radiusM: GRENADE_BLAST_RADIUS_M, peakImpulseNs: GRENADE_PEAK_IMPULSE_NS, peakEnergyJ: GRENADE_PEAK_ENERGY_J },
-      'M67 FRAG'
-    );
-    ctx.onExplosionBlast?.(center, GRENADE_BLAST_RADIUS_M, GRENADE_PEAK_IMPULSE_NS, GRENADE_PEAK_ENERGY_J);
-  });
+  stepActiveGrenades(
+    ctx.activeGrenades,
+    dt,
+    environment,
+    (center) => {
+      ctx.applyExternalExplosionTrauma(
+        { centerWorld: center, radiusM: GRENADE_BLAST_RADIUS_M, peakImpulseNs: GRENADE_PEAK_IMPULSE_NS, peakEnergyJ: GRENADE_PEAK_ENERGY_J },
+        'M67 FRAG'
+      );
+      ctx.onExplosionBlast?.(center, GRENADE_BLAST_RADIUS_M, GRENADE_PEAK_IMPULSE_NS, GRENADE_PEAK_ENERGY_J);
+    },
+    ctx.grenadeSweepInterceptor
+  );
 
   stepBlastFlashes(ctx.activeBlastFlashes, dt);
   ctx.physiologySystem.update(dt);

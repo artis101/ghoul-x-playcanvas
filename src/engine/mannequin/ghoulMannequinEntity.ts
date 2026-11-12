@@ -163,6 +163,7 @@ export class GhoulMannequinEntity {
             this.locomotion.sync(glb, this.healthState, dt, this.driveState.mode === 'ANIM_STANDING');
           }
 
+          this.deadLimbOverlay.sync(glb, this.healthState, this.boneSync, dt);
           if (this.healthState.severedZones.size > 0) {
             for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
               if (this.healthState.ragdollBones[zone].componentId !== 'BODY') {
@@ -171,7 +172,6 @@ export class GhoulMannequinEntity {
             }
             glb.rootEntity.syncHierarchy();
           }
-          this.deadLimbOverlay.sync(glb, this.healthState, this.boneSync, dt);
           break;
         }
       }

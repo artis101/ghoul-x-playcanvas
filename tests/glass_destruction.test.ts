@@ -306,28 +306,58 @@ describe('Pillar 4: Unified Voronoi Glass Destruction — Multi-Hit Armored Lami
       expect(Math.abs(armored.voronoi.totalAreaM2 - 2.2 * 1.7)).toBeLessThan(1e-3);
       expect(armored.survivingChunkCount).toBe(68);
 
-      // Shot 1 with 9mm pistol (500 J): crazes & cracks Voronoi chunks, ZERO chunks detach!
+      // Shot 1 & 2 with 9mm pistol (500 J, 360 m/s): visually breaks/crazes Voronoi chunks, ZERO chunks detach!
       const pistolShot1 = armored.applyImpact({
         hitX: 1.1,
         hitY: 0.85,
         energyJ: 500,
+        speedMs: 360,
         seed: 1001,
       });
       expect(pistolShot1.alreadyBrokenHole).toBe(false);
+      expect(pistolShot1.perforatedHitChunk).toBe(false);
       expect(pistolShot1.newlyDetachedIndices.length).toBe(0);
       expect(pistolShot1.chunksCrazed).toBeGreaterThanOrEqual(4);
       expect(armored.detachedChunkCount).toBe(0);
       expect(armored.crazedChunkCount).toBeGreaterThanOrEqual(4);
 
-      // Shot 2 with 9mm pistol at same crazed chunk: shears the weakened chunk out of the laminate!
       const pistolShot2 = armored.applyImpact({
         hitX: 1.1,
         hitY: 0.85,
         energyJ: 500,
+        speedMs: 360,
         seed: 1002,
       });
-      expect(pistolShot2.newlyDetachedIndices.length).toBeGreaterThanOrEqual(1);
-      expect(armored.isDetachedAt(1.1, 0.85)).toBe(true);
+      expect(pistolShot2.perforatedHitChunk).toBe(false);
+      expect(pistolShot2.newlyDetachedIndices.length).toBe(0);
+      expect(armored.isDetachedAt(1.1, 0.85)).toBe(false);
+
+      // Blunt impact (thrown grenade): visually breaks/crazes glass in-place with ZERO detached chunks!
+      const grenadeHit = armored.applyImpact({
+        hitX: 0.55,
+        hitY: 0.85,
+        energyJ: 650,
+        radiusM: 0.24,
+        bluntImpactOnly: true,
+        seed: 1003,
+      });
+      expect(grenadeHit.perforatedHitChunk).toBe(false);
+      expect(grenadeHit.newlyDetachedIndices.length).toBe(0);
+      expect(armored.isDetachedAt(0.55, 0.85)).toBe(false);
+
+      // High-velocity + high-punching-power 7.62 Tungsten AP (830 m/s, 4064 J, apFactor 2.35) perforates!
+      const tungstenApShot = armored.applyImpact({
+        hitX: 1.65,
+        hitY: 0.85,
+        energyJ: 4064,
+        speedMs: 830,
+        isArmorPiercing: true,
+        armorPenetrationFactor: 2.35,
+        seed: 1004,
+      });
+      expect(tungstenApShot.perforatedHitChunk).toBe(true);
+      expect(tungstenApShot.newlyDetachedIndices.length).toBeGreaterThanOrEqual(1);
+      expect(armored.isDetachedAt(1.65, 0.85)).toBe(true);
 
       // Progressive regular glass pane: large breach + surviving perimeter fangs
       const shatter22 = shatterWindowVoronoi2D({
@@ -531,66 +561,114 @@ describe('Pillar 4: Unified Voronoi Glass Destruction — Multi-Hit Armored Lami
         physics.step(1 / 60);
         const rootEntityCountBeforeShatter = app.root.children.length;
 
-        // 1A. Pistol shot (500 J) at left side of Armored Window: crazes Voronoi chunks, 0 chunks fall out!
+        // 1A. Pistol shots (500 J, 360 m/s) & low-velocity .50 AE JHP (1878 J, 440 m/s) at Armored Window:
+        // STOPPED cold (stopped=true, 0 remaining energy), visually crazes glass, ZERO fragments/shards lost!
         const pistolHitX = -0.55;
-        const pistolShot1 = glassSystem.handleRaySegment({
-          originWorld: { x: pistolHitX, y: 1.5, z: 0 },
-          directionWorld: { x: 0, y: 0, z: -1 },
-          maxDistanceM: 15,
-          kineticEnergyJ: 500,
-          speedMs: 360,
-          caliberRadiusM: 0.0045,
-          isArmorPiercing: false,
-        });
-        expect(pistolShot1).not.toBeNull();
+        for (let s = 0; s < 3; s++) {
+          const pistolShot = glassSystem.handleRaySegment({
+            originWorld: { x: pistolHitX, y: 1.5, z: 0 },
+            directionWorld: { x: 0, y: 0, z: -1 },
+            maxDistanceM: 15,
+            kineticEnergyJ: 500,
+            speedMs: 360,
+            caliberRadiusM: 0.0045,
+            isArmorPiercing: false,
+            armorPenetrationFactor: 0.75,
+          });
+          expect(pistolShot).not.toBeNull();
+          expect(pistolShot!.stopped).toBe(true);
+          expect(pistolShot!.remainingEnergyJ).toBe(0);
+        }
         expect(marchingWin.crazedChunkCount).toBeGreaterThanOrEqual(4);
         expect(marchingWin.detachedChunkCount).toBe(0);
         expect(marchingWin.isBrokenAtWorldPoint({ x: pistolHitX, y: 1.5, z: -6.0 })).toBe(false);
         expect(glassSystem.activeVoronoiShardCount).toBe(0);
+        expect(glassSystem.activeInstancedTriangleCount).toBe(0);
 
-        // 1B. Second pistol shot (500 J) at same spot shears the crazed armored Voronoi chunk loose into VoronoiShardPool!
-        const pistolShot2 = glassSystem.handleRaySegment({
+        const heavyPistolJhp = glassSystem.handleRaySegment({
           originWorld: { x: pistolHitX, y: 1.5, z: 0 },
           directionWorld: { x: 0, y: 0, z: -1 },
           maxDistanceM: 15,
-          kineticEnergyJ: 500,
-          speedMs: 360,
-          caliberRadiusM: 0.0045,
+          kineticEnergyJ: 1878,
+          speedMs: 440,
+          caliberRadiusM: 0.00635,
           isArmorPiercing: false,
+          armorPenetrationFactor: 0.76,
         });
-        expect(pistolShot2).not.toBeNull();
-        expect(marchingWin.detachedChunkCount).toBeGreaterThanOrEqual(1);
-        expect(marchingWin.isBrokenAtWorldPoint({ x: pistolHitX, y: 1.5, z: -6.0 })).toBe(true);
-        expect(glassSystem.activeVoronoiShardCount).toBeGreaterThanOrEqual(1);
+        expect(heavyPistolJhp).not.toBeNull();
+        expect(heavyPistolJhp!.stopped).toBe(true);
+        expect(marchingWin.detachedChunkCount).toBe(0);
+        expect(glassSystem.activeVoronoiShardCount).toBe(0);
 
-        // 2A. Rifle round (3400 J) hits right side of Armored Window: punches tight bullseye core + crazes wide halo
-        const rifleHitX = 0.45;
+        // 1B. M4A1 5.56 M855 Green Tip (910 m/s, 1664 J, apFactor 1.52):
+        // Stopped on Shots 1 & 2 (progressive visual fracture), punches through on Shot 3 with 0 loose shards!
+        const m855HitX = 0.0;
+        const m855Shot1 = glassSystem.handleRaySegment({
+          originWorld: { x: m855HitX, y: 1.5, z: 0 },
+          directionWorld: { x: 0, y: 0, z: -1 },
+          maxDistanceM: 15,
+          kineticEnergyJ: 1664,
+          speedMs: 910,
+          caliberRadiusM: 0.00285,
+          isArmorPiercing: true,
+          armorPenetrationFactor: 1.52,
+        });
+        expect(m855Shot1!.stopped).toBe(true);
+        const m855Shot2 = glassSystem.handleRaySegment({
+          originWorld: { x: m855HitX, y: 1.5, z: 0 },
+          directionWorld: { x: 0, y: 0, z: -1 },
+          maxDistanceM: 15,
+          kineticEnergyJ: 1664,
+          speedMs: 910,
+          caliberRadiusM: 0.00285,
+          isArmorPiercing: true,
+          armorPenetrationFactor: 1.52,
+        });
+        expect(m855Shot2!.stopped).toBe(true);
+        const m855Shot3 = glassSystem.handleRaySegment({
+          originWorld: { x: m855HitX, y: 1.5, z: 0 },
+          directionWorld: { x: 0, y: 0, z: -1 },
+          maxDistanceM: 15,
+          kineticEnergyJ: 1664,
+          speedMs: 910,
+          caliberRadiusM: 0.00285,
+          isArmorPiercing: true,
+          armorPenetrationFactor: 1.52,
+        });
+        expect(m855Shot3!.stopped).toBe(false);
+        expect(m855Shot3!.remainingEnergyJ).toBeGreaterThan(500);
+        expect(marchingWin.isBrokenAtWorldPoint({ x: m855HitX, y: 1.5, z: -6.0 })).toBe(true);
+        expect(glassSystem.activeVoronoiShardCount).toBe(0);
+
+        // 2A. 7.62x51mm M993 Tungsten AP (830 m/s, 4064 J, apFactor 2.35) hits right side of Armored Window:
+        // High velocity + extreme AP punching power perforates on Shot 1 with realistic laminate energy absorption!
+        const rifleHitX = 0.55;
         const detachedBeforeRifle = marchingWin.detachedChunkCount;
         const shot1 = glassSystem.handleRaySegment({
           originWorld: { x: rifleHitX, y: 1.5, z: 0 },
           directionWorld: { x: 0, y: 0, z: -1 },
           maxDistanceM: 15,
-          kineticEnergyJ: 3400,
-          speedMs: 820,
+          kineticEnergyJ: 4064,
+          speedMs: 830,
           caliberRadiusM: 0.0039,
-          isArmorPiercing: false,
+          isArmorPiercing: true,
+          armorPenetrationFactor: 2.35,
         });
 
         expect(shot1).not.toBeNull();
         expect(shot1!.stopped).toBe(false);
         expect(shot1!.hitMaterial).toBe('GLASS_MARCHING_256');
-        const loss1 = 3400 - shot1!.remainingEnergyJ;
-        expect(loss1).toBeGreaterThanOrEqual(25);
-        expect(loss1).toBeLessThanOrEqual(45);
-        // Tight core perforation (1..2 cells), while surrounding halo chunks stay held in the laminate!
+        const loss1 = 4064 - shot1!.remainingEnergyJ;
+        expect(loss1).toBeGreaterThanOrEqual(1200);
+        expect(shot1!.remainingEnergyJ).toBeGreaterThan(1500);
+        // Tight single-core perforation while surrounding halo chunks stay held in the laminate (0 loose shards)!
         const rifleCoreDetached = marchingWin.detachedChunkCount - detachedBeforeRifle;
-        expect(rifleCoreDetached).toBeGreaterThanOrEqual(1);
-        expect(rifleCoreDetached).toBeLessThanOrEqual(3);
+        expect(rifleCoreDetached).toBe(1);
         expect(marchingWin.crazedChunkCount).toBeGreaterThanOrEqual(8);
         expect(marchingWin.pane.survivingCellCount).toBeLessThan(256);
+        expect(glassSystem.activeVoronoiShardCount).toBe(0);
 
         // 2B. Follow-up bullet through the SAME open rifle hole loses 0 J!
-        const trianglesBeforePass = glassSystem.activeInstancedTriangleCount;
         const shot2 = glassSystem.handleRaySegment({
           originWorld: { x: rifleHitX, y: 1.5, z: 0 },
           directionWorld: { x: 0, y: 0, z: -1 },
@@ -605,23 +683,7 @@ describe('Pillar 4: Unified Voronoi Glass Destruction — Multi-Hit Armored Lami
         expect(shot2!.stopped).toBe(false);
         expect(shot2!.remainingEnergyJ).toBe(520);
         expect(shot2!.remainingSpeedMs).toBeCloseTo(365, 6);
-        expect(glassSystem.activeInstancedTriangleCount).toBe(trianglesBeforePass);
-
-        // 2C. Offset follow-up rifle shot into the surviving crazed halo knocks out multiple weakened armored chunks!
-        const haloTargetWorld = { x: rifleHitX + 0.28, y: 1.55, z: -6.0 };
-        expect(marchingWin.isBrokenAtWorldPoint(haloTargetWorld)).toBe(false);
-        const detachedBeforeHaloHit = marchingWin.detachedChunkCount;
-        glassSystem.handleRaySegment({
-          originWorld: { x: haloTargetWorld.x, y: haloTargetWorld.y, z: 0 },
-          directionWorld: { x: 0, y: 0, z: -1 },
-          maxDistanceM: 15,
-          kineticEnergyJ: 2400,
-          speedMs: 760,
-          caliberRadiusM: 0.0039,
-          isArmorPiercing: false,
-        });
-        expect(marchingWin.isBrokenAtWorldPoint(haloTargetWorld)).toBe(true);
-        expect(marchingWin.detachedChunkCount - detachedBeforeHaloHit).toBeGreaterThanOrEqual(2);
+        expect(glassSystem.activeInstancedTriangleCount).toBe(0);
 
         // 3. Pistol round hits VoronoiGlassWindow: shatters into large plate breach + frame-clinging corner fangs!
         const shardsBeforeRegular = glassSystem.activeVoronoiShardCount;
