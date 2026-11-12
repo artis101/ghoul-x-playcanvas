@@ -13,6 +13,7 @@ export class CombatantSupportGrip {
 
   public syncPalm(
     glb: CombatantGlbInstance, side: ActiveFiringHand, palm: pc.Vec3, handRotation: pc.Quat, palmOffset: number,
+    bendDirection?: pc.Vec3,
   ): void {
     const upper = glb.boneNodes.get(`UPPER_ARM_${side}`);
     const forearm = glb.boneNodes.get(`FOREARM_${side}`);
@@ -20,7 +21,7 @@ export class CombatantSupportGrip {
     if (!upper || !forearm || !hand) return;
     handRotation.transformVector(pc.Vec3.UP, this.wristGoal);
     this.wristGoal.mulScalar(-palmOffset).add(palm);
-    const pose = solveTwoBoneIk(upper.getPosition(), forearm.getPosition(), hand.getPosition(), this.wristGoal);
+    const pose = solveTwoBoneIk(upper.getPosition(), forearm.getPosition(), hand.getPosition(), this.wristGoal, bendDirection);
     if (!pose) return;
 
     this.elbowGoal.set(pose.elbow.x, pose.elbow.y, pose.elbow.z);

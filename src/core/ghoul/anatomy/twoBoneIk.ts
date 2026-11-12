@@ -5,7 +5,8 @@ export function solveTwoBoneIk(
   shoulder: Vec3Like,
   elbow: Vec3Like,
   wrist: Vec3Like,
-  goal: Vec3Like
+  goal: Vec3Like,
+  bendDirection?: Vec3Like
 ): { elbow: Vec3Like; wrist: Vec3Like } | null {
   const upperLength = length(sub(elbow, shoulder));
   const lowerLength = length(sub(wrist, elbow));
@@ -18,7 +19,7 @@ export function solveTwoBoneIk(
     Math.abs(upperLength - lowerLength) + 1e-4,
     Math.min(distance, upperLength + lowerLength - 1e-4)
   );
-  const elbowOffset = sub(elbow, shoulder);
+  const elbowOffset = bendDirection ?? sub(elbow, shoulder);
   let pole = sub(elbowOffset, scale(forward, dot(elbowOffset, forward)));
   if (length(pole) < 1e-4) {
     const axis = Math.abs(forward.y) < 0.95 ? vec3(0, 1, 0) : vec3(1, 0, 0);

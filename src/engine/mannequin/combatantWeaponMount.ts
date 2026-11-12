@@ -22,13 +22,18 @@ import {
 } from '../assets/glbLoader.ts';
 import { getPreferredPrimaryHand, isArmChainIntactAndFunctional } from '../ai/combatantArmEvaluation.ts';
 import { CombatantWeaponHands } from './combatantWeaponHands.ts';
-import { CombatantWeaponGrip } from './combatantWeaponGrip.ts';
+import { CombatantWeaponGrip, M4A1_PALM_OFFSET_X } from './combatantWeaponGrip.ts';
 import {
   createPropAttachmentState,
   transitionPropAttachment,
   type PropAttachmentState,
 } from './propAttachmentState.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
+
+function smoothGripWeight(value: number, minimum: number, fullWeight: number): number {
+  const t = Math.min(1, Math.max(0, (value - minimum) / (fullWeight - minimum)));
+  return t * t * (3 - 2 * t);
+}
 
 export class CombatantWeaponMount {
   public heldWeaponNode: pc.Entity | null = null;
@@ -146,6 +151,9 @@ export class CombatantWeaponMount {
         healthState.posture === 'COMBAT_READY' && healthState.activeReaction.type === 'NONE' &&
         weaponId !== 'frag_grenade' &&
         isArmChainIntactAndFunctional(healthState, supportHand);
+      const clip = glb?.animComponent?.baseLayer?.activeState;
+      const twoHandReadyIdle = canUseSupport && weaponId !== 'silver_talon_50ae' &&
+        (clip === 'CombatReadyIdle' || clip === 'CombatReadyIdle_Southpaw');
       if (glbTrigNode) {
         const pT = glbTrigNode.getPosition();
         const uT = glbTrigNode.up;
@@ -155,13 +163,20 @@ export class CombatantWeaponMount {
         gunFwd = normalize(add(scale(handAim, 0.32), scale(charFwd, 0.68)));
 
         if (canUseSupport && weaponId !== 'silver_talon_50ae' && glbSuppNode) {
+          if (twoHandReadyIdle) {
+            // Keep the forend within reach across the body when the authored palms are close.
+            const across = supportHand === 'RIGHT' ? 0.9 : -0.9;
+            gunFwd = normalize(add(gunFwd, vec3(charFwd.z * across, 0.12, -charFwd.x * across)));
+          }
           const pS = glbSuppNode.getPosition();
           const uS = glbSuppNode.up;
           const palmSupp = vec3(pS.x + uS.x * 0.05, pS.y + uS.y * 0.05, pS.z + uS.z * 0.05);
           const aimSpan = sub(palmSupp, add(palmTrig, vec3(0, forendRiseOffset, 0)));
-          if (length(aimSpan) > 0.08 && (guarding || dot(aimSpan, charFwd) > 0.07)) {
-            gunFwd = normalize(aimSpan);
-          }
+          // Fade out the support-hand aim as the authored palms approach each other or cross.
+          const reachWeight = smoothGripWeight(length(aimSpan), 0.08, 0.18);
+          const forwardWeight = guarding ? 1 : smoothGripWeight(dot(aimSpan, charFwd), 0.07, 0.23);
+          const supportWeight = reachWeight * forwardWeight;
+          gunFwd = normalize(add(scale(gunFwd, 1 - supportWeight), scale(normalize(aimSpan), supportWeight)));
         }
       } else {
         const handTrig = healthState.ragdollBones[triggerHandZone];
@@ -169,8 +184,11 @@ export class CombatantWeaponMount {
         gunFwd = normalize(charFwd);
       }
 
-      this.grip.align(this.heldWeaponNode, this.heldWeaponNode, weaponId, palmTrig, gunFwd);
-      if (glb) this.hands?.sync(glb, triggerHand, canUseSupport);
+      const triggerOffset = weaponId === 'm4a1_carbine' && canUseSupport
+        ? (triggerHand === 'LEFT' ? M4A1_PALM_OFFSET_X : -M4A1_PALM_OFFSET_X)
+        : 0;
+      this.grip.align(this.heldWeaponNode, this.heldWeaponNode, weaponId, palmTrig, gunFwd, triggerOffset);
+      if (glb) this.hands?.sync(glb, triggerHand, canUseSupport, twoHandReadyIdle);
     }
   }
 
