@@ -58,6 +58,17 @@ export class CombatantBoneSync {
 
     const boneState = healthState.ragdollBones[zone];
 
+    // A burst head leaves its bare skull on the neck. The burst particles are no longer
+    // simulated, so the skull rides the neck instead of hanging where the head was hit.
+    if (healthState.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP' && (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW')) {
+      const neckState = healthState.ragdollBones.NECK_CERVICAL;
+      const neckRest = REST_RAGDOLL_FRAMES.get('NECK_CERVICAL');
+      if (neckRest) {
+        this.placeRigidlyOn(boneNode, bind, neckState, neckRest);
+        return;
+      }
+    }
+
     if (zone === 'HEAD_FACE_JAW') {
       const headState = healthState.ragdollBones.HEAD_CRANIUM;
       const headRest = REST_RAGDOLL_FRAMES.get('HEAD_CRANIUM');
@@ -103,6 +114,26 @@ export class CombatantBoneSync {
       boneState.position.x + this.tmpRotOffsetVec.x,
       boneState.position.y + this.tmpRotOffsetVec.y,
       boneState.position.z + this.tmpRotOffsetVec.z
+    );
+    boneNode.setRotation(this.tmpWorldQuat);
+  }
+
+  /** Carries a joint along with another bone, keeping the offset the two have at rest. */
+  private placeRigidlyOn(
+    boneNode: pc.GraphNode,
+    bind: BoneBindPose,
+    carrier: TargetHealthState['ragdollBones'][GhoulZoneId],
+    carrierRest: { restPos: pc.Vec3; restRotInv: pc.Quat }
+  ): void {
+    basisToQuat(carrier.basisRight, carrier.basisUp, carrier.basisForward, this.tmpMat4, this.tmpRagQuat);
+    this.tmpDeltaQuat.mul2(this.tmpRagQuat, carrierRest.restRotInv);
+    this.tmpWorldQuat.mul2(this.tmpDeltaQuat, bind.modelRot);
+    this.tmpOffsetVec.sub2(bind.modelPos, carrierRest.restPos);
+    this.tmpDeltaQuat.transformVector(this.tmpOffsetVec, this.tmpRotOffsetVec);
+    boneNode.setPosition(
+      carrier.position.x + this.tmpRotOffsetVec.x,
+      carrier.position.y + this.tmpRotOffsetVec.y,
+      carrier.position.z + this.tmpRotOffsetVec.z
     );
     boneNode.setRotation(this.tmpWorldQuat);
   }

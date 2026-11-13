@@ -25,6 +25,9 @@ import { type BurstContext, stepWeaponBurstFire } from './tacticalBurstAndTracer
 
 // Ground speed of an unhurt crawl.
 const CRAWL_SPEED_MPS = 0.35;
+const CRAWL_ARRIVAL_RADIUS_M = 0.3;
+// A body on the ground shuffles round slowly; it cannot pivot like one on its feet.
+const DOWNED_TURN_RATE_RAD_S = 0.9;
 
 export type { AlertedEngagementSubstate };
 
@@ -178,18 +181,24 @@ export function stepSingleEnemyAgent(
 
     case 'DOWNED_CRAWLING': {
       if (!hs.isRagdollActive) hs.posture = aimProfile.clutchingWound ? 'DISARMED' : 'LEG_BUCKLED';
-      if (!hs.isRagdollActive && (hs.rightArmFunctional || hs.leftArmFunctional)) {
-        const crawlTargetX = agent.coverAnchorWorld.x + agent.peekSign * 0.35;
-        const crawlTargetZ =
-          agent.resolveProfile === 'FANATIC_BERSERKER'
-            ? Math.min(playerEyeWorldPos.z - 2.6, hs.worldPosition.z + 0.8)
-            : agent.coverAnchorWorld.z - 0.25;
-        const { effort } = evaluateCrawlCondition(hs, ctx.elapsedClockS);
-        moveHorizontalClamped(hs, crawlTargetX, crawlTargetZ, CRAWL_SPEED_MPS * effort * dt, ctx.rapierWorld);
-      }
-      turnTowardPlayer(2.8);
+      // Down is down. A combatant that can still fight stays where it fell and shoots from
+      // there. One that cannot drags itself toward cover, head first, never sideways.
       if (aimProfile.canReturnFire) {
+        turnTowardPlayer(DOWNED_TURN_RATE_RAD_S);
         stepWeaponBurstFire(dt, hs, agent, aimProfile, playerEyeWorldPos, ctx.burstCtx);
+      } else if (!hs.isRagdollActive && (hs.rightArmFunctional || hs.leftArmFunctional)) {
+        const crawlGoal = { x: agent.coverAnchorWorld.x, y: hs.worldPosition.y, z: agent.coverAnchorWorld.z - 0.25 };
+        const { effort } = evaluateCrawlCondition(hs, ctx.elapsedClockS);
+        const goalDistM = Math.hypot(crawlGoal.x - hs.worldPosition.x, crawlGoal.z - hs.worldPosition.z);
+        if (goalDistM > CRAWL_ARRIVAL_RADIUS_M) {
+          const crawlYaw = yawToward(hs.worldPosition, crawlGoal, hs.yawRad);
+          hs.yawRad = approachAngleRad(hs.yawRad, crawlYaw, DOWNED_TURN_RATE_RAD_S * dt);
+          // It only pulls itself along once it is pointing the way it wants to go.
+          const facing = Math.cos(crawlYaw - hs.yawRad);
+          if (facing > 0.8) {
+            moveHorizontalClamped(hs, crawlGoal.x, crawlGoal.z, CRAWL_SPEED_MPS * effort * dt, ctx.rapierWorld);
+          }
+        }
       }
       break;
     }
@@ -209,6 +218,19 @@ function stepAlertedEngagingState(
   turnTowardPlayer: (speed: number) => void,
   ctx: TacticalFsmContext
 ): void {
+  // Doubled over on its knees, a combatant holds its ground: it neither strafes nor rushes.
+  const gutShot = hs.rupturedOrgans.size > 0 && hs.zoneIntegrity.TORSO_LOWER_ABDOMEN < 65;
+  if (gutShot && !hs.isRagdollActive) {
+    hs.posture = 'GUT_HURT';
+    agent.isPeekingOut = true;
+    agent.engagementSubstate = 'COVER_PEEK';
+    turnTowardPlayer(DOWNED_TURN_RATE_RAD_S);
+    if (aimProfile.canReturnFire) {
+      stepWeaponBurstFire(dt, hs, agent, aimProfile, playerEyeWorldPos, ctx.burstCtx);
+    }
+    return;
+  }
+
   const tuning = ARCHETYPE_TUNING[hs.archetype];
   const isWounded = hs.currentHp < hs.maxHp * 0.92 || hs.painShock > 0.15 || hs.rupturedOrgans.size > 0;
   const moraleShockS = agent.moraleShockTimerS ?? 0;

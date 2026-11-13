@@ -124,16 +124,18 @@ describe('Ragdoll anatomical joint limits', () => {
     }
   });
 
-  it('slumps a combatant who dies sitting up, then lets the corpse sleep', () => {
+  it('slumps a combatant who dies propped up on an elbow, then lets the corpse sleep', () => {
     const target = createTargetHealthState('sit_death', 'Militia', vec3(0, 0, 0), 0);
     target.rightLegFunctional = false;
     simulate(target, 2.5, 1);
     expect(target.isRagdollActive).toBe(true);
-    expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeGreaterThan(0.6);
+    // Lying down to fight, head and chest lifted clear of the floor.
+    expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeGreaterThan(0.38);
+    expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeLessThan(0.6);
 
     transitionTargetLifecycle(target, { kind: 'LETHAL_DEATH' });
     simulate(target, 3);
-    expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeLessThan(0.45);
+    expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeLessThan(0.25);
     expect(target.ragdollPhase.kind).toBe('CORPSE_SLEEPING');
   });
 });

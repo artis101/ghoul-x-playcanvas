@@ -1,7 +1,8 @@
 import type { PlayerNearMissGrazePayload } from '../../contracts/ai/aiContracts.ts';
 import type { GhoulZoneId, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
 import { computeSuppressionTargetWorld } from '../../core/ai/attackTokenPool.ts';
-import { stepWeaponBurstCadence } from '../../core/ai/weaponBurstFsm.ts';
+import { cancelActiveBurst, stepWeaponBurstCadence } from '../../core/ai/weaponBurstFsm.ts';
+import { canDownedBodyAimAt } from '../../core/ballistics/triage/downedAimReach.ts';
 import {
   add,
   copyVec3,
@@ -58,6 +59,13 @@ export function stepWeaponBurstFire(
   playerEyeWorldPos: Vec3Like,
   ctx: BurstContext
 ): void {
+  // A body on the ground cannot twist round to shoot behind itself. It waits for a target it
+  // can actually bring the weapon to bear on.
+  if (hs.isRagdollActive && !canDownedBodyAimAt(hs, playerEyeWorldPos)) {
+    cancelActiveBurst(agent);
+    return;
+  }
+
   const tuning = ARCHETYPE_TUNING[hs.archetype];
   const isWounded =
     hs.currentHp < hs.maxHp * 0.88 || hs.painShock > 0.18 || hs.rupturedOrgans.size > 0;

@@ -42,6 +42,7 @@ const GROUND_FRICTION_COEFF = 0.6;
 const CORPSE_GRIP_SPEED_MS = 0.1;
 const LIVING_GRIP_SPEED_MS = 0.3;
 const JOINT_LIMIT_PASSES = 3;
+const POSE_HOLD_FLOOR = 0.55;
 
 function clampParticleVelocity(vel: Vec3Like, grounded: boolean): void {
   if (grounded && vel.y > MAX_GROUNDED_UPWARD_POP_MS) {
@@ -113,13 +114,17 @@ export function stepRagdollPhysics(
     ? Math.max(0.22, target.consciousness * (1.0 - 0.55 * target.painShock))
     : 0.0;
 
+  // Someone still fighting from the floor holds the pose with what strength is left: weakness
+  // shows as sag and tremor, not as a body that cannot lift its own head.
+  const poseHold = target.alive ? POSE_HOLD_FLOOR + (1 - POSE_HOLD_FLOOR) * muscleTone : 0.0;
+
   const gripSpeed = target.alive ? LIVING_GRIP_SPEED_MS : CORPSE_GRIP_SPEED_MS;
   let finalGroundedCount = 0;
   for (let step = 0; step < subSteps; step++) {
     const activePoseTargets =
-      muscleTone > 0.01 ? buildLivingGroundedPoseTargets(target, floorY, agonyClockS) : null;
+      poseHold > 0.01 ? buildLivingGroundedPoseTargets(target, floorY, agonyClockS) : null;
     const muscleDrive = activePoseTargets
-      ? computeMuscleDrive(target, activePoseTargets, muscleTone)
+      ? computeMuscleDrive(target, activePoseTargets, poseHold)
       : null;
 
     // A. Symplectic Euler Prediction Step
@@ -162,7 +167,7 @@ export function stepRagdollPhysics(
       a.velocity.y += gravity * h;
 
       if (activePoseTargets && a.componentId === 'BODY' && aId === 'HEAD_TOP') {
-        a.velocity.y += -gravity * muscleTone * h;
+        a.velocity.y += -gravity * poseHold * h;
       }
       const airDamp = Math.exp(-0.45 * h);
       a.velocity.x *= airDamp;

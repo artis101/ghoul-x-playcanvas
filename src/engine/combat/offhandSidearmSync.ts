@@ -2,6 +2,7 @@ import { oppositeSide } from '../../core/ghoul/anatomy/handedness.ts';
 import * as pc from 'playcanvas';
 import type { GhoulZoneId, Vec3Like } from '../../contracts/ballistics.ts';
 import { add, copyVec3, dot, length, normalize, scale, sub, vec3 } from '../../core/ballistics/vec3.ts';
+import { clampDownedAimDirection } from '../../core/ballistics/triage/downedAimReach.ts';
 import { safeOrthonormalBasis } from '../../core/ghoul/anatomy/ragdollBasisMath.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
@@ -11,6 +12,8 @@ import { basisToQuat } from '../mannequin/combatantPoseConstants.ts';
 import { CombatantWeaponGrip } from '../mannequin/combatantWeaponGrip.ts';
 import { CombatantBoneSync } from '../mannequin/combatantBoneSync.ts';
 import { transitionPropAttachment } from '../mannequin/propAttachmentState.ts';
+
+const NO_SUPPORT_GRIP = new pc.Vec3();
 
 export class OffhandSidearmSync {
   private readonly scratchMat4 = new pc.Mat4();
@@ -92,9 +95,10 @@ export class OffhandSidearmSync {
     let rawAimDir = normalize(sub(aimTarget, pUpper));
     if (length(rawAimDir) < 1e-4) rawAimDir = charFwd;
 
-    // A combatant lying on the ground has no facing to respect: it points the pistol straight at
-    // the threat, even one standing over it.
+    // A combatant lying on the ground points the pistol at a threat standing over it or past
+    // its feet, but only as far round as its shoulder can really turn.
     const downed = hs.isRagdollActive;
+    if (downed) rawAimDir = clampDownedAimDirection(hs, rawAimDir);
     const clampedY = downed
       ? Math.max(-0.1, Math.min(0.96, rawAimDir.y))
       : Math.max(-0.52, Math.min(0.52, rawAimDir.y));
@@ -181,7 +185,8 @@ export class OffhandSidearmSync {
         ? add(glbHand.getPosition(), scale(glbHand.up, 0.052))
         : add(pHand, scale(armAimDir, 0.052));
       this.grip.align(rig.holderEntity, rig.glbInstance.rootEntity, 'silver_talon_50ae', palm, armAimDir);
-      if (glb && !hs.isRagdollActive) rig.hands?.sync(glb, activeHand, false);
+      // Wrap the fist round the grip, wrist behind it, instead of leaving the hand flat.
+      if (glb) rig.hands?.syncHold(glb, activeHand, NO_SUPPORT_GRIP, true);
     }
     return true;
   }
