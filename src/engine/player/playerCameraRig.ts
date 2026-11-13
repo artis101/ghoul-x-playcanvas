@@ -124,7 +124,7 @@ export class PlayerCameraRig {
     this.recoilCameraRoll = Math.max(-2.4, Math.min(2.4, this.recoilCameraRoll + this.recoilShotSign * recoilKickDeg * 0.16 * adsBrace));
 
     // A little forward jolt and FOV pulse on every shot, scaled by the kick and braced when aimed.
-    addPunchImpulse(this.punch, recoilKickDeg * 6 * adsBrace, 0, this.recoilShotSign * recoilKickDeg * 5 * adsBrace, recoilKickDeg * 3.5 * adsBrace);
+    addPunchImpulse(this.punch, recoilKickDeg * 11 * adsBrace, this.recoilShotSign * recoilKickDeg * 4 * adsBrace, this.recoilShotSign * recoilKickDeg * 9 * adsBrace, recoilKickDeg * 6 * adsBrace);
 
     if (!applyViewmodelKick) return;
     const kickNorm = Math.min(1.6, Math.max(0.45, recoilKickDeg / 3.2));
@@ -160,7 +160,7 @@ export class PlayerCameraRig {
   /** A blast or heavy impact nearby: a hard, brief, direction-less bump. */
   public applyBump(strength: number): void {
     const s = Math.max(0, Math.min(2, strength));
-    addPunchImpulse(this.punch, s * 70, (Math.random() - 0.5) * s * 60, (Math.random() - 0.5) * s * 100, s * 30);
+    addPunchImpulse(this.punch, s * 120, (Math.random() - 0.5) * s * 100, (Math.random() - 0.5) * s * 160, s * 55);
   }
 
   public applyCameraShake(intensityDeg: number, durationS = 0.36): void {
@@ -195,7 +195,7 @@ export class PlayerCameraRig {
 
     this.cameraPitch -= stepRecoilClimb(this.climb, dt);
     stepViewPunch(this.punch, dt);
-    const leanTarget = -strafeSign * 1.1 * (1 - nextBlend * 0.7);
+    const leanTarget = -strafeSign * 2.2 * (1 - nextBlend * 0.7);
     this.strafeLeanRoll += (leanTarget - this.strafeLeanRoll) * (1 - Math.exp(-9.0 * dt));
     if (camera) camera.fov += this.punch.fov.value;
 

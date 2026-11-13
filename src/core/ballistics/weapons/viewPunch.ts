@@ -32,8 +32,8 @@ const DAMPING = 24;
 const FOV_STIFFNESS = 260;
 const FOV_DAMPING = 22;
 /** Beyond this the spring is clamped so stacked hits cannot spin the view. */
-const MAX_ANGLE_DEG = 9;
-const MAX_FOV_DEG = 6;
+const MAX_ANGLE_DEG = 14;
+const MAX_FOV_DEG = 10;
 
 function stepAxis(axis: PunchAxis, dt: number, stiffness: number, damping: number): void {
   // Semi-implicit Euler, sub-stepped so a long frame cannot blow the spring up.
@@ -94,16 +94,16 @@ export interface HitFlinch {
 export function hitFlinch(incomingRightness: number, damageNorm: number, u1: number, u2: number): HitFlinch {
   const d = Math.max(0, Math.min(1, damageNorm));
   const side = Math.max(-1, Math.min(1, incomingRightness));
-  const strength = 0.55 + d * 0.9;
+  const strength = 0.9 + d * 1.4;
   const jitterYaw = (u1 * 2 - 1) * 0.5;
   const jitterPitch = 0.6 + u2 * 0.4;
   return {
     // The muzzle is thrown up and away from the side the round came from.
-    aimPitchDeg: strength * 0.9 * jitterPitch,
-    aimYawDeg: strength * 1.1 * (-side * 0.8 + jitterYaw),
-    pitchImpulse: strength * 95 * jitterPitch,
-    yawImpulse: strength * 80 * (-side * 0.8 + jitterYaw),
-    rollImpulse: strength * 110 * side,
-    fovImpulse: strength * 45,
+    aimPitchDeg: strength * 1.5 * jitterPitch,
+    aimYawDeg: strength * 1.8 * (-side * 0.8 + jitterYaw),
+    pitchImpulse: strength * 150 * jitterPitch,
+    yawImpulse: strength * 130 * (-side * 0.8 + jitterYaw),
+    rollImpulse: strength * 190 * side,
+    fovImpulse: strength * 70,
   };
 }
