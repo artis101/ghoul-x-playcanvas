@@ -23,8 +23,8 @@ const GRIP_BLEND_RATE = 10;
  * under the upper-body aim layer), and the only correction is the shared aim delta, which turns
  * the chest and gun arm a few degrees toward the target and carries the sway and recoil.
  *
- * A living body on the ground in the ragdoll (face down) keeps the pistol holstered: it never
- * shoots from there.
+ * A living body on the ground in the ragdoll keeps a pistol the AI has not drawn holstered; one the
+ * AI has drawn stays in the fist.
  */
 export class OffhandSidearmSync {
   private readonly grip = new CombatantWeaponGrip();
@@ -47,7 +47,10 @@ export class OffhandSidearmSync {
     const hand: ActiveFiringHand | null = sidearmState?.hand ?? null;
     const armIntact = hand !== null && isArmChainIntactAndFunctional(hs, hand);
     const isAirborneRagdoll = hs.isRagdollActive && hs.posture === 'AIRBORNE_RAGDOLL';
-    const faceDown = hs.isRagdollActive && !isAirborneRagdoll && alive;
+    // A living body on the ground in the ragdoll keeps a pistol the AI has not drawn holstered. One
+    // the AI has drawn (or is drawing) stays in the fist: the armament never lets go of it, and a
+    // downed body may fire it (the wounded sequence's own fire gate decides when).
+    const faceDown = hs.isRagdollActive && !isAirborneRagdoll && alive && !sidearmState?.visible;
     const glb = target.combatantGlb;
     const seated = isSeatedAnimated(hs);
 

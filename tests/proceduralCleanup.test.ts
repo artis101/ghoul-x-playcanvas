@@ -73,9 +73,9 @@ describe('procedural cleanup: the sidearm rides the animated hand', () => {
     return { rig, target, hand, holder, glb };
   }
 
-  const provider = (drawing: boolean, progress = 1) => ({
+  const provider = (drawing: boolean, progress = 1, visible = true) => ({
     getSidearmVisualState: () => ({
-      visible: true, drawing, drawProgress: progress, hand: 'RIGHT', dropped: false,
+      visible, drawing, drawProgress: progress, hand: 'RIGHT', dropped: false,
       aimTargetWorld: vec3(0, 1.5, 6), weaponId: 'silver_talon_50ae',
     }),
   }) as never;
@@ -114,7 +114,7 @@ describe('procedural cleanup: the sidearm rides the animated hand', () => {
     expect(hs.ragdollBones.FOREARM_RIGHT.position).toEqual(forearmBefore);
   });
 
-  it('keeps a face-down body holstered: it never shoots from the ground', () => {
+  it('keeps a pistol the AI has not drawn holstered on a body lying in the ragdoll', () => {
     const hs = createTargetHealthState('facedown', 'FaceDown', vec3(0, 0, 0));
     hs.isRagdollActive = true;
     hs.posture = 'RAGDOLL_GROUNDED';
@@ -122,9 +122,12 @@ describe('procedural cleanup: the sidearm rides the animated hand', () => {
     const fx = { spawnDroppedWeaponProp: vi.fn() };
     const sync = new OffhandSidearmSync();
     for (let i = 0; i < 4; i++) {
-      expect(sync.sync(target, vec3(0, 1.6, 6), rig, provider(false), fx as never, 1 / 60)).toBe(false);
+      expect(sync.sync(target, vec3(0, 1.6, 6), rig, provider(false, 1, false), fx as never, 1 / 60)).toBe(false);
     }
     expect(rig.attachmentState.kind).toBe('HIDDEN_TEMP');
     expect(fx.spawnDroppedWeaponProp).not.toHaveBeenCalled();
+    // Drawn, it stays in the fist of the downed body.
+    expect(sync.sync(target, vec3(0, 1.6, 6), rig, provider(false), fx as never, 1 / 60)).toBe(true);
+    expect(rig.attachmentState).toMatchObject({ kind: 'ATTACHED', hand: 'RIGHT' });
   });
 });
