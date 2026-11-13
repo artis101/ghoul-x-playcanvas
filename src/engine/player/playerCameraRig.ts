@@ -68,6 +68,9 @@ export class PlayerCameraRig {
   public readonly punch = createViewPunch();
   /** Smoothed camera lean into a strafe, degrees. */
   public strafeLeanRoll = 0;
+  /** Aim wander left by a hit, degrees per second; decays. */
+  private hitSwayDegPerS = 0;
+  private hitSwayClockS = 0;
   private readonly scratchBaseRot = new pc.Quat();
   private readonly scratchOffsetRot = new pc.Quat();
   private readonly scratchAdsRot = new pc.Quat();
@@ -154,6 +157,7 @@ export class PlayerCameraRig {
     addPunchImpulse(this.punch, f.pitchImpulse, f.yawImpulse, f.rollImpulse, f.fovImpulse);
     this.cameraPitch = Math.max(-85, Math.min(85, this.cameraPitch + f.aimPitchDeg));
     this.cameraYaw += f.aimYawDeg;
+    this.hitSwayDegPerS = Math.min(60, Math.max(this.hitSwayDegPerS, f.swayDegPerS) + f.swayDegPerS * 0.3);
     // The shooter is not holding this rise, so it is not paid back by the climb recovery.
   }
 
@@ -195,6 +199,15 @@ export class PlayerCameraRig {
 
     this.cameraPitch -= stepRecoilClimb(this.climb, dt);
     stepViewPunch(this.punch, dt);
+    if (this.hitSwayDegPerS > 0.05) {
+      this.hitSwayClockS += dt;
+      const t = this.hitSwayClockS;
+      this.cameraYaw += Math.sin(t * 7.1) * this.hitSwayDegPerS * dt;
+      this.cameraPitch = Math.max(-85, Math.min(85, this.cameraPitch + Math.cos(t * 5.3) * this.hitSwayDegPerS * 0.7 * dt));
+      this.hitSwayDegPerS *= Math.exp(-2.4 * dt);
+    } else {
+      this.hitSwayDegPerS = 0;
+    }
     const leanTarget = -strafeSign * 2.2 * (1 - nextBlend * 0.7);
     this.strafeLeanRoll += (leanTarget - this.strafeLeanRoll) * (1 - Math.exp(-9.0 * dt));
     if (camera) camera.fov += this.punch.fov.value;

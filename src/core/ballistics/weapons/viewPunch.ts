@@ -83,6 +83,8 @@ export interface HitFlinch {
   readonly yawImpulse: number;
   readonly rollImpulse: number;
   readonly fovImpulse: number;
+  /** Speed of the lingering aim wander the hit leaves behind, degrees per second. */
+  readonly swayDegPerS: number;
 }
 
 /**
@@ -95,15 +97,18 @@ export function hitFlinch(incomingRightness: number, damageNorm: number, u1: num
   const d = Math.max(0, Math.min(1, damageNorm));
   const side = Math.max(-1, Math.min(1, incomingRightness));
   const strength = 0.9 + d * 1.4;
+  // Hard and direct hits knock the aim much further than a graze.
+  const aimKnock = 0.7 + d * 2.6;
   const jitterYaw = (u1 * 2 - 1) * 0.5;
   const jitterPitch = 0.6 + u2 * 0.4;
   return {
     // The muzzle is thrown up and away from the side the round came from.
-    aimPitchDeg: strength * 1.5 * jitterPitch,
-    aimYawDeg: strength * 1.8 * (-side * 0.8 + jitterYaw),
+    aimPitchDeg: aimKnock * 1.5 * jitterPitch,
+    aimYawDeg: aimKnock * 1.8 * (-side * 0.8 + jitterYaw),
     pitchImpulse: strength * 150 * jitterPitch,
     yawImpulse: strength * 130 * (-side * 0.8 + jitterYaw),
     rollImpulse: strength * 190 * side,
     fovImpulse: strength * 70,
+    swayDegPerS: 8 + d * 40,
   };
 }
