@@ -18,7 +18,7 @@ describe('NPC animation and weapon grips', () => {
     state.activeReaction.type = 'CHEST_STAGGER';
     expect(controller.resolveDesiredClip(state)).toBe('HitStaggerChest');
     state.activeReaction.type = 'GUT_FOLD';
-    expect(controller.resolveDesiredClip(state)).toBe('DiaphragmDropKneel');
+    expect(controller.resolveDesiredClip(state)).toBe('HitStaggerChest');
     state.activeReaction.type = 'LEG_BUCKLE_RIGHT';
     expect(controller.resolveDesiredClip(state)).toBe('LegCollapseCrawl');
   });

@@ -426,11 +426,11 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
   });
 
   describe('4. Soldier of Fortune GHOUL Dismemberment & Subtree Separation', () => {
-    it('HEAD_CRANIUM close hit with .50 AE JHP triggers CRANIAL_POP while keeping rest of body unified', () => {
-      const target = createTargetHealthState('target_headshot', 'Enemy Leader', vec3(0, 0, 3), Math.PI);
+    it('HEAD_CRANIUM contact-range hit with .50 AE JHP triggers CRANIAL_POP while keeping rest of body unified', () => {
+      const target = createTargetHealthState('target_headshot', 'Enemy Leader', vec3(0, 0, 1.6), Math.PI);
 
       const shooterPos = vec3(0, 1.7, 0);
-      const aimDir = normalize(sub(vec3(0, 1.7, 3), shooterPos));
+      const aimDir = normalize(sub(vec3(0, 1.7, 1.6), shooterPos));
 
       const report = simulateShot(
         WEAPON_SILVER_TALON,
@@ -503,7 +503,7 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
   });
 
   describe('5. Grounded Joint Dismemberment, Living Downed Leg-Shot Posture & 4-State Triage', () => {
-    it('rewards deliberate large-caliber joint shots with CLEAN_SEVER while 5.56mm and off-joint mid-shaft hits do NOT amputate', () => {
+    it('rifle and pistol bullets wound joints without amputating them', () => {
       // 1) 5.56mm M4A1 shot directly at knee joint does NOT sever leg
       const m4Target = createTargetHealthState('m4_knee', 'Militia', vec3(0, 0, -6), 0);
       const kneePos = m4Target.ragdollBones.KNEE_RIGHT.position;
@@ -535,7 +535,7 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       expect(midRep.hitTarget).toBe(true);
       expect(midRep.dismembermentEvents.length).toBe(0);
 
-      // 3) Deliberate 7.62 NATO shot directly into KNEE_RIGHT joint severs lower leg cleanly AND keeps enemy ALIVE!
+      // 3) A 7.62 NATO round through the knee wrecks the joint but does not take the leg off.
       const jointTarget = createTargetHealthState('joint_knee', 'Militia', vec3(0, 0, -6), 0);
       const jointKneePt = jointTarget.ragdollBones.KNEE_RIGHT.position;
       const jointOrigin = vec3(jointKneePt.x, jointKneePt.y, 0);
@@ -549,12 +549,12 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       );
       expect(jointRep.hitTarget).toBe(true);
       expect(jointRep.isLethalKill).toBe(false);
-      expect(jointRep.dismembermentEvents.some((d) => d.zone === 'KNEE_RIGHT' && d.goreMode === 'CLEAN_SEVER')).toBe(true);
+      expect(jointRep.dismembermentEvents.length).toBe(0);
 
       applyShotReportToTarget(jointTarget, jointRep);
       expect(jointTarget.alive).toBe(true);
 
-      // 4) Deliberate .50 AE shot at wrist/hand severs HAND_RIGHT while keeping enemy standing & alive!
+      // 4) A .50 AE round through the gun hand knocks the weapon away but leaves the hand attached.
       const handTarget = createTargetHealthState('joint_hand', 'Punk', vec3(0, 0, -5), 0);
       const handPt = handTarget.ragdollBones.HAND_RIGHT.position;
       const handOrigin = vec3(handPt.x, handPt.y, 0);
@@ -568,9 +568,10 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       );
       expect(handRep.hitTarget).toBe(true);
       expect(handRep.isLethalKill).toBe(false);
-      expect(handRep.dismembermentEvents.some((d) => d.zone === 'HAND_RIGHT')).toBe(true);
+      expect(handRep.dismembermentEvents.length).toBe(0);
       applyShotReportToTarget(handTarget, handRep);
       expect(handTarget.alive).toBe(true);
+      expect(handTarget.weaponDropped).toBe(true);
       expect(handTarget.rightLegFunctional).toBe(true);
       expect(handTarget.leftLegFunctional).toBe(true);
     });
@@ -629,7 +630,7 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeLessThan(0.22);
     });
 
-    it('keeps ordinary cumulative gunfire non-dismembering while rewarding surgical sniper cervical neck shots with clean decapitation', () => {
+    it('keeps ordinary gunfire non-dismembering; a sniper neck shot kills through the spine without decapitating', () => {
       // 1) Ordinary combat: spray mid-bicep with 3x 5.56mm rounds + follow-up 8m .50 AE mid-bicep hit -> gory laceration, ZERO accidental amputation!
       const ordinaryTarget = createTargetHealthState('ord_target', 'Militia Regular', vec3(0, 0, -8), 0);
       const midArmAimPt = vec3(-0.29, 1.24, -8); // off-joint bicep shaft
@@ -645,7 +646,7 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       expect(rep50Mid.hitTarget).toBe(true);
       expect(rep50Mid.dismembermentEvents).toHaveLength(0);
 
-      // 2) Surgical sniper cervical neck shot at 22m -> shoots the head clean off (NECK_CERVICAL subtree detached)!
+      // 2) A 7.62 round through the neck at 22m severs the spinal cord and kills, but the head stays on.
       const neckTarget = createTargetHealthState('neck_decap', 'Sniper Target', vec3(0, 0, -22), 0);
       const neckPivot = neckTarget.ragdollBones.NECK_CERVICAL.position;
       const sniperOrigin = vec3(neckPivot.x, neckPivot.y, 0);
@@ -659,17 +660,11 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       );
       expect(neckRep.hitTarget).toBe(true);
       expect(neckRep.isLethalKill).toBe(true);
-      const neckSever = neckRep.dismembermentEvents.find((d) => d.zone === 'NECK_CERVICAL');
-      expect(neckSever).toBeDefined();
-      expect(neckSever!.goreMode).toBe('CLEAN_SEVER');
-      expect(neckSever!.detachedSubtree).toEqual(
-        expect.arrayContaining(['NECK_CERVICAL', 'HEAD_CRANIUM', 'HEAD_FACE_JAW'])
-      );
-      expect(neckRep.combatantEffects.some((e) => e.includes('CERVICAL DECAPITATION'))).toBe(true);
+      expect(neckRep.dismembermentEvents.some((d) => d.zone === 'NECK_CERVICAL')).toBe(false);
 
       applyShotReportToTarget(neckTarget, neckRep);
       expect(neckTarget.alive).toBe(false);
-      expect(neckTarget.ragdollBones.HEAD_CRANIUM.componentId).not.toBe('BODY');
+      expect(neckTarget.ragdollBones.HEAD_CRANIUM.componentId).toBe('BODY');
       expect(neckTarget.ragdollBones.TORSO_UPPER_THORAX.componentId).toBe('BODY');
     });
   });

@@ -105,7 +105,7 @@ export function handleEnemyHit(
     target.painShock = Math.max(target.painShock, 0.85);
     target.consciousness = Math.min(target.consciousness, 0.42);
     if (!target.isRagdollActive) {
-      target.posture = hit.hitZone === 'TORSO_LOWER_ABDOMEN' ? 'GUT_HURT' : 'STAGGERED';
+      target.posture = 'STAGGERED';
     }
     onTransition(agent, 'SUPPRESSED_STAGGERED');
   } else {

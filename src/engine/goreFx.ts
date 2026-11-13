@@ -73,8 +73,8 @@ export class GoreAndBallisticsFxManager {
     spawnDetachedHeadgearProp(this.fxRoot, this.gibChunks, this.glbRegistry, archetype, worldPos, shotDir);
   }
 
-  public spawnDroppedWeaponProp(archetype: EnemyArchetypeId, worldPos: Vec3Like, inheritedVel: Vec3Like): void {
-    spawnDroppedWeaponProp(this.fxRoot, this.gibChunks, this.glbRegistry, archetype, worldPos, inheritedVel);
+  public spawnDroppedWeaponProp(archetype: EnemyArchetypeId, worldPos: Vec3Like, inheritedVel: Vec3Like): pc.Entity {
+    return spawnDroppedWeaponProp(this.fxRoot, this.gibChunks, this.glbRegistry, archetype, worldPos, inheritedVel);
   }
 
   public spawnArmorImpactSparks(worldPos: Vec3Like, normalDir: Vec3Like): void {

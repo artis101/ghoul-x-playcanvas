@@ -7,6 +7,7 @@ import {
 import { ALL_AUX_PARTICLES, ALL_GHOUL_ZONES } from '../../ghoul/anatomy.ts';
 import { transitionTargetLifecycle } from '../lifecycle/targetLifecycleFsm.ts';
 import { add, copyVec3, length, normalize, scale, vec3 } from '../vec3.ts';
+import { gradeZoneWound } from './woundSeverity.ts';
 
 export function applySurvivingReaction(
   target: TargetHealthState,
@@ -41,6 +42,7 @@ export function applySurvivingReaction(
     }
   }
 
+  const wound = gradeZoneWound(hitZone, report.woundEvents);
   let rxType: PainReactionType = 'CHEST_STAGGER';
   let rxDurationS = 0.65;
   let postureOverride: StandingCombatPosture | undefined;
@@ -49,12 +51,14 @@ export function applySurvivingReaction(
     rxType = !target.rightLegFunctional ? 'LEG_BUCKLE_RIGHT' : 'LEG_BUCKLE_LEFT';
     rxDurationS = newlySeveredRightLeg || newlySeveredLeftLeg ? 0.68 : 0.46;
     postureOverride = 'LEG_BUCKLED';
-  } else if (hitZone === 'NECK_CERVICAL') {
+  } else if (hitZone === 'NECK_CERVICAL' && wound.severity === 'CRITICAL') {
+    // An opened artery or airway: they grab at the throat, on their feet, while it pumps out.
     rxType = 'THROAT_CLUTCH';
-    postureOverride = 'THROAT_CLUTCH';
-  } else if (hitZone === 'TORSO_LOWER_ABDOMEN') {
+    postureOverride = 'STAGGERED';
+  } else if (hitZone === 'TORSO_LOWER_ABDOMEN' && wound.severity === 'CRITICAL') {
+    // A burst gut makes them hunch and clutch it, but adrenaline keeps them standing.
     rxType = 'GUT_FOLD';
-    postureOverride = 'GUT_HURT';
+    postureOverride = 'STAGGERED';
   } else if (hitZone === 'HEAD_CRANIUM' || hitZone === 'HEAD_FACE_JAW') {
     rxType = 'HEAD_SNAP';
     postureOverride = 'STAGGERED';
@@ -66,11 +70,24 @@ export function applySurvivingReaction(
     if (target.weaponDropped) postureOverride = 'DISARMED';
   }
 
+  // How long the reaction lasts follows the wound, not the body part: a pellet graze is a twitch,
+  // a deep channel a real stagger, a cut artery or burst organ a long clutch.
+  const isLegReaction = rxType === 'LEG_BUCKLE_RIGHT' || rxType === 'LEG_BUCKLE_LEFT';
+  if (!isLegReaction) {
+    if (wound.severity === 'GRAZE') {
+      rxDurationS = 0.22;
+      if (postureOverride === 'STAGGERED') postureOverride = undefined;
+    } else if (wound.severity === 'CRITICAL') {
+      rxDurationS = rxType === 'THROAT_CLUTCH' || rxType === 'GUT_FOLD' ? 1.1 : 0.8;
+    }
+  }
+  const severityScale = wound.severity === 'GRAZE' ? 0.45 : wound.severity === 'CRITICAL' ? 1.15 : 0.85;
+
   transitionTargetLifecycle(target, {
     kind: 'START_PAIN_REACTION',
     reactionType: rxType,
     durationS: rxDurationS,
-    intensity: Math.min(1.3, 0.60 + report.totalEnergyDepositedJ / 450),
+    intensity: Math.min(1.3, (0.6 + report.totalEnergyDepositedJ / 450) * severityScale),
     hitDirectionWorld: report.aimDirectionWorld,
     postureOverride,
   });

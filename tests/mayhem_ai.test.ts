@@ -960,8 +960,8 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
         const shotOrigin = add(handPt, vec3(0, 0, 0.9));
         const aimDir = normalize(sub(handPt, shotOrigin));
         const rep = simulateShot(
-          WEAPON_SILVER_TALON,
-          AMMO_50AE_JHP,
+          WEAPON_M590,
+          AMMO_12G_00_BUCK,
           shotOrigin,
           aimDir,
           combatant,
@@ -978,8 +978,8 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
         const sniperHandPt = hardenedSniper.ragdollBones.HAND_LEFT.position;
         const sniperOrigin = add(sniperHandPt, vec3(0, 0, 0.9));
         const sniperRep = simulateShot(
-          WEAPON_SILVER_TALON,
-          AMMO_50AE_JHP,
+          WEAPON_M590,
+          AMMO_12G_00_BUCK,
           sniperOrigin,
           normalize(sub(sniperHandPt, sniperOrigin)),
           hardenedSniper,

@@ -98,9 +98,8 @@ export function syncPhysiologyToHealthState(
   }
 
   if (!hs.isRagdollActive && hs.alive) {
-    if (physio.readability.immediatePostureReaction === 'DIAPHRAGM_DROP_KNEEL') {
-      hs.posture = 'GUT_HURT';
-    } else if (physio.readability.immediatePostureReaction === 'LEG_COLLAPSE_PRONE') {
+    // A gut or diaphragm hit is only a flinch in combat; only a leg that cannot bear weight drops them.
+    if (physio.readability.immediatePostureReaction === 'LEG_COLLAPSE_PRONE') {
       hs.posture = 'LEG_BUCKLED';
     }
   }

@@ -14,6 +14,7 @@ import {
   vec3,
 } from '../vec3.ts';
 import { stabilizeRagdollPoseForTransition } from '../ragdoll/ragdollPoseStabilizer.ts';
+import { chooseDeathFallStyle } from './deathFallStyle.ts';
 
 export function applyRagdollActivationAndImpulses(
   target: TargetHealthState,
@@ -49,8 +50,11 @@ export function applyRagdollActivationAndImpulses(
       ? scale(horizImp, 1 / horizImpMag)
       : normalize(vec3(report.aimDirectionWorld.x, 0, report.aimDirectionWorld.z));
 
+  const isFreshDeath = !wasAlreadyRagdoll && !target.alive;
+  const fallStyle = isFreshDeath ? chooseDeathFallStyle(target, report) : 'KNOCKBACK';
   const maxRootHorizSpeed = isOverkillCorpseHit ? 1.35 : 3.6;
-  const targetHorizSpeed = Math.min(maxRootHorizSpeed, horizImpMag / bodyMassKg);
+  const styleHorizScale = fallStyle === 'CRUMPLE' ? 0.3 : fallStyle === 'DRAMATIC' ? 1.15 : 1.0;
+  const targetHorizSpeed = Math.min(maxRootHorizSpeed, (horizImpMag / bodyMassKg) * styleHorizScale);
 
   const baseVel = vec3(
     horizDir.x * targetHorizSpeed,
@@ -72,9 +76,14 @@ export function applyRagdollActivationAndImpulses(
   }
 
   target.ragdollAngularVelocity = scale(report.ragdollPlan.netTorqueWorld, 1 / 65.0);
+  if (fallStyle === 'DRAMATIC') {
+    // Spun round by the hit as the legs go: a twisting fall.
+    const spinSign = horizDir.x * Math.cos(target.yawRad) - horizDir.z * Math.sin(target.yawRad) >= 0 ? 1 : -1;
+    target.ragdollAngularVelocity = add(target.ragdollAngularVelocity, vec3(0, 3.2 * spinSign, 0));
+  }
 
   const facingFwd = vec3(Math.sin(target.yawRad), 0, Math.cos(target.yawRad));
-  const isLowImpulseCollapse = !wasAlreadyRagdoll && targetHorizSpeed < 1.0;
+  const isLowImpulseCollapse = !wasAlreadyRagdoll && (targetHorizSpeed < 1.0 || fallStyle !== 'KNOCKBACK');
   const maxBoneSpeedMs = isOverkillCorpseHit ? 2.6 : 4.2;
   const maxLocalKickMs = isOverkillCorpseHit ? 1.15 : 2.1;
 

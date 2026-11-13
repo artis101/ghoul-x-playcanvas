@@ -180,6 +180,8 @@ export interface TargetHealthState {
   weaponDropped: boolean;
   /** True when the primary weapon was dropped due to direct arm/hand trauma or disarm rather than leg knockdown */
   primaryArmDisarmed?: boolean;
+  /** Where the dropped primary weapon lies, while it is on the ground and can be picked back up. */
+  droppedWeaponWorld?: Vec3Like;
   /** Optional live tactical resolve archetype for AI & HUD telemetry */
   resolveProfile?:
     | 'HARDENED_VETERAN'

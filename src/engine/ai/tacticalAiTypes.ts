@@ -206,9 +206,12 @@ export interface EnemyAiAgentRuntime {
   timeWithoutLosS?: number;
   moraleShockTimerS?: number;
   berserkerFrenzyTimerS?: number;
-  /** Health tiers already fallen back from; see `woundFallback.ts`. */
-  woundFallbackTier?: number;
+  /** Wounded behaviour state; see `woundFallback.ts`. */
+  woundFallbackHpMark?: number;
   woundFallbackTimerS?: number;
+  mortalWoundMode?: 'AMBUSH_HOLD' | 'AMBUSH_SPRUNG' | 'LAST_STAND';
+  mortalHoldTimerS?: number;
+  weaponPickupTimerS?: number;
   lastRelocationClockS?: number;
   lastObservedBurstCount?: number;
 

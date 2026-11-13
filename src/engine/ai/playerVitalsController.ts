@@ -22,7 +22,9 @@ export interface PlayerShotDamageResolution {
   readonly grazeEvent: PlayerNearMissGrazePayload | null;
 }
 
-const REGEN_QUIET_DELAY_S = 3.5;
+const REGEN_QUIET_DELAY_S = 5.0;
+/** Slow field recovery: you heal back between fights, not mid-firefight. */
+const REGEN_HP_PER_S = 4.0;
 
 export function syncPlayerVitalsFsm(vitals: PlayerCombatVitals): void {
   if (vitals.health <= 0 || vitals.survivalPhase?.kind === 'DEAD') {
@@ -121,7 +123,7 @@ export function stepPlayerVitalsRegen(vitals: PlayerCombatVitals, dt: number): v
   syncPlayerVitalsFsm(vitals);
 
   if (vitals.survivalPhase?.kind === 'REGENERATING') {
-    vitals.health = Math.min(vitals.maxHealth, vitals.health + 8.5 * dt);
+    vitals.health = Math.min(vitals.maxHealth, vitals.health + REGEN_HP_PER_S * dt);
     if (vitals.health >= 35) vitals.healthGateReady = true;
     syncPlayerVitalsFsm(vitals);
   }
@@ -159,9 +161,10 @@ export function resolveIncomingPlayerShotDamage(
   let armorChipApplied = 0;
   let healthDamageApplied = 0;
   if (vitals.armor > 0) {
-    armorChipApplied = Math.min(vitals.armor, ctx.rawChipDamage * 0.7);
+    // Body armour soaks most of a round but wears out; blunt trauma still gets through.
+    armorChipApplied = Math.min(vitals.armor, ctx.rawChipDamage * 0.8);
     vitals.armor = Math.max(0, vitals.armor - armorChipApplied);
-    healthDamageApplied = ctx.rawChipDamage * 0.35;
+    healthDamageApplied = ctx.rawChipDamage * 0.4;
   } else {
     healthDamageApplied = ctx.rawChipDamage;
   }

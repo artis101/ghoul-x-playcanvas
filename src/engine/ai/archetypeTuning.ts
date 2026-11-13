@@ -21,7 +21,8 @@ export const ARCHETYPE_TUNING: Record<EnemyArchetypeId, ArchetypeCombatTuning> =
     burstCooldownS: 1.55,
     strafeSpeedMs: 2.15,
     tracerSpeedMs: 78,
-    baseChipDamage: 4.0,
+    // .50 AE pistol round.
+    baseChipDamage: 24.0,
   },
   MILITIA_GUNNER: {
     primaryWeaponId: 'm4a1_carbine',
@@ -31,7 +32,8 @@ export const ARCHETYPE_TUNING: Record<EnemyArchetypeId, ArchetypeCombatTuning> =
     burstCooldownS: 1.75,
     strafeSpeedMs: 1.85,
     tracerSpeedMs: 92,
-    baseChipDamage: 5.0,
+    // 5.56 rifle round.
+    baseChipDamage: 18.0,
   },
   HEAVY_ENFORCER: {
     primaryWeaponId: 'm590_shotgun',
@@ -41,7 +43,8 @@ export const ARCHETYPE_TUNING: Record<EnemyArchetypeId, ArchetypeCombatTuning> =
     burstCooldownS: 2.05,
     strafeSpeedMs: 1.35,
     tracerSpeedMs: 72,
-    baseChipDamage: 6.5,
+    // A full 00 buckshot load landing.
+    baseChipDamage: 34.0,
   },
   SNIPER_OPERATIVE: {
     primaryWeaponId: 'msg90_sniper',
@@ -51,7 +54,8 @@ export const ARCHETYPE_TUNING: Record<EnemyArchetypeId, ArchetypeCombatTuning> =
     burstCooldownS: 2.65,
     strafeSpeedMs: 1.5,
     tracerSpeedMs: 125,
-    baseChipDamage: 8.0,
+    // 7.62 rifle round.
+    baseChipDamage: 60.0,
   },
 };
 
@@ -61,7 +65,8 @@ export const SIDEARM_M9_TUNING = {
   interShotDelayS: 0.14,
   burstCooldownS: 1.25,
   tracerSpeedMs: 88,
-  baseChipDamage: 4.5,
+  // 9 mm pistol round.
+  baseChipDamage: 14.0,
 } as const;
 
 export const TORSO_ZONES: ReadonlySet<GhoulZoneId> = new Set<GhoulZoneId>([

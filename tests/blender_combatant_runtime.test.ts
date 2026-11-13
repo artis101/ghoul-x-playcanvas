@@ -4,10 +4,12 @@ import { AmmoSpec, GhoulZoneId } from '../src/contracts/ballistics.ts';
 import { applyShotReportToTarget, simulateShot } from '../src/core/ballistics/solver.ts';
 import { add, normalize, sub, vec3 } from '../src/core/ballistics/vec3.ts';
 import {
+  AMMO_12G_00_BUCK,
   AMMO_50AE_FMJ_SOLID,
   AMMO_556_NATO_M855,
   DEFAULT_ENVIRONMENT,
   WEAPON_M4A1,
+  WEAPON_M590,
   WEAPON_SILVER_TALON,
 } from '../src/core/ballistics/weapons.ts';
 import {
@@ -324,18 +326,13 @@ describe('Blender combatant runtime', () => {
       expect(mannequin.combatantGlb!.evisceratedGut!.enabled).toBe(true);
       assertZeroLegacyFleshEnabled(mannequin, '2. Lacerated & Eviscerated');
 
-      // Phase 3: LIVING DISMEMBERMENT — sever entire right trigger arm (.50 AE blowoff) while target is STILL ALIVE!
+      // Phase 3: LIVING DISMEMBERMENT — a contact-range 00 buck blast takes the right arm off while the target is STILL ALIVE
       const upperArmPos = enforcerState.ragdollBones.UPPER_ARM_RIGHT.position;
       const armOrigin = add(upperArmPos, vec3(0.0, 0.0, 0.8));
       const armAimDir = normalize(sub(add(upperArmPos, vec3(-0.08, 0, -0.2)), armOrigin));
-      const severArmAmmo: AmmoSpec = {
-        ...AMMO_50AE_FMJ_SOLID,
-        tissueExpansionFactor: 2.8,
-        goreFactor: 2.5,
-      };
       const armReport = simulateShot(
-        WEAPON_SILVER_TALON,
-        severArmAmmo,
+        WEAPON_M590,
+        AMMO_12G_00_BUCK,
         armOrigin,
         armAimDir,
         enforcerState,

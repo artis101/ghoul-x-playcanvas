@@ -53,7 +53,7 @@ export function spawnDroppedWeaponProp(
   archetype: EnemyArchetypeId,
   worldPos: Vec3Like,
   inheritedVel: Vec3Like,
-): void {
+): pc.Entity {
   let gun: pc.Entity | null = null;
   const weaponId = getArchetypeWeaponAssetId(archetype);
   if (glbRegistry && glbRegistry.isLoaded(weaponId)) {
@@ -93,4 +93,5 @@ export function spawnDroppedWeaponProp(
     leavesBlood: false,
     restHeight: 0.04,
   });
+  return gun;
 }

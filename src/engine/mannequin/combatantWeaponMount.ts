@@ -45,6 +45,8 @@ export class CombatantWeaponMount {
   public heldWeaponNode: pc.Entity | null = null;
   public heldWeaponGlb: WeaponGlbInstance | null = null;
   public attachmentState: PropAttachmentState<'RIGHT' | 'LEFT'> = createPropAttachmentState('ATTACHED');
+  /** The gun lying on the floor after a disarm, until the combatant picks it back up. */
+  private droppedProp: pc.Entity | null = null;
   private hands: CombatantWeaponHands | null = null;
   private readonly grip = new CombatantWeaponGrip();
   private readonly hold = new CombatantWeaponHold();
@@ -132,12 +134,13 @@ export class CombatantWeaponMount {
     if (transition.shouldSpawnDroppedProp && fxManager && this.heldWeaponNode) {
       const trigBone = healthState.ragdollBones[triggerHandZone];
       const dropPos = this.heldWeaponNode.getPosition();
-      fxManager.spawnDroppedWeaponProp(
+      this.droppedProp = fxManager.spawnDroppedWeaponProp(
         healthState.archetype,
         dropPos,
         trigBone.velocity
       );
     }
+    this.trackDroppedProp(healthState);
 
     if (this.heldWeaponNode) {
       this.heldWeaponNode.enabled = transition.isVisible;
@@ -227,6 +230,25 @@ export class CombatantWeaponMount {
     if (!weapon?.rootEntity.enabled) return undefined;
     weapon.playFire?.();
     return weapon.muzzleNode?.getPosition();
+  }
+
+  /** Publishes where the dropped gun lies for the AI, and hides it once the AI has picked it up. */
+  private trackDroppedProp(healthState: TargetHealthState): void {
+    const prop = this.droppedProp;
+    if (!prop) return;
+    if (!healthState.alive || !prop.parent) {
+      healthState.droppedWeaponWorld = undefined;
+      this.droppedProp = null;
+      return;
+    }
+    if (!healthState.weaponDropped) {
+      prop.enabled = false;
+      healthState.droppedWeaponWorld = undefined;
+      this.droppedProp = null;
+      return;
+    }
+    const p = prop.getPosition();
+    healthState.droppedWeaponWorld = { x: p.x, y: p.y, z: p.z };
   }
 
   public destroy(): void {

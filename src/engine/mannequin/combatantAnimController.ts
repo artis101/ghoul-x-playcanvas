@@ -43,15 +43,13 @@ export class CombatantAnimController {
     if (posture === 'LEG_BUCKLED' || activeReaction.type.startsWith('LEG_BUCKLE')) {
       return 'LegCollapseCrawl';
     }
+    // Gut and throat hits flinch like any other torso hit; nobody kneels down mid-firefight.
     if (
+      posture === 'STAGGERED' ||
       posture === 'GUT_HURT' ||
       posture === 'THROAT_CLUTCH' ||
-      activeReaction.type === 'GUT_FOLD' ||
-      activeReaction.type === 'THROAT_CLUTCH'
+      activeReaction.type !== 'NONE'
     ) {
-      return 'DiaphragmDropKneel';
-    }
-    if (posture === 'STAGGERED' || activeReaction.type !== 'NONE') {
       return 'HitStaggerChest';
     }
     return guarding ? 'UnsuspectingIdle' : 'CombatReadyIdle';

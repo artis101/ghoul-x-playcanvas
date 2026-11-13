@@ -283,7 +283,8 @@ export function simulateShot(
     });
   }
 
-  const targetDistanceM = distance(originWorld, target.worldPosition);
+  // Range is measured across the ground: eye height above the feet is not distance to the target.
+  const targetDistanceM = Math.hypot(originWorld.x - target.worldPosition.x, originWorld.z - target.worldPosition.z);
 
   const dismRes = evaluateJointDismemberment(
     weapon, ammo, target, targetDistanceM, normAimDir,

@@ -70,22 +70,22 @@ export function evaluateJointDismemberment(
 ): { weaponDisarmed: boolean } {
   let weaponDisarmed = false;
 
+  // Real bullets punch holes; they rarely take limbs off. Only contact-range shotgun loads (and
+  // explosives, handled elsewhere) amputate, and only a rifle or .50 at very close range bursts a skull.
   const isHeavyOrSurgicalCapable =
     ammo.diameterM >= 0.007 &&
-    ((ammo.type === 'BUCKSHOT_00' && targetDistanceM <= 6.5) ||
-      (ammo.id === '12G_FLECHETTE_SLUG' && targetDistanceM <= 18.0) ||
-      (weapon.role === 'HEAVY_PISTOL' && ammo.diameterM >= 0.012 && targetDistanceM <= 9.0) ||
-      (weapon.role === 'SNIPER' && targetDistanceM <= 55.0));
+    ((ammo.type === 'BUCKSHOT_00' && targetDistanceM <= 3.0) ||
+      (ammo.id === '12G_FLECHETTE_SLUG' && targetDistanceM <= 3.0) ||
+      (weapon.role === 'HEAVY_PISTOL' && ammo.diameterM >= 0.012 && targetDistanceM <= 2.0) ||
+      (weapon.role === 'SNIPER' && targetDistanceM <= 11.5));
+  const canAmputate = weapon.role === 'SHOTGUN' && targetDistanceM <= 3.0;
 
   if (!isHeavyOrSurgicalCapable) {
     return { weaponDisarmed };
   }
 
-  const isPointBlank12G = weapon.role === 'SHOTGUN' && targetDistanceM <= 3.6;
-  const isCloseHighImpactLimbBlast =
-    (weapon.role === 'SHOTGUN' && targetDistanceM <= 4.6) ||
-    (ammo.id === '12G_FLECHETTE_SLUG' && targetDistanceM <= 5.5) ||
-    (weapon.role === 'HEAVY_PISTOL' && ammo.diameterM >= 0.012 && targetDistanceM <= 2.8);
+  const isPointBlank12G = weapon.role === 'SHOTGUN' && targetDistanceM <= 2.0;
+  const isCloseHighImpactLimbBlast = weapon.role === 'SHOTGUN' && targetDistanceM <= 2.0;
 
   const jointHitBonusByZone: Partial<Record<GhoulZoneId, { maxEntryJ: number; label: string }>> = {};
   if (allWoundEvents.length > 0) {
@@ -138,16 +138,15 @@ export function evaluateJointDismemberment(
 
     if (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW') {
       const canPopSkull =
-        (weapon.role === 'SHOTGUN' && targetDistanceM <= 5.5) ||
-        (weapon.role === 'HEAVY_PISTOL' && ammo.diameterM >= 0.012 && targetDistanceM <= 5.6) ||
+        (weapon.role === 'SHOTGUN' && targetDistanceM <= 3.0) ||
+        (weapon.role === 'HEAVY_PISTOL' && ammo.diameterM >= 0.012 && targetDistanceM <= 2.0) ||
         (weapon.role === 'SNIPER' && ammo.tissueExpansionFactor >= 1.4 && targetDistanceM <= 11.5);
       if (!canPopSkull) continue;
     } else if (zone === 'TORSO_LOWER_ABDOMEN') {
       if (!isPointBlank12G) continue;
     } else {
-      // Earned reward rule: limb & neck amputations require EITHER a surgical joint/neck hit
-      // OR a close-distance high-impact blast (no accidental mid-range cumulative chip amputations)
-      if (!jointHit && !isCloseHighImpactLimbBlast) continue;
+      // Limb and neck amputation needs a contact-range shotgun blast, at the joint or point-blank.
+      if (!canAmputate || (!jointHit && !isCloseHighImpactLimbBlast)) continue;
     }
 
     const refCol = ALL_ANATOMICAL_COLLIDERS.find(

@@ -9,8 +9,9 @@ import { ARCHETYPE_TUNING } from './archetypeTuning.ts';
 import { computeAlertedPeekTarget } from './tacticalCoverFinder.ts';
 import { moveHorizontalClamped } from './tacticalLocomotion.ts';
 import { stepWeaponBurstFire } from './tacticalBurstAndTracers.ts';
-import { DOWNED_TURN_RATE_RAD_S, type TacticalFsmContext } from './tacticalFsmContext.ts';
-import { stepWoundFallback } from './woundFallback.ts';
+import type { TacticalFsmContext } from './tacticalFsmContext.ts';
+import { stepWoundedBehaviour } from './woundFallback.ts';
+import { stepWeaponRecovery } from './weaponRecovery.ts';
 
 // Usable half-width of the arena floor for lateral jukes, a little inside the movement clamp.
 const JUKE_ARENA_HALF_WIDTH_M = 7.7;
@@ -31,19 +32,6 @@ export function stepAlertedEngagingState(
   turnTowardPlayer: (speed: number) => void,
   ctx: TacticalFsmContext
 ): void {
-  // Doubled over on its knees, a combatant holds its ground: it neither strafes nor rushes.
-  const gutShot = hs.rupturedOrgans.size > 0 && hs.zoneIntegrity.TORSO_LOWER_ABDOMEN < 65;
-  if (gutShot && !hs.isRagdollActive) {
-    hs.posture = 'GUT_HURT';
-    agent.isPeekingOut = true;
-    agent.engagementSubstate = 'COVER_PEEK';
-    turnTowardPlayer(DOWNED_TURN_RATE_RAD_S);
-    if (aimProfile.canReturnFire) {
-      stepWeaponBurstFire(dt, hs, agent, aimProfile, playerEyeWorldPos, ctx.burstCtx);
-    }
-    return;
-  }
-
   const tuning = ARCHETYPE_TUNING[hs.archetype];
   const isWounded = hs.currentHp < hs.maxHp * 0.92 || hs.painShock > 0.15 || hs.rupturedOrgans.size > 0;
   const moraleShockS = agent.moraleShockTimerS ?? 0;
@@ -109,11 +97,10 @@ export function stepAlertedEngagingState(
     hasCoverToDuckBehind: ctx.hasCoverQueries && prelimPeek.anchorBlockedByCover,
     midBurst: agent.burstShotsRemaining > 0,
   });
-  const fallingBack =
-    doctrineSubstate !== 'CLUTCHING_RETREAT' && stepWoundFallback(dt, hs, agent, ctx);
-  const substate = fallingBack
-    ? 'COVER_SHELTER'
-    : ducking ? duckedSubstate(doctrineSubstate) : doctrineSubstate;
+  const woundedSubstate =
+    doctrineSubstate === 'CLUTCHING_RETREAT' ? null : stepWoundedBehaviour(dt, hs, agent, playerDistM, ctx);
+  const substate =
+    woundedSubstate ?? (ducking ? duckedSubstate(doctrineSubstate) : doctrineSubstate);
   agent.engagementSubstate = substate;
 
   if (hs.combatantStatusTag === null) {
@@ -123,6 +110,10 @@ export function stepAlertedEngagingState(
   }
 
   const prevPeekSign = agent.peekSign;
+  if (substate === 'CLUTCHING_RETREAT' && stepWeaponRecovery(dt, hs, agent, ctx)) {
+    cancelActiveBurst(agent);
+    return;
+  }
   if (substate === 'CLUTCHING_RETREAT') {
     agent.isPeekingOut = false;
     cancelActiveBurst(agent);
@@ -226,10 +217,8 @@ export function stepAlertedEngagingState(
 
   turnTowardPlayer(substate === 'SNIPER_SNAP_PEEK' ? 6.8 : 5.4);
   if (!hs.isRagdollActive) {
-    hs.posture =
-      hs.rupturedOrgans.size > 0 && hs.zoneIntegrity.TORSO_LOWER_ABDOMEN < 65
-        ? 'GUT_HURT'
-        : ('COMBAT_READY' as CombatantPostureState);
+    // Adrenaline keeps a gut-shot fighter on its feet; the wound shows in its aim, not a kneel.
+    hs.posture = 'COMBAT_READY' as CombatantPostureState;
   }
 
   if (!agent.isPeekingOut && peekPlan.anchorBlockedByCover) {
