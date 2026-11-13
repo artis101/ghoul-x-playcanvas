@@ -28,7 +28,11 @@ export function handleTriggerPull(app: IGhoulXApp): void {
   app.combatDirector.fireWeapon(weapon, ammo, eyeVec, firedVec);
 
   // The weapon GLB's animated root moves the gun and its attached viewmodel hands.
-  app.fpsController.applyRecoilKick(weapon.recoilKickDeg, !app.arsenalManager.lastShotPlayedViewmodelClip);
+  app.fpsController.applyRecoilKick(
+    weapon.recoilKickDeg,
+    !app.arsenalManager.lastShotPlayedViewmodelClip,
+    weapon.id
+  );
   app.fpsController.syncCameraTransform();
 }
 

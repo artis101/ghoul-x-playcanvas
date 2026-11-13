@@ -2,6 +2,13 @@ import * as pc from 'playcanvas';
 import type { WeaponSpec } from '../../contracts/ballistics.ts';
 import type { HudController } from '../hudController.ts';
 import { aimSpreadRad } from '../../core/ballistics/aim/aimDownSights.ts';
+import {
+  absorbPlayerPullDown,
+  createRecoilClimbState,
+  creditClimb,
+  kickRecoilClimb,
+  stepRecoilClimb,
+} from '../../core/ballistics/weapons/recoilClimb.ts';
 import type { WeaponGlbInstance } from '../assets/glbLoader.ts';
 import { PlayerSightController, type PlayerSightState } from './playerSightController.ts';
 import { ViewmodelAimStabilizer } from './viewmodelAimStabilizer.ts';
@@ -51,6 +58,7 @@ export class PlayerCameraRig {
   private vmRecoilOffsetY = 0;
   private recoilShotSign = 1;
   private breathClockS = 0;
+  private readonly climb = createRecoilClimbState();
   private readonly scratchBaseRot = new pc.Quat();
   private readonly scratchOffsetRot = new pc.Quat();
   private readonly scratchAdsRot = new pc.Quat();
@@ -84,15 +92,17 @@ export class PlayerCameraRig {
 
   public onLook(deltaYaw: number, deltaPitch: number): void {
     this.cameraYaw -= deltaYaw;
-    this.cameraPitch -= deltaPitch;
-    this.cameraPitch = Math.max(-85, Math.min(85, this.cameraPitch));
+    const prevPitch = this.cameraPitch;
+    this.cameraPitch = Math.max(-85, Math.min(85, this.cameraPitch - deltaPitch));
+    absorbPlayerPullDown(this.climb, prevPitch - this.cameraPitch);
     const swayScale = 1 - this.sight.blend * 0.68;
     this.swayYawOffset = Math.max(-2.6, Math.min(2.6, this.swayYawOffset - deltaYaw * 0.28 * swayScale));
     this.swayPitchOffset = Math.max(-2.2, Math.min(2.2, this.swayPitchOffset - deltaPitch * 0.24 * swayScale));
   }
 
-  public applyRecoilKick(recoilKickDeg: number, applyViewmodelKick = true): void {
+  public applyRecoilKick(recoilKickDeg: number, applyViewmodelKick = true, weaponId?: string): void {
     const adsBrace = 1 - this.sight.blend * (1 - this.sight.profile.adsRecoilScale);
+    if (weaponId) this.applyRecoilClimb(weaponId);
     this.recoilShotSign = -this.recoilShotSign;
     this.recoilPitch = Math.min(8.0, this.recoilPitch + recoilKickDeg * 0.72 * adsBrace);
     this.recoilYaw = Math.max(-2.2, Math.min(2.2, this.recoilYaw + this.recoilShotSign * recoilKickDeg * 0.11 * adsBrace));
@@ -104,6 +114,16 @@ export class PlayerCameraRig {
     this.vmRecoilPitchDeg = Math.min(11.5, this.vmRecoilPitchDeg + recoilKickDeg * 1.18 * adsBrace);
     this.vmRecoilRollDeg = Math.max(-6.5, Math.min(6.5, this.vmRecoilRollDeg + this.recoilShotSign * recoilKickDeg * 0.55 * adsBrace));
     this.vmRecoilOffsetY = Math.min(0.022, this.vmRecoilOffsetY + 0.0065 * kickNorm * adsBrace);
+  }
+
+  /** The rise that stays in the view: the player has to pull down against it. */
+  private applyRecoilClimb(weaponId: string): void {
+    const kick = kickRecoilClimb(this.climb, weaponId, this.sight.blend, Math.random());
+    const prevPitch = this.cameraPitch;
+    this.cameraPitch = Math.min(85, this.cameraPitch + kick.pitchDeg);
+    creditClimb(this.climb, this.cameraPitch - prevPitch);
+    // Positive yaw turns left, so a throw to the right lowers it.
+    this.cameraYaw -= kick.yawDeg;
   }
 
   public applyCameraShake(intensityDeg: number, durationS = 0.36): void {
@@ -135,6 +155,8 @@ export class PlayerCameraRig {
     this.sight.update(dt, currentWeapon, hands.aimBlocked, camera, hud);
     const isAds = this.sight.isAiming;
     const nextBlend = this.sight.blend;
+
+    this.cameraPitch -= stepRecoilClimb(this.climb, dt);
 
     const camDecay = Math.exp(-15.0 * dt);
     this.recoilPitch *= camDecay;
