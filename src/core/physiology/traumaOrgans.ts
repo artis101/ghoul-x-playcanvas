@@ -13,6 +13,22 @@ import {
   transitionVitalState,
 } from './physiologyLifecycleFsm.ts';
 import { mergeOrAddVascularWound } from './vascularHelper.ts';
+import { constitutionOf, nextPhysiologyRoll, startTerminalCountdown } from './physiologyVariance.ts';
+
+/** Share of destroyed hearts that stop at once for an average combatant; the rest fight on briefly. */
+const INSTANT_CARDIAC_ARREST_CHANCE = 0.4;
+
+function destroyHeart(state: PhysiologicalEntityState): void {
+  const roll = nextPhysiologyRoll(state);
+  const will = constitutionOf(state).willToLive;
+  if (roll === null || roll < INSTANT_CARDIAC_ARREST_CHANCE / will) {
+    transitionVitalState(state, { kind: 'LETHAL_ARREST', cause: 'CARDIAC_DESTRUCTION' });
+    return;
+  }
+  // Enough oxygen left in the brain for a few seconds of fight.
+  const spread = nextPhysiologyRoll(state) ?? 0.5;
+  startTerminalCountdown(state, Math.min(14, (3 + spread * 6) * will), 'CARDIAC_DESTRUCTION');
+}
 
 export function applyOrganTrauma(
   state: PhysiologicalEntityState,
@@ -61,10 +77,7 @@ export function applyOrganTrauma(
           vocal = escalateVocalCue(vocal, 'SHARP_GASP');
         }
         if (state.heartIntegrity <= 0.08 && ot.stretchCavitationRuptured) {
-          transitionVitalState(state, {
-            kind: 'LETHAL_ARREST',
-            cause: 'CARDIAC_DESTRUCTION',
-          });
+          destroyHeart(state);
         }
         mergeOrAddVascularWound(state, {
           vesselId: 'AORTA_THORACIC_ABDOMINAL',

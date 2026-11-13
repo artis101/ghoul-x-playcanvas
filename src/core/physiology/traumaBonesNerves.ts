@@ -9,6 +9,29 @@ import {
   escalatePostureReaction,
   transitionVitalState,
 } from './physiologyLifecycleFsm.ts';
+import { WEAPON_DROP_CHANCE, rollsWeaponDrop } from '../combatant/weaponDropRoll.ts';
+import { nextPhysiologyRoll } from './physiologyVariance.ts';
+
+/**
+ * A wounded arm usually keeps working, badly: heavy sway, but the gun stays up. Only on a rare roll
+ * does the arm go out, and with it the weapon if it is the trigger hand.
+ */
+function woundArm(
+  state: PhysiologicalEntityState,
+  side: 'RIGHT' | 'LEFT',
+  sway: number,
+  dropChance: number
+): boolean {
+  state.aimSwayMultiplier = Math.min(6.0, Math.max(state.aimSwayMultiplier, sway));
+  if (!rollsWeaponDrop(nextPhysiologyRoll(state), dropChance)) return false;
+  if (side === 'RIGHT') state.rightArmFunctional = false;
+  else state.leftArmFunctional = false;
+  if (state.dominantHand === side) {
+    state.weaponDropped = true;
+    state.canPullTrigger = false;
+  }
+  return true;
+}
 
 export function applyBoneAndNerveTrauma(
   state: PhysiologicalEntityState,
@@ -72,23 +95,15 @@ export function applyBoneAndNerveTrauma(
         break;
       case 'HUMERUS_RIGHT':
       case 'RADIUS_ULNA_RIGHT':
-        state.rightArmFunctional = false;
-        state.aimSwayMultiplier = Math.min(6.0, Math.max(state.aimSwayMultiplier, 4.4));
-        if (state.dominantHand === 'RIGHT') {
-          state.weaponDropped = true;
-          state.canPullTrigger = false;
+        if (woundArm(state, 'RIGHT', 4.4, WEAPON_DROP_CHANCE.ARM_FRACTURE)) {
+          reaction = escalatePostureReaction(reaction, 'WEAPON_WRENCH_DROP');
         }
-        reaction = escalatePostureReaction(reaction, 'WEAPON_WRENCH_DROP');
         break;
       case 'HUMERUS_LEFT':
       case 'RADIUS_ULNA_LEFT':
-        state.leftArmFunctional = false;
-        state.aimSwayMultiplier = Math.min(6.0, Math.max(state.aimSwayMultiplier, 4.8));
-        if (state.dominantHand === 'LEFT') {
-          state.weaponDropped = true;
-          state.canPullTrigger = false;
+        if (woundArm(state, 'LEFT', 4.8, WEAPON_DROP_CHANCE.ARM_FRACTURE)) {
+          reaction = escalatePostureReaction(reaction, 'WEAPON_WRENCH_DROP');
         }
-        reaction = escalatePostureReaction(reaction, 'WEAPON_WRENCH_DROP');
         break;
       default:
         break;
@@ -98,22 +113,16 @@ export function applyBoneAndNerveTrauma(
   for (const nv of nervesSevered) {
     state.severedNerves.add(nv);
     painSpike += 0.48;
+    // Other nerve cuts flinch the body as before; arm nerves only when the arm actually goes out.
+    let armOut = nv !== 'BRACHIAL_PLEXUS_RIGHT' && nv !== 'BRACHIAL_PLEXUS_LEFT';
     if (nv === 'BRACHIAL_PLEXUS_RIGHT') {
-      state.rightArmFunctional = false;
-      state.aimSwayMultiplier = Math.min(6.0, Math.max(state.aimSwayMultiplier, 4.6));
-      if (state.dominantHand === 'RIGHT') {
-        state.weaponDropped = true;
-        state.canPullTrigger = false;
-      }
+      armOut = woundArm(state, 'RIGHT', 4.6, WEAPON_DROP_CHANCE.ARM_NERVE_SEVERED);
     } else if (nv === 'BRACHIAL_PLEXUS_LEFT') {
-      state.leftArmFunctional = false;
-      state.aimSwayMultiplier = Math.min(6.0, Math.max(state.aimSwayMultiplier, 5.2));
-      if (state.dominantHand === 'LEFT') {
-        state.weaponDropped = true;
-        state.canPullTrigger = false;
-      }
+      armOut = woundArm(state, 'LEFT', 5.2, WEAPON_DROP_CHANCE.ARM_NERVE_SEVERED);
     }
-    reaction = escalatePostureReaction(reaction, 'WEAPON_WRENCH_DROP');
+    if (armOut) {
+      reaction = escalatePostureReaction(reaction, 'WEAPON_WRENCH_DROP');
+    }
   }
 
   return { reaction, vocal, painSpike };

@@ -1,3 +1,4 @@
+import type { CombatantConstitution, DelayedLethality, TerminalVarianceSummary } from '../combatantConstitution.ts';
 import {
   AmmoSpec,
   CombatantPostureState,
@@ -69,6 +70,10 @@ export interface ShotSimulationReport {
   totalEnergyDepositedJ: number;
   totalDamageHp: number;
   isLethalKill: boolean;
+  /** Set when the shot is fatal but the combatant fights on for a few seconds first. */
+  delayedLethality?: DelayedLethality | null;
+  /** How the first round to land behaved inside the body; absent when the target has no variance seed. */
+  terminalVariance?: TerminalVarianceSummary | null;
   ragdollPlan: RagdollActivationPlan;
   /** Retained for telemetry inspector compatibility */
   severedZones: GhoulZoneId[];
@@ -230,4 +235,11 @@ export interface TargetHealthState {
   fracturedBones: Set<string>;
   rupturedOrgans: Set<string>;
   surfaceWounds: LocalizedSurfaceWound[];
+  /** Rolled at spawn; absent means an average body (and is what headless tests use). */
+  constitution?: CombatantConstitution;
+  /**
+   * Seeds the per-shot terminal-ballistics variance. Advances after every hit that lands, so repeated
+   * shots differ while every re-simulation of one trigger pull agrees. Absent: no variance.
+   */
+  shotVarianceSeed?: number;
 }

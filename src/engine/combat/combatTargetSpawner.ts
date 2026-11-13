@@ -7,7 +7,12 @@ import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
 import type { EngineMaterialPalette } from '../materials.ts';
 import { GhoulMannequinEntity } from '../mannequin.ts';
 import type { TacticalCombatAiSystem } from '../ai/tacticalCombatAi.ts';
+import { rollConstitution } from '../../core/combatant/constitutionRoll.ts';
 import { TARGET_CONFIGS } from './combatTargetConfigs.ts';
+
+function randomSeed(): number {
+  return Math.floor(Math.random() * 0xffffffff) >>> 0;
+}
 
 export function spawnCombatTargets(
   app: pc.AppBase,
@@ -30,6 +35,12 @@ export function spawnCombatTargets(
       isSouthpaw
     );
     hs.hitstopRemainingS = 0;
+    // Every enemy gets their own body and nerve, so the same shot does not play out the same way twice.
+    const constitution = rollConstitution(Math.random);
+    hs.constitution = constitution;
+    hs.maxHp = Math.round(hs.maxHp * constitution.toughness);
+    hs.currentHp = hs.maxHp;
+    hs.shotVarianceSeed = randomSeed();
     const mannequin = new GhoulMannequinEntity(
       app,
       hs,
@@ -44,6 +55,8 @@ export function spawnCombatTargets(
       entityId: cfg.id,
       enableArmorPlates: cfg.archetype === 'HEAVY_ENFORCER',
       alertnessState: 'COMBAT_ALERT',
+      constitution,
+      varianceSeed: randomSeed(),
     });
   }
 

@@ -8,6 +8,7 @@ import {
   transitionVitalState,
 } from './physiologyLifecycleFsm.ts';
 import { classifyShockStage } from './shockBleedProfiles.ts';
+import { clotBleedRate, tickTerminalCountdown } from './physiologyVariance.ts';
 
 export function stepBiologicalTick(state: PhysiologicalEntityState, tickDt: number): void {
   state.biologicalTicksExecuted++;
@@ -30,7 +31,20 @@ export function stepBiologicalTick(state: PhysiologicalEntityState, tickDt: numb
     state.adrenalineLevel = Math.max(0.10, state.adrenalineLevel - decayPerSec * tickDt);
   }
 
+  // 1b. Borrowed time: a fatal wound that let them fight on for a few seconds now takes them.
+  if (tickTerminalCountdown(state, tickDt)) {
+    const cause = state.terminalCountdownCause;
+    transitionVitalState(state, {
+      kind: 'LETHAL_ARREST',
+      cause: cause && cause !== 'NONE' ? cause : 'EXSANGUINATION_CLASS_IV_ARREST',
+    });
+    state.terminalCountdownS = null;
+    recomputeMotorAndReadability(state, 'NEUROGENIC_DROP', 'AGUNAL_WHEEZE');
+    return;
+  }
+
   // 2. Pressure-Scaled Hemorrhage
+  clotBleedRate(state, tickDt);
   const currentPressureRatio = Math.max(
     0.10,
     state.meanArterialPressureMmHg / PHYSIOLOGY_CONSTANTS.BASELINE_MAP_MMHG

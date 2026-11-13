@@ -17,6 +17,7 @@ import {
 import { applyBoneAndNerveTrauma } from './traumaBonesNerves.ts';
 import { applyOrganTrauma } from './traumaOrgans.ts';
 import { mergeOrAddVascularWound } from './vascularHelper.ts';
+import { constitutionOf } from './physiologyVariance.ts';
 
 export function applyInternalBallisticsTrauma(
   state: PhysiologicalEntityState,
@@ -106,6 +107,8 @@ export function applyInternalBallisticsTrauma(
 
   // 6. Neurogenic Pain Shock vs Adrenaline Buffer
   painSpike += Math.min(0.65, report.totalEnergyDepositedJ / 950);
+  const constitution = constitutionOf(state);
+  painSpike /= constitution.painTolerance;
   state.painShockLevel = Math.min(2.0, state.painShockLevel + painSpike);
 
   const isTorsoHit =
@@ -116,11 +119,13 @@ export function applyInternalBallisticsTrauma(
 
   const isDefeatedAtOuterArmor =
     report.stoppedByArmorPlate !== null && report.totalPenetrationDepthCm < 1.5;
-  const adrenalineBuffer = 0.14 + state.adrenalineLevel * 1.65;
+  const adrenalineBuffer = 0.14 + state.adrenalineLevel * 1.65 * constitution.adrenalineResponse;
+  // A glass jaw folds from a solid hit even mid-fight; anyone else only when caught unaware.
+  const canFold = state.alertnessState === 'UNSUSPECTING' || constitution.trait === 'GLASS_JAW';
   if (
     state.alive &&
     state.conscious &&
-    state.alertnessState === 'UNSUSPECTING' &&
+    canFold &&
     isTorsoHit &&
     !isDefeatedAtOuterArmor &&
     painSpike > adrenalineBuffer

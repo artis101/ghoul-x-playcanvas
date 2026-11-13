@@ -33,10 +33,16 @@ import { evaluateArmorInteraction } from './shotArmorInteraction.ts';
 import { evaluateTissueCavitation } from './shotTissueCavitation.ts';
 import { evaluateJointDismemberment } from './shotJointDismemberment.ts';
 import { evaluateLethalityAndRagdollPlan } from './shotLethalityPass.ts';
+import { PelletVariance, rollPelletVariance } from './terminalVariance.ts';
+import type { TerminalVarianceSummary } from '../../../contracts/combatantConstitution.ts';
 
 export interface SimulateShotOptions {
   readonly allowedPelletIndices?: ReadonlySet<number>;
   readonly pelletSpeedOverridesMs?: ReadonlyMap<number, number>;
+}
+
+function summarizeVariance(v: PelletVariance | null, ribGlance: boolean): TerminalVarianceSummary | null {
+  return v ? { behavior: v.behavior, depositScale: v.depositScale, ribGlance } : null;
 }
 
 export function simulateShot(
@@ -78,6 +84,8 @@ export function simulateShot(
   let netTorqueWorld: Vec3Like = vec3(0, 0, 0);
   let headgearKnockedOff = false;
   let weaponDisarmed = false;
+  let primaryVariance: PelletVariance | null = null;
+  let primaryRibGlance = false;
 
   const bounds = computeTargetLiveBounds(target);
   const dt = 0.0015;
@@ -127,6 +135,11 @@ export function simulateShot(
     const trajectorySamples: TrajectorySample[] = [];
     const pelletWoundEvents: WoundChannelEvent[] = [];
     const penetratedColliders = new Set<string>();
+    const variance: PelletVariance | undefined =
+      target.shotVarianceSeed !== undefined
+        ? rollPelletVariance(target.shotVarianceSeed, pIdx, weapon, ammo)
+        : undefined;
+    let tissueDepthM = 0;
 
     trajectorySamples.push({
       timeS: 0,
@@ -240,7 +253,12 @@ export function simulateShot(
               }
             }
 
-            const cavRes = evaluateTissueCavitation(proj, ammo, target, hit, currentSpeed, entryEnergy, bulletDir);
+            const cavRes = evaluateTissueCavitation(
+              proj, ammo, target, hit, currentSpeed, entryEnergy, bulletDir, variance, tissueDepthM
+            );
+            tissueDepthM += hit.pathLen;
+            if (variance && !primaryVariance) primaryVariance = variance;
+            if (variance === primaryVariance && cavRes.ribGlance) primaryRibGlance = true;
             totalDamageHp += cavRes.layerDamage;
             totalEnergyDepositedJ += cavRes.energyDeposited;
             pelletEnergyDeposited += cavRes.energyDeposited;
@@ -339,6 +357,8 @@ export function simulateShot(
     totalEnergyDepositedJ,
     totalDamageHp,
     isLethalKill: lethality.isLethalKill,
+    delayedLethality: lethality.delayedLethality,
+    terminalVariance: summarizeVariance(primaryVariance, primaryRibGlance),
     ragdollPlan: lethality.ragdollPlan,
     severedZones: newlySeveredZones,
     dismembermentEvents,

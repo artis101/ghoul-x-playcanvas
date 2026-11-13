@@ -14,6 +14,7 @@ import type { TacticalCombatAiSystem, BrutalKillRewardKind } from '../ai/tactica
 import type { CombatAudioEngine, GoreImpactAudioKind } from '../audio/combatAudioEngine.ts';
 import { SYNTHETIC_SHRAPNEL_AMMO } from './combatTargetConfigs.ts';
 import { syncPhysiologyToHealthState } from './physiologySyncAdapter.ts';
+import { startTerminalCountdown } from '../../core/physiology/physiologyVariance.ts';
 
 export interface ImpactDispatcherContext {
   app?: pc.AppBase | null;
@@ -77,7 +78,14 @@ export function applyImpactFxAndState(
     const marchOrigin = primaryWound
       ? sub(primaryWound.entryPointWorld, scale(marchDir, 0.35))
       : report.originWorld;
-    const marchSpeedMs = Math.max(60, primaryWound ? primaryWound.entryVelocityMs : report.impactSpeedMs);
+    // The organ march must agree with how the round behaved in the outer wound: a tumbling round
+    // tears more (more effective energy), an icepick less.
+    const variance = report.terminalVariance;
+    const varianceSpeedScale = variance ? Math.sqrt(variance.depositScale) : 1;
+    const marchSpeedMs = Math.max(
+      60,
+      (primaryWound ? primaryWound.entryVelocityMs : report.impactSpeedMs) * varianceSpeedScale
+    );
 
     internalReport = marchInternalBallistics(
       {
@@ -121,7 +129,9 @@ export function applyImpactFxAndState(
       }
     }
 
-    if (internalReport.hitOuterShell) {
+    // A round that skated off a rib never reached the organs; only the outer wound counts.
+    const skatedOffRib = variance?.ribGlance === true;
+    if (internalReport.hitOuterShell && !skatedOffRib) {
       ctx.physiologySystem.applyBallisticTrauma(hs.targetId, internalReport);
       for (const ot of internalReport.organTrauma) {
         if (ot.directCrushLacerated || ot.stretchCavitationRuptured) hs.rupturedOrgans.add(ot.organId);
@@ -129,6 +139,9 @@ export function applyImpactFxAndState(
       for (const bt of internalReport.boneTrauma) {
         if (bt.fractured) hs.fracturedBones.add(bt.boneId);
       }
+    }
+    if (report.delayedLethality && hs.alive) {
+      startTerminalCountdown(physio, report.delayedLethality.delayS, report.delayedLethality.cause);
     }
     syncPhysiologyToHealthState(physio, hs, ctx.tacticalAi);
   }

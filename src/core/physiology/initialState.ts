@@ -103,5 +103,9 @@ export function createPhysiologicalEntityState(
       visionTunnelIntensity: 0.0,
       bleedVisualProfile: createIdleBleedVisualProfile(),
     },
+
+    constitution: config.constitution,
+    varianceRngState: config.varianceSeed,
+    terminalCountdownS: null,
   };
 }

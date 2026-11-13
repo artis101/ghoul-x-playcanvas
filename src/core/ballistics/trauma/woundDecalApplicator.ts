@@ -5,6 +5,11 @@ import {
 import { transitionTargetLifecycle } from '../lifecycle/targetLifecycleFsm.ts';
 import { copyVec3, vec3 } from '../vec3.ts';
 import { getArchetypeLoadout } from '../../ghoul/anatomy/archetypeLoadout.ts';
+import { WEAPON_DROP_CHANCE, rollsWeaponDrop } from '../../combatant/weaponDropRoll.ts';
+import { createSeededRng, mixSeed } from '../../random/seededRng.ts';
+
+/** Salt so the arm-out roll does not reuse the shot's other draws. */
+const ARM_OUT_SALT = 0xa4a0;
 
 export function applyWoundsAndDecals(
   target: TargetHealthState,
@@ -29,6 +34,8 @@ export function applyWoundsAndDecals(
   let rightLegShotEnergyJ = 0;
   let leftLegShotEnergyJ = 0;
 
+  const dropRng =
+    target.shotVarianceSeed !== undefined ? createSeededRng(mixSeed(target.shotVarianceSeed, ARM_OUT_SALT)) : null;
   for (const w of report.woundEvents) {
     if (!w.armorStopped) {
       const isRL = w.ghoulZone === 'THIGH_RIGHT' || w.ghoulZone === 'KNEE_RIGHT' || w.ghoulZone === 'SHIN_RIGHT' || w.ghoulZone === 'FOOT_RIGHT';
@@ -78,10 +85,12 @@ export function applyWoundsAndDecals(
       }
       // Only a shattered arm stops working; a cracked bone is fought through. Losing the gun is
       // decided by the shot itself (a hit on the grip hand), reported as weaponDisarmed above.
-      if (w.boneShattered && (w.ghoulZone === 'UPPER_ARM_RIGHT' || w.ghoulZone === 'FOREARM_RIGHT')) {
+      // Even then it is usually gripped through; an arm that stops working costs them the gun.
+      const armOut = (): boolean => rollsWeaponDrop(dropRng ? dropRng() : null, WEAPON_DROP_CHANCE.SHATTERED_GRIP_ARM);
+      if (w.boneShattered && (w.ghoulZone === 'UPPER_ARM_RIGHT' || w.ghoulZone === 'FOREARM_RIGHT') && armOut()) {
         target.rightArmFunctional = false;
       }
-      if (w.boneShattered && (w.ghoulZone === 'UPPER_ARM_LEFT' || w.ghoulZone === 'FOREARM_LEFT')) {
+      if (w.boneShattered && (w.ghoulZone === 'UPPER_ARM_LEFT' || w.ghoulZone === 'FOREARM_LEFT') && armOut()) {
         target.leftArmFunctional = false;
       }
     }

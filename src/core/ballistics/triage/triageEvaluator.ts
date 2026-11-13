@@ -1,5 +1,17 @@
 import { TargetHealthState } from '../../../contracts/ballistics.ts';
 
+/**
+ * Organs whose rupture alone means dying without surgery. A punctured lung or gut is serious but
+ * survivable in the short run, so it reads as wounded unless the bleeding says otherwise.
+ * Matches both the shot solver's collider labels and the physiology march's organ ids.
+ */
+const VITAL_ORGAN_MARKERS = ['HEART', 'BRAIN', 'LIVER', 'AORTA', 'CAROTID'];
+
+function isVitalOrgan(organ: string): boolean {
+  const upper = organ.toUpperCase();
+  return VITAL_ORGAN_MARKERS.some((m) => upper.includes(m));
+}
+
 export type CombatantTriageStatus = 'HEALTHY' | 'WOUNDED' | 'MORTALLY_WOUNDED' | 'DEAD';
 
 /**
@@ -29,7 +41,7 @@ export function computeCombatantTriageStatus(target: TargetHealthState): Combata
     hpRatio <= 0.32 ||
     target.bloodVolumeMl <= 3550 ||
     target.bloodLossRateMlPerSec >= 24 ||
-    target.rupturedOrgans.size > 0 ||
+    [...target.rupturedOrgans].some(isVitalOrgan) ||
     hasMajorAmputation
   ) {
     return 'MORTALLY_WOUNDED';
@@ -44,6 +56,7 @@ export function computeCombatantTriageStatus(target: TargetHealthState): Combata
     !target.leftLegFunctional ||
     !target.rightArmFunctional ||
     !target.leftArmFunctional ||
+    target.rupturedOrgans.size > 0 ||
     target.surfaceWounds.some((sw) => !sw.armorDent);
 
   return isAnyWound ? 'WOUNDED' : 'HEALTHY';

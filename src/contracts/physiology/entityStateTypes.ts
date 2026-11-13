@@ -1,3 +1,4 @@
+import type { CombatantConstitution } from '../combatantConstitution.ts';
 import { ArmorPlateId } from './armorShellTypes.ts';
 import {
   NeuralPlexusId,
@@ -103,6 +104,9 @@ export interface PhysiologicalEntityConfig {
   readonly enableHelmet?: boolean;
   /** Time in seconds over which combat adrenaline decays (default 60s, within 30–90s envelope) */
   readonly adrenalineDecayDurationS?: number;
+  readonly constitution?: CombatantConstitution;
+  /** Seeds the physiology's own outcome rolls (e.g. a heart hit that kills now or in seconds). */
+  readonly varianceSeed?: number;
 }
 
 export interface PhysiologicalEntityState {
@@ -163,4 +167,12 @@ export interface PhysiologicalEntityState {
   elapsedTimeS: number;
   biologicalTicksExecuted: number;
   readability: ReadabilityFeedbackState;
+
+  // Variance (absent in headless defaults: outcomes stay as deterministic as before)
+  constitution?: CombatantConstitution;
+  /** Running PRNG state for physiology outcome rolls; undefined disables them. */
+  varianceRngState?: number;
+  /** Seconds until a fatal-but-not-instant wound stops them; null when none is pending. */
+  terminalCountdownS?: number | null;
+  terminalCountdownCause?: CauseOfDeath;
 }

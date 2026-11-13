@@ -8,6 +8,7 @@ import {
 } from '../lifecycle/targetLifecycleFsm.ts';
 import { stabilizeRagdollPoseForTransition } from '../ragdoll/ragdollPoseStabilizer.ts';
 import { applyWoundsAndDecals } from './woundDecalApplicator.ts';
+import { mixSeed } from '../../random/seededRng.ts';
 import { applyDismembermentTree } from './dismembermentTreeApplicator.ts';
 import { applySurvivingReaction } from './reactionAgonyApplicator.ts';
 import { applyRagdollActivationAndImpulses } from './ragdollImpulseApplicator.ts';
@@ -22,6 +23,10 @@ export function applyShotReportToTarget(
   report: ShotSimulationReport
 ): void {
   if (!report.hitTarget) return;
+  // The next trigger pull rolls fresh terminal behaviour; re-simulations of this one already agreed.
+  if (target.shotVarianceSeed !== undefined) {
+    target.shotVarianceSeed = mixSeed(target.shotVarianceSeed, 0x5eed);
+  }
 
   const wasAlreadyRagdoll = target.isRagdollActive;
 

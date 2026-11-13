@@ -10,6 +10,8 @@ import {
 } from '../../../contracts/ballistics.ts';
 import { add, length, scale, vec3 } from '../vec3.ts';
 import { isLimbLossFatal } from '../trauma/limbLossDeathRule.ts';
+import type { DelayedLethality } from '../../../contracts/combatantConstitution.ts';
+import { borrowedTimeHp, rollDelayedLethality } from './lethalityRoll.ts';
 
 export function evaluateLethalityAndRagdollPlan(
   weapon: WeaponSpec,
@@ -33,11 +35,13 @@ export function evaluateLethalityAndRagdollPlan(
 ): {
   totalDamageHp: number;
   isLethalKill: boolean;
+  delayedLethality: DelayedLethality | null;
   ragdollPlan: RagdollActivationPlan;
 } {
   let totalDamageHp = initialDamageHp;
 
-  if (rupturedOrgansSet.has('Heart (Myocardium & Ventricles)')) {
+  const heartRuptured = rupturedOrgansSet.has('Heart (Myocardium & Ventricles)');
+  if (heartRuptured) {
     totalDamageHp += 68.0;
   }
 
@@ -83,15 +87,26 @@ export function evaluateLethalityAndRagdollPlan(
   const isFatalLimbLoss =
     hasHitTarget && dismembermentEvents.length > 0 && isLimbLossFatal(severedZonesSet);
 
-  const isLethalKill =
+  const isInstantKill =
     hasHitTarget &&
     (isFatalLimbLoss ||
-      (!isPureLimbShot &&
-        (totalDamageHp >= target.currentHp ||
-          isCranialExploded ||
-          isNeckSevered ||
-          isGutEviscerated ||
-          isCnsDestroyed)));
+      (!isPureLimbShot && (isCranialExploded || isNeckSevered || isGutEviscerated || isCnsDestroyed)));
+  const isTraumaKill = hasHitTarget && !isPureLimbShot && totalDamageHp >= target.currentHp;
+
+  // A kill through accumulated trauma may take a few seconds to land; the combatant fights on meanwhile.
+  let delayedLethality: DelayedLethality | null = null;
+  if (isTraumaKill && !isInstantKill) {
+    delayedLethality = rollDelayedLethality({
+      target,
+      overkillRatio: 1 + (totalDamageHp - target.currentHp) / Math.max(1, target.maxHp),
+      heartRuptured,
+    });
+    if (delayedLethality) {
+      totalDamageHp = Math.max(0, target.currentHp - borrowedTimeHp(target));
+    }
+  }
+
+  const isLethalKill = isInstantKill || (isTraumaKill && delayedLethality === null);
 
   const rightLegSeveredAfter =
     severedZonesSet.has('THIGH_RIGHT') ||
@@ -138,5 +153,5 @@ export function evaluateLethalityAndRagdollPlan(
     dismembermentEvents,
   };
 
-  return { totalDamageHp, isLethalKill, ragdollPlan };
+  return { totalDamageHp, isLethalKill, delayedLethality, ragdollPlan };
 }

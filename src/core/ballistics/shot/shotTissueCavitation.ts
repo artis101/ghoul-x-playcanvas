@@ -8,6 +8,13 @@ import {
 } from '../../../contracts/ballistics.ts';
 import { scale } from '../vec3.ts';
 import { HitCandidate } from './shotTypes.ts';
+import { WEAPON_DROP_CHANCE, rollsWeaponDrop } from '../../combatant/weaponDropRoll.ts';
+import {
+  PelletVariance,
+  depositScaleAtDepth,
+  jitterThreshold,
+  rollsRibGlance,
+} from './terminalVariance.ts';
 
 export interface TissueCavitationResult {
   layerDamage: number;
@@ -20,6 +27,8 @@ export interface TissueCavitationResult {
   arterialSevered: boolean;
   headgearKnockedOff: boolean;
   weaponDisarmed: boolean;
+  /** The round skated off a rib and went no deeper. */
+  ribGlance: boolean;
   physEffect: string;
   woundEvent: WoundChannelEvent;
 }
@@ -31,7 +40,9 @@ export function evaluateTissueCavitation(
   hit: HitCandidate,
   currentSpeed: number,
   entryEnergy: number,
-  bulletDir: Vec3Like
+  bulletDir: Vec3Like,
+  variance?: PelletVariance,
+  tissueDepthM = 0
 ): TissueCavitationResult {
   const col = hit.collider;
 
@@ -52,7 +63,12 @@ export function evaluateTissueCavitation(
   const energyLossRate = resistanceBase * penetrationMultiplier;
   const effectiveTissuePathM =
     col.id === 'vol_thorax_ribcage' ? Math.min(hit.pathLen, 0.055) : hit.pathLen;
-  const energyDeposited = Math.min(entryEnergy, energyLossRate * effectiveTissuePathM);
+  const depthScale = variance ? depositScaleAtDepth(variance, tissueDepthM) : 1;
+  const ribGlance = variance ? rollsRibGlance(variance, col.id, entryEnergy) : false;
+  const energyDeposited = ribGlance
+    ? Math.min(entryEnergy, entryEnergy * (0.08 + variance!.rng() * 0.12))
+    : Math.min(entryEnergy, energyLossRate * effectiveTissuePathM * depthScale);
+  const organThresholdJ = variance ? jitterThreshold(variance, col.fractureThresholdJ) : col.fractureThresholdJ;
 
   const exitEnergy = Math.max(0, entryEnergy - energyDeposited);
   const exitSpeed = Math.sqrt((2 * exitEnergy) / ammo.massKg);
@@ -80,14 +96,16 @@ export function evaluateTissueCavitation(
       ammo.goreFactor >= 2.2 ||
       entryEnergy >= col.fractureThresholdJ * 6.0);
   const organRuptured =
-    col.layerType.startsWith('ORGAN_') && energyDeposited >= col.fractureThresholdJ;
+    col.layerType.startsWith('ORGAN_') && energyDeposited >= organThresholdJ;
   const arterialSevered =
-    col.layerType === 'ARTERY_CAROTID_AORTA' && energyDeposited >= col.fractureThresholdJ;
+    col.layerType === 'ARTERY_CAROTID_AORTA' && energyDeposited >= organThresholdJ;
 
   let physEffect = 'Soft Tissue Cavitation & Laceration';
   let weaponDisarmed = false;
 
-  if (col.layerType === 'ORGAN_BRAIN' && organRuptured) {
+  if (ribGlance) {
+    physEffect = 'Round Skated Off a Rib — Lucky';
+  } else if (col.layerType === 'ORGAN_BRAIN' && organRuptured) {
     physEffect = 'CNS Cranial Disruption — Instant Neuromuscular Collapse';
   } else if (col.id === 'vol_neck_spine' && boneFractured) {
     physEffect = 'Cervical Spinal Cord Severance — Instant Paralysis';
@@ -130,11 +148,12 @@ export function evaluateTissueCavitation(
   }
 
   const trigger = triggerSide(target.isLeftHanded);
-  // Only a hit to the hand on the grip, or a forearm shattered so the hand cannot close, makes a
-  // combatant let go of the gun. Hits higher up the arm are fought through.
+  // Only a hit to the hand on the grip, or a forearm shattered so the hand cannot close, can make a
+  // combatant let go of the gun, and even then usually they hang on. Hits higher up are fought through.
   const hitGripHand = col.ghoulZone === `HAND_${trigger}` && energyDeposited >= 30;
   const shatteredGripForearm = col.ghoulZone === `FOREARM_${trigger}` && boneShattered;
-  if (hitGripHand || shatteredGripForearm) {
+  const dropChance = hitGripHand ? WEAPON_DROP_CHANCE.GRIP_HAND_HIT : WEAPON_DROP_CHANCE.SHATTERED_GRIP_ARM;
+  if ((hitGripHand || shatteredGripForearm) && rollsWeaponDrop(variance ? variance.rng() : null, dropChance)) {
     weaponDisarmed = true;
     physEffect = `${col.label} Hit — Weapon Knocked From Grip`;
   }
@@ -189,7 +208,8 @@ export function evaluateTissueCavitation(
   proj.kineticEnergyJ = exitEnergy;
   proj.velocity = scale(bulletDir, exitSpeed);
 
-  if (exitEnergy < 15.0 || exitSpeed < 40.0) {
+  // A round that skates off a rib leaves the chest along the ribcage instead of going deeper.
+  if (ribGlance || exitEnergy < 15.0 || exitSpeed < 40.0) {
     proj.alive = false;
   }
 
@@ -204,6 +224,7 @@ export function evaluateTissueCavitation(
     arterialSevered,
     headgearKnockedOff,
     weaponDisarmed,
+    ribGlance,
     physEffect,
     woundEvent,
   };
