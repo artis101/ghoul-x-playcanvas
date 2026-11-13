@@ -29,7 +29,7 @@ export function generateVoronoiWallData(
   depth = 0.28,
   cellCount = 32,
   seed = 1337,
-  bondStrengthPerSqM = 18000,
+  bondStrengthPerSqM = 34000,
 ): VoronoiWallData {
   const safeW = Math.max(0.2, width);
   const safeH = Math.max(0.2, height);

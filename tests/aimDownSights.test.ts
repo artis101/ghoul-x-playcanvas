@@ -80,4 +80,19 @@ describe('aim down sights', () => {
       expect(Math.acos(Math.min(1, dot(fired, aim)))).toBeLessThanOrEqual(standing + 1e-9);
     }
   });
+
+  it('makes aiming down sights the most accurate way to fire for every weapon', () => {
+    for (const id of ['m590_shotgun', 'silver_talon_50ae', 'msg90_sniper', 'm4a1_carbine']) {
+      const profile = getWeaponAdsProfile(id);
+      for (const move of [0, 1]) {
+        for (const heat of [0, 4]) {
+          for (const flinch of [0, 2]) {
+            expect(aimSpreadRad(profile, 1, move, heat, flinch)).toBeLessThan(
+              aimSpreadRad(profile, 0, move, heat, flinch) * 0.5
+            );
+          }
+        }
+      }
+    }
+  });
 });

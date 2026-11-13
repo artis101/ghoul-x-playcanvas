@@ -151,6 +151,9 @@ export function handleGlassRaySegment(
   };
 }
 
+/** Local blast energy an armored pane needs before the blast punches through it. */
+const ARMORED_BLAST_BREACH_J = 1400;
+
 export function applyGlassRadialBlast(
   blast: BlastEvent,
   marchingWindowMap: Map<string, MarchingTileGlassWindow>,
@@ -174,6 +177,11 @@ export function applyGlassRadialBlast(
     const shockEnergyJ = blast.peakEnergyJ * falloff;
     const blastHoleRadiusM = Math.max(0.24, Math.hypot(win.widthM, win.heightM) * (0.35 + 0.65 * falloff));
     const dir = dist > 1e-4 ? { x: dx / dist, y: dy / dist, z: dz / dist } : rotateVec3ByQuat({ x: 0, y: 0, z: 1 }, win.rotationQuat);
+    // Armored laminate only gives way to a close, strong blast; farther out it just crazes in place.
+    if (shockEnergyJ < ARMORED_BLAST_BREACH_J) {
+      win.breakAtWorldPoint(closest, dir, shockEnergyJ * 0.5, 0.1, 0, false, 395, undefined, false);
+      continue;
+    }
     win.breakAtWorldPoint(
       closest,
       dir,

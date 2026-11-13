@@ -55,9 +55,8 @@ describe('Wood framing is never tougher against blasts than brick masonry', () =
   });
 
   const cases: Array<[string, number, number, number]> = [
-    ['grenade at 1.5 m', 1.5, GRENADE_BLAST_RADIUS_M, GRENADE_PEAK_ENERGY_J],
-    ['grenade at 3.5 m', 3.5, GRENADE_BLAST_RADIUS_M, GRENADE_PEAK_ENERGY_J],
-    ['grenade at 5.5 m', 5.5, GRENADE_BLAST_RADIUS_M, GRENADE_PEAK_ENERGY_J],
+    ['grenade at 0.8 m', 0.8, GRENADE_BLAST_RADIUS_M, GRENADE_PEAK_ENERGY_J],
+    ['grenade at 1.3 m', 1.3, GRENADE_BLAST_RADIUS_M, GRENADE_PEAK_ENERGY_J],
     ['barrel at 0.6 m', 0.6, BARREL_BLAST_RADIUS_M, BARREL_BLAST_PEAK_ENERGY_J],
     ['barrel at 1.3 m', 1.3, BARREL_BLAST_RADIUS_M, BARREL_BLAST_PEAK_ENERGY_J],
   ];

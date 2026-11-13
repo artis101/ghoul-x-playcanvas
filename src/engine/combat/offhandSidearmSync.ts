@@ -64,10 +64,16 @@ export class OffhandSidearmSync {
         : drawing && (sidearmState?.drawProgress ?? 1) < SEATED_PISTOL_VISIBLE_PROGRESS);
     const wantsSidearm = Boolean(sidearmState?.visible) && alive && armIntact && !holstered;
     const shouldBeAttached = wantsSidearm && !isAirborneRagdoll;
+    // The pistol is thrown on the floor only when it is really lost: the body died, or the AI says
+    // it was dropped (its arm gone, the magazine dry). Any other frame the AI does not want it out
+    // (a cancelled draw, a wound clip, a rule flip) it goes back in the holster. A dropped prop can
+    // never be picked up again, so treating a hiccup as a drop left a seated last stand with the
+    // AI saying "pistol drawn" and no pistol in the fist for the rest of its life.
+    const sidearmLost = !alive || (sidearmState?.dropped ?? false);
     const temporarilyHidden =
       (wantsSidearm && isAirborneRagdoll) ||
       (holstered && alive) ||
-      (!wantsSidearm && alive && rig.attachmentState.kind === 'HIDDEN_TEMP' && rig.attachmentState.hand === undefined);
+      (!wantsSidearm && !sidearmLost);
 
     // Only a pistol that was in a hand remembers that hand. A holstered one must stay handless, or
     // the next frame reads it as held-then-hidden and throws it on the floor as a dropped prop

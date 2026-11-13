@@ -30,4 +30,24 @@ describe('holstered backup sidearm', () => {
     expect(rig.attachmentState.kind).toBe('HIDDEN_TEMP');
     expect(fx.spawnDroppedWeaponProp).not.toHaveBeenCalled();
   });
+
+  it('puts a drawn pistol back in the fist after the AI let go of it for a frame, never on the floor', () => {
+    const hs = createTargetHealthState('flicker', 'Flicker', vec3(0, 0, 0));
+    const rig = {
+      attachmentState: createPropAttachmentState<'RIGHT' | 'LEFT'>('HIDDEN_TEMP'),
+      lastHand: null,
+      holderEntity: { enabled: false },
+      glbInstance: null,
+      wasHeldLastFrame: false,
+    } as unknown as OffhandSidearmRig;
+    const target = { healthState: hs } as unknown as GhoulMannequinEntity;
+    const fx = { spawnDroppedWeaponProp: vi.fn() };
+    const sync = new OffhandSidearmSync();
+    const state = (visible: boolean) =>
+      ({ getSidearmVisualState: () => ({ visible, hand: visible ? 'RIGHT' : null, dropped: false, drawing: false, drawProgress: 1 }) }) as never;
+    expect(sync.sync(target, vec3(0, 1.6, 4), rig, state(true), fx as never)).toBe(true);
+    expect(sync.sync(target, vec3(0, 1.6, 4), rig, state(false), fx as never)).toBe(false);
+    expect(sync.sync(target, vec3(0, 1.6, 4), rig, state(true), fx as never)).toBe(true);
+    expect(fx.spawnDroppedWeaponProp).not.toHaveBeenCalled();
+  });
 });

@@ -71,6 +71,7 @@ export class FpsController {
   public get isPointerLocked(): boolean { return this.input.isPointerLocked; }
   public get isAimingDownSights(): boolean { return this.rig.isAimingDownSights; }
   public get adsBlend(): number { return this.rig.adsBlend; }
+  public get sightKind(): 'IRON' | 'HOLO' | 'SCOPE' { return this.rig.sight.profile.sightKind; }
   public get isScopeOpticActive(): boolean { return this.rig.isScopeOpticActive; }
   public get sightState(): PlayerSightState { return this.rig.sightState; }
   public get isTriggerHeld(): boolean { return this.input.isTriggerHeld; }

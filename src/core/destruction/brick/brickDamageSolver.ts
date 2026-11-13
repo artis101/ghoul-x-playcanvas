@@ -12,8 +12,10 @@ export function computeBulletBrickDamageHp(
 ): number {
   if (kineticEnergyJ <= 0) return 0;
   const effJ = kineticEnergyJ * (isArmorPiercing ? 1.18 : 1.0);
-  const raw = 4 + Math.pow(effJ, 0.66) * 0.34;
-  return Math.min(88, Math.max(5, raw));
+  // Tuned so ~13 concentrated 5.56 rounds (~7.6 HP each) fully destroy a 100-HP brick,
+  // i.e. about half a magazine; heavier rounds (.308, .50, slugs) chew through in a few hits.
+  const raw = 1.5 + Math.pow(effJ, 0.66) * 0.045;
+  return Math.min(40, Math.max(1.5, raw));
 }
 
 function addGouge(

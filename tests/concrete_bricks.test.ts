@@ -357,20 +357,36 @@ describe('Pillar 2: Concrete & Bricks Destruction (BFS + Instancing + MultiDraw 
         expect(wall.grid.hp[targetIdx]).toBeGreaterThan(50);
         expect(brickSystem.mortarChipPool.activeCount).toBeGreaterThan(0);
 
-        // 2) M4A1 5.56 rifle round (1,550 J) into the chipped brick -> gouges & cracks deeply, still standing!
-        const rifleRes = brickSystem.handleRaySegment({
-          originWorld: { x: targetPos.x, y: targetPos.y, z: 0 },
-          directionWorld: { x: 0, y: 0, z: -1 },
-          maxDistanceM: 20,
-          kineticEnergyJ: 1550,
-          speedMs: 880,
-          caliberRadiusM: 0.00285,
-          isArmorPiercing: false,
-        });
+        // 2) M4A1 5.56 rifle rounds (1,550 J) into the chipped brick -> gouges & cracks deeply, still standing!
+        //    Bricks are tough: it takes about half a magazine of concentrated fire to put one down.
+        const fireRifle = () =>
+          brickSystem.handleRaySegment({
+            originWorld: { x: targetPos.x, y: targetPos.y, z: 0 },
+            directionWorld: { x: 0, y: 0, z: -1 },
+            maxDistanceM: 20,
+            kineticEnergyJ: 1550,
+            speedMs: 880,
+            caliberRadiusM: 0.00285,
+            isArmorPiercing: false,
+          });
+        let rifleRes = fireRifle();
         expect(rifleRes).not.toBeNull();
         expect(rifleRes!.stopped).toBe(true);
+        let rifleShots = 1;
+        while (wall.grid.frontGouge[targetIdx] <= 0.4 && rifleShots < 20) {
+          rifleRes = fireRifle();
+          rifleShots++;
+        }
         expect(wall.destroyedBrickCount).toBe(0);
         expect(wall.grid.frontGouge[targetIdx]).toBeGreaterThan(0.4);
+        expect(rifleShots).toBeGreaterThan(2);
+        while (wall.grid.hp[targetIdx] > 8 && rifleShots < 40) {
+          fireRifle();
+          rifleShots++;
+        }
+        expect(wall.destroyedBrickCount).toBe(0);
+        expect(rifleShots).toBeGreaterThanOrEqual(8);
+        expect(rifleShots).toBeLessThanOrEqual(16);
 
         // 3) Finishing heavy hit (2,600 J) -> shatters weakened brick out, punches hole through & over-penetrates!
         const slugRes = brickSystem.handleRaySegment({

@@ -31,6 +31,6 @@ export interface ActiveFragGrenade {
 export const GRENADE_RADIUS_M = 0.045;
 export const GRENADE_FUSE_S = 1.6;
 export const GRENADE_CRITICAL_FUSE_WARNING_S = 0.45;
-export const GRENADE_BLAST_RADIUS_M = 7.5;
-export const GRENADE_PEAK_IMPULSE_NS = 260;
-export const GRENADE_PEAK_ENERGY_J = 6200;
+export const GRENADE_BLAST_RADIUS_M = 4.0;
+export const GRENADE_PEAK_IMPULSE_NS = 150;
+export const GRENADE_PEAK_ENERGY_J = 1600;

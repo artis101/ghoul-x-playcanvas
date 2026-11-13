@@ -1,4 +1,5 @@
 import * as pc from 'playcanvas';
+import type { AdsFocus } from '../../core/ballistics/aim/aimDownSights.ts';
 
 /**
  * The player camera's HDR frame: the scene is lit into a float target, then composed to the
@@ -71,6 +72,23 @@ export class CinematicFrame {
     frame.vignette.outer = look.vignetteOuter;
     frame.update();
     this.frame = frame;
+  }
+
+  /** Depth of field for aiming: sharp at the sight's range, soft elsewhere. Off at the hip. */
+  public setAdsFocus(focus: AdsFocus): void {
+    const frame = this.frame;
+    if (!frame) return;
+    const on = focus.strength > 0.02;
+    if (on) {
+      frame.dof.focusDistance = focus.focusDistanceM;
+      frame.dof.focusRange = focus.focusRangeM;
+      frame.dof.blurRadius = Math.max(0.5, focus.blurRadius);
+      frame.dof.nearBlur = true;
+    }
+    if (frame.dof.enabled !== on) {
+      frame.dof.enabled = on;
+      frame.update();
+    }
   }
 
   /** False on headless devices, where the camera keeps drawing straight to the screen. */

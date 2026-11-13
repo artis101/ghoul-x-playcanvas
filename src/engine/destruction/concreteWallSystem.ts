@@ -156,7 +156,7 @@ export class ConcreteWallSystem implements IDestructibleSubsystem {
         config.depth ?? 0.28,
         config.cellCount ?? 30,
         config.seed ?? 1337,
-        config.bondStrengthPerSqM ?? 18000
+        config.bondStrengthPerSqM ?? 34000
       );
     }
 

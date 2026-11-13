@@ -10,8 +10,8 @@ const ADS_M590: WeaponAdsProfile = {
   aimInTimeS: 0.27,
   aimOutTimeS: 0.22,
   moveSpeedScale: 0.72,
-  hipSpreadRad: 0.004,
-  hipMoveSpreadRad: 0.006,
+  hipSpreadRad: 0.012,
+  hipMoveSpreadRad: 0.014,
   adsRecoilScale: 0.75,
 };
 
@@ -25,8 +25,8 @@ const ADS_SILVER_TALON: WeaponAdsProfile = {
   aimInTimeS: 0.17,
   aimOutTimeS: 0.15,
   moveSpeedScale: 0.86,
-  hipSpreadRad: 0.012,
-  hipMoveSpreadRad: 0.01,
+  hipSpreadRad: 0.028,
+  hipMoveSpreadRad: 0.02,
   adsRecoilScale: 0.7,
 };
 
@@ -40,8 +40,8 @@ const ADS_MSG90: WeaponAdsProfile = {
   aimInTimeS: 0.36,
   aimOutTimeS: 0.26,
   moveSpeedScale: 0.5,
-  hipSpreadRad: 0.04,
-  hipMoveSpreadRad: 0.03,
+  hipSpreadRad: 0.075,
+  hipMoveSpreadRad: 0.05,
   adsRecoilScale: 0.6,
 };
 
@@ -55,8 +55,8 @@ const ADS_M4A1: WeaponAdsProfile = {
   aimInTimeS: 0.22,
   aimOutTimeS: 0.18,
   moveSpeedScale: 0.78,
-  hipSpreadRad: 0.016,
-  hipMoveSpreadRad: 0.012,
+  hipSpreadRad: 0.036,
+  hipMoveSpreadRad: 0.024,
   adsRecoilScale: 0.62,
 };
 

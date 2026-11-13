@@ -1,3 +1,4 @@
+import { adsFocus } from '../../core/ballistics/aim/aimDownSights.ts';
 import { vec3 } from '../../core/ballistics/vec3.ts';
 import type { IGhoulXApp } from './appContext.ts';
 
@@ -16,6 +17,10 @@ export function onEngineUpdate(app: IGhoulXApp, dt: number): void {
       firing: app.arsenalManager.actionState.kind === 'FIRING',
       weaponGlb: app.arsenalManager.activeWeaponGlb,
     }
+  );
+
+  app.cinematicFrame.setAdsFocus(
+    adsFocus(app.fpsController.sightKind, app.fpsController.adsBlend)
   );
 
   // 2. Step hazard barrels, tracers, sparks & casings

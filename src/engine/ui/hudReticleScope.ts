@@ -25,10 +25,12 @@ export class HudReticleScope {
       this.lastCrosshairHidden = hidden;
       this.crosshairEl.style.opacity = hidden ? '0' : '1';
     }
-    const scaleStr = `scale(${scaleFactor.toFixed(3)})`;
+    // Spread the bars apart (fixed bar size) instead of scaling the whole crosshair.
+    const scaleStr = scaleFactor.toFixed(3);
     if (scaleStr !== this.lastCrosshairScaleStr) {
       this.lastCrosshairScaleStr = scaleStr;
-      this.crosshairEl.style.transform = scaleStr;
+      this.crosshairEl.style.setProperty('--ch-off', `${((scaleFactor - 1) * 10.5).toFixed(2)}px`);
+      this.crosshairEl.style.setProperty('--ch-ring-scale', scaleStr);
     }
   }
 
