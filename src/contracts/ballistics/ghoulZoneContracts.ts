@@ -76,6 +76,21 @@ export interface AnatomicalColliderVolume {
   childZones?: GhoulZoneId[];
 }
 
+/**
+ * Where a limb was cut through, in the cut zone's own bone frame. The engine places the
+ * mesh split and the wound caps from this, so the limb parts where the bullet crossed it.
+ */
+export interface SeverCut {
+  /** Where the cut crosses the bone, as a fraction of its length from its proximal joint (0) to its distal joint (1). */
+  alongFraction: number;
+  /** Where the bullet crossed the limb, relative to the bone origin, in the ragdoll bone basis (right, up, forward). */
+  entryLocal: Vec3Like;
+  /** Bullet direction in the same basis. */
+  shotDirLocal: Vec3Like;
+  /** Seeds the jagged fracture profile, so both halves of the cut tear the same way. */
+  seed: number;
+}
+
 export interface DismembermentEvent {
   zone: GhoulZoneId;
   parentZone?: GhoulZoneId;
@@ -92,6 +107,8 @@ export interface DismembermentEvent {
   severedLimbAngularVelocity: Vec3Like;
   /** Number of meat/bone gib chunks spawned (especially for CRANIAL_POP or shotgun obliteration) */
   gibCount: number;
+  /** Where the limb parted along the bone; absent when it came away at its joint. */
+  cut?: SeverCut;
 }
 
 export interface LocalizedSurfaceWound {

@@ -22,6 +22,7 @@ import {
   vec3,
 } from '../vec3.ts';
 import { ALL_ANATOMICAL_COLLIDERS } from '../math/restBoneBases.ts';
+import { computeSeverCut, severCutWorldPoint } from '../../ghoul/severCut/severCutPlacement.ts';
 
 const JOINT_SEVER_SPECS: Array<{
   severZone: GhoulZoneId;
@@ -238,16 +239,20 @@ export function evaluateJointDismemberment(
         ? normalize(add(sub(boneState.position, target.ragdollBones[parentZone].position), vec3(0, 0.35, 0)))
         : vec3(0, 1, 0);
 
+      // Limbs and the neck part where the bullet crossed the bone, not at the joint.
+      const cut = goreMode === 'CRANIAL_POP' ? null : computeSeverCut(zone, boneState, allWoundEvents);
+
       dismembermentEvents.push({
         zone,
         parentZone,
         goreMode,
         detachedSubtree,
-        stumpWorldPosition: stumpWorld,
+        stumpWorldPosition: cut ? severCutWorldPoint(boneState, cut) : stumpWorld,
         arterialSprayDirection: sprayDir,
         severedLimbVelocity: limbVelocity,
         severedLimbAngularVelocity: limbSpin,
         gibCount,
+        ...(cut ? { cut } : {}),
       });
 
       for (const we of allWoundEvents) {

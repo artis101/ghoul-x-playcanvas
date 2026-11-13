@@ -13,6 +13,7 @@ import { CombatantLocomotion } from './combatantLocomotion.ts';
 import { CombatantBoneSync } from './combatantBoneSync.ts';
 import { CombatantDismemberment } from './combatantDismemberment.ts';
 import { CombatantSeveredSkin } from './combatantSeveredSkin.ts';
+import { CombatantImpactCuts } from './combatantImpactCuts.ts';
 import { CombatantVisualGoreSync } from './combatantVisualGoreSync.ts';
 import { CombatantWoundDecals } from './combatantWoundDecals.ts';
 import { CombatantWeaponMount } from './combatantWeaponMount.ts';
@@ -43,6 +44,7 @@ export class GhoulMannequinEntity {
   private readonly boneSync = new CombatantBoneSync();
   private readonly dismemberment = new CombatantDismemberment();
   private readonly severedSkin = new CombatantSeveredSkin();
+  private readonly impactCuts = new CombatantImpactCuts();
   private readonly visualGoreSync = new CombatantVisualGoreSync();
   private readonly woundDecals = new CombatantWoundDecals();
   private readonly weaponMount = new CombatantWeaponMount();
@@ -80,6 +82,7 @@ export class GhoulMannequinEntity {
   public reset(): void {
     this.dismemberment.reset();
     this.severedSkin.reset();
+    this.impactCuts.reset();
     this.crawlOverlay.reset();
     this.weaponMount.reset();
     this.animController.reset();
@@ -116,6 +119,7 @@ export class GhoulMannequinEntity {
 
     this.combatantGlb = inst;
     this.stumpCaps = buildStumpCaps(inst, this.materials);
+    this.impactCuts.bind(this.stumpCaps, this.materials);
     this.rootEntity.addChild(inst.rootEntity);
     this.syncFromHealthState(0, 0);
     return true;
@@ -132,7 +136,7 @@ export class GhoulMannequinEntity {
     if (glb) {
       glb.rootEntity.enabled = true;
       this.dismemberment.syncGlbSeverances(glb, this.healthState);
-      this.severedSkin.sync(glb, this.healthState);
+      this.severedSkin.sync(glb, this.healthState, this.impactCuts);
       this.dismemberment.syncGearVisibility(glb, this.healthState, headgearAttached);
 
       switch (this.driveState.mode) {

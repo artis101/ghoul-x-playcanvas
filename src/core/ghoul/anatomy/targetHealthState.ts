@@ -157,6 +157,7 @@ export function createTargetHealthState(
     zoneCumulativeDamageJ,
     zoneGoreMode,
     severedZones: new Set<GhoulZoneId>(),
+    severCuts: {},
     fracturedBones: new Set<string>(),
     rupturedOrgans: new Set<string>(),
     surfaceWounds: [],

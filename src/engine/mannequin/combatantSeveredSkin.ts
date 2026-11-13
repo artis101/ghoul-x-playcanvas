@@ -2,6 +2,7 @@ import * as pc from 'playcanvas';
 import type { GhoulZoneId, TargetHealthState } from '../../contracts/ballistics.ts';
 import { ALL_GHOUL_ZONES, GHOUL_ZONE_HIERARCHY } from '../../core/ghoul/anatomy.ts';
 import type { CombatantGlbInstance } from '../assets/glbLoader.ts';
+import type { CombatantImpactCuts } from './combatantImpactCuts.ts';
 
 // Zone meshes are shared by every combatant. Hold a reference so swapping one out never frees it.
 const pinnedMeshes = new WeakSet<pc.Mesh>();
@@ -62,7 +63,11 @@ export class CombatantSeveredSkin {
   private readonly originals = new Map<pc.MeshInstance, pc.Mesh>();
   private readonly rigidZones = new Set<GhoulZoneId>();
 
-  public sync(glb: CombatantGlbInstance, healthState: TargetHealthState): void {
+  /**
+   * Zones cut mid-bone (`healthState.severCuts`) are torn where the bullet crossed them by
+   * `impactCuts`; the rest come away whole at their joint.
+   */
+  public sync(glb: CombatantGlbInstance, healthState: TargetHealthState, impactCuts?: CombatantImpactCuts): void {
     if (healthState.severedZones.size === 0) return;
     const bones = healthState.ragdollBones;
     for (const zone of ALL_GHOUL_ZONES) {
@@ -70,6 +75,8 @@ export class CombatantSeveredSkin {
       if (!parent || this.rigidZones.has(zone)) continue;
       if (bones[zone].componentId === bones[parent].componentId) continue;
       this.rigidZones.add(zone);
+      const cut = healthState.severCuts?.[zone];
+      if (cut && impactCuts?.apply(glb, zone, cut, (mi, mesh) => this.swap(mi, mesh))) continue;
       this.makeRigid(glb, zone);
     }
   }
@@ -88,13 +95,18 @@ export class CombatantSeveredSkin {
       const boneIndex = meshInstance.skinInstance?.skin.boneNames.indexOf(`Bone_${zone}`) ?? -1;
       if (!mesh || boneIndex < 0) continue;
       const rigid = createRigidCopy(mesh, boneIndex);
-      if (!rigid) continue;
-      if (!pinnedMeshes.has(mesh)) {
-        mesh.incRefCount();
-        pinnedMeshes.add(mesh);
-      }
-      this.originals.set(meshInstance, mesh);
-      meshInstance.mesh = rigid;
+      if (rigid) this.swap(meshInstance, rigid);
     }
+  }
+
+  private swap(meshInstance: pc.MeshInstance, replacement: pc.Mesh): void {
+    const mesh = meshInstance.mesh;
+    if (!mesh) return;
+    if (!pinnedMeshes.has(mesh)) {
+      mesh.incRefCount();
+      pinnedMeshes.add(mesh);
+    }
+    if (!this.originals.has(meshInstance)) this.originals.set(meshInstance, mesh);
+    meshInstance.mesh = replacement;
   }
 }

@@ -32,6 +32,10 @@ export function applyDismembermentTree(
     const nextAttachment =
       dism.goreMode === 'CRANIAL_POP' ? 'OBLITERATED_HIDDEN' : 'DETACHED_LIMB';
     target.severedZones.add(dism.zone);
+    if (dism.cut) {
+      target.severCuts ??= {};
+      target.severCuts[dism.zone] = dism.cut;
+    }
 
     if (dism.zone === 'HAND_RIGHT' || dism.zone === 'HAND_LEFT' || dism.zone === 'FOOT_RIGHT' || dism.zone === 'FOOT_LEFT') {
       target.bloodLossRateMlPerSec += 16;

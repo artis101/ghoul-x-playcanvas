@@ -111,7 +111,7 @@ function createCap(name: string, radius: number, materials: EngineMaterialPalett
 }
 
 /** Parents `cap` to a bone so it sits at a model-space point, facing along a model-space rotation. */
-function seat(cap: pc.Entity, boneNode: pc.GraphNode, bind: BoneBindPose, position: pc.Vec3, rotation: pc.Quat): void {
+export function seatCap(cap: pc.Entity, boneNode: pc.GraphNode, bind: BoneBindPose, position: pc.Vec3, rotation: pc.Quat): void {
   const toBone = new pc.Quat().copy(bind.modelRot).invert();
   boneNode.addChild(cap);
   cap.setLocalPosition(toBone.transformVector(new pc.Vec3().sub2(position, bind.modelPos)));
@@ -143,11 +143,11 @@ export function buildStumpCaps(
 
     const socket = createCap(`${zone}_SocketCap`, cut.bodyRadius, materials);
     const socketAt = new pc.Vec3().copy(axis).mulScalar(cut.bodyEnd - lift).add(bind.modelPos);
-    seat(socket, parentNode, parentBind, socketAt, bind.modelRot);
+    seatCap(socket, parentNode, parentBind, socketAt, bind.modelRot);
 
     const limb = createCap(`${zone}_LimbCap`, cut.radius, materials);
     const limbAt = new pc.Vec3().copy(axis).mulScalar(cut.limbStart + lift).add(bind.modelPos);
-    seat(limb, node, bind, limbAt, new pc.Quat().mul2(bind.modelRot, flip));
+    seatCap(limb, node, bind, limbAt, new pc.Quat().mul2(bind.modelRot, flip));
 
     caps.set(zone, { zone, parent, socket, limb });
   }

@@ -120,6 +120,13 @@ export class WoundPreview {
         severedLimbVelocity: vec3(zone.endsWith('RIGHT') ? -1.6 : 1.6, 1.8, -0.6),
         severedLimbAngularVelocity: vec3(3, 2, -4),
         gibCount: 0,
+        // Torn mid-bone, as a bullet through the middle of the limb would leave it.
+        cut: {
+          alongFraction: 0.55,
+          entryLocal: vec3(0, 0.1, 0.05),
+          shotDirLocal: vec3(0.3, 0, -1),
+          seed: 0x5eed + zone.length * 7919,
+        },
       };
     });
     applyDismembermentTree(hs, { dismembermentEvents } as unknown as ShotSimulationReport);

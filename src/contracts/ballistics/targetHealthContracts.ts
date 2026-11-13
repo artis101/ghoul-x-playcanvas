@@ -12,6 +12,7 @@ import {
   GoreMode,
   LocalizedSurfaceWound,
   RagdollActivationPlan,
+  SeverCut,
   WoundChannelEvent,
 } from './ghoulZoneContracts.ts';
 import type {
@@ -222,6 +223,8 @@ export interface TargetHealthState {
   zoneCumulativeDamageJ: Record<GhoulZoneId, number>;
   zoneGoreMode: Record<GhoulZoneId, GoreMode>;
   severedZones: Set<GhoulZoneId>;
+  /** Impact-located cut for each zone severed mid-bone; zones missing here parted at their joint. */
+  severCuts?: Partial<Record<GhoulZoneId, SeverCut>>;
   fracturedBones: Set<string>;
   rupturedOrgans: Set<string>;
   surfaceWounds: LocalizedSurfaceWound[];
