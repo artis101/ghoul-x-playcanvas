@@ -12,6 +12,8 @@ import {
   clampDownedAimDirection,
   computeDownedAimReach,
 } from '../src/core/ballistics/triage/downedAimReach.ts';
+import { computeChestFrame } from '../src/core/ghoul/anatomy/ragdollBodyFrames.ts';
+import { keepAimClearOfChest } from '../src/core/ballistics/triage/downedChestClearance.ts';
 import { dot, normalize, sub, vec3 } from '../src/core/ballistics/vec3.ts';
 import { createTargetHealthState } from '../src/core/ghoul/anatomy.ts';
 import { getSubtreeZones } from '../src/core/ghoul/anatomy/ghoulHierarchy.ts';
@@ -146,6 +148,27 @@ describe('a downed shooter only covers what lies in front of its extended arm', 
       expect(aim.z).toBeLessThan(0.05);
       const point = { x: shoulder.x + aim.x * 5, y: shoulder.y + aim.y * 5, z: shoulder.z + aim.z * 5 };
       expect(dot(normalize(sub(point, shoulder)), reach.axis)).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('a downed gun arm reaching across the body', () => {
+  it('passes in front of the chest instead of through it', () => {
+    // Face up the chest faces +y and the right-hander's gun side lies along +x.
+    const target = lying(false);
+    const chest = computeChestFrame(target)!;
+    const across = keepAimClearOfChest(target, vec3(-1, 0.05, -0.3));
+    // The frame's right is the body's own left, the way this arm crosses.
+    const medial = dot(across, chest.right);
+    expect(medial).toBeGreaterThan(0);
+    // Crossing no steeper than 40 degrees from the chest's forward line.
+    expect(medial).toBeLessThanOrEqual(Math.tan((40 * Math.PI) / 180) * dot(across, chest.forward) + 1e-6);
+  });
+
+  it('leaves aims out to the gun side or up off the chest alone', () => {
+    const target = lying(false);
+    for (const wanted of [vec3(1, 0.1, -0.4), vec3(-0.3, 0.9, -0.2), vec3(0.2, 0.3, -1)]) {
+      expect(dot(keepAimClearOfChest(target, wanted), normalize(wanted))).toBeGreaterThan(0.999);
     }
   });
 });

@@ -2,6 +2,7 @@ import type { TargetHealthState, Vec3Like } from '../../../contracts/ballistics.
 import { sideSignX } from '../../ghoul/anatomy/handedness.ts';
 import { computeChestFrame } from '../../ghoul/anatomy/ragdollBodyFrames.ts';
 import { add, cross, dot, length, normalize, scale, sub, vec3 } from '../vec3.ts';
+import { isAimClearOfChest } from './downedChestClearance.ts';
 import { resolveDownedGunSide } from './downedGunSide.ts';
 
 const DEG = Math.PI / 180;
@@ -71,7 +72,7 @@ export function canDownedBodyAimAt(target: TargetHealthState, point: Vec3Like): 
   const reach = computeDownedAimReach(target);
   if (!reach) return true;
   const toPoint = normalize(sub(point, reach.origin));
-  return dot(toPoint, reach.axis) >= Math.cos(reach.halfAngleRad);
+  return dot(toPoint, reach.axis) >= Math.cos(reach.halfAngleRad) && isAimClearOfChest(target, toPoint);
 }
 
 /** Turns an aim direction to the nearest one the body can actually reach. */

@@ -3,6 +3,7 @@ import * as pc from 'playcanvas';
 import type { GhoulZoneId, Vec3Like } from '../../contracts/ballistics.ts';
 import { add, copyVec3, dot, length, normalize, scale, sub, vec3 } from '../../core/ballistics/vec3.ts';
 import { clampDownedAimDirection } from '../../core/ballistics/triage/downedAimReach.ts';
+import { keepAimClearOfChest } from '../../core/ballistics/triage/downedChestClearance.ts';
 import { safeOrthonormalBasis } from '../../core/ghoul/anatomy/ragdollBasisMath.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
@@ -115,7 +116,9 @@ export class OffhandSidearmSync {
         horizDir = normalize(add(scale(charFwd, 0.72), scale(horizDir, 0.28)));
       }
     }
-    const aimDir = normalize(vec3(horizDir.x * Math.sqrt(1 - clampedY * clampedY), clampedY, horizDir.z * Math.sqrt(1 - clampedY * clampedY)));
+    const levelled = normalize(vec3(horizDir.x * Math.sqrt(1 - clampedY * clampedY), clampedY, horizDir.z * Math.sqrt(1 - clampedY * clampedY)));
+    // Swung across the body, the straight arm must pass in front of the chest, not through it.
+    const aimDir = downed ? keepAimClearOfChest(hs, levelled) : levelled;
     // A downed shooter's head turns to look along the gun (see groundedPoseTargets).
     hs.downedAimDirWorld = downed && (sidearmState?.drawProgress ?? 1) >= 1 ? aimDir : null;
 
