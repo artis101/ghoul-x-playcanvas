@@ -45,6 +45,7 @@ const ARCHETYPES: readonly EnemyArchetypeId[] = [
   'HEAVY_ENFORCER',
   'SNIPER_OPERATIVE',
   'MILITIA_GUNNER',
+  'MASKED_BRUISER',
 ];
 
 const prewarmedDeviceMaterials = new WeakMap<pc.GraphicsDevice, pc.Material[]>();

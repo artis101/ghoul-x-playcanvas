@@ -1,0 +1,149 @@
+[
+ {
+  "name": "stump_kneel_r",
+  "seed": 91,
+  "samples": 4,
+  "durations": [
+   1.6
+  ],
+  "prompts": [
+   "A person holding the right wrist against the chest with the left hand sinks down onto both knees, staying hunched over the arm"
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/takes/handloss_r_03.npz",
+    "frames": [
+     70,
+     71
+    ]
+   }
+  ]
+ },
+ {
+  "name": "kneel_pistol_one_hand",
+  "seed": 92,
+  "samples": 4,
+  "durations": [
+   1.4
+  ],
+  "prompts": [
+   "A person kneeling on both knees holds the left forearm tight against the chest and raises a pistol in the right hand to eye level, aiming straight ahead with the right arm extended, holding still"
+  ]
+ },
+ {
+  "name": "sit_to_crawl",
+  "seed": 93,
+  "samples": 4,
+  "durations": [
+   2.0
+  ],
+  "prompts": [
+   "A person sitting on the ground leaning back on the left hand rolls over onto the stomach and starts pulling forward along the ground with the arms, dragging the legs behind"
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/takes/legshot_fall_r_03.npz",
+    "frames": [
+     70,
+     71
+    ]
+   }
+  ]
+ },
+ {
+  "name": "hop_loop_r",
+  "seed": 101,
+  "samples": 4,
+  "durations": [
+   0.8333333333333334
+  ],
+  "prompts": [
+   "A person balances on the left leg with the right knee bent and lifted high off the ground, hopping up and down in place on the left foot again and again with both arms held out to the sides for balance"
+  ],
+  "pins": [
+   {
+    "take": "work/takes/hop_r_04.npz",
+    "frames": [
+     35,
+     36
+    ],
+    "at": [
+     0,
+     1
+    ]
+   },
+   {
+    "take": "work/takes/hop_r_04.npz",
+    "frames": [
+     35,
+     36
+    ],
+    "at": "end"
+   }
+  ]
+ },
+ {
+  "name": "legloss_lift_r",
+  "seed": 102,
+  "samples": 4,
+  "durations": [
+   0.9
+  ],
+  "prompts": [
+   "A person standing jerks the right knee up high toward the chest and staggers onto the left foot, throwing both arms out to the sides for balance"
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   },
+   {
+    "take": "work/takes/hop_r_04.npz",
+    "frames": [
+     35,
+     36
+    ],
+    "at": "end"
+   }
+  ]
+ },
+ {
+  "name": "legloss_fall_r",
+  "seed": 103,
+  "samples": 4,
+  "durations": [
+   1.8
+  ],
+  "prompts": [
+   "A person balancing on the left foot with the right knee raised loses balance, tips backward and falls, landing sitting on the ground leaning back on the left hand"
+  ],
+  "pins": [
+   {
+    "take": "work/takes/hop_r_04.npz",
+    "frames": [
+     35,
+     36
+    ],
+    "at": [
+     0,
+     1
+    ]
+   }
+  ]
+ }
+]

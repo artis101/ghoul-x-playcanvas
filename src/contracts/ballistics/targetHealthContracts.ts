@@ -147,6 +147,24 @@ export interface RagdollDistanceConstraint {
   stiffness: number;
 }
 
+/**
+ * One step of the wounded sequence. Standing after an arm loss: CLUTCH, then BLAZE (draw and gun
+ * on its feet), KNEEL_DOWN then KNEEL_FIRE, or SIT_DOWN. On the floor: DOWNED_ENGAGE (seated, only
+ * fires straight ahead), DOWNED_CRAWL (rolls onto the belly and drags itself away; never fires),
+ * DOWNED_AGONY (lies there), FACE_DOWN (landed on its face: no gun, no damage).
+ */
+export type WoundedPhase =
+  | 'NONE'
+  | 'CLUTCH'
+  | 'BLAZE'
+  | 'KNEEL_DOWN'
+  | 'KNEEL_FIRE'
+  | 'SIT_DOWN'
+  | 'DOWNED_ENGAGE'
+  | 'DOWNED_CRAWL'
+  | 'DOWNED_AGONY'
+  | 'FACE_DOWN';
+
 export interface ActivePainReaction {
   type: PainReactionType;
   timerS: number;
@@ -208,6 +226,47 @@ export interface TargetHealthState {
   hasHelmetArmor: boolean;
   helmetArmorIntegrity: number;
   activeReaction: ActivePainReaction;
+  /**
+   * Counts every hit the living body takes, including hits that land while a fall, loss or
+   * collapse clip is playing and so do not start a new reaction. The pose layer watches it to
+   * add a short spring jolt on each hit. Absent until the first hit.
+   */
+  joltEpoch?: number;
+  /** World direction of the hit that last bumped `joltEpoch`. */
+  lastJoltDirectionWorld?: Vec3Like;
+  /** How hard that hit was, on the same 0..1.3 scale as a reaction's intensity. */
+  lastJoltIntensity?: number;
+  /**
+   * True while a mannequin copies its animated GLB pose into `ragdollBones` every frame. The
+   * procedural standing pose then leaves the bones alone, so when a fall clip ends and the body
+   * goes ragdoll it starts from the seat the clip put it in, not from a made-up standing pose.
+   */
+  poseFromAnimation?: boolean;
+  /**
+   * Where a badly wounded combatant is in its one-thing-at-a-time sequence (docs/wound-movement.md).
+   * Absent or NONE while it fights normally. Each phase finishes before the next starts.
+   */
+  woundedPhase?: WoundedPhase;
+  /** Seconds spent in the current `woundedPhase`. */
+  woundedPhaseTimerS?: number;
+  /**
+   * 0..1 grit rolled once per combatant from its resolve profile, health and consciousness. High
+   * fortitude stands and guns, middling kneels and shoots, low sits down before reaching for a gun.
+   */
+  fortitude?: number;
+  /** Chest-forward direction, flattened, when the body came to rest on the floor. */
+  downedFacingWorld?: Vec3Like;
+  /**
+   * What a falling body will do once it is on the floor, planned every frame of the fall. A body
+   * that sits down keeps SIT_DOWN through its collapse and takes this phase when the clip ends.
+   */
+  plannedDownedPhase?: WoundedPhase;
+  /**
+   * Seconds a living ragdoll has lain still in the face-down shape. Set (0 or more) as soon as the
+   * shape is seen, cleared when it is not; FACE_DOWN is committed only after a settle window, and
+   * the body may not draw or fire while the shape is pending.
+   */
+  faceDownSettleS?: number;
   /** Optional local micro-hitstop freeze timer in seconds (35-50ms on heavy/shattering hits) */
   hitstopRemainingS?: number;
   alive: boolean;

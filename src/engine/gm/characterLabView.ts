@@ -44,6 +44,29 @@ export function createCharacterLabView(root: HTMLElement) {
               </label>
               <output id="gm-wound-readout"></output>
             </div>
+            <div class="gm-control-group" id="gm-sequences">
+              <h2>Wound sequences</h2>
+              <label class="gm-check"><input id="gm-sequence-sidearm" type="checkbox" checked> Backup sidearm</label>
+              <label class="gm-check"><input id="gm-sequence-southpaw" type="checkbox"> Southpaw</label>
+              <label>Fortitude
+                <select id="gm-sequence-fortitude">
+                  <option value="AUTO">Auto (rolled)</option>
+                  <option value="HIGH">High: blaze</option>
+                  <option value="MIDDLING">Middling: kneel</option>
+                  <option value="LOW">Low: sit down</option>
+                </select>
+              </label>
+              <label>You stand
+                <select id="gm-sequence-stand-in">
+                  <option value="FRONT">In front</option>
+                  <option value="LEFT">To its left</option>
+                  <option value="BEHIND">Behind</option>
+                </select>
+              </label>
+              <div class="gm-sequence-buttons" id="gm-sequence-buttons"></div>
+              <button id="gm-sequence-replay" type="button" disabled>Replay</button>
+              <output id="gm-sequence-readout"></output>
+            </div>
             <div class="gm-control-group">
               <h2>Held item</h2>
               <label>Item <select id="gm-item"></select></label>
@@ -89,6 +112,13 @@ export function createCharacterLabView(root: HTMLElement) {
     wounds: element<HTMLDivElement>('wounds'),
     consciousness: element<HTMLInputElement>('consciousness'),
     woundReadout: element<HTMLOutputElement>('wound-readout'),
+    sequenceSidearm: element<HTMLInputElement>('sequence-sidearm'),
+    sequenceSouthpaw: element<HTMLInputElement>('sequence-southpaw'),
+    sequenceFortitude: element<HTMLSelectElement>('sequence-fortitude'),
+    sequenceStandIn: element<HTMLSelectElement>('sequence-stand-in'),
+    sequenceButtons: element<HTMLDivElement>('sequence-buttons'),
+    sequenceReplay: element<HTMLButtonElement>('sequence-replay'),
+    sequenceReadout: element<HTMLOutputElement>('sequence-readout'),
     characterClip: element<HTMLSelectElement>('character-clip'),
     characterTime: element<HTMLInputElement>('character-time'),
     characterReadout: element<HTMLOutputElement>('character-readout'),

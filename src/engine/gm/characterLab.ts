@@ -9,37 +9,11 @@ import { CombatantDismemberment } from '../mannequin/combatantDismemberment.ts';
 import { setupCombatantGlbInstance } from '../mannequin/combatantGlbSetup.ts';
 import { CombatantWeaponMount } from '../mannequin/combatantWeaponMount.ts';
 import { WoundPreview, type LostLimb } from './woundPreview.ts';
+import { characters, isWoundedClip, items, setClipOptions } from './characterLabOptions.ts';
 import { createCharacterLabView } from './characterLabView.ts';
 import { createPreviewStage } from './previewStage.ts';
 import { PreviewTimeline } from './previewTimeline.ts';
-
-const characters: Record<EnemyArchetypeId, string> = {
-  MILITIA_GUNNER: 'Militia Gunner',
-  SKINHEAD_PUNK: 'Skinhead Punk',
-  HEAVY_ENFORCER: 'Heavy Enforcer',
-  SNIPER_OPERATIVE: 'Sniper Operative',
-};
-
-const items: Record<WeaponAssetId, string> = {
-  m4a1_carbine: 'M4A1 Carbine',
-  m590_shotgun: 'M590 Shotgun',
-  msg90_sniper: 'MSG90 Sniper',
-  silver_talon_50ae: 'Silver Talon .50 AE',
-  frag_grenade: 'Frag Grenade',
-};
-
-function clipLabel(clip: string): string {
-  return clip.replace('UnsuspectingIdle', 'GuardIdle')
-    .replace('_Southpaw', ' (left hand)').replace(/([a-z])([A-Z])/g, '$1 $2');
-}
-
-function setClipOptions(select: HTMLSelectElement, clips: Iterable<string>, empty: string): void {
-  const previous = select.value;
-  const options = Array.from(clips, (clip) => new Option(clipLabel(clip), clip));
-  select.replaceChildren(...(options.length ? options : [new Option(empty, '')]));
-  if (options.some((option) => option.value === previous)) select.value = previous;
-  select.disabled = !options.length;
-}
+import { WoundSequenceController } from './woundSequenceController.ts';
 
 export async function openCharacterLab(): Promise<void> {
   const root = document.getElementById('app-root');
@@ -69,7 +43,7 @@ export async function openCharacterLab(): Promise<void> {
   try {
     await Promise.all(['ghoul_combatant' as const, ...WEAPON_ASSET_IDS].map((id) => registry.loadContainer(id)));
     let downed: WoundPreview | null = null;
-    cleanupStage = createPreviewStage(app, view.canvas, undefined, () => downed?.focus ?? null);
+    cleanupStage = createPreviewStage(app, view.canvas, undefined, () => downed?.focus ?? sequences.current?.focus ?? null);
     const characterTimeline = new PreviewTimeline(view.characterTime, view.characterReadout);
     const itemTimeline = new PreviewTimeline(view.itemTime, view.itemReadout);
     const dismemberment = new CombatantDismemberment();
@@ -79,8 +53,18 @@ export async function openCharacterLab(): Promise<void> {
     let playing = true;
     let speed = 1;
     const camera = app.root.findByName('Preview Camera');
+    const sequences = new WoundSequenceController(app, registry, view, () => view.model.value as EnemyArchetypeId, () => {
+      // A sequence brings its own combatant, so the clip preview and the wound preview step aside.
+      downed?.destroy();
+      downed = null;
+      view.woundReadout.value = '';
+      character.rootEntity.enabled = false;
+      if (mount.heldWeaponNode) mount.heldWeaponNode.enabled = false;
+      setPlaying(true);
+    }, listeners.signal);
 
     function selectWounds(): void {
+      sequences.stop();
       downed?.destroy();
       downed = null;
       const checked = new Set(Array.from(
@@ -127,9 +111,9 @@ export async function openCharacterLab(): Promise<void> {
     function selectCharacterClip(): void {
       const clip = view.characterClip.value;
       health.isLeftHanded = clip.endsWith('_Southpaw');
-      health.posture = /^(HitStagger|DiaphragmDrop|LegCollapse|Crawl)/.test(clip) ? 'STAGGERED' : 'COMBAT_READY';
+      health.posture = isWoundedClip(clip) ? 'STAGGERED' : 'COMBAT_READY';
       characterTimeline.select(character.animComponent, clip);
-      if (clip.startsWith('PistolAim') && view.item.value !== 'silver_talon_50ae') {
+      if (/^(Kneel)?PistolAim/.test(clip) && view.item.value !== 'silver_talon_50ae') {
         view.item.value = 'silver_talon_50ae';
         selectItem();
         return;
@@ -206,10 +190,18 @@ export async function openCharacterLab(): Promise<void> {
       if (!playing && !characterTimeline.canAdvance && !itemTimeline.canAdvance) rewind();
       setPlaying(!playing);
     }, options);
-    view.restart.addEventListener('click', () => (downed ? selectWounds() : rewind()), options);
+    view.restart.addEventListener('click', () => {
+      if (downed) selectWounds();
+      else if (sequences.current) sequences.replay();
+      else rewind();
+    }, options);
     app.on('update', (dt: number) => {
       if (!playing) return;
       const elapsed = dt * speed;
+      if (sequences.current) {
+        sequences.update(elapsed);
+        return;
+      }
       if (downed) {
         downed.consciousness = view.consciousness.valueAsNumber;
         downed.update(elapsed);
@@ -224,8 +216,8 @@ export async function openCharacterLab(): Promise<void> {
       if (!characterTimeline.canAdvance && !itemTimeline.canAdvance) setPlaying(false);
     });
 
-    // Console handle for inspecting the wounded combatant's live health state.
-    Object.assign(window, { gmLab: { get wound() { return downed; } } });
+    // Console handles for inspecting the wounded combatant's live health state.
+    Object.assign(window, { gmLab: { get wound() { return downed; }, get sequence() { return sequences.current; } } });
     app.start();
     view.status.hidden = true;
     view.controls.disabled = false;

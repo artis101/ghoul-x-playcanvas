@@ -37,6 +37,7 @@ import type {
 import { wrapAngleRad, yawToward } from './combatantArmEvaluation.ts';
 import { ARCHETYPE_TUNING, BACKUP_SIDEARM_WEAPON_ID, SIDEARM_M9_TUNING } from './archetypeTuning.ts';
 import { getAgentMagazine } from './enemyWeaponMagazine.ts';
+import { isKneelingPhase, woundedSequenceAllowsShot } from './woundedSequenceDriver.ts';
 
 function primaryHandling(hs: TargetHealthState) {
   return resolveEnemyGunHandling(ARCHETYPE_TUNING[hs.archetype].primaryWeaponId);
@@ -76,6 +77,13 @@ export function stepWeaponBurstFire(
   /** True while the shooter is still moving or settling its aim: no new burst starts. */
   holdFire = false
 ): void {
+  // Every enemy shot passes the wounded sequence first: nothing fires while clutching, kneeling
+  // down, falling, crawling or lying face down, and a body on the floor only fires at a player
+  // straight in front of it (docs/wound-movement.md).
+  if (!woundedSequenceAllowsShot(hs, agent)) {
+    cancelActiveBurst(agent);
+    return;
+  }
   // A body on the ground cannot twist round to shoot behind itself. It waits for a target it
   // can actually bring the weapon to bear on.
   if (hs.isRagdollActive && !canDownedBodyAimAt(hs, playerEyeWorldPos)) {
@@ -197,7 +205,9 @@ export function emitEnemyTracerShot(
     ? Math.max(0.42, basePos.y)
     : isGroundedOrDowned
       ? hs.worldPosition.y + 0.62
-      : hs.worldPosition.y + 1.32;
+      : isKneelingPhase(hs)
+        ? hs.worldPosition.y + 0.92
+        : hs.worldPosition.y + 1.32;
 
   const coreOrigin: Vec3Like = { x: basePos.x, y: muzzleHeight, z: basePos.z };
   const seed = agent.tracerSeedCounter++;

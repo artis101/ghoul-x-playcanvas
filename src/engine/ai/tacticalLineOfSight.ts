@@ -40,16 +40,18 @@ export function resolveExposedPlayerAimPoint(
   const basePos = hs.isRagdollActive
     ? hs.ragdollBones.TORSO_UPPER_THORAX?.position ?? hs.worldPosition
     : hs.worldPosition;
+  // Kneeling to shoot (wounded sequence KNEEL_FIRE) the gun and eyes sit lower than standing.
+  const kneeling = hs.woundedPhase === 'KNEEL_DOWN' || hs.woundedPhase === 'KNEEL_FIRE';
   const muzzleHeight = hs.isRagdollActive
     ? Math.max(0.42, basePos.y)
     : isGroundedOrDowned
       ? hs.worldPosition.y + 0.62
-      : hs.worldPosition.y + 1.32;
+      : hs.worldPosition.y + (kneeling ? 0.92 : 1.32);
   const eyeHeight = hs.isRagdollActive
     ? Math.max(0.55, hs.ragdollBones.HEAD_CRANIUM?.position.y ?? basePos.y + 0.16)
     : isGroundedOrDowned
       ? hs.worldPosition.y + 0.78
-      : hs.worldPosition.y + 1.55;
+      : hs.worldPosition.y + (kneeling ? 1.05 : 1.55);
 
   const enemyCorePos: Vec3Like = { x: basePos.x, y: muzzleHeight, z: basePos.z };
   const enemyEyePos: Vec3Like = { x: basePos.x, y: eyeHeight, z: basePos.z };

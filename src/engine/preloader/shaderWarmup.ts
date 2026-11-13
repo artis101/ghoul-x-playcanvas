@@ -168,6 +168,7 @@ export async function compileAllGameShaders(
         if (tempCombatant.tacticalVisor) tempCombatant.tacticalVisor.enabled = true;
         if (tempCombatant.boonieHat) tempCombatant.boonieHat.enabled = true;
         if (tempCombatant.punkMohawk) tempCombatant.punkMohawk.enabled = true;
+        if (tempCombatant.gasMask) tempCombatant.gasMask.enabled = true;
         if (tempCombatant.evisceratedGut) tempCombatant.evisceratedGut.enabled = true;
 
         tempCombatant.setInternalAnatomyVisible(false);

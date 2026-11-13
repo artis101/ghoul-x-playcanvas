@@ -34,7 +34,13 @@ export interface DeadArmTrackerSlice {
   deadArmState: Record<ArmSide, DeadArmSimState>;
 }
 
-export function isArmDeadButAttached(state: TargetHealthState, side: ArmSide): boolean {
+/**
+ * True when an arm still hangs from the shoulder but no longer works, so it swings as a pendulum.
+ * A hand or forearm cut off below an intact upper arm is a stump, not a dead arm: the stump is
+ * still moved by its muscles, so it follows the body clip (recoil, clutch to the chest). Pass
+ * `distalStumpAnimated = false` while the GLB has no stump clips, and the stump hangs as before.
+ */
+export function isArmDeadButAttached(state: TargetHealthState, side: ArmSide, distalStumpAnimated = true): boolean {
   if (!state.alive || state.isRagdollActive) return false;
   const functional = side === 'RIGHT' ? state.rightArmFunctional : state.leftArmFunctional;
   if (functional) return false;
@@ -43,9 +49,19 @@ export function isArmDeadButAttached(state: TargetHealthState, side: ArmSide): b
   if (state.severedZones.has(upperZone) || state.severedZones.has(shoulderZone)) {
     return false;
   }
+  if (distalStumpAnimated && isDistalArmStump(state, side)) return false;
   const upperBone = state.ragdollBones[upperZone];
   return (
     upperBone.attachmentState === 'ATTACHED' && upperBone.componentId === 'BODY'
+  );
+}
+
+/** Hand or forearm gone with the upper arm still attached. */
+export function isDistalArmStump(state: Pick<TargetHealthState, 'severedZones'>, side: ArmSide): boolean {
+  return (
+    !state.severedZones.has(`UPPER_ARM_${side}`) &&
+    !state.severedZones.has(`SHOULDER_${side}`) &&
+    (state.severedZones.has(`HAND_${side}`) || state.severedZones.has(`FOREARM_${side}`))
   );
 }
 
@@ -72,9 +88,10 @@ export function stepPinnedDeadArmVerlet(
   tracker: DeadArmTrackerSlice,
   side: ArmSide,
   shoulderPivotWorld: Vec3Like,
-  dt: number
+  dt: number,
+  distalStumpAnimated = true
 ): boolean {
-  if (!isArmDeadButAttached(state, side)) {
+  if (!isArmDeadButAttached(state, side, distalStumpAnimated)) {
     if (tracker.deadArmState[side].kind !== 'INACTIVE') {
       tracker.deadArmState[side] = { kind: 'INACTIVE' };
     }

@@ -20,6 +20,7 @@ import { CombatantWeaponMount } from './combatantWeaponMount.ts';
 import { CombatantDeadLimbOverlay } from './combatantDeadLimbOverlay.ts';
 import { CombatantCrawlOverlay } from './combatantCrawlOverlay.ts';
 import { buildStumpCaps } from './combatantStumpCaps.ts';
+import type { WoundClipOwner } from './combatantWoundClips.ts';
 import {
   resolveMannequinDriveState,
   type MannequinDriveMode,
@@ -65,7 +66,7 @@ export class GhoulMannequinEntity {
     this.materials = materials;
     this.fxManager = fxManager;
     this.retroMats = getArchetypeRetroMaterials(app.graphicsDevice, healthState.archetype);
-    this.driveState = resolveMannequinDriveState(healthState);
+    this.driveState = this.resolveDriveState();
 
     this.rootEntity = new pc.Entity(`GhoulMannequin_${healthState.targetId}`);
     this.buildSkeleton();
@@ -86,7 +87,19 @@ export class GhoulMannequinEntity {
     this.crawlOverlay.reset();
     this.weaponMount.reset();
     this.animController.reset();
-    this.driveState = resolveMannequinDriveState(this.healthState);
+    this.driveState = this.resolveDriveState();
+  }
+
+  /**
+   * A hand or forearm stump follows the body clip once the GLB has the stump clips; before they
+   * are baked it hangs as a dead arm, since the idle clip would hold it out at a missing gun.
+   */
+  private get stumpClipsBaked(): boolean {
+    return this.combatantGlb?.availableClips.has('StumpClutchRight') ?? false;
+  }
+
+  private resolveDriveState(): MannequinDriveState {
+    return resolveMannequinDriveState(this.healthState, this.stumpClipsBaked);
   }
 
   private buildSkeleton(): void {
@@ -126,7 +139,7 @@ export class GhoulMannequinEntity {
   }
 
   public syncFromHealthState(dt: number, elapsedTime: number, guarding = false, aim?: CombatantAimPose): void {
-    this.driveState = resolveMannequinDriveState(this.healthState);
+    this.driveState = this.resolveDriveState();
     const movement = this.locomotion.sample(
       this.healthState.worldPosition, this.healthState.yawRad, dt, this.driveState.mode === 'ANIM_STANDING'
     );
@@ -153,7 +166,7 @@ export class GhoulMannequinEntity {
         case 'ANIM_STANDING':
         case 'ANIM_WOUNDED_POSTURE': {
           this.animController.syncAnimation(
-            glb, this.healthState, guarding, movement, aim, this.locomotion.groundSpeed
+            glb, this.healthState, guarding, movement, aim, this.locomotion.groundSpeed, dt
           );
           glb.rootEntity.setPosition(
             this.healthState.worldPosition.x,
@@ -161,7 +174,12 @@ export class GhoulMannequinEntity {
             this.healthState.worldPosition.z
           );
           glb.rootEntity.setEulerAngles(0, (this.healthState.yawRad * 180) / Math.PI, 0);
-          this.deadLimbOverlay.sync(glb, this.healthState, this.boneSync, dt);
+          // While a wound clip plays it owns the body: the jolt shrinks, the prop-up and the
+          // wound-clutch hand step back, and the stump clutch holds the arm by itself.
+          this.deadLimbOverlay.sync(glb, this.healthState, this.boneSync, dt, {
+            woundClip: this.animController.activeWoundClip,
+            suppressClutch: this.animController.isStumpClutching,
+          }, this.stumpClipsBaked);
           this.crawlOverlay.sync(
             glb, this.healthState, this.animController.isCrawling, dt, elapsedTime, this.fxManager
           );
@@ -179,7 +197,8 @@ export class GhoulMannequinEntity {
     }
 
     this.weaponMount.syncWeaponPosition(
-      this.healthState, glb, this.fxManager, guarding, dt, aim?.clip === 'PistolAim' ? aim.hand ?? null : null
+      this.healthState, glb, this.fxManager, guarding, dt,
+      aim && aim.clip !== 'LongGunAim' ? aim.hand ?? null : null
     );
     this.syncPoseAttachments();
     this.dismemberment.syncStumps(this.stumpCaps, this.healthState);
@@ -192,8 +211,9 @@ export class GhoulMannequinEntity {
   public syncPoseAttachments(): void {
     const state = this.healthState;
     const glb = this.combatantGlb;
-    this.driveState = resolveMannequinDriveState(state);
+    this.driveState = this.resolveDriveState();
     const animated = glb !== null && this.driveState.mode !== 'FULL_RAGDOLL';
+    state.poseFromAnimation = animated;
     const rightArmDead = this.driveState.rightArmDeadAttached;
     const leftArmDead = this.driveState.leftArmDeadAttached;
     for (const [zone, bundle] of this.zoneBundles) {
@@ -224,6 +244,25 @@ export class GhoulMannequinEntity {
 
   public get isPlayingPistolAim(): boolean {
     return this.animController.clipState.kind === 'PLAYING' && this.animController.clipState.clip === 'PistolAim';
+  }
+
+  /**
+   * A one-handed pistol aim, standing or on one knee, held with the good hand while the other
+   * arm is a stump. The gun then sits in the animated fist.
+   */
+  public get isPlayingPistolAimOneHand(): boolean {
+    const clip = this.animController.clipState;
+    return clip.kind === 'PLAYING' && (clip.clip === 'PistolAimOneHand' || clip.clip === 'KneelPistolAimOneHand');
+  }
+
+  /** True while the downed body drags itself along in the crawl loop. */
+  public get isCrawling(): boolean {
+    return this.animController.isCrawling;
+  }
+
+  /** Which kind of wound clip owns the body this frame, if any. */
+  public get activeWoundClip(): WoundClipOwner {
+    return this.animController.activeWoundClip;
   }
 
   public destroy(): void {

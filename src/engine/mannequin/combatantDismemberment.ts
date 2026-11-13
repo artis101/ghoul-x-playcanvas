@@ -103,11 +103,14 @@ export class CombatantDismemberment {
     const showVisor = headgearAttached && arch === 'HEAVY_ENFORCER';
     const showBoonie = headgearAttached && arch === 'SNIPER_OPERATIVE';
     const showMohawk = !isCranialPopped && arch === 'SKINHEAD_PUNK';
+    // The respirator straps round the skull, so it goes with a burst head but not with a lost helmet.
+    const showGasMask = !isCranialPopped && arch === 'MASKED_BRUISER';
 
     glb.setArmorVisible(showPlate, showHelmet);
     if (glb.tacticalVisor) glb.tacticalVisor.enabled = showVisor;
     if (glb.boonieHat) glb.boonieHat.enabled = showBoonie;
     if (glb.punkMohawk) glb.punkMohawk.enabled = showMohawk;
+    if (glb.gasMask) glb.gasMask.enabled = showGasMask;
   }
 
   public syncStumps(stumpCaps: ReadonlyMap<GhoulZoneId, StumpCap>, healthState: TargetHealthState): void {

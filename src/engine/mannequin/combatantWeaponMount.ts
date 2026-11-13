@@ -38,6 +38,7 @@ import { CombatantWeaponGrip, M4A1_PALM_OFFSET_X } from './combatantWeaponGrip.t
 import { CombatantWeaponHold } from './combatantWeaponHold.ts';
 import { isOneHandedStance } from '../../core/ghoul/anatomy/weaponHold.ts';
 import { resolveWeaponHoldStance } from './combatantWeaponStance.ts';
+import { isWoundClip } from './combatantWoundClips.ts';
 import { CombatantUnarmedArms } from './combatantUnarmedArms.ts';
 import { CombatantAimHead } from './combatantAimHead.ts';
 import {
@@ -182,11 +183,14 @@ export class CombatantWeaponMount {
       const glbTrigNode = glb?.boneNodes.get(triggerHandZone);
       const glbSuppNode = glb?.boneNodes.get(supportHandZone);
 
+      const clip = glb?.animComponent?.baseLayer?.activeState;
+      // A flinch plays out after its reaction ends; until it does, the gun rides the animated
+      // trigger hand instead of being pulled into a hold the clip's arms are not in.
+      const woundClipPlaying = clip !== undefined && isWoundClip(clip.replace('_Southpaw', ''));
       const canUseSupport =
         healthState.posture === 'COMBAT_READY' && healthState.activeReaction.type === 'NONE' &&
-        weaponId !== 'frag_grenade' &&
+        !woundClipPlaying && weaponId !== 'frag_grenade' &&
         isArmChainIntactAndFunctional(healthState, supportHand);
-      const clip = glb?.animComponent?.baseLayer?.activeState;
       const stance = canUseSupport ? resolveWeaponHoldStance(weaponId, clip, guarding) : null;
       const supportGrip = glb && stance
         ? this.hold.place(this.heldWeaponNode, glb, weaponId, stance, triggerHand, dt)

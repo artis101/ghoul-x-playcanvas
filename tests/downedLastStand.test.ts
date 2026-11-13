@@ -7,6 +7,7 @@ import {
 import { buildLivingGroundedPoseTargets } from '../src/core/ballistics/triage/groundedPoseTargets.ts';
 import { applyDismembermentTree } from '../src/core/ballistics/trauma/dismembermentTreeApplicator.ts';
 import { isLimbLossFatal, listLostLimbs } from '../src/core/ballistics/trauma/limbLossDeathRule.ts';
+import { WOUND_CLIP_SECONDS } from '../src/core/ballistics/trauma/woundReactionTimings.ts';
 import {
   canDownedBodyAimAt,
   clampDownedAimDirection,
@@ -183,6 +184,12 @@ describe('a one-armed combatant stands until its last stand, then sits down to f
 
     target.currentHp = target.maxHp * 0.3;
     stepLivingTargetVitalsAndFall(target, 1 / 60, 0);
+    // It plays the collapse clip first and only goes to the ragdoll once that has sat it down.
+    expect(target.activeReaction.type).toBe('DOWNED_COLLAPSE');
+    expect(target.isRagdollActive).toBe(false);
+    for (let t = 0; t < WOUND_CLIP_SECONDS.DOWNED_COLLAPSE + 0.05; t += 1 / 60) {
+      stepLivingTargetVitalsAndFall(target, 1 / 60, 0);
+    }
     expect(target.alive).toBe(true);
     expect(target.isRagdollActive).toBe(true);
     expect(target.ragdollPhase.kind).toBe('LIVING_AGONY');

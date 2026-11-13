@@ -1,28 +1,13 @@
 import type * as pc from 'playcanvas';
-import type {
-  EnemyArchetypeId, GhoulZoneId, ShotSimulationReport, TargetHealthState, Vec3Like,
-} from '../../contracts/ballistics.ts';
-import {
-  applyArmamentStateToRuntime, createPrimaryArmedState, reconcileEnemyArmamentState,
-  stepEnemyArmamentState, type SyncedArmamentRuntimeFields,
-} from '../../core/ai/enemyArmamentFsm.ts';
+import type { EnemyArchetypeId, GhoulZoneId, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
 import { transitionTargetLifecycle } from '../../core/ballistics/lifecycle/targetLifecycleFsm.ts';
 import { stabilizeRagdollPoseForTransition } from '../../core/ballistics/ragdoll/ragdollPoseStabilizer.ts';
-import { stepRagdollPhysics } from '../../core/ballistics/ragdoll/ragdollVerletStep.ts';
 import { applyDismembermentTree } from '../../core/ballistics/trauma/dismembermentTreeApplicator.ts';
 import { vec3 } from '../../core/ballistics/vec3.ts';
 import { createTargetHealthState } from '../../core/ghoul/anatomy.ts';
-import { getSubtreeZones } from '../../core/ghoul/anatomy/ghoulHierarchy.ts';
-import {
-  getPreferredPrimaryHand, isArmChainIntactAndFunctional, selectIntactFiringHand,
-} from '../ai/combatantArmEvaluation.ts';
-import { SIDEARM_DRAW_DURATION_S, type EnemySidearmVisualState } from '../ai/tacticalAiTypes.ts';
 import type { GlbModelRegistry } from '../assets/glbLoader.ts';
-import { createOffhandSidearmRig, destroyOffhandSidearmRig } from '../combat/offhandSidearmRig.ts';
-import { OffhandSidearmSync } from '../combat/offhandSidearmSync.ts';
-import type { OffhandSidearmRig } from '../combat/offhandSidearmTypes.ts';
-import { GhoulMannequinEntity } from '../mannequin.ts';
-import { getOrCreateMaterials } from '../materials.ts';
+import { LiveCombatant } from './liveCombatant.ts';
+import { buildSeverReport } from './woundSequences.ts';
 
 export type LostLimb = 'ARM_RIGHT' | 'ARM_LEFT' | 'LEG_RIGHT' | 'LEG_LEFT';
 
@@ -42,7 +27,6 @@ const SEVER_ZONE: Record<LostLimb, GhoulZoneId> = {
   LEG_RIGHT: 'THIGH_RIGHT',
 };
 const STAND_BEFORE_WOUND_S = 0.6;
-const MAX_STEP_S = 1 / 30;
 
 /**
  * Wounds a combatant and runs it through the same armament, ragdoll, mannequin and sidearm
@@ -50,12 +34,8 @@ const MAX_STEP_S = 1 / 30;
  */
 export class WoundPreview {
   public readonly health: TargetHealthState;
-  private readonly mannequin: GhoulMannequinEntity;
-  private readonly rig: OffhandSidearmRig;
-  private readonly sidearmSync = new OffhandSidearmSync();
-  private readonly armament: SyncedArmamentRuntimeFields;
+  private readonly body: LiveCombatant;
   private readonly viewer = vec3(0, 1.6, 3);
-  private clockS = 0;
   private wounded = false;
   /** Drives ragdoll muscle tone. Mortally wounded combatants sit near 0.2–0.5. */
   public consciousness = 1;
@@ -68,68 +48,32 @@ export class WoundPreview {
     private readonly camera: pc.GraphNode | null,
   ) {
     this.health = createTargetHealthState('gm-wounded', 'Wounded', { x: 0, y: 0, z: 0 }, 0, archetype);
-    const hand = getPreferredPrimaryHand(this.health);
-    this.armament = {
-      activeFiringHand: hand,
-      sidearmDrawTimerS: 0,
-      sidearmDrawing: false,
-      sidearmActive: false,
-      sidearmDropped: false,
-      armamentState: createPrimaryArmedState(hand),
-    };
-    this.mannequin = new GhoulMannequinEntity(app, this.health, getOrCreateMaterials(), undefined, registry);
-    app.root.addChild(this.mannequin.rootEntity);
-    this.rig = createOffhandSidearmRig(this.mannequin, registry);
-    this.sync(0);
+    this.body = new LiveCombatant(app, registry, this.health, spec.backupSidearm, () => this.viewerPosition());
   }
 
   /** Where the preview camera should look. */
   public get focus(): Vec3Like {
-    return this.health.ragdollBones.TORSO_LOWER_ABDOMEN.position;
+    return this.body.focus;
   }
 
   public get statusLine(): string {
     const hs = this.health;
     const body = hs.isRagdollActive ? hs.ragdollPhase.kind : 'ANIMATED';
     const tone = Math.max(0.22, hs.consciousness * (1 - 0.55 * hs.painShock));
-    return `${hs.posture} · ${body} · tone ${tone.toFixed(2)} · ${this.armament.armamentState?.kind ?? '—'} · ${hs.combatantStatusTag ?? 'no tag'}`;
+    return `${hs.posture} · ${body} · tone ${tone.toFixed(2)} · ${this.body.armamentKind} · ${hs.combatantStatusTag ?? 'no tag'}`;
   }
 
   public update(dt: number): void {
-    const step = Math.min(dt, MAX_STEP_S);
-    this.clockS += step;
-    if (!this.wounded && this.clockS >= STAND_BEFORE_WOUND_S) this.applyWounds();
+    const step = this.body.clampStep(dt);
+    if (!this.wounded && this.body.clockS >= STAND_BEFORE_WOUND_S) this.applyWounds();
     if (this.wounded && !this.spec.bleeding) this.health.consciousness = this.consciousness;
-    this.stepArmament(step);
-    stepRagdollPhysics(this.health, step, 0);
-    this.sync(step);
+    this.body.step(step);
   }
 
   private applyWounds(): void {
     const hs = this.health;
     this.wounded = true;
-    const dismembermentEvents = this.spec.lostLimbs.map((limb) => {
-      const zone = SEVER_ZONE[limb];
-      return {
-        zone,
-        goreMode: 'CLEAN_SEVER' as const,
-        detachedSubtree: getSubtreeZones(zone),
-        stumpWorldPosition: hs.ragdollBones[zone].position,
-        arterialSprayDirection: vec3(0, 1, 0),
-        // Thrown outward, away from the side of the body it came off.
-        severedLimbVelocity: vec3(zone.endsWith('RIGHT') ? -1.6 : 1.6, 1.8, -0.6),
-        severedLimbAngularVelocity: vec3(3, 2, -4),
-        gibCount: 0,
-        // Torn mid-bone, as a bullet through the middle of the limb would leave it.
-        cut: {
-          alongFraction: 0.55,
-          entryLocal: vec3(0, 0.1, 0.05),
-          shotDirLocal: vec3(0.3, 0, -1),
-          seed: 0x5eed + zone.length * 7919,
-        },
-      };
-    });
-    applyDismembermentTree(hs, { dismembermentEvents } as unknown as ShotSimulationReport);
+    applyDismembermentTree(hs, buildSeverReport(hs, this.spec.lostLimbs.map((limb) => SEVER_ZONE[limb])));
     if (!this.spec.bleeding) hs.bloodLossRateMlPerSec = 0;
     // Two lost limbs (other than one arm and one leg) kill it, and it drops whatever was asked.
     if (!this.spec.downed && hs.alive) return;
@@ -137,47 +81,6 @@ export class WoundPreview {
     transitionTargetLifecycle(hs, { kind: 'ACTIVATE_RAGDOLL', isOverkillCorpseHit: false });
     stabilizeRagdollPoseForTransition(hs, 0);
     hs.ragdollRootVelocity = vec3(0, 0.3, -2.4);
-  }
-
-  /** The combat loop's armament step, without the AI agent around it. */
-  private stepArmament(dt: number): void {
-    const hs = this.health;
-    const preferred = getPreferredPrimaryHand(hs);
-    const result = stepEnemyArmamentState(reconcileEnemyArmamentState(this.armament), {
-      dt,
-      alive: hs.alive && hs.currentHp > 0,
-      rightArmIntact: isArmChainIntactAndFunctional(hs, 'RIGHT'),
-      leftArmIntact: isArmChainIntactAndFunctional(hs, 'LEFT'),
-      preferredPrimaryHand: preferred,
-      intactHand: selectIntactFiringHand(hs, preferred),
-      weaponDropped: hs.weaponDropped,
-      primaryArmDisarmed: hs.primaryArmDisarmed === true,
-      isRagdollActive: hs.isRagdollActive,
-      isAirborneRagdoll: hs.isRagdollActive && hs.posture === 'AIRBORNE_RAGDOLL',
-      carriesBackupSidearm: this.spec.backupSidearm,
-      isGuarding: false,
-      isLastStandVital: hs.currentHp <= hs.maxHp * 0.32,
-      sidearmDrawDurationS: SIDEARM_DRAW_DURATION_S,
-    });
-    applyArmamentStateToRuntime(this.armament, result.state);
-    if (result.dropPrimaryWeapon) hs.weaponDropped = true;
-    if (result.markPrimaryArmDisarmed) hs.primaryArmDisarmed = true;
-    if (result.forceDisarmedPosture) hs.posture = 'DISARMED';
-    hs.combatantStatusTag = result.statusTag;
-  }
-
-  private sidearmState(): EnemySidearmVisualState {
-    const state = reconcileEnemyArmamentState(this.armament);
-    const visible = state.kind === 'SIDEARM_ACTIVE' || state.kind === 'SIDEARM_DRAWING';
-    return {
-      visible,
-      drawing: state.kind === 'SIDEARM_DRAWING',
-      drawProgress: state.kind === 'SIDEARM_DRAWING' ? 1 - state.remainingS / SIDEARM_DRAW_DURATION_S : visible ? 1 : 0,
-      hand: visible ? state.hand : null,
-      dropped: state.kind === 'DISARMED' && state.sidearmDropped,
-      aimTargetWorld: this.viewerPosition(),
-      weaponId: 'silver_talon_50ae',
-    };
   }
 
   private viewerPosition(): Vec3Like {
@@ -190,19 +93,7 @@ export class WoundPreview {
     return this.viewer;
   }
 
-  private sync(dt: number): void {
-    const sidearm = this.sidearmState();
-    this.mannequin.syncFromHealthState(
-      dt, this.clockS, false, sidearm.visible && sidearm.hand ? { clip: 'PistolAim', hand: sidearm.hand } : undefined,
-    );
-    const provider = { getSidearmVisualState: () => sidearm };
-    if (this.sidearmSync.sync(this.mannequin, this.viewerPosition(), this.rig, provider)) {
-      this.mannequin.syncPoseAttachments();
-    }
-  }
-
   public destroy(): void {
-    destroyOffhandSidearmRig(this.rig);
-    this.mannequin.destroy();
+    this.body.destroy();
   }
 }

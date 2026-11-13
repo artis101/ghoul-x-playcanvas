@@ -16,6 +16,8 @@ import {
   isArmChainIntactAndFunctional,
   selectIntactFiringHand,
 } from './combatantArmEvaluation.ts';
+import { isWoundClipHoldingBody } from './woundClipHold.ts';
+import { resolveSidearmRule } from './woundedSequenceDriver.ts';
 
 export function getSidearmVisualState(agent?: EnemyAiAgentRuntime): EnemySidearmVisualState {
   if (!agent) {
@@ -111,6 +113,9 @@ export function syncAgentArmamentAndSidearm(
     isGuarding: agent.state === 'PATROL_GUARD',
     isLastStandVital,
     sidearmDrawDurationS: SIDEARM_DRAW_DURATION_S,
+    woundClipPlaying: isWoundClipHoldingBody(hs),
+    // The wounded sequence decides when the pistol may come out (docs/wound-movement.md).
+    sidearmRule: resolveSidearmRule(hs, agent),
   });
 
   applyArmamentStateToRuntime(agent, result.state);

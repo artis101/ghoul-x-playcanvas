@@ -98,7 +98,14 @@ export interface MannequinDriveState {
   readonly leftArmDeadAttached: boolean;
 }
 
-export function resolveMannequinDriveState(healthState: TargetHealthState): MannequinDriveState {
+/**
+ * `distalStumpAnimated` says the GLB has the stump clips, so a hand or forearm stump follows the
+ * body clip instead of hanging as a dead arm.
+ */
+export function resolveMannequinDriveState(
+  healthState: TargetHealthState,
+  distalStumpAnimated = true
+): MannequinDriveState {
   if (healthState.isRagdollActive || !healthState.alive || healthState.currentHp <= 0) {
     return {
       mode: 'FULL_RAGDOLL',
@@ -113,7 +120,7 @@ export function resolveMannequinDriveState(healthState: TargetHealthState): Mann
 
   return {
     mode: isStandingPosture ? 'ANIM_STANDING' : 'ANIM_WOUNDED_POSTURE',
-    rightArmDeadAttached: isArmDeadButAttached(healthState, 'RIGHT'),
-    leftArmDeadAttached: isArmDeadButAttached(healthState, 'LEFT'),
+    rightArmDeadAttached: isArmDeadButAttached(healthState, 'RIGHT', distalStumpAnimated),
+    leftArmDeadAttached: isArmDeadButAttached(healthState, 'LEFT', distalStumpAnimated),
   };
 }

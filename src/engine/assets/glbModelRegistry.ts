@@ -40,6 +40,7 @@ const WARMUP_ARCHETYPES: readonly EnemyArchetypeId[] = [
   'HEAVY_ENFORCER',
   'SNIPER_OPERATIVE',
   'MILITIA_GUNNER',
+  'MASKED_BRUISER',
 ];
 
 export class GlbModelRegistry {

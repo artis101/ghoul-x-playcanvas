@@ -6,6 +6,8 @@ import bpy
 from mathutils import Quaternion, Vector
 
 PELVIS = "Bone_PELVIS_GROIN"
+# Distance from these bones to the skin they lie on.
+TRUNK_CONTACTS = {PELVIS: 0.1, "Bone_TORSO_UPPER_THORAX": 0.11}
 TO_GLTF = Quaternion((1, 0, 0), -math.pi / 2)
 MIDLINE = {
     "PELVIS_GROIN": "Hips",
@@ -154,4 +156,7 @@ class CombatantRetarget:
                 contacts.append(min(position.y - 0.07, toe.y - 0.025))
             elif name.startswith(("Bone_HAND", "Bone_KNEE")):
                 contacts.append(position.y - 0.045)
+            elif name in TRUNK_CONTACTS:
+                # Seated and fallen bodies rest on the buttocks and back, not only on hands and feet.
+                contacts.append(position.y - TRUNK_CONTACTS[name])
         return min(contacts)

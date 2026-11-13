@@ -6,12 +6,13 @@ import { Vec3Like, add, copyVec3, scale, sub } from '../../ballistics/vec3';
 import { ALL_AUX_PARTICLES, AUX_PARTICLE_REST_LOCAL } from './ghoulAuxParticles';
 import { GHOUL_ZONE_HIERARCHY } from './ghoulHierarchy';
 import { recomputeRagdollBasisVectors } from './ragdollBasis';
+import { isFallingReaction } from '../../ballistics/trauma/woundReactionTimings.ts';
 
 /**
  * Updates standing / injured procedural combat pose for living, non-ragdolled combatant.
  */
 export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS: number): void {
-  if (target.isRagdollActive || !target.alive) return;
+  if (target.isRagdollActive || !target.alive || target.poseFromAnimation) return;
 
   const cosY = Math.cos(target.yawRad);
   const sinY = Math.sin(target.yawRad);
@@ -42,13 +43,24 @@ export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS
     target.severedZones.has('FOOT_LEFT');
   const hasSeveredLeg = rightLegSevered || leftLegSevered;
 
+  const rxProg = rx.type !== 'NONE' && rx.durationS > 0 ? Math.min(1, rx.timerS / rx.durationS) : 0;
   const staggerProg =
     hasSeveredLeg && rx.durationS > 0 ? Math.min(1, rx.timerS / rx.durationS) : 0;
-  const kneeBuckleDrop = hasSeveredLeg
-    ? 0.10 + staggerProg * 0.24
-    : !target.rightLegFunctional || !target.leftLegFunctional
-      ? 0.28
-      : 0;
+  // Fall, loss and collapse sink the hips over the clip so the ragdoll takes over low. The
+  // animated GLB pose replaces this whenever it is present; this is only the proxy skeleton.
+  const fallSink = isFallingReaction(rx.type) ? rxProg * rxProg * 0.35 : 0;
+  // The collapse starts with the knees giving way, before the hips sink.
+  const collapseDrop = rx.type === 'DOWNED_COLLAPSE' ? 0.12 * Math.min(1, rxProg * 4) : 0;
+  const legFlinchDrop = rx.type === 'LEG_FLINCH_RIGHT' || rx.type === 'LEG_FLINCH_LEFT' ? 0.06 * rxWeight : 0;
+  const kneeBuckleDrop =
+    (hasSeveredLeg
+      ? 0.10 + staggerProg * 0.24
+      : !target.rightLegFunctional || !target.leftLegFunctional
+        ? 0.28
+        : 0) +
+    fallSink +
+    collapseDrop +
+    legFlinchDrop;
   const legStaggerX = rightLegSevered
     ? -(0.08 + staggerProg * 0.16)
     : leftLegSevered
@@ -57,7 +69,11 @@ export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS
         ? -0.09 * rxWeight
         : rx.type === 'LEG_BUCKLE_LEFT'
           ? 0.09 * rxWeight
-          : 0;
+          : rx.type === 'LEG_FLINCH_RIGHT'
+            ? -0.04 * rxWeight
+            : rx.type === 'LEG_FLINCH_LEFT'
+              ? 0.04 * rxWeight
+              : 0;
   const gutFoldZ = rx.type === 'GUT_FOLD' ? 0.14 * rxWeight : 0;
   const gutFoldY = rx.type === 'GUT_FOLD' ? -0.09 * rxWeight : 0;
   const chestBackZ = rx.type === 'CHEST_STAGGER' ? -0.11 * rxWeight : 0;
@@ -108,10 +124,12 @@ export function updateStandingCombatPose(target: TargetHealthState, elapsedTimeS
       lz += headSnapZ;
     }
 
-    if (rx.type === 'ARM_WRENCH_RIGHT' && (zone === 'SHOULDER_RIGHT' || zone === 'UPPER_ARM_RIGHT')) {
+    const wrenchRight = rx.type === 'ARM_WRENCH_RIGHT' || rx.type === 'ARM_LOST_RIGHT';
+    const wrenchLeft = rx.type === 'ARM_WRENCH_LEFT' || rx.type === 'ARM_LOST_LEFT';
+    if (wrenchRight && (zone === 'SHOULDER_RIGHT' || zone === 'UPPER_ARM_RIGHT')) {
       lz -= 0.10 * rxWeight;
     }
-    if (rx.type === 'ARM_WRENCH_LEFT' && (zone === 'SHOULDER_LEFT' || zone === 'UPPER_ARM_LEFT')) {
+    if (wrenchLeft && (zone === 'SHOULDER_LEFT' || zone === 'UPPER_ARM_LEFT')) {
       lz -= 0.10 * rxWeight;
     }
 

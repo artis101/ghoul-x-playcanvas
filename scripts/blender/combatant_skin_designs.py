@@ -1,8 +1,11 @@
 """The four combatant looks, one painted atlas page each.
 
-They are period-style originals: a tattooed skinhead in leathers, a militia gunner in a tank top and
-woodland trousers, a masked enforcer in black and urban camouflage, and a contract operative in grey
-fatigues, a load-bearing vest and a boonie hat.
+They are period-style originals: a tattooed skinhead in leathers; "the Muscle", a bald militia gunner
+in a ribbed tank top, woodland trousers and canvas shoulder straps; "Bear", a red-haired bruiser in a
+half-face respirator, olive tank top and woodland cargo trousers; a masked enforcer in black and urban
+camouflage; and a contract operative in grey fatigues, a load-bearing vest and a boonie hat.
+
+Every field of a Look is a knob, so new characters and per-spawn variants are a few values away.
 """
 
 from dataclasses import dataclass, field
@@ -35,6 +38,8 @@ class Look:
     vest_color: np.ndarray = field(default_factory=lambda: rgb(0.10, 0.145, 0.135))
     gloves: bool = False
     holster: bool = False
+    boot_color: np.ndarray = field(default_factory=lambda: rgb(0.085, 0.080, 0.080))
+    chest_hair: float = 0.0
     hair: str = "bald"                     # bald or cropped
     hair_color: np.ndarray = field(default_factory=lambda: rgb(0.09, 0.07, 0.06))
     hair_cover: float = 0.9
@@ -52,10 +57,19 @@ LOOKS: Dict[str, Look] = {
         skin=rgb(0.86, 0.69, 0.58), seed=100, tattoos=True, face_ink=True, pants="leather",
         pants_colors=(rgb(0.07, 0.07, 0.08),), stubble=0.12, scowl=1.0,
     ),
-    "MILITIA_GUNNER": Look(
-        skin=rgb(0.50, 0.32, 0.22), seed=200, top="tank", top_color=rgb(0.36, 0.39, 0.28), pants="camo",
-        pants_colors=(rgb(0.36, 0.38, 0.23), rgb(0.19, 0.25, 0.14), rgb(0.37, 0.27, 0.16), rgb(0.07, 0.08, 0.06)),
-        buckle=rgb(0.62, 0.52, 0.28), straps=True, facial="goatee", stubble=0.2,
+    "MILITIA_GUNNER": Look(   # the Muscle
+        skin=rgb(0.44, 0.255, 0.185), seed=200, top="tank", top_color=rgb(0.40, 0.42, 0.31), pants="camo",
+        pants_colors=(rgb(0.46, 0.47, 0.37), rgb(0.23, 0.285, 0.20), rgb(0.29, 0.225, 0.165), rgb(0.075, 0.08, 0.065)),
+        belt_color=rgb(0.06, 0.06, 0.065), buckle=rgb(0.60, 0.61, 0.63), straps=True, strap_color=rgb(0.62, 0.54, 0.37),
+        hair_color=rgb(0.10, 0.085, 0.08), facial="goatee", stubble=0.55, scowl=1.0,
+        boot_color=rgb(0.075, 0.072, 0.072),
+    ),
+    "MASKED_BRUISER": Look(   # Bear
+        skin=rgb(0.80, 0.59, 0.44), seed=500, top="tank", top_color=rgb(0.35, 0.41, 0.22), pants="camo",
+        pants_colors=(rgb(0.37, 0.40, 0.24), rgb(0.22, 0.29, 0.15), rgb(0.40, 0.28, 0.17), rgb(0.075, 0.075, 0.06)),
+        belt_color=rgb(0.06, 0.06, 0.065), buckle=rgb(0.62, 0.63, 0.66), hair="cropped",
+        hair_color=rgb(0.40, 0.22, 0.12), hair_cover=0.97, stubble=0.18, scowl=1.0,
+        boot_color=rgb(0.40, 0.27, 0.17), chest_hair=0.8,
     ),
     "HEAVY_ENFORCER": Look(
         skin=rgb(0.82, 0.57, 0.40), seed=300, top="tee", pants="camo",
@@ -82,7 +96,7 @@ def paint_page(look: Look, chains: Dict[str, ChainMap], head_base: Callable, hea
         leg = chain_region(f"LEG_{label}", chains[f"LEG_{label}"], side)
         paste(page, f"LEG_{label}", paint_leg(leg, look, look.holster and label == "LEFT"))
         paste(page, f"HAND_{label}", paint_hand(f"HAND_{label}", look))
-        paste(page, f"FOOT_{label}", paint_boot(f"FOOT_{label}"))
+        paste(page, f"FOOT_{label}", paint_boot(f"FOOT_{label}", look.boot_color))
     paste(page, "HEAD", paint_head("HEAD", look, head_base, head_theta, head_keys))
     covered = look.balaclava is not None
     paste(page, "SWATCH_SKIN", swatch("SWATCH_SKIN", look.skin, 0.95))

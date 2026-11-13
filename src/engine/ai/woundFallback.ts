@@ -17,8 +17,9 @@ const AMBUSH_MAX_WAIT_S = 10.0;
  * How a wounded fighter on adrenaline behaves, layered over its normal doctrine:
  * - Hurt: every fresh 20% of health lost, it pulls back to other cover for a moment, then fights on.
  * - Mortally wounded: it commits once. Veterans (and some regulars) hole up behind cover and wait
- *   to ambush the player at close range; berserkers (and the other regulars) make a last stand,
- *   pushing at the player and firing with whatever they still hold, the sidearm if the gun is gone.
+ *   to ambush the player at close range; berserkers (and the other regulars) make a dying push at
+ *   the player with the long gun. This only runs while the wounded sequence is NONE: a body that
+ *   lost an arm or went down follows its sequence phase instead.
  * Returns the substate to force, or null to leave the doctrine's choice alone.
  */
 export function stepWoundedBehaviour(
@@ -66,7 +67,7 @@ function stepMortalChoice(
     const prefersAmbush =
       agent.resolveProfile === 'HARDENED_VETERAN' ||
       (agent.resolveProfile === 'GRITTY_REGULAR' && hashCombatantTargetId(hs.targetId) % 2 === 0);
-    agent.mortalWoundMode = prefersAmbush ? 'AMBUSH_HOLD' : 'LAST_STAND';
+    agent.mortalWoundMode = prefersAmbush ? 'AMBUSH_HOLD' : 'DYING_PUSH';
     agent.mortalHoldTimerS = 0;
     if (prefersAmbush) relocate(hs, agent, ctx);
   }
@@ -82,7 +83,7 @@ function stepMortalChoice(
     }
     case 'AMBUSH_SPRUNG':
       return 'COVER_PEEK';
-    case 'LAST_STAND':
+    case 'DYING_PUSH':
       return 'BERSERKER_CHARGE';
   }
 }

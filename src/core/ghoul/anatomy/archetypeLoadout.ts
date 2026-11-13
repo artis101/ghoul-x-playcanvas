@@ -30,6 +30,11 @@ export const ARCHETYPE_LOADOUTS: Readonly<Record<EnemyArchetypeId, ArchetypeLoad
     baseHp: 145, hasChestArmor: false, hasHelmetArmor: false,
     plateWearPerStop: 0, helmetWearPerStop: 0,
   },
+  // Tank top and a rubber respirator: big, but nothing that stops a bullet.
+  MASKED_BRUISER: {
+    baseHp: 165, hasChestArmor: false, hasHelmetArmor: false,
+    plateWearPerStop: 0, helmetWearPerStop: 0,
+  },
   // Plate carrier, PASGT helmet and visor: soaks several rifle rounds before the plate fails.
   HEAVY_ENFORCER: {
     baseHp: 190, hasChestArmor: true, hasHelmetArmor: true,

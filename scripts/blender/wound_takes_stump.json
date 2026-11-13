@@ -1,0 +1,6 @@
+[
+ {"name": "stump_loop", "seed": 81, "samples": 4, "durations": [2.0],
+  "prompts": ["A person stands hunched forward holding the right wrist tight against the chest with the left hand, rocking slightly and breathing hard"],
+  "pins": [{"at": [0, 1], "take": "work/takes/handloss_r_03.npz", "frames": [70, 71]},
+           {"at": "end", "take": "work/takes/handloss_r_03.npz", "frames": [70, 71]}]}
+]

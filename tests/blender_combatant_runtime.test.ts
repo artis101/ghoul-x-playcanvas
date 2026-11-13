@@ -18,7 +18,7 @@ import {
   LEFT_HANDED_PROBABILITY,
   updateStandingCombatPose,
 } from '../src/core/ghoul/anatomy.ts';
-import { COMBATANT_ANIMATION_CLIPS, GlbModelRegistry } from '../src/engine/assets/glbLoader.ts';
+import { COMBATANT_ANIMATION_CLIPS, COMBATANT_SIDED_CLIPS, GlbModelRegistry } from '../src/engine/assets/glbLoader.ts';
 import { GoreAndBallisticsFxManager } from '../src/engine/goreFx.ts';
 import { GhoulMannequinEntity } from '../src/engine/mannequin.ts';
 import { getOrCreateMaterials } from '../src/engine/materials.ts';
@@ -175,6 +175,11 @@ describe('Blender combatant runtime', () => {
           a.resource = track;
           animAssets.push(a);
         }
+      }
+      for (const clipName of COMBATANT_SIDED_CLIPS) {
+        const a = new pc.Asset(clipName, 'animation');
+        a.resource = new pc.AnimTrack(clipName, 1.2, [], [], []);
+        animAssets.push(a);
       }
 
       const combatantContainer: pc.ContainerResource = {

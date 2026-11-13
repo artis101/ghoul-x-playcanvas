@@ -7,12 +7,22 @@ import { transitionTargetLifecycle } from '../lifecycle/targetLifecycleFsm.ts';
 import { isLimbLossFatal } from './limbLossDeathRule.ts';
 import { add, copyVec3, cross, scale, sub } from '../vec3.ts';
 
+/** Which limbs this shot newly took off. An arm counts when its hand, forearm or upper arm goes. */
+export interface NewlySeveredLimbs {
+  newlySeveredRightLeg: boolean;
+  newlySeveredLeftLeg: boolean;
+  newlySeveredRightArm: boolean;
+  newlySeveredLeftArm: boolean;
+}
+
 export function applyDismembermentTree(
   target: TargetHealthState,
   report: ShotSimulationReport
-): { newlySeveredRightLeg: boolean; newlySeveredLeftLeg: boolean } {
+): NewlySeveredLimbs {
   let newlySeveredRightLeg = false;
   let newlySeveredLeftLeg = false;
+  let newlySeveredRightArm = false;
+  let newlySeveredLeftArm = false;
 
   for (const dism of report.dismembermentEvents) {
     target.zoneGoreMode[dism.zone] = dism.goreMode;
@@ -98,10 +108,12 @@ export function applyDismembermentTree(
     }
     if (dism.zone === 'UPPER_ARM_RIGHT' || dism.zone === 'FOREARM_RIGHT' || dism.zone === 'HAND_RIGHT') {
       target.rightArmFunctional = false;
+      newlySeveredRightArm = true;
       transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
     }
     if (dism.zone === 'UPPER_ARM_LEFT' || dism.zone === 'FOREARM_LEFT' || dism.zone === 'HAND_LEFT') {
       target.leftArmFunctional = false;
+      newlySeveredLeftArm = true;
       transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
     }
   }
@@ -111,5 +123,5 @@ export function applyDismembermentTree(
     transitionTargetLifecycle(target, { kind: 'LETHAL_DEATH' });
   }
 
-  return { newlySeveredRightLeg, newlySeveredLeftLeg };
+  return { newlySeveredRightLeg, newlySeveredLeftLeg, newlySeveredRightArm, newlySeveredLeftArm };
 }

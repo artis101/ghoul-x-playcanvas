@@ -43,6 +43,8 @@ from mathutils import Euler, Matrix, Quaternion, Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from combatant_body import build_body_zones  # noqa: E402
+from combatant_gas_mask import build_gas_mask, paint_gas_mask  # noqa: E402
+from glb_quantize import quantize_glb_vertex_streams  # noqa: E402
 from combatant_skin_atlas import EXPORT  # noqa: E402
 from combatant_skin_designs import DEFAULT_LOOK, LOOKS, paint_page  # noqa: E402
 from combatant_skin_uv import (  # noqa: E402
@@ -264,6 +266,7 @@ def build_palette() -> Dict[str, bpy.types.Material]:
         "polymer_dark": make_flat_material("Mat_Polymer_ArmorPad", (0.042, 0.045, 0.048, 1.0), roughness=0.8),
         "metal_hw": make_flat_material("Mat_Gunmetal_Hardware", (0.075, 0.078, 0.082, 1.0), roughness=0.55, metallic=0.6),
         "visor_glass": make_flat_material("Mat_EyePro_Visor", (0.025, 0.035, 0.05, 1.0), roughness=0.2, metallic=0.6),
+        "gas_mask": make_flat_material("Mat_GasMask_Rubber", albedo_image=make_image_from_array("Tex_Combatant_GasMask_Albedo", paint_gas_mask()), point_sampled=True),
         "mohawk_punk": make_flat_material("Mat_Punk_Mohawk", (0.62, 0.035, 0.04, 1.0), roughness=0.7),
         "gore_viscera": make_flat_material("Mat_Gore_Viscera", (0.42, 0.025, 0.035, 1.0), roughness=0.3,
                                            emission_color=(0.18, 0.01, 0.01, 1.0), emission_strength=0.10),
@@ -884,10 +887,10 @@ def finalize_skinned_mesh_object(
 HEAD_KEYS = np.array([
     (1.5650, 1.5940, 0.044, 0.010, 0.034),  # 0  under-chin / submental (tucks onto throat)
     (1.5685, 1.5970, 0.068, 0.025, 0.041),  # 1  chin underside
-    (1.5780, 1.5990, 0.080, 0.040, 0.047),  # 2  mental protuberance / chin
-    (1.5910, 1.6010, 0.085, 0.054, 0.054),  # 3  lower lip / gonial angle
-    (1.6040, 1.6040, 0.088, 0.064, 0.059),  # 4  mouth / jaw angle
-    (1.6190, 1.6140, 0.090, 0.073, 0.065),  # 5  upper lip / philtrum
+    (1.5780, 1.5990, 0.080, 0.040, 0.050),  # 2  mental protuberance / chin (square, heavy jaw)
+    (1.5910, 1.6010, 0.085, 0.054, 0.058),  # 3  lower lip / gonial angle
+    (1.6040, 1.6040, 0.088, 0.064, 0.063),  # 4  mouth / jaw angle
+    (1.6190, 1.6140, 0.090, 0.073, 0.068),  # 5  upper lip / philtrum
     (1.6340, 1.6260, 0.089, 0.082, 0.070),  # 6  SEAM: maxilla / cheek line under nose
     (1.6520, 1.6440, 0.088, 0.091, 0.074),  # 7  nose tip / alae
     (1.6700, 1.6640, 0.087, 0.099, 0.077),  # 8  zygomatic cheekbones
@@ -1792,8 +1795,10 @@ def build_mohawk(arm_obj, pal, collection) -> bpy.types.Object:
 
 HEAD_SCALED = {
     "Zone_HEAD_CRANIUM", "Zone_HEAD_FACE_JAW", "Gear_PASGT_Helmet", "Gear_TacticalVisor", "Gear_BoonieHat",
-    "Gear_PunkMohawk", "Organ_Brain", "Skelet_Skull",
+    "Gear_PunkMohawk", "Gear_GasMask", "Organ_Brain", "Skelet_Skull",
 }
+HEAD_SCALE = 1.0
+HAND_SCALE = 1.02
 
 
 def scale_mesh_about_pc(obj: bpy.types.Object, pivot_pc, factor: float) -> None:
@@ -1851,6 +1856,12 @@ def build_all_combatant_submeshes(
         [pal["skin_SNIPER_OPERATIVE"]], arm_obj, [("Bone_HEAD_CRANIUM", 1.0)], collection,
     ))
     objs.append(build_mohawk(arm_obj, pal, collection))
+    objs.append(finalize_skinned_mesh_object(
+        "Gear_GasMask",
+        build_gas_mask(lambda uk, s, off, feat, nose: _v(head_surface(uk, s, off, features=feat, nose=nose)),
+                       lambda uk, s: _v(head_normal(uk, s, features=False, nose=False)), head_s_of_theta, pc_vec_to_bl),
+        [pal["gas_mask"]], arm_obj, [("Bone_HEAD_CRANIUM", 1.0)], collection,
+    ))
 
     # 28. Gear_EvisceratedGut — Sculpted SoF open-stomach visceral crater + broken ribs + entrail coils
     def sculpt_eviscerated_shell(t: float, theta: float, lr: float, lf: float) -> Tuple[float, float, float]:
@@ -2074,12 +2085,12 @@ def build_all_combatant_submeshes(
         "Skin_Library", build_skin_library(len(names), pc_vec_to_bl), [pal[f"skin_{name}"] for name in names],
         arm_obj, [("Bone_PELVIS_GROIN", 1.0)], collection,
     ))
-    # Period models carry a slightly large head and hands; the skeleton stays as it is.
+    # True-scale head and hands keep the figure about eight heads tall, as on the character sheets.
     for obj in objs:
         if obj.name in HEAD_SCALED:
-            scale_mesh_about_pc(obj, (0.0, 1.578, -0.004), 1.10)
+            scale_mesh_about_pc(obj, (0.0, 1.578, -0.004), HEAD_SCALE)
         elif obj.name.startswith("Zone_HAND_"):
-            scale_mesh_about_pc(obj, _bone_spec(obj.name.replace("Zone_", "Bone_"))[0], 1.10)
+            scale_mesh_about_pc(obj, _bone_spec(obj.name.replace("Zone_", "Bone_"))[0], HAND_SCALE)
 
     for name in names:
         page = paint_page(LOOKS[name], chains, head_base, head_theta, HEAD_KEYS.shape[0])
@@ -2773,12 +2784,17 @@ def main() -> None:
         export_image_format="AUTO",
         export_skins=True,
         export_all_influences=False,
+        export_morph=True,
+        export_morph_normal=False,
+        export_try_sparse_sk=False,   # the bake's GLB repacker needs every accessor in a bufferView
         export_animations=not SKIP_ANIMATION,
         export_animation_mode="NLA_TRACKS",
         export_rest_position_armature=True,
         export_lights=False,
     )
     quantize_glb_skin_weights(OUT_GLB)
+    # Gear the runtime copies vertex data from (helmet, visor, hat) keeps float streams.
+    quantize_glb_vertex_streams(OUT_GLB, ("Zone_", "Gear_GasMask", "Gear_EvisceratedGut", "Organ_", "Skelet_"))
 
     total_tris = sum(len(o.data.polygons) for o in submeshes)
     total_verts = sum(len(o.data.vertices) for o in submeshes)

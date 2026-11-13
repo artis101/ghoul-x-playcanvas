@@ -39,6 +39,15 @@ export const ARCHETYPE_TUNING: Record<EnemyArchetypeId, ArchetypeCombatTuning> =
     // A full 00 buckshot load landing.
     baseChipDamage: 34.0,
   },
+  MASKED_BRUISER: {
+    primaryWeaponId: 'm590_shotgun',
+    baseSpreadRad: 0.058,
+    burstCooldownS: 1.9,
+    strafeSpeedMs: 1.55,
+    tracerSpeedMs: 72,
+    // A full 00 buckshot load landing.
+    baseChipDamage: 34.0,
+  },
   SNIPER_OPERATIVE: {
     primaryWeaponId: 'msg90_sniper',
     baseSpreadRad: 0.018,

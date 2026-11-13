@@ -8,7 +8,6 @@ from combatant_skin_paint import (
     tattoo, torso_muscle, tribal, wrap,
 )
 
-BOOT = rgb(0.085, 0.080, 0.080)
 GLOVE = rgb(0.095, 0.095, 0.105)
 
 
@@ -16,6 +15,11 @@ def _rim(mask) -> np.ndarray:
     """Darkens along a garment's edge so it reads as lying on top."""
     gy, gx = np.gradient(mask)
     return 1.0 - 0.5 * np.clip(np.hypot(gx, gy) * 1.6, 0.0, 1.0)
+
+
+def _chest_only(form, region) -> np.ndarray:
+    """Tight cloth shows the chest and back, but not the abdominal grid."""
+    return 1.0 + (form - 1.0) * sm(1.22, 1.30, region.y)
 
 
 def _layer(tile, garment, mask) -> np.ndarray:
@@ -49,12 +53,16 @@ def paint_torso(region: Region, look) -> np.ndarray:
         back = tribal(bx, y - 1.36, 4.1, bands=2.0, spikes=4.0) * sm(0.3, 0.55, gs(bx, 0.15) * gs(y - 1.36, 0.085))
         tile = tattoo(tile, (chest + sun + belly) * f + back * b)
 
+    if look.chest_hair > 0:
+        hairs = sm(0.55, 0.75, noise(region.th.shape, 40, 60, look.seed + 9, 1)) * sm(0.10, 0.04, ax) * sm(1.30, 1.36, y) * sm(1.50, 1.45, y) * f
+        tile = over(tile, look.hair_color * 0.8, hairs * look.chest_hair * 0.7)
+
     if look.top == "tank":
         scoop = np.where(region.front >= 0, (x / 0.085) ** 2 + ((y - 1.505) / 0.10) ** 2,
                          (bx / 0.075) ** 2 + ((y - 1.505) / 0.055) ** 2)
         arm_edge = 0.118 + sm(1.44, 1.29, y) * 0.16
         mask = sm(1.502, 1.496, y) * sm(0.94, 1.02, scoop) * sm(arm_edge + 0.004, arm_edge - 0.004, s)
-        top = shade(cloth(region, look.top_color, look.seed + 11, 0.07, form=form, form_gain=0.6), ribbing(region))
+        top = shade(cloth(region, look.top_color, look.seed + 11, 0.07, form=_chest_only(form, region), form_gain=0.45), ribbing(region))
         tile = _layer(tile, top, mask)
     elif look.top == "tee":
         scoop = (x / 0.066) ** 2 + ((y - 1.515) / 0.040) ** 2 + (region.front < 0) * 4.0
@@ -167,9 +175,9 @@ def paint_leg(region: Region, look, holster: bool) -> np.ndarray:
         tile = over(tile, rgb(0.20, 0.20, 0.22), box(outer, y, 0.006, 0.752, 0.018, 0.028, 0.003))   # pistol grip
         tile = shade(tile, 1 - 0.5 * box(outer, y, 0.004, 0.722, 0.036, 0.0025, 0.002))
 
-    boot = lit(BOOT, round_light(th, 0.4) * (1 + 0.9 * gs(th - 0.5, 0.25) * gs(y - 0.18, 0.02)))
+    boot = lit(look.boot_color, round_light(th, 0.4) * (1 + 0.9 * gs(th - 0.5, 0.25) * gs(y - 0.18, 0.02)))
     laces = sm(0.3, 0.6, np.sin(y * 2 * PI / 0.017)) * sm(0.024, 0.018, np.abs(x))
-    boot = over(boot, rgb(0.30, 0.30, 0.31), laces)
+    boot = over(boot, _lace_color(look.boot_color), laces)
     tile = shade(tile, 1 - 0.45 * gs(y - 0.204, 0.006))
     return over(tile, boot, sm(0.200, 0.196, y))
 
@@ -190,14 +198,22 @@ def paint_hand(name: str, look) -> np.ndarray:
     return tile
 
 
-def paint_boot(name: str) -> np.ndarray:
+def _lace_color(leather) -> np.ndarray:
+    """Laces: grey on black leather, dark brown on brown leather."""
+    return rgb(0.30, 0.30, 0.31) if float(np.mean(leather)) < 0.12 else leather * 0.45
+
+
+def paint_boot(name: str, leather) -> np.ndarray:
     """Side view of the boot: U runs heel to toe, V from the ground to the top of the shaft."""
     u, v = rect_grid(name)
     light = 0.85 + 0.25 * v + 0.9 * gs(u - 0.82, 0.07) * gs(v - 0.16, 0.06) + 0.35 * gs(u - 0.2, 0.05) * gs(v - 0.3, 0.2)
     creases = 1 - 0.2 * sm(0.5, 0.9, np.sin(v * 2 * PI * 9 + u * 6)) * gs(v - 0.42, 0.12)
-    tile = lit(BOOT, light * creases)
+    tile = lit(leather, light * creases)
+    if float(np.mean(leather)) > 0.12:   # worn brown leather goes pale where it scuffs
+        scuff = sm(0.62, 0.8, noise(u.shape, 6, 8, 97, 3)) * (gs(u - 0.85, 0.12) + 0.6 * gs(v - 0.55, 0.15))
+        tile = over(tile, leather * 1.55, np.clip(scuff, 0, 1) * 0.6)
     lace = sm(0.3, 0.6, np.sin(v * 2 * PI * 13)) * sm(0.07, 0.05, np.abs(u - 0.47)) * sm(0.34, 0.38, v)
-    tile = over(tile, rgb(0.30, 0.30, 0.31), lace)
+    tile = over(tile, _lace_color(leather), lace)
     tile = shade(tile, 1 - 0.5 * gs(v - 0.30, 0.012) * sm(0.55, 0.6, u))          # toe-cap seam
     sole = sm(0.135, 0.125, v)
     tread = 0.7 + 0.3 * np.sign(np.sin(u * 2 * PI * 9))

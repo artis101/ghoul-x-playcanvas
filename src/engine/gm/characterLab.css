@@ -176,6 +176,24 @@
   }
 }
 
+#gm-sequence-readout {
+  display: block;
+  min-height: 4.2em;
+  white-space: pre-line;
+  font: 500 11px 'JetBrains Mono', monospace;
+  color: var(--gm-accent);
+}
+
+.gm-sequence-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.gm-sequence-buttons button { font-size: 12px; }
+
+.gm-sequence-buttons button[aria-pressed='true'] { border-color: var(--gm-accent); }
+
 #gm-wound-readout {
   display: block;
   min-height: 1.4em;

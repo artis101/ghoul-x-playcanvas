@@ -9,13 +9,19 @@ import { readAndParseGlb } from './blenderGlbFixtures.ts';
 
 const { gltf, binChunk } = readAndParseGlb('ghoul_combatant.glb');
 
+// Animation rotations are baked as normalized int16 (see combatant_glb_animation.py); everything
+// else is float. Decode both the way PlayCanvas does.
 function readFloats(accessorIndex: number, size: number): number[] {
   const accessor = gltf.accessors![accessorIndex];
   const view = gltf.bufferViews![accessor.bufferView!];
   const start = (view.byteOffset ?? 0) + (accessor.byteOffset ?? 0);
-  const stride = view.byteStride ?? size * 4;
-  return Array.from({ length: accessor.count * size }, (_, i) =>
-    binChunk.readFloatLE(start + Math.floor(i / size) * stride + i % size * 4));
+  const short = accessor.componentType === 5122;
+  const width = short ? 2 : 4;
+  const stride = view.byteStride ?? size * width;
+  return Array.from({ length: accessor.count * size }, (_, i) => {
+    const offset = start + Math.floor(i / size) * stride + (i % size) * width;
+    return short ? Math.max(binChunk.readInt16LE(offset) / 32767, -1) : binChunk.readFloatLE(offset);
+  });
 }
 
 function createIdlePose(clip: string) {

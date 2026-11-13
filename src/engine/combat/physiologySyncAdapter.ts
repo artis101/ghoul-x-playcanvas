@@ -2,6 +2,7 @@ import type { TargetHealthState } from '../../contracts/ballistics.ts';
 import type { PhysiologicalEntityState } from '../../contracts/physiology.ts';
 import { stabilizeRagdollPoseForTransition } from '../../core/ballistics/solver.ts';
 import { scale, vec3 } from '../../core/ballistics/vec3.ts';
+import { buckleOnLateLegCripple } from '../../core/ballistics/trauma/woundReactionSelector.ts';
 import type { TacticalCombatAiSystem } from '../ai/tacticalCombatAi.ts';
 
 export function syncPhysiologyToHealthState(
@@ -88,8 +89,11 @@ export function syncPhysiologyToHealthState(
     }
   }
 
+  const legsWereUp = hs.rightLegFunctional && hs.leftLegFunctional;
   if (!physio.rightLegFunctional) hs.rightLegFunctional = false;
   if (!physio.leftLegFunctional) hs.leftLegFunctional = false;
+  // A leg the physiology model just took out plays the fall clip instead of a flinch.
+  if (legsWereUp && (!hs.rightLegFunctional || !hs.leftLegFunctional)) buckleOnLateLegCripple(hs);
   if (!physio.rightArmFunctional) hs.rightArmFunctional = false;
   if (!physio.leftArmFunctional) hs.leftArmFunctional = false;
   if (physio.weaponDropped) {

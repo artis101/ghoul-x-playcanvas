@@ -76,7 +76,11 @@ class CombatantGlbAnimation:
         return [items[index] for index in indices]
 
     def add_clip(self, name, times, frames):
+        """Appends a clip. Its keys share one buffer view; rotations are normalized int16."""
         clip = {"name": name, "channels": [], "samplers": []}
+        self.clip_view = {"buffer": 0, "byteOffset": len(self.binary), "byteLength": 0}
+        self.doc["bufferViews"].append(self.clip_view)
+        self.clip_view_index = len(self.doc["bufferViews"]) - 1
         time_sampler = {}
         self.replace_times(time_sampler, times)
         node_indices = {node["name"]: index for index, node in enumerate(self.doc["nodes"])}
@@ -90,6 +94,8 @@ class CombatantGlbAnimation:
                 self.replace_rotations(sampler, values)
             else:
                 self.replace_vectors(sampler, values)
+        self.clip_view["byteLength"] = len(self.binary) - self.clip_view["byteOffset"]
+        self.clip_view = None
         self.doc["animations"].append(clip)
 
     def rotation_channels(self, clip):
@@ -124,15 +130,19 @@ class CombatantGlbAnimation:
     def read(self, index, kind, width):
         accessor = self.doc["accessors"][index]
         view = self.doc["bufferViews"][accessor["bufferView"]]
-        if (accessor["componentType"], accessor["type"]) != (5126, kind):
-            raise ValueError(f"Expected float {kind} animation data")
-        if "sparse" in accessor or view.get("byteStride", 4 * width) != 4 * width:
+        component = accessor["componentType"]
+        if accessor["type"] != kind or component not in (5126, 5122):
+            raise ValueError(f"Expected float or normalized int16 {kind} animation data")
+        size = 4 if component == 5126 else 2
+        if "sparse" in accessor or view.get("byteStride", size * width) != size * width:
             raise ValueError("Expected tightly packed animation data")
         offset = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
-        return [
-            struct.unpack_from(f"<{width}f", self.binary, offset + row * width * 4)
-            for row in range(accessor["count"])
-        ]
+        code = "f" if component == 5126 else "h"
+        rows = [struct.unpack_from(f"<{width}{code}", self.binary, offset + row * width * size)
+                for row in range(accessor["count"])]
+        if component == 5122:
+            rows = [tuple(max(value / 32767, -1.0) for value in row) for row in rows]
+        return rows
 
     def replace_rotations(self, sampler, rotations):
         payload = bytearray()
@@ -141,9 +151,10 @@ class CombatantGlbAnimation:
             rotation = rotation.normalized()
             if previous is not None and previous.dot(rotation) < 0:
                 rotation.negate()
-            payload.extend(struct.pack("<4f", rotation.x, rotation.y, rotation.z, rotation.w))
+            payload.extend(struct.pack("<4h", *(round(max(-1.0, min(1.0, value)) * 32767)
+                                                for value in (rotation.x, rotation.y, rotation.z, rotation.w))))
             previous = rotation
-        sampler["output"] = self.append_accessor(payload, "VEC4", len(rotations))
+        sampler["output"] = self.append_accessor(payload, "VEC4", len(rotations), component=5122)
 
     def replace_times(self, sampler, times):
         payload = struct.pack(f"<{len(times)}f", *times)
@@ -155,13 +166,22 @@ class CombatantGlbAnimation:
         payload = b"".join(struct.pack("<3f", *value) for value in values)
         sampler["output"] = self.append_accessor(payload, "VEC3", len(values))
 
-    def append_accessor(self, payload, kind, count, **bounds):
+    def append_accessor(self, payload, kind, count, component=5126, **bounds):
         views = self.doc["bufferViews"]
         accessors = self.doc["accessors"]
-        views.append({"buffer": 0, "byteOffset": len(self.binary), "byteLength": len(payload)})
+        accessor = {"componentType": component, "count": count, "type": kind, **bounds}
+        if component == 5122:
+            accessor["normalized"] = True
+        view = getattr(self, "clip_view", None)
+        if view is None:
+            views.append({"buffer": 0, "byteOffset": len(self.binary), "byteLength": len(payload)})
+            accessor["bufferView"] = len(views) - 1
+        else:
+            self.binary.extend(b"\0" * (-len(self.binary) % 4))
+            accessor["bufferView"] = self.clip_view_index
+            accessor["byteOffset"] = len(self.binary) - view["byteOffset"]
         self.binary.extend(payload)
-        accessors.append({"bufferView": len(views) - 1, "componentType": 5126,
-                          "count": count, "type": kind, **bounds})
+        accessors.append(accessor)
         return len(accessors) - 1
 
     def write(self, path: Path):

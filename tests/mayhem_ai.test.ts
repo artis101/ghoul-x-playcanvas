@@ -1,3 +1,4 @@
+import { WOUND_CLIP_SECONDS } from '../src/core/ballistics/trauma/woundReactionTimings.ts';
 import { beforeAll, describe, expect, it } from 'vitest';
 import * as pc from 'playcanvas';
 import {
@@ -27,6 +28,7 @@ import {
   writeColumnMajorTrsMatrix4,
 } from '../src/engine/physics/rapierWorld.ts';
 import { createTargetHealthState } from '../src/core/ghoul/anatomy.ts';
+import { transitionTargetLifecycle } from '../src/core/ballistics/lifecycle/targetLifecycleFsm.ts';
 import { simulateShot, applyShotReportToTarget } from '../src/core/ballistics/solver.ts';
 import { add, distance, normalize, sub, vec3 } from '../src/core/ballistics/vec3.ts';
 import {
@@ -782,6 +784,8 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
       const firedShots: EnemyTracerFireEvent[] = [];
       const ai = new TacticalCombatAiSystem({
         onEnemyFireTracer: (ev) => firedShots.push(ev),
+        // On the floor only a pistol still shoots (docs/wound-movement.md, DOWNED_ENGAGE).
+        hardenedSidearmOverrides: { last_stand_gunner: true },
       });
 
       const lastStandGunner = createTargetHealthState(
@@ -815,7 +819,8 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
       expect(firedShots.length).toBeGreaterThan(0);
       expect(lastStandGunner.combatantStatusTag).toBe('LAST_STAND');
 
-      // Verify airborne ragdoll temporarily prevents shooting, while grounded living ragdoll resumes shooting!
+      // Verify airborne ragdoll temporarily prevents shooting, while grounded living ragdoll resumes
+      // shooting with its pistol, but only at a player straight in front of it.
       lastStandGunner.isRagdollActive = true;
       lastStandGunner.posture = 'AIRBORNE_RAGDOLL';
       expect(ai.computeEnemyAimProfile(lastStandGunner, ai.getAgent('last_stand_gunner')).canReturnFire).toBe(false);
@@ -827,6 +832,15 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
         ai.update(0.05, [lastStandGunner], { x: 0, y: 1.62, z: 0 });
       }
       expect(firedShots.length).toBeGreaterThan(countBeforeGrounded);
+      expect(lastStandGunner.woundedPhase).toBe('DOWNED_ENGAGE');
+      const yawOnFloor = lastStandGunner.yawRad;
+      const countInFront = firedShots.length;
+      for (let i = 0; i < 40; i++) {
+        ai.update(0.05, [lastStandGunner], { x: 9, y: 1.62, z: -12 });
+      }
+      // Off to its side: it holds fire and does not turn to track.
+      expect(firedShots.length).toBe(countInFront);
+      expect(lastStandGunner.yawRad).toBe(yawOnFloor);
 
       // Dropping consciousness <= 0.12 or dying finally stops return fire
       lastStandGunner.consciousness = 0.08;
@@ -951,6 +965,9 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
         true,
       );
 
+      // Grit enough to stand and gun (BLAZE) once the stump clutch is over.
+      hardenedVet.fortitude = 1;
+      hardenedSniper.fortitude = 1;
       ai.registerWaveTargets([stdGunner, hardenedVet, hardenedSniper], false);
       ai.notifyGunshotOrExplosion({ x: 0, y: 1.62, z: 0 }, 30);
 
@@ -996,18 +1013,54 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
       expect(ai.computeEnemyAimProfile(stdGunner, stdAgent).canReturnFire).toBe(false);
       expect(stdGunner.posture).toBe('DISARMED');
 
-      // Hardened veterans enter ~0.6s sidearmDrawTimerS transition on their remaining intact hand!
+      // A lost hand first plays the arm-loss clip (recoil, stare, clutch the stump). The sidearm
+      // draw waits for it to end. The game ticks reactions in the ragdoll step; tick them here.
       const vetAgent = ai.getAgent('hardened_vet')!;
       const sniperAgent = ai.getAgent('hardened_sniper')!;
+      const all = [stdGunner, hardenedVet, hardenedSniper];
+      const tickReactions = (dt: number) => {
+        for (const t of all) transitionTargetLifecycle(t, { kind: 'TICK_PAIN_REACTION', dt });
+      };
+      expect(hardenedVet.activeReaction.type).toBe('ARM_LOST_RIGHT');
+      expect(hardenedSniper.activeReaction.type).toBe('ARM_LOST_LEFT');
+      expect(vetAgent.sidearmDrawing).toBe(false);
+      expect(ai.computeEnemyAimProfile(hardenedVet, vetAgent).canReturnFire).toBe(false);
+
+      // Step through the arm-loss clip -> zero shots, no draw yet
+      const clipSteps = Math.ceil(WOUND_CLIP_SECONDS.ARM_LOSS / 0.05) - 1;
+      for (let i = 0; i < clipSteps; i++) {
+        ai.update(0.05, all, { x: 0, y: 1.62, z: 0 });
+        tickReactions(0.05);
+      }
+      expect(vetAgent.sidearmDrawing).toBe(false);
+      expect(veteranShots).toHaveLength(0);
+      expect(sniperRightHandShots).toHaveLength(0);
+      expect(regularShots).toHaveLength(0);
+
+      // Clip over: they clutch the stump first (docs/wound-movement.md), hands busy, no draw.
+      tickReactions(0.05);
+      ai.update(0.05, all, { x: 0, y: 1.62, z: 0 });
+      expect(hardenedVet.activeReaction.type).toBe('NONE');
+      expect(hardenedVet.woundedPhase).toBe('CLUTCH');
+      expect(vetAgent.sidearmDrawing).toBe(false);
+      const clutching = () => hardenedVet.woundedPhase === 'CLUTCH' || hardenedSniper.woundedPhase === 'CLUTCH';
+      for (let i = 0; i < 80 && clutching(); i++) {
+        ai.update(0.05, all, { x: 0, y: 1.62, z: 0 });
+        if (hardenedVet.woundedPhase === 'CLUTCH') expect(vetAgent.sidearmDrawing).toBe(false);
+      }
+      // Then they stand and gun: the ~0.6s draw on the remaining intact hand starts now.
+      expect(hardenedVet.woundedPhase).toBe('BLAZE');
+      expect(hardenedSniper.woundedPhase).toBe('BLAZE');
+      expect(stdGunner.woundedPhase).toBe('CLUTCH');
       expect(vetAgent.sidearmDrawing).toBe(true);
-      expect(vetAgent.sidearmDrawTimerS).toBeCloseTo(SIDEARM_DRAW_DURATION_S, 2);
+      expect(vetAgent.sidearmDrawTimerS).toBeGreaterThan(SIDEARM_DRAW_DURATION_S - 0.2);
       expect(vetAgent.activeFiringHand).toBe('LEFT');
       expect(sniperAgent.activeFiringHand).toBe('RIGHT');
       expect(ai.computeEnemyAimProfile(hardenedVet, vetAgent).canReturnFire).toBe(false);
 
       // Step 0.3s (still mid-draw < 0.6s) -> zero shots yet
       for (let i = 0; i < 6; i++) {
-        ai.update(0.05, [stdGunner, hardenedVet, hardenedSniper], { x: 0, y: 1.62, z: 0 });
+        ai.update(0.05, all, { x: 0, y: 1.62, z: 0 });
       }
       expect(veteranShots).toHaveLength(0);
       expect(sniperRightHandShots).toHaveLength(0);
@@ -1142,8 +1195,9 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
         hs.primaryArmDisarmed = true;
         ai.notifyEnemyHit(hs, { hitZone: 'FOREARM_RIGHT', energyDepositedJ: 900 });
 
-        // Step CombatDirector for 0.8s so sidearm finishes drawing and aims toward viewer at (0, 1.62, 0)
-        for (let i = 0; i < 16; i++) {
+        // Clutch the stump (0.8s at full grit), then draw (0.6s) and aim toward the viewer at (0, 1.62, 0).
+        hs.fortitude = 1;
+        for (let i = 0; i < 40; i++) {
           director.update(0.05, (i + 1) * 0.05, null, hud);
         }
 

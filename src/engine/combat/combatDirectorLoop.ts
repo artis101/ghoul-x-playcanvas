@@ -20,6 +20,8 @@ import { playWeaponReloadClip } from '../mannequin/combatantWeaponMount.ts';
 import { OffhandSidearmSync } from './offhandSidearmSync.ts';
 import { getArchetypeWeaponAssetId } from '../assets/glbLoader.ts';
 import type { CombatantAimPose } from '../mannequin/combatantAnimController.ts';
+import { pistolAimClip } from '../mannequin/combatantWoundClips.ts';
+import { sidearmAimClip } from '../mannequin/combatantWoundedPhaseClips.ts';
 import { HudTargetTracker } from './hudTargetTracker.ts';
 import { GRENADE_BLAST_RADIUS_M, GRENADE_PEAK_ENERGY_J, GRENADE_PEAK_IMPULSE_NS } from './fragGrenadeTypes.ts';
 
@@ -114,10 +116,15 @@ export function stepCombatDirectorLoop(
     const agent = ctx.tacticalAi?.getAgent(hs.targetId);
     const sidearm = ctx.tacticalAi?.getSidearmVisualState(hs.targetId);
     let aim: CombatantAimPose | undefined;
+    // A pistol held with no support hand left (arm lost or dead) is aimed one-handed, and on one
+    // knee while the body is in its kneel-and-fire phase.
     if (sidearm?.visible && sidearm.hand) {
-      aim = { clip: 'PistolAim', hand: sidearm.hand };
+      aim = { clip: sidearmAimClip(hs, sidearm.hand), hand: sidearm.hand };
     } else if (!hs.weaponDropped && agent?.state === 'ALERTED_ENGAGING' && agent.isPeekingOut) {
-      aim = { clip: getArchetypeWeaponAssetId(hs.archetype) === 'silver_talon_50ae' ? 'PistolAim' : 'LongGunAim' };
+      const gunHand = hs.isLeftHanded ? 'LEFT' : 'RIGHT';
+      aim = getArchetypeWeaponAssetId(hs.archetype) === 'silver_talon_50ae'
+        ? { clip: pistolAimClip(hs, gunHand) }
+        : { clip: 'LongGunAim' };
     }
     t.syncFromHealthState(effectiveDt, totalElapsedTimeS, agent?.state === 'PATROL_GUARD', aim);
     let rig = ctx.offhandSidearmRigs.get(hs.targetId);

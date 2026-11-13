@@ -8,6 +8,7 @@ import type {
   EnemyTacticalAiState,
 } from './tacticalAiTypes.ts';
 import { TORSO_ZONES } from './archetypeTuning.ts';
+import { isWoundClipHoldingBody } from './woundClipHold.ts';
 
 export function handleGunshotOrExplosion(
   agents: Map<string, EnemyAiAgentRuntime>,
@@ -91,7 +92,7 @@ export function handleEnemyHit(
       agent.adrenaline,
       agent.resolveProfile === 'FANATIC_BERSERKER' ? 1.0 : 0.82
     );
-    if (!target.isRagdollActive) {
+    if (!target.isRagdollActive && !isWoundClipHoldingBody(target)) {
       target.posture = agent.clutchingWound ? 'DISARMED' : 'LEG_BUCKLED';
     }
     onTransition(agent, 'DOWNED_CRAWLING');
@@ -104,7 +105,7 @@ export function handleEnemyHit(
     cancelActiveBurst(agent);
     target.painShock = Math.max(target.painShock, 0.85);
     target.consciousness = Math.min(target.consciousness, 0.42);
-    if (!target.isRagdollActive) {
+    if (!target.isRagdollActive && !isWoundClipHoldingBody(target)) {
       target.posture = 'STAGGERED';
     }
     onTransition(agent, 'SUPPRESSED_STAGGERED');

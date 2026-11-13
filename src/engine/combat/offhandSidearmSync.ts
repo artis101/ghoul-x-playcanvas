@@ -4,6 +4,7 @@ import type { GhoulZoneId, Vec3Like } from '../../contracts/ballistics.ts';
 import { add, copyVec3, dot, length, normalize, scale, sub, vec3 } from '../../core/ballistics/vec3.ts';
 import { clampDownedAimDirection } from '../../core/ballistics/triage/downedAimReach.ts';
 import { keepAimClearOfChest } from '../../core/ballistics/triage/downedChestClearance.ts';
+import { DOWNED_FIRE_CONE_RAD } from '../../core/ai/woundedSequenceFsm.ts';
 import { safeOrthonormalBasis } from '../../core/ghoul/anatomy/ragdollBasisMath.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
@@ -53,10 +54,15 @@ export class OffhandSidearmSync {
         rig.attachmentState.kind === 'HIDDEN_TEMP' &&
         rig.attachmentState.hand === undefined);
 
+    // Only a pistol that was in a hand remembers that hand. A holstered one must stay handless, or
+    // the next frame reads it as held-then-hidden and throws it on the floor as a dropped prop
+    // before the body has even drawn it (a downed body waits to land before it draws).
+    const prevState = rig.attachmentState;
+    const wasInHand = prevState.kind === 'ATTACHED' || (prevState.kind === 'HIDDEN_TEMP' && prevState.hand !== undefined);
     const transition = transitionPropAttachment(rig.attachmentState, {
       shouldBeAttached,
       temporarilyHidden,
-      hand: hand ?? rig.lastHand ?? undefined,
+      hand: hand ?? (wasInHand ? rig.lastHand ?? undefined : undefined),
     });
     rig.attachmentState = transition.state;
     rig.wasHeldLastFrame = transition.isVisible;
@@ -105,6 +111,9 @@ export class OffhandSidearmSync {
     // its feet, but only as far round as its shoulder can really turn.
     const downed = hs.isRagdollActive;
     if (downed) rawAimDir = clampDownedAimDirection(hs, rawAimDir);
+    // It never turns to track: the pistol swings no further round than the cone it may fire in,
+    // so with the player off to the side it points ahead and holds fire.
+    if (downed && hs.downedFacingWorld) rawAimDir = clampToFacingCone(rawAimDir, hs.downedFacingWorld, DOWNED_FIRE_CONE_RAD);
     const clampedY = downed
       ? Math.max(-0.1, Math.min(0.96, rawAimDir.y))
       : Math.max(-0.52, Math.min(0.52, rawAimDir.y));
@@ -135,6 +144,15 @@ export class OffhandSidearmSync {
       const palm = add(animatedHand.getPosition(), scale(animatedHand.up, 0.052));
       this.grip.align(rig.holderEntity, rig.glbInstance.rootEntity, 'silver_talon_50ae', palm, aimDir);
       rig.hands?.sync(glb, activeHand, false);
+      return true;
+    }
+    // The one-handed aim clip already holds the good arm out with the stump tucked in, so the
+    // gun sits in the animated fist instead of an arm posed here.
+    const drawn = (sidearmState?.drawProgress ?? 1) >= 1;
+    if (!downed && drawn && target.isPlayingPistolAimOneHand && glb && animatedHand && rig.glbInstance) {
+      const palm = add(animatedHand.getPosition(), scale(animatedHand.up, 0.052));
+      this.grip.align(rig.holderEntity, rig.glbInstance.rootEntity, 'silver_talon_50ae', palm, aimDir);
+      rig.hands?.syncHold(glb, activeHand, NO_SUPPORT_GRIP, true);
       return true;
     }
 
@@ -208,4 +226,24 @@ export class OffhandSidearmSync {
     return true;
   }
 
+}
+
+/**
+ * Keeps a direction's flat heading within `coneRad` of `facing`, leaving its rise as it was.
+ * Used so a downed shooter's arm agrees with the fire cone in `woundedSequenceFsm.ts`.
+ */
+export function clampToFacingCone(dir: Vec3Like, facing: Vec3Like, coneRad: number): Vec3Like {
+  const flatLen = Math.hypot(dir.x, dir.z);
+  const facingLen = Math.hypot(facing.x, facing.z);
+  if (flatLen < 1e-4 || facingLen < 1e-4) return dir;
+  const fx = facing.x / facingLen;
+  const fz = facing.z / facingLen;
+  const heading = Math.atan2(dir.x / flatLen, dir.z / flatLen);
+  const facingHeading = Math.atan2(fx, fz);
+  let off = heading - facingHeading;
+  while (off > Math.PI) off -= Math.PI * 2;
+  while (off < -Math.PI) off += Math.PI * 2;
+  if (Math.abs(off) <= coneRad) return dir;
+  const kept = facingHeading + Math.sign(off) * coneRad;
+  return vec3(Math.sin(kept) * flatLen, dir.y, Math.cos(kept) * flatLen);
 }

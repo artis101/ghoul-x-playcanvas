@@ -6,7 +6,8 @@ import type {
 import type { PeekPlanCacheEntry } from './tacticalCoverFinder.ts';
 import type { BurstContext } from './tacticalBurstAndTracers.ts';
 
-// A body on the ground, or doubled over, shuffles round slowly; it cannot pivot like one on its feet.
+// A crawler drags itself round slowly to face away from the player. A downed shooter never turns
+// at all (docs/wound-movement.md): it only fires at a player already in front of it.
 export const DOWNED_TURN_RATE_RAD_S = 0.9;
 
 export interface TacticalFsmContext {

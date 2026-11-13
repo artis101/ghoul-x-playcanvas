@@ -4,7 +4,9 @@ import * as pc from 'playcanvas';
 import { describe, expect, it } from 'vitest';
 import type { GhoulZoneId } from '../src/contracts/ballistics.ts';
 import { ALL_GHOUL_ZONES, GHOUL_ZONE_HIERARCHY } from '../src/core/ghoul/anatomy.ts';
-import { ALL_GLB_ASSET_KEYS, COMBATANT_ANIMATION_CLIPS, WEAPON_ASSET_IDS } from '../src/engine/assets/glbLoader.ts';
+import {
+  ALL_GLB_ASSET_KEYS, COMBATANT_ANIMATION_CLIPS, COMBATANT_SIDED_CLIPS, WEAPON_ASSET_IDS,
+} from '../src/engine/assets/glbLoader.ts';
 import { BLEND_SOURCES_DIR, readAndParseGlb, readVec4AccessorRow } from './blenderGlbFixtures.ts';
 
 describe('Blender combatant and weapon assets', () => {
@@ -39,7 +41,7 @@ describe('Blender combatant and weapon assets', () => {
     expect(armNodes.every((node) => node.skin === undefined)).toBe(true);
   });
 
-  it('ghoul_combatant.glb contains 36 low-poly submeshes, parent-only joint blending, and Kimodo clips for both hands', () => {
+  it('ghoul_combatant.glb contains 37 low-poly submeshes, parent-only joint blending, and Kimodo clips for both hands', () => {
     const { gltf, binChunk } = readAndParseGlb('ghoul_combatant.glb');
     const nodes = gltf.nodes ?? [];
     const meshes = gltf.meshes ?? [];
@@ -122,13 +124,14 @@ describe('Blender combatant and weapon assets', () => {
     expect(globalMaxY).toBeGreaterThan(1.76);
     expect(globalMaxY).toBeLessThan(1.86);
 
-    // 2. Toggleable Gear (Archetype Headgear + Eviscerated Gut) & Internal X-Ray Anatomy submeshes (13 extra = 35 total)
+    // 2. Toggleable Gear (Archetype Headgear + Eviscerated Gut) & Internal X-Ray Anatomy submeshes (14 extra = 36, plus Skin_Library)
     const requiredExtraMeshes = [
       'Gear_ESAPI_PlateCarrier',
       'Gear_PASGT_Helmet',
       'Gear_TacticalVisor',
       'Gear_BoonieHat',
       'Gear_PunkMohawk',
+      'Gear_GasMask',
       'Gear_EvisceratedGut',
       'Organ_Brain',
       'Organ_Heart',
@@ -143,10 +146,10 @@ describe('Blender combatant and weapon assets', () => {
       expect(nodeNames.has(extraName), `Missing node ${extraName}`).toBe(true);
       expect(meshByName.has(extraName), `Missing mesh ${extraName}`).toBe(true);
     }
-    expect(meshes.length).toBe(36);
+    expect(meshes.length).toBe(37);
 
     // One hand-painted, point-sampled skin page per archetype, diffuse only.
-    for (const archetype of ['SKINHEAD_PUNK', 'MILITIA_GUNNER', 'HEAVY_ENFORCER', 'SNIPER_OPERATIVE']) {
+    for (const archetype of ['SKINHEAD_PUNK', 'MILITIA_GUNNER', 'MASKED_BRUISER', 'HEAVY_ENFORCER', 'SNIPER_OPERATIVE']) {
       const material = gltf.materials?.find((entry) => entry.name === `Mat_Skin_${archetype}`);
       const texture = material?.pbrMetallicRoughness?.baseColorTexture as { index: number } | undefined;
       expect(texture, `Missing skin page for ${archetype}`).toBeDefined();
@@ -160,9 +163,13 @@ describe('Blender combatant and weapon assets', () => {
       expect(nodeNames.has(`Bone_${zone}`), `Missing joint Bone_${zone}`).toBe(true);
     }
 
-    // 4. All combatant clips have both handed variants.
+    // 4. Handed clips have both variants; sided wound clips are baked once, with no twin.
     const animNames = new Set(animations.map((a) => a.name ?? ''));
-    expect(animations.length).toBe(COMBATANT_ANIMATION_CLIPS.length * 2);
+    expect(animations.length).toBe(COMBATANT_ANIMATION_CLIPS.length * 2 + COMBATANT_SIDED_CLIPS.length);
+    for (const sidedClip of COMBATANT_SIDED_CLIPS) {
+      expect(animNames.has(sidedClip), `Missing sided wound clip ${sidedClip}`).toBe(true);
+      expect(animNames.has(`${sidedClip}_Southpaw`), `Sided clip ${sidedClip} must not have a twin`).toBe(false);
+    }
     for (const expectedClip of COMBATANT_ANIMATION_CLIPS) {
       expect(animNames.has(expectedClip), `Missing right-handed clip ${expectedClip}`).toBe(true);
       const southpawClipName = `${expectedClip}_Southpaw`;

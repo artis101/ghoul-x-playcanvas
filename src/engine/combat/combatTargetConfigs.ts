@@ -39,8 +39,8 @@ export const TARGET_CONFIGS: RangeTargetConfig[] = [
   },
   {
     id: 'target_4',
-    name: 'MASONRY BUNKER GUARD (14m BRICK)',
-    archetype: 'MILITIA_GUNNER',
+    name: 'MASONRY BUNKER BRUISER (14m BRICK)',
+    archetype: 'MASKED_BRUISER',
     position: { x: -3.8, y: 0, z: -13.75 },
     yawDeg: 10,
   },

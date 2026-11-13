@@ -7,20 +7,18 @@ import {
 } from '../../core/ai/weaponBurstFsm.ts';
 import { add, dot, normalize, sub, vec3 } from '../../core/ballistics/vec3.ts';
 import { updateStandingCombatPose } from '../../core/ghoul/anatomy.ts';
-import { evaluateCrawlCondition } from '../../core/ghoul/anatomy/crawlCondition.ts';
 import { computeCombatantTriageStatus } from '../../core/ballistics/solver.ts';
 import type { EnemyAiAgentRuntime, EnemyTacticalAiState } from './tacticalAiTypes.ts';
 import { approachAngleRad, yawToward } from './combatantArmEvaluation.ts';
 import { syncAgentArmamentAndSidearm } from './agentArmamentController.ts';
 import { moveHorizontalClamped } from './tacticalLocomotion.ts';
+import { stepAgentWoundedSequence } from './woundedSequenceDriver.ts';
+import { crawlAwayFromPlayer, stepWoundedPhaseBehaviour } from './woundedPhaseBehaviour.ts';
 import { stepAgentMagazine } from './enemyWeaponMagazine.ts';
 import { stepWeaponBurstFire } from './tacticalBurstAndTracers.ts';
 import { stepAlertedEngagingState } from './alertedEngagementStep.ts';
-import { DOWNED_TURN_RATE_RAD_S, type TacticalFsmContext } from './tacticalFsmContext.ts';
-
-// Ground speed of an unhurt crawl.
-const CRAWL_SPEED_MPS = 0.35;
-const CRAWL_ARRIVAL_RADIUS_M = 0.3;
+import type { TacticalFsmContext } from './tacticalFsmContext.ts';
+import { isWoundClipHoldingBody } from './woundClipHold.ts';
 
 export type { AlertedEngagementSubstate, TacticalFsmContext };
 
@@ -53,6 +51,8 @@ export function stepSingleEnemyAgent(
   }
   agent.lastObservedHp = hs.currentHp;
 
+  // The wounded sequence picks this tick's phase first, so the draw and fire gates below see it.
+  stepAgentWoundedSequence(dt, hs, agent, playerEyeWorldPos, ctx.isSightBlocked);
   syncAgentArmamentAndSidearm(
     dt,
     hs,
@@ -86,10 +86,13 @@ export function stepSingleEnemyAgent(
     }
   }
 
+  // While a fall, loss or collapse clip plays, the reaction's posture stands and the body stays put.
+  const clipHolds = isWoundClipHoldingBody(hs);
+  const inWoundedPhase = (hs.woundedPhase ?? 'NONE') !== 'NONE';
   const legCrippled = !hs.rightLegFunctional || !hs.leftLegFunctional;
   if (legCrippled && agent.state !== 'DOWNED_CRAWLING') {
     if (agent.state === 'PATROL_GUARD') agent.adrenaline = Math.max(agent.adrenaline, 0.85);
-    if (!hs.isRagdollActive) hs.posture = 'LEG_BUCKLED';
+    if (!hs.isRagdollActive && !clipHolds && !inWoundedPhase) hs.posture = 'LEG_BUCKLED';
     ctx.transitionState(agent, 'DOWNED_CRAWLING');
   }
 
@@ -97,7 +100,28 @@ export function stepSingleEnemyAgent(
   agent.lastSpreadMultiplier = aimProfile.spreadMultiplier;
   agent.lastAimAccuracyMultiplier = aimProfile.aimAccuracyMultiplier;
   agent.clutchingWound = aimProfile.clutchingWound;
-  if (aimProfile.clutchingWound && !hs.isRagdollActive) hs.posture = 'DISARMED';
+  // A kneeling, sitting or crawling phase keeps the posture its clip set; only the clutch shows here.
+  if (aimProfile.clutchingWound && !hs.isRagdollActive && !clipHolds && (!inWoundedPhase || hs.woundedPhase === 'CLUTCH')) {
+    hs.posture = 'DISARMED';
+  }
+
+  if (clipHolds) {
+    // No shots, steps, crawling or turning until the clip has played out.
+    cancelActiveBurst(agent);
+    updateStandingCombatPose(hs, ctx.elapsedClockS);
+    return;
+  }
+
+  // An arm lost or the body downed: the wounded phase runs it instead of the tactical doctrine.
+  // A hit still staggers it; the stagger wears off here so it can shoot again when allowed.
+  if (inWoundedPhase && agent.state === 'SUPPRESSED_STAGGERED') {
+    if (agent.staggerTimerS > 0) agent.staggerTimerS = Math.max(0, agent.staggerTimerS - dt);
+    endStaggerWhenSettled(hs, agent, legCrippled, true, ctx);
+  }
+  if (stepWoundedPhaseBehaviour(dt, hs, agent, aimProfile, playerEyeWorldPos, ctx)) {
+    if (!hs.isRagdollActive) updateStandingCombatPose(hs, ctx.elapsedClockS);
+    return;
+  }
 
   const turnTowardPlayer = (turnSpeed: number) => {
     if (!hs.alive || hs.currentHp <= 0 || hs.isRagdollActive || agent.state === 'DEAD') return;
@@ -141,14 +165,7 @@ export function stepSingleEnemyAgent(
       }
       turnTowardPlayer(2.8);
 
-      if (agent.staggerTimerS <= 0 && agent.neurogenicShockTimerS <= 0) {
-        if (legCrippled) {
-          ctx.transitionState(agent, 'DOWNED_CRAWLING');
-        } else {
-          if (!hs.isRagdollActive && !aimProfile.clutchingWound) hs.posture = 'COMBAT_READY';
-          ctx.transitionState(agent, 'ALERTED_ENGAGING');
-        }
-      }
+      endStaggerWhenSettled(hs, agent, legCrippled, aimProfile.clutchingWound, ctx);
       break;
     }
 
@@ -158,24 +175,14 @@ export function stepSingleEnemyAgent(
 
     case 'DOWNED_CRAWLING': {
       if (!hs.isRagdollActive) hs.posture = aimProfile.clutchingWound ? 'DISARMED' : 'LEG_BUCKLED';
-      // Down is down. A combatant that can still fight stays where it fell and shoots from
-      // there. One that cannot drags itself toward cover, head first, never sideways.
+      // Down is down. A combatant that can still fight stays where it fell and never turns to
+      // track: it only shoots at a player straight in front of it (the shot gate checks that).
+      // One that cannot drags itself away from the player, head first, never sideways.
       if (aimProfile.canReturnFire) {
-        turnTowardPlayer(DOWNED_TURN_RATE_RAD_S);
         stepWeaponBurstFire(dt, hs, agent, aimProfile, playerEyeWorldPos, ctx.burstCtx);
-      } else if (!hs.isRagdollActive && (hs.rightArmFunctional || hs.leftArmFunctional)) {
-        const crawlGoal = { x: agent.coverAnchorWorld.x, y: hs.worldPosition.y, z: agent.coverAnchorWorld.z - 0.25 };
-        const { effort } = evaluateCrawlCondition(hs, ctx.elapsedClockS);
-        const goalDistM = Math.hypot(crawlGoal.x - hs.worldPosition.x, crawlGoal.z - hs.worldPosition.z);
-        if (goalDistM > CRAWL_ARRIVAL_RADIUS_M) {
-          const crawlYaw = yawToward(hs.worldPosition, crawlGoal, hs.yawRad);
-          hs.yawRad = approachAngleRad(hs.yawRad, crawlYaw, DOWNED_TURN_RATE_RAD_S * dt);
-          // It only pulls itself along once it is pointing the way it wants to go.
-          const facing = Math.cos(crawlYaw - hs.yawRad);
-          if (facing > 0.8) {
-            moveHorizontalClamped(hs, crawlGoal.x, crawlGoal.z, CRAWL_SPEED_MPS * effort * dt, ctx.rapierWorld);
-          }
-        }
+      } else {
+        cancelActiveBurst(agent);
+        crawlAwayFromPlayer(dt, hs, agent, playerEyeWorldPos, ctx);
       }
       break;
     }
@@ -184,4 +191,21 @@ export function stepSingleEnemyAgent(
   if (!hs.isRagdollActive && hs.alive && hs.currentHp > 0 && (agent.state as EnemyTacticalAiState) !== 'DEAD') {
     updateStandingCombatPose(hs, ctx.elapsedClockS);
   }
+}
+
+/** Once the stagger and the nerve shock have passed, the agent goes back to fighting (or crawling). */
+function endStaggerWhenSettled(
+  hs: TargetHealthState,
+  agent: EnemyAiAgentRuntime,
+  legCrippled: boolean,
+  clutchingWound: boolean,
+  ctx: TacticalFsmContext
+): void {
+  if (agent.staggerTimerS > 0 || agent.neurogenicShockTimerS > 0) return;
+  if (legCrippled) {
+    ctx.transitionState(agent, 'DOWNED_CRAWLING');
+    return;
+  }
+  if (!hs.isRagdollActive && !clutchingWound) hs.posture = 'COMBAT_READY';
+  ctx.transitionState(agent, 'ALERTED_ENGAGING');
 }

@@ -1,5 +1,6 @@
 import type { TargetHealthState } from '../../contracts/ballistics.ts';
 import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
+import { isWoundClipHoldingBody } from './woundClipHold.ts';
 
 export function isWaistStepBlocked(
   originX: number,
@@ -39,6 +40,8 @@ export function moveHorizontalClamped(
   rapierWorld: RapierPhysicsWorld | null
 ): void {
   if (!hs.alive || hs.currentHp <= 0 || hs.isRagdollActive || maxStepM <= 0) return;
+  // A wound clip playing owns the root; stepping it would make the fall skate across the floor.
+  if (isWoundClipHoldingBody(hs)) return;
 
   const clampedGoalX = clampArenaGoalX(goalX);
   const clampedGoalZ = clampArenaGoalZ(goalZ);

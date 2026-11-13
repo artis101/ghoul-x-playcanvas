@@ -9,7 +9,8 @@ export function resolveWeaponHoldStance(
 ): WeaponHoldStance | null {
   if (weaponId === 'frag_grenade') return null;
   const motion = clip?.replace('_Southpaw', '');
-  const aiming = motion === 'LongGunAim' || motion === 'PistolAim';
+  // The one-handed pistol aim points the gun the same way; it simply has no support hand to place.
+  const aiming = motion === 'LongGunAim' || motion === 'PistolAim' || motion === 'PistolAimOneHand';
   const relaxed = guarding || motion === 'UnsuspectingIdle';
   if (weaponId === 'silver_talon_50ae') return aiming ? 'PISTOL_AIM' : relaxed ? 'PISTOL_CARRY' : 'PISTOL_READY';
   if (aiming) return 'SHOULDERED';

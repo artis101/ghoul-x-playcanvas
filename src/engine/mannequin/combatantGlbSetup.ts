@@ -4,6 +4,9 @@ import type { GlbModelRegistry, CombatantGlbInstance } from '../assets/glbLoader
 import type { EngineMaterialPalette } from '../materials.ts';
 import type { GlbZoneMaterialPair } from './types.ts';
 import { createArchetypeAndBloodyGlbMaterials } from './combatantGlbMaterials.ts';
+import { applyCombatantBodyBuild } from './combatantBodyBuild.ts';
+import { pickBodyBuild } from '../../core/ghoul/anatomy/archetypeBodyBuild.ts';
+import { hashCombatantTargetId } from '../ai/archetypeTuning.ts';
 
 const sharedSwatGearMatCache = new WeakMap<pc.Material, pc.StandardMaterial>();
 
@@ -22,6 +25,11 @@ export function setupCombatantGlbInstance(
       initialClip: 'CombatReadyIdle',
       southpaw: healthState.isLeftHanded,
     });
+    // Each target gets its own build within its archetype's range, the same one every time.
+    applyCombatantBodyBuild(
+      inst.zoneEntities.values(),
+      pickBodyBuild(healthState.archetype, hashCombatantTargetId(healthState.targetId))
+    );
 
     for (const [zone, zEnt] of inst.zoneEntities) {
       if (!zEnt.render) continue;
@@ -48,6 +56,7 @@ export function setupCombatantGlbInstance(
       inst.tacticalVisor,
       inst.boonieHat,
       inst.punkMohawk,
+      inst.gasMask,
       inst.evisceratedGut,
     ];
 

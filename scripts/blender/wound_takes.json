@@ -1,0 +1,416 @@
+[
+ {
+  "name": "hit_chest",
+  "seed": 51,
+  "samples": 6,
+  "prompts": [
+   "A person holding a rifle jerks backward, the chest caves in and the shoulders hunch forward as they take two quick stumbling steps back",
+   "The person straightens up, plants the feet and raises the rifle to aim forward"
+  ],
+  "durations": [
+   0.8,
+   0.7
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   },
+   {
+    "at": "end",
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   }
+  ]
+ },
+ {
+  "name": "hit_head",
+  "seed": 52,
+  "samples": 6,
+  "prompts": [
+   "A person holding a rifle snaps the head back sharply and sways backward off balance, one foot stepping back to catch themselves",
+   "The person shakes the head, steadies and raises the rifle to aim forward"
+  ],
+  "durations": [
+   0.8,
+   0.7
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   },
+   {
+    "at": "end",
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   }
+  ]
+ },
+ {
+  "name": "hit_gut",
+  "seed": 53,
+  "samples": 6,
+  "prompts": [
+   "A person holding a rifle in the right hand bends forward at the waist and holds the stomach with the left hand, knees bent",
+   "The person slowly straightens up and puts the left hand back on the rifle to aim"
+  ],
+  "durations": [
+   0.9,
+   0.7
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   },
+   {
+    "at": "end",
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   }
+  ]
+ },
+ {
+  "name": "hit_throat",
+  "seed": 54,
+  "samples": 6,
+  "prompts": [
+   "A person holding a rifle in the right hand grabs the side of the neck with the left hand, bends forward coughing and stumbles a step",
+   "The person lets go of the neck and grips the rifle with both hands to aim"
+  ],
+  "durations": [
+   1.0,
+   0.7
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   },
+   {
+    "at": "end",
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   }
+  ]
+ },
+ {
+  "name": "hit_arm_r",
+  "seed": 55,
+  "samples": 6,
+  "prompts": [
+   "A person holding a rifle has the right shoulder jerk backward, the torso twisting to the right and the right elbow dropping",
+   "The person turns back to face forward and shoulders the rifle to aim"
+  ],
+  "durations": [
+   0.7,
+   0.7
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   },
+   {
+    "at": "end",
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   }
+  ]
+ },
+ {
+  "name": "hit_arm_l",
+  "seed": 56,
+  "samples": 6,
+  "prompts": [
+   "A person holding a rifle pulls the left hand off the rifle and swings the left arm out to the side, shaking it while turning the body away",
+   "The person brings the left hand back onto the rifle and aims forward"
+  ],
+  "durations": [
+   0.7,
+   0.7
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   },
+   {
+    "at": "end",
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   }
+  ]
+ },
+ {
+  "name": "hit_leg_r",
+  "seed": 57,
+  "samples": 6,
+  "prompts": [
+   "A person holding a rifle suddenly bends the right knee and dips down, putting the weight on the left leg and hopping half a step",
+   "The person stands back up, limping slightly on the right leg, and aims the rifle forward"
+  ],
+  "durations": [
+   0.7,
+   0.8
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   },
+   {
+    "at": "end",
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   }
+  ]
+ },
+ {
+  "name": "hit_leg_l",
+  "seed": 58,
+  "samples": 6,
+  "prompts": [
+   "A person holding a rifle suddenly bends the left knee and dips down, putting the weight on the right leg and hopping half a step",
+   "The person stands back up, limping slightly on the left leg, and aims the rifle forward"
+  ],
+  "durations": [
+   0.7,
+   0.8
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   },
+   {
+    "at": "end",
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   }
+  ]
+ },
+ {
+  "name": "legshot_fall_r",
+  "seed": 61,
+  "samples": 4,
+  "prompts": [
+   "A person stumbles as the right knee gives way, twists and falls sideways onto the right hip, then sits on the ground leaning back on the left hand with the right leg stretched out"
+  ],
+  "durations": [
+   2.4
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   }
+  ]
+ },
+ {
+  "name": "legloss_r",
+  "seed": 62,
+  "samples": 4,
+  "prompts": [
+   "A person pulls the right knee up high and hops on the left foot three times with the arms waving out for balance, then tips backward, falls and sits on the ground leaning back on the left hand"
+  ],
+  "durations": [
+   3.6
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   }
+  ]
+ },
+ {
+  "name": "handloss_r",
+  "seed": 63,
+  "samples": 4,
+  "prompts": [
+   "A person jerks the right arm away from the body and shakes it, looks down at the right wrist, then holds the right wrist against the chest with the left hand and steps back hunched over"
+  ],
+  "durations": [
+   2.4
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   }
+  ]
+ },
+ {
+  "name": "downed_collapse",
+  "seed": 64,
+  "samples": 4,
+  "prompts": [
+   "A person sways unsteadily, the legs buckle and they drop onto both knees, then sit down on the ground and lean back on the left hand"
+  ],
+  "durations": [
+   2.4
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   }
+  ]
+ },
+ {
+  "name": "long_aim",
+  "seed": 65,
+  "samples": 4,
+  "prompts": [
+   "A person holding a rifle at the hip raises it to the right shoulder, lowers the head to the sights and aims straight ahead, holding still"
+  ],
+  "durations": [
+   1.3
+  ],
+  "pins": [
+   {
+    "at": [
+     0,
+     1
+    ],
+    "take": "work/ready_loop.npz",
+    "frames": [
+     0,
+     1
+    ]
+   }
+  ]
+ },
+ {
+  "name": "pistol_aim",
+  "seed": 66,
+  "samples": 4,
+  "prompts": [
+   "A person holding a pistol low in both hands raises it to eye level and aims straight ahead with both arms extended, holding still"
+  ],
+  "durations": [
+   1.3
+  ]
+ },
+ {
+  "name": "pistol_one_hand",
+  "seed": 67,
+  "samples": 4,
+  "prompts": [
+   "A person holds the left forearm tight against the chest and raises a pistol in the right hand to eye level, aiming straight ahead with the right arm extended, holding still"
+  ],
+  "durations": [
+   1.3
+  ]
+ }
+]

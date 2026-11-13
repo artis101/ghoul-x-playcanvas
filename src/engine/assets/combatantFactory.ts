@@ -8,6 +8,9 @@ export { instantiateDetachedHeadgearProp } from './headgearFactory.ts';
 
 const LOOPING_COMBATANT_CLIPS = new Set([
   'CombatReadyIdle', 'UnsuspectingIdle', 'Walk', 'Run', 'WalkBackward', 'StrafeLeft', 'StrafeRight', 'Crawl',
+  // A one-legged body hops in place until it falls; the stump clutch holds a lost arm to the
+  // chest for as long as the combatant has no gun.
+  'OneLegHopRight', 'OneLegHopLeft', 'StumpClutchRight', 'StumpClutchLeft',
 ]);
 
 /** Skin page materials in the combatant GLB are named `Mat_Skin_<archetype id>`. */
@@ -60,6 +63,7 @@ export function instantiateCombatantGlb(
   const tacticalVisor = findEntityByName(rootEntity, 'Gear_TacticalVisor');
   const boonieHat = findEntityByName(rootEntity, 'Gear_BoonieHat');
   const punkMohawk = findEntityByName(rootEntity, 'Gear_PunkMohawk');
+  const gasMask = findEntityByName(rootEntity, 'Gear_GasMask');
   const evisceratedGut = findEntityByName(rootEntity, 'Gear_EvisceratedGut');
 
   // Skin_Library is a hidden mesh whose only job is to carry one material per character skin.
@@ -77,6 +81,8 @@ export function instantiateCombatantGlb(
   if (tacticalVisor) tacticalVisor.enabled = false;
   if (boonieHat) boonieHat.enabled = false;
   if (punkMohawk) punkMohawk.enabled = false;
+  // Only the masked archetype shows the respirator; combatantDismemberment turns it back on.
+  if (gasMask) gasMask.enabled = false;
   if (evisceratedGut) evisceratedGut.enabled = false;
 
   const internalAnatomyEntities = {
@@ -106,6 +112,7 @@ export function instantiateCombatantGlb(
     tacticalVisor,
     boonieHat,
     punkMohawk,
+    gasMask,
     evisceratedGut,
     ...Object.values(internalAnatomyEntities),
   ];
@@ -143,6 +150,7 @@ export function instantiateCombatantGlb(
     tacticalVisor,
     boonieHat,
     punkMohawk,
+    gasMask,
     evisceratedGut,
     skinMaterials,
     internalAnatomyEntities,

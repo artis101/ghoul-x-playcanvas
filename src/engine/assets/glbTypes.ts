@@ -16,35 +16,97 @@ export type GlbAssetKey =
   | 'debris_pack'
   | 'viewmodel_arms';
 
-export type CombatantAnimationClipName =
+/** Clips baked with a `_Southpaw` twin: the same motion for a left-handed character. */
+export type CombatantHandedClipName =
   | 'CombatReadyIdle'
   | 'UnsuspectingIdle'
   | 'LongGunAim'
   | 'PistolAim'
+  | 'PistolAimOneHand'
+  | 'KneelPistolAimOneHand'
   | 'Walk'
   | 'Run'
   | 'WalkBackward'
   | 'StrafeLeft'
   | 'StrafeRight'
   | 'HitStaggerChest'
+  | 'HitFlinchHead'
+  | 'HitFlinchGut'
+  | 'HitFlinchThroat'
+  | 'HitFlinchArmRight'
+  | 'HitFlinchArmLeft'
+  | 'HitFlinchLegRight'
+  | 'HitFlinchLegLeft'
   | 'DiaphragmDropKneel'
   | 'LegCollapseCrawl'
   | 'Crawl';
 
-export const COMBATANT_ANIMATION_CLIPS: readonly CombatantAnimationClipName[] = [
+/**
+ * Wound clips named for the side of the body they hurt. The gun is dropped, so handedness does
+ * not matter and there is no `_Southpaw` twin; the Left clip is the Right take mirrored.
+ */
+export type CombatantSidedClipName =
+  | 'LegShotFallRight'
+  | 'LegShotFallLeft'
+  | 'LegLossRight'
+  | 'LegLossLeft'
+  | 'OneLegHopRight'
+  | 'OneLegHopLeft'
+  | 'LegLossFallRight'
+  | 'LegLossFallLeft'
+  | 'ArmLossRight'
+  | 'ArmLossLeft'
+  | 'StumpClutchRight'
+  | 'StumpClutchLeft'
+  | 'StumpKneelRight'
+  | 'StumpKneelLeft'
+  | 'DownedCollapse'
+  | 'SitToCrawl';
+
+export type CombatantAnimationClipName = CombatantHandedClipName | CombatantSidedClipName;
+
+export const COMBATANT_ANIMATION_CLIPS: readonly CombatantHandedClipName[] = [
   'CombatReadyIdle',
   'UnsuspectingIdle',
   'LongGunAim',
   'PistolAim',
+  'PistolAimOneHand',
+  'KneelPistolAimOneHand',
   'Walk',
   'Run',
   'WalkBackward',
   'StrafeLeft',
   'StrafeRight',
   'HitStaggerChest',
+  'HitFlinchHead',
+  'HitFlinchGut',
+  'HitFlinchThroat',
+  'HitFlinchArmRight',
+  'HitFlinchArmLeft',
+  'HitFlinchLegRight',
+  'HitFlinchLegLeft',
   'DiaphragmDropKneel',
   'LegCollapseCrawl',
   'Crawl',
+] as const;
+
+export const COMBATANT_SIDED_CLIPS: readonly CombatantSidedClipName[] = [
+  'LegShotFallRight',
+  'LegShotFallLeft',
+  'LegLossRight',
+  'LegLossLeft',
+  'OneLegHopRight',
+  'OneLegHopLeft',
+  'LegLossFallRight',
+  'LegLossFallLeft',
+  'ArmLossRight',
+  'ArmLossLeft',
+  'StumpClutchRight',
+  'StumpClutchLeft',
+  'StumpKneelRight',
+  'StumpKneelLeft',
+  'DownedCollapse',
+  'SitToCrawl',
 ] as const;
 
 export const WEAPON_ASSET_IDS: readonly WeaponAssetId[] = [
@@ -86,6 +148,7 @@ export function getArchetypeWeaponAssetId(archetype: EnemyArchetypeId): WeaponAs
     case 'SKINHEAD_PUNK':
       return 'silver_talon_50ae';
     case 'HEAVY_ENFORCER':
+    case 'MASKED_BRUISER':
       return 'm590_shotgun';
     case 'SNIPER_OPERATIVE':
       return 'msg90_sniper';
@@ -106,6 +169,8 @@ export interface CombatantGlbInstance {
   tacticalVisor: pc.Entity | null;
   boonieHat: pc.Entity | null;
   punkMohawk: pc.Entity | null;
+  /** Bear's half-face respirator, skinned to the cranium. */
+  gasMask: pc.Entity | null;
   evisceratedGut: pc.Entity | null;
   /** Painted skin page per archetype, keyed by archetype id (from the GLB's Skin_Library mesh). */
   skinMaterials: ReadonlyMap<string, pc.Material>;

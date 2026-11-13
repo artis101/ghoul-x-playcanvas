@@ -4,10 +4,10 @@ import {
   Vec3Like,
 } from '../../../contracts/ballistics.ts';
 import { type BodySide, oppositeSide, sideSignX, triggerSide } from '../../ghoul/anatomy/handedness.ts';
-import { computeChestFrame } from '../../ghoul/anatomy/ragdollBodyFrames.ts';
 import { add, cross, dot, normalize, scale, sub, vec3 } from '../vec3.ts';
-import { FACE_DOWN_BELOW, MIN_LYING_SPAN_M } from './downedAimReach.ts';
+import { MIN_LYING_SPAN_M } from './downedAimReach.ts';
 import { isDownedArmUsable } from './downedGunSide.ts';
+import { PELVIS_ON_FLOOR_M, isFaceDownShape } from './faceDownLanding.ts';
 
 const DEG = Math.PI / 180;
 interface LyingShape {
@@ -58,7 +58,7 @@ export function buildLivingGroundedPoseTargets(
   if (!target.alive || !target.isRagdollActive) return null;
 
   const pelvis = target.ragdollBones.PELVIS_GROIN;
-  if (pelvis.componentId !== 'BODY' || pelvis.position.y > floorY + 0.44) {
+  if (pelvis.componentId !== 'BODY' || pelvis.position.y > floorY + PELVIS_ON_FLOOR_M) {
     return null;
   }
 
@@ -71,8 +71,8 @@ export function buildLivingGroundedPoseTargets(
   const lying = Math.hypot(lie.x, lie.z) > MIN_LYING_SPAN_M;
   const headW = lying ? normalize(lie) : scale(yawForward, -1);
   const feetW = scale(headW, -1);
-  const chest = lying ? computeChestFrame(target) : null;
-  const faceDown = chest !== null && chest.forward.y < FACE_DOWN_BELOW;
+  // The same test the wounded sequence uses to mark a body FACE_DOWN (no gun, no damage).
+  const faceDown = lying && isFaceDownShape(target);
   const leftW = scale(cross(headW, up), faceDown ? -1 : 1);
 
   const preferredGunSide = triggerSide(target.isLeftHanded);

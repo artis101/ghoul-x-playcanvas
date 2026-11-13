@@ -1,6 +1,7 @@
 import type {
   CombatantArmamentState,
   CombatantBodyState,
+  PainReactionType,
   StandingCombatPosture,
   TargetHealthState,
   TargetLifecycleEvent,
@@ -8,11 +9,15 @@ import type {
 import { ALL_AUX_PARTICLES, ALL_GHOUL_ZONES } from '../../ghoul/anatomy.ts';
 import { deriveCorpseSleepPhase } from '../ragdoll/corpseSleepFsm.ts';
 import { stabilizeRagdollPoseForTransition } from '../ragdoll/ragdollPoseStabilizer.ts';
+import { stepFaceDownSettle, yawForward } from '../triage/faceDownLanding.ts';
 import { listLostLimbs } from '../trauma/limbLossDeathRule.ts';
+import { WOUND_CLIP_SECONDS, isCommittedWoundReaction, isFallingReaction } from '../trauma/woundReactionTimings.ts';
 import { add, copyVec3, scale, vec3 } from '../vec3.ts';
 
 /** Matches the armament FSM's last-stand vitals: below this a wounded combatant goes down fighting. */
 const LAST_STAND_HP_FRACTION = 0.32;
+/** Downward speed a body already seated by its fall clip gets as the ragdoll takes it over. */
+const SETTLE_DOWN_SPEED_MS = 0.15;
 
 const STANDING_POSTURES: ReadonlySet<string> = new Set<StandingCombatPosture>([
   'COMBAT_READY',
@@ -26,6 +31,10 @@ const STANDING_POSTURES: ReadonlySet<string> = new Set<StandingCombatPosture>([
 export function resolveStandingPostureAfterReaction(
   target: TargetHealthState
 ): StandingCombatPosture {
+  // A crawler is animated rather than ragdolled, but it is on the floor all the same.
+  if (target.woundedPhase === 'DOWNED_CRAWL') {
+    return 'LEG_BUCKLED';
+  }
   if (!target.rightLegFunctional || !target.leftLegFunctional) {
     return 'LEG_BUCKLED';
   }
@@ -263,53 +272,115 @@ export function stepLivingTargetVitalsAndFall(
     }
   }
 
-  if (target.alive && target.activeReaction.type !== 'NONE') {
+  // Read before the tick: the reaction that ends this frame decides how the body is handed over.
+  const reactionBeforeTick = target.activeReaction.type;
+  if (target.alive && reactionBeforeTick !== 'NONE') {
     transitionTargetLifecycle(target, { kind: 'TICK_PAIN_REACTION', dt });
   }
 
-  // A lost or useless leg drops the body as soon as the buckle has played. A lost arm keeps it on
-  // its feet until it is weak enough for a last stand, then it sits down to fight on from there.
+  // A body that sat down keeps SIT_DOWN through its collapse; once it is on the floor it takes
+  // the downed phase planned during the fall (agony when nothing planned one).
+  if (
+    target.woundedPhase === 'SIT_DOWN' &&
+    reactionBeforeTick !== 'NONE' &&
+    isFallingReaction(reactionBeforeTick) &&
+    target.activeReaction.type === 'NONE'
+  ) {
+    target.woundedPhase = target.plannedDownedPhase ?? 'DOWNED_AGONY';
+    target.woundedPhaseTimerS = 0;
+  }
+
+  // A lost or useless leg drops the body once its fall has played. A lost arm keeps it on its
+  // feet until it is weak enough for a last stand; then it plays the collapse and sits down to
+  // fight on from the floor.
   const legGone = !target.rightLegFunctional || !target.leftLegFunctional;
   const armGoneAndSpent =
     listLostLimbs(target.severedZones).some((limb) => limb.startsWith('ARM')) &&
     target.currentHp <= target.maxHp * LAST_STAND_HP_FRACTION;
-  if (
-    target.alive &&
-    (legGone || armGoneAndSpent) &&
-    !target.isRagdollActive &&
-    target.activeReaction.type === 'NONE'
-  ) {
+  // A body that chose to crawl away stays animated (SitToCrawl, then Crawl): the AI drags it
+  // along the floor, so the gate must not hand it to the ragdoll or make it collapse again.
+  const crawling = target.woundedPhase === 'DOWNED_CRAWL';
+  const standingIdle =
+    target.alive && !target.isRagdollActive && target.activeReaction.type === 'NONE' && !crawling;
+  // A body that is downed but not crawling belongs on the floor in the ragdoll, whatever its
+  // health: a sit-down collapse at high HP, or a seated engager, must never stand back up.
+  const downedOnFeet =
+    target.woundedPhase === 'DOWNED_ENGAGE' ||
+    target.woundedPhase === 'DOWNED_AGONY' ||
+    reactionBeforeTick === 'DOWNED_COLLAPSE';
+  if (standingIdle && armGoneAndSpent && !legGone && reactionBeforeTick !== 'DOWNED_COLLAPSE') {
+    target.weaponDropped = true;
     transitionTargetLifecycle(target, {
-      kind: 'ACTIVATE_RAGDOLL',
-      isOverkillCorpseHit: false,
+      kind: 'START_PAIN_REACTION',
+      reactionType: 'DOWNED_COLLAPSE',
+      durationS: WOUND_CLIP_SECONDS.DOWNED_COLLAPSE,
+      intensity: 0.8,
+      hitDirectionWorld: vec3(Math.sin(target.yawRad), 0, Math.cos(target.yawRad)),
+      postureOverride: 'LEG_BUCKLED',
     });
-    stabilizeRagdollPoseForTransition(target, floorY);
+  } else if (standingIdle && legGone && endedStandingCommittedClip(reactionBeforeTick)) {
+    // A leg went out while the arm-loss clip held the body (that hit only jolted it). The body is
+    // still standing, so play the leg fall now rather than popping it straight into the ragdoll.
+    target.weaponDropped = true;
+    transitionTargetLifecycle(target, {
+      kind: 'START_PAIN_REACTION',
+      reactionType: !target.rightLegFunctional ? 'LEG_BUCKLE_RIGHT' : 'LEG_BUCKLE_LEFT',
+      durationS: WOUND_CLIP_SECONDS.LEG_SHOT_FALL,
+      intensity: 0.8,
+      hitDirectionWorld: vec3(Math.sin(target.yawRad), 0, Math.cos(target.yawRad)),
+      postureOverride: 'LEG_BUCKLED',
+    });
+  } else if (standingIdle && (legGone || armGoneAndSpent || downedOnFeet)) {
+    dropLivingBodyToRagdoll(target, floorY, reactionBeforeTick !== 'NONE' && isFallingReaction(reactionBeforeTick));
+  }
 
+  // Down on its face and settled there: no gun and no damage from here on (FACE_DOWN).
+  if (target.alive) stepFaceDownSettle(target, dt, floorY);
+
+  target.painShock = Math.max(0, target.painShock - dt * 0.55);
+  syncTargetLifecycleDerivedState(target);
+}
+
+/** True when the reaction that just ended was a long clip that leaves the body on its feet. */
+function endedStandingCommittedClip(type: PainReactionType): boolean {
+  return type !== 'NONE' && isCommittedWoundReaction(type) && !isFallingReaction(type);
+}
+
+/**
+ * Hands a downed but living body to the ragdoll. When a fall clip has just played it is already
+ * seated on the floor, so it only gets a small settling nudge; a body that went down without one
+ * is thrown back and down onto its butt.
+ */
+function dropLivingBodyToRagdoll(target: TargetHealthState, floorY: number, clipAlreadyFell: boolean): void {
+  transitionTargetLifecycle(target, {
+    kind: 'ACTIVATE_RAGDOLL',
+    isOverkillCorpseHit: false,
+  });
+  stabilizeRagdollPoseForTransition(target, floorY);
+  // It lands facing roughly where it stood; the downed fire cone is measured from here.
+  target.downedFacingWorld = yawForward(target);
+
+  let dropVel = vec3(0, -SETTLE_DOWN_SPEED_MS, 0);
+  if (!clipAlreadyFell) {
     const cosY = Math.cos(target.yawRad);
     const sinY = Math.sin(target.yawRad);
     // Down onto its butt: mostly back and down, leaning a little toward a bad leg.
     const sideSign = !target.rightLegFunctional ? -1.0 : !target.leftLegFunctional ? 1.0 : 0;
     const sideWorld = vec3(cosY * sideSign, 0, -sinY * sideSign);
     const fwdWorld = vec3(sinY, 0, cosY);
-    const dropVel = add(
-      scale(sideWorld, 0.2),
-      add(scale(fwdWorld, -0.6), vec3(0, -1.1, 0))
-    );
-
-    for (const z of ALL_GHOUL_ZONES) {
-      const b = target.ragdollBones[z];
-      if (b.componentId === 'BODY') {
-        b.velocity = copyVec3(dropVel);
-      }
-    }
-    for (const aId of ALL_AUX_PARTICLES) {
-      const a = target.auxParticles[aId];
-      if (a.componentId === 'BODY') {
-        a.velocity = copyVec3(dropVel);
-      }
-    }
+    dropVel = add(scale(sideWorld, 0.2), add(scale(fwdWorld, -0.6), vec3(0, -1.1, 0)));
   }
 
-  target.painShock = Math.max(0, target.painShock - dt * 0.55);
-  syncTargetLifecycleDerivedState(target);
+  for (const z of ALL_GHOUL_ZONES) {
+    const b = target.ragdollBones[z];
+    if (b.componentId === 'BODY') {
+      b.velocity = copyVec3(dropVel);
+    }
+  }
+  for (const aId of ALL_AUX_PARTICLES) {
+    const a = target.auxParticles[aId];
+    if (a.componentId === 'BODY') {
+      a.velocity = copyVec3(dropVel);
+    }
+  }
 }

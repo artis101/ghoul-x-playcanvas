@@ -12,8 +12,24 @@ import { solveTwoBoneIk } from './twoBoneIk.ts';
 export type { ArmSide, DeadArmSimState };
 export { isArmDeadButAttached, stepPinnedDeadArmVerlet };
 
+/** Which kind of authored wound clip owns the body: a short flinch, a long fall or loss, or none. */
+export type WoundClipOwner = 'FLINCH' | 'COMMITTED' | null;
+
+/** What the body clip is doing, so the procedural passes can step back from it. */
+export interface ProceduralTraumaGating {
+  readonly woundClip?: WoundClipOwner;
+  /** Keep the free hand off the wound, e.g. while the stump-clutch loop holds it. */
+  readonly suppressClutch?: boolean;
+}
+
+// The clips already carry the hit, so the spring only adds the punch of each new bullet on top.
+const JOLT_SCALE_DURING_FLINCH = 0.35;
+const JOLT_SCALE_DURING_COMMITTED = 0.25;
+
 export interface ProceduralTraumaTrackerState {
   lastHandledReactionEpoch: number;
+  /** Last per-hit jolt counter seen; null until the first frame has read it. */
+  lastHandledJoltEpoch: number | null;
   lastTotalDamageJ: number;
   joltVelPitch: number;
   joltVelYaw: number;
@@ -42,6 +58,7 @@ export interface ProceduralTraumaPoseOutput {
 export function createProceduralTraumaTracker(): ProceduralTraumaTrackerState {
   return {
     lastHandledReactionEpoch: 0,
+    lastHandledJoltEpoch: null,
     lastTotalDamageJ: 0,
     joltVelPitch: 0,
     joltVelYaw: 0,
@@ -133,8 +150,10 @@ export function stepProceduralTraumaIk(
   dt: number,
   shoulderPositionsWorld: Record<ArmSide, Vec3Like>,
   elbowPositionsWorld: Record<ArmSide, Vec3Like>,
-  wristPositionsWorld: Record<ArmSide, Vec3Like>
+  wristPositionsWorld: Record<ArmSide, Vec3Like>,
+  gating: ProceduralTraumaGating = {}
 ): ProceduralTraumaPoseOutput {
+  const woundClip = gating.woundClip ?? null;
   const safeDt = dt > 0 && Number.isFinite(dt) ? Math.min(dt, 0.05) : 0;
 
   let totalDamageJ = 0;
@@ -144,27 +163,36 @@ export function stepProceduralTraumaIk(
 
   const rx = state.activeReaction;
   const rxEpoch = rx.epoch ?? 0;
+  // Every surviving hit bumps the jolt counter, even one that leaves the running reaction alone.
+  // Without it, a new reaction or a jump in damage stands in for a hit.
+  const joltEpoch = state.joltEpoch;
   const newHitImpulse =
-    (rx.type !== 'NONE' && rxEpoch !== tracker.lastHandledReactionEpoch) ||
-    totalDamageJ > tracker.lastTotalDamageJ + 12;
+    joltEpoch !== undefined
+      ? tracker.lastHandledJoltEpoch !== null && joltEpoch !== tracker.lastHandledJoltEpoch
+      : (rx.type !== 'NONE' && rxEpoch !== tracker.lastHandledReactionEpoch) ||
+        totalDamageJ > tracker.lastTotalDamageJ + 12;
 
   if (newHitImpulse) {
     const sinYaw = Math.sin(state.yawRad);
     const cosYaw = Math.cos(state.yawRad);
     const fwd = vec3(sinYaw, 0, cosYaw);
     const left = vec3(cosYaw, 0, -sinYaw);
-    const hitDir =
-      length(rx.hitDirectionWorld) > 1e-4 ? normalize(rx.hitDirectionWorld) : scale(fwd, -1);
+    const rawDir = state.lastJoltDirectionWorld ?? rx.hitDirectionWorld;
+    const hitDir = length(rawDir) > 1e-4 ? normalize(rawDir) : scale(fwd, -1);
 
     const frontDot = dot(hitDir, fwd);
     const sideDot = dot(hitDir, left);
-    const joltMag = Math.min(1.6, Math.max(0.45, rx.intensity * 1.15));
+    const clipScale =
+      woundClip === 'COMMITTED' ? JOLT_SCALE_DURING_COMMITTED : woundClip === 'FLINCH' ? JOLT_SCALE_DURING_FLINCH : 1;
+    const joltMag = Math.min(1.6, Math.max(0.45, (state.lastJoltIntensity ?? rx.intensity) * 1.15)) * clipScale;
 
     tracker.joltVelPitch += frontDot * 9.5 * joltMag;
     tracker.joltVelYaw += sideDot * 7.8 * joltMag;
     tracker.joltVelRoll += -sideDot * 6.2 * joltMag;
   }
   tracker.lastHandledReactionEpoch = rxEpoch;
+  // The counter is absent until the first hit, which then counts up from zero.
+  tracker.lastHandledJoltEpoch = joltEpoch ?? 0;
   tracker.lastTotalDamageJ = totalDamageJ;
 
   if (safeDt > 0) {
@@ -193,7 +221,9 @@ export function stepProceduralTraumaIk(
   }
 
   // Downed pelvic/femur upper-body prop-up while returning fire
+  // A wound clip poses the chest itself; lifting it on top would bend a fall backwards.
   const downedReturningFire =
+    woundClip === null &&
     state.alive &&
     !state.isRagdollActive &&
     !state.weaponDropped &&
@@ -204,13 +234,15 @@ export function stepProceduralTraumaIk(
   const propUpPitchRad = tracker.propUpBlend * -0.44; // Lifts chest/head upward from crawl pose
 
   // Wound-clutching IK evaluation
+  // The wound clips and the stump clutch hold the wound with their own hands.
+  const clutchAllowed = woundClip === null && !gating.suppressClutch;
   let clutchSide: ArmSide | null = null;
   const preferredSupport: ArmSide = supportSide(state.isLeftHanded);
-  if (isArmAvailableForClutch(state, preferredSupport)) {
+  if (clutchAllowed && isArmAvailableForClutch(state, preferredSupport)) {
     clutchSide = preferredSupport;
   } else {
     const otherSide: ArmSide = oppositeSide(preferredSupport);
-    if (isArmAvailableForClutch(state, otherSide)) {
+    if (clutchAllowed && isArmAvailableForClutch(state, otherSide)) {
       clutchSide = otherSide;
     }
   }

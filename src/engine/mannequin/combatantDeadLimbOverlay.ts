@@ -3,6 +3,7 @@ import type { GhoulZoneId, TargetHealthState, Vec3Like } from '../../contracts/b
 import {
   type ArmSide,
   createProceduralTraumaTracker,
+  type ProceduralTraumaGating,
   type ProceduralTraumaTrackerState,
   stepPinnedDeadArmVerlet,
   stepProceduralTraumaIk,
@@ -37,7 +38,9 @@ export class CombatantDeadLimbOverlay {
     glb: CombatantGlbInstance,
     healthState: TargetHealthState,
     boneSync: CombatantBoneSync,
-    dt: number
+    dt: number,
+    gating: ProceduralTraumaGating = {},
+    distalStumpAnimated = true
   ): void {
     if (!healthState.alive || healthState.isRagdollActive) return;
 
@@ -79,7 +82,8 @@ export class CombatantDeadLimbOverlay {
       dt,
       this.shoulderPos,
       this.elbowPos,
-      this.wristPos
+      this.wristPos,
+      gating
     );
 
     let modifiedHierarchy = false;
@@ -146,7 +150,8 @@ export class CombatantDeadLimbOverlay {
         this.tracker,
         side,
         this.shoulderPos[side],
-        dt
+        dt,
+        distalStumpAnimated
       );
       if (stepped) {
         const armZones: GhoulZoneId[] = [

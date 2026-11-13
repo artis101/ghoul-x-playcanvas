@@ -10,7 +10,9 @@ export type EnemyArchetypeId =
   | 'SKINHEAD_PUNK'
   | 'MILITIA_GUNNER'
   | 'HEAVY_ENFORCER'
-  | 'SNIPER_OPERATIVE';
+  | 'SNIPER_OPERATIVE'
+  /** "Bear": a red-haired bruiser in a half-face respirator, tank top and woodland trousers. */
+  | 'MASKED_BRUISER';
 
 export type CombatantPostureState =
   | 'COMBAT_READY'
@@ -31,7 +33,18 @@ export type PainReactionType =
   | 'ARM_WRENCH_RIGHT'
   | 'ARM_WRENCH_LEFT'
   | 'LEG_BUCKLE_RIGHT'
-  | 'LEG_BUCKLE_LEFT';
+  | 'LEG_BUCKLE_LEFT'
+  /** A leg hit that hurts but leaves the leg working: the knee dips and recovers. */
+  | 'LEG_FLINCH_RIGHT'
+  | 'LEG_FLINCH_LEFT'
+  /** A leg blown off: the body hops on the other leg, then topples into a seat. */
+  | 'LEG_LOST_RIGHT'
+  | 'LEG_LOST_LEFT'
+  /** A hand, forearm or whole arm blown off: recoil, then the stump is clutched to the chest. */
+  | 'ARM_LOST_RIGHT'
+  | 'ARM_LOST_LEFT'
+  /** Too weak to stand: drops to the knees and sits down to fight on from the floor. */
+  | 'DOWNED_COLLAPSE';
 
 export interface AmmoSpec {
   id: string;

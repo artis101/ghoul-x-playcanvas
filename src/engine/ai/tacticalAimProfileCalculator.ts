@@ -2,6 +2,7 @@ import type { TargetHealthState } from '../../contracts/ballistics.ts';
 import { computeMoraleSpreadMultiplier } from '../../core/ai/tacticalDoctrine.ts';
 import { computeCombatantTriageStatus } from '../../core/ballistics/solver.ts';
 import { evaluateTargetArmamentState } from './agentArmamentController.ts';
+import { woundedPhaseCanEverFire } from './woundedSequenceDriver.ts';
 import type { EnemyAimProfile, EnemyAiAgentRuntime } from './tacticalAiTypes.ts';
 import {
   ARCHETYPE_TUNING,
@@ -187,7 +188,8 @@ export function computeEnemyAimProfile(
     spreadMultiplier,
     effectiveSpreadRad: baseSpreadRad * spreadMultiplier,
     aimAccuracyMultiplier,
-    canReturnFire: !inNeurogenicOrStagger && agent?.state !== 'PATROL_GUARD',
+    // Clutching, kneeling down, crawling, agony and face down never shoot back.
+    canReturnFire: !inNeurogenicOrStagger && agent?.state !== 'PATROL_GUARD' && woundedPhaseCanEverFire(target),
     isOneHandedDownedFire: legCrippled,
     clutchingWound: false,
     usingBackupSidearm: sidearmActive,

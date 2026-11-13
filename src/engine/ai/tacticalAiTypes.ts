@@ -161,6 +161,13 @@ export interface EnemySidearmVisualState {
   readonly weaponId: string;
 }
 
+/** Where the player stands for the wounded sequence; see `woundedSequenceDriver.ts`. */
+export interface WoundedPlayerSense {
+  /** Unsigned flat angle between the body's facing and the player, or null when unknown. */
+  readonly playerBearingRad: number | null;
+  readonly playerVisible: boolean;
+}
+
 export interface EnemyAiAgentRuntime {
   readonly targetId: string;
   state: EnemyTacticalAiState;
@@ -211,7 +218,7 @@ export interface EnemyAiAgentRuntime {
   /** Wounded behaviour state; see `woundFallback.ts`. */
   woundFallbackHpMark?: number;
   woundFallbackTimerS?: number;
-  mortalWoundMode?: 'AMBUSH_HOLD' | 'AMBUSH_SPRUNG' | 'LAST_STAND';
+  mortalWoundMode?: 'AMBUSH_HOLD' | 'AMBUSH_SPRUNG' | 'DYING_PUSH';
   mortalHoldTimerS?: number;
   weaponPickupTimerS?: number;
   lastRelocationClockS?: number;
@@ -238,6 +245,8 @@ export interface EnemyAiAgentRuntime {
   moveSpeedMs?: number;
   /** Held movement goal and time standing still; see `plantedFootwork.ts`. */
   footwork?: PlantedFootworkState;
+  /** This tick's read of the player for the wounded sequence (bearing from facing, line of sight). */
+  woundedSense?: WoundedPlayerSense;
 }
 
 export interface EnemyHitNotification {

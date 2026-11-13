@@ -627,15 +627,24 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       }
       expect(target.isRagdollActive).toBe(false);
 
-      // Step forward ~1.8s: combatant goes down to the ground (pelvis on floor) WITH active muscle tone holding head/chest up!
-      for (let i = 0; i < 180; i++) {
+      // The leg-shot fall clip lasts WOUND_CLIP_SECONDS.LEG_SHOT_FALL; the body stays off the
+      // ragdoll until it ends, then ~1.8 s more lets it settle on the ground (pelvis on floor) WITH
+      // active muscle tone holding head/chest up!
+      for (let i = 0; i < 200; i++) {
+        stepRagdollPhysics(target, 0.01, 0.0);
+      }
+      expect(target.isRagdollActive).toBe(false);
+      for (let i = 0; i < 250; i++) {
         stepRagdollPhysics(target, 0.01, 0.0);
       }
       expect(target.isRagdollActive).toBe(true);
       expect(target.alive).toBe(true);
       expect(target.ragdollBones.PELVIS_GROIN.position.y).toBeLessThan(0.24);
-      // Propped semi-upright (~45 deg): head stays well off the concrete (> 0.42m), NOT flat like a dead sandbag!
-      expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeGreaterThan(0.42);
+      // Propped up: head stays well off the concrete, NOT flat like a dead sandbag (< 0.22 m below).
+      // The fall clip hands the body over with only a small settle instead of a throw onto its butt,
+      // and this headless test has no clip pose to start from, so it sits a little lower than it
+      // used to (0.38-0.40 m rather than > 0.42 m).
+      expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeGreaterThan(0.34);
 
       // Severing femoral artery / dropping HP low transitions triage to MORTALLY_WOUNDED while still alive
       target.bloodLossRateMlPerSec = 95;
