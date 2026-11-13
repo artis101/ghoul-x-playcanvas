@@ -84,8 +84,9 @@ export class CombatantDismemberment {
       glb.evisceratedGut.enabled = isEviscerated;
     }
 
+    // A burst head is gone entirely: no bare skull is left on the neck.
     if (glb.internalAnatomyEntities.skeletSkull) {
-      glb.internalAnatomyEntities.skeletSkull.enabled = isCranialPopped;
+      glb.internalAnatomyEntities.skeletSkull.enabled = false;
     }
   }
 

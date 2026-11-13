@@ -373,7 +373,7 @@ describe('Blender combatant runtime', () => {
       assertZeroLegacyFleshEnabled(mannequin, '4. Cranial Pop + KIA Full Ragdoll');
       expect(mannequin.combatantGlb!.animComponent!.playing).toBe(false);
       expect(mannequin.combatantGlb!.zoneEntities.get('HEAD_CRANIUM')!.enabled).toBe(false);
-      expect(mannequin.combatantGlb!.internalAnatomyEntities.skeletSkull!.enabled).toBe(true);
+      expect(mannequin.combatantGlb!.internalAnatomyEntities.skeletSkull!.enabled).toBe(false);
       expect(mannequin.combatantGlb!.pasgtHelmet!.enabled).toBe(false);
       expect(mannequin.combatantGlb!.tacticalVisor!.enabled).toBe(false);
       expect(fxManager.fxRoot.findByName('DetachedHeadgear_HEAVY_ENFORCER')).not.toBeNull();

@@ -58,8 +58,8 @@ export class CombatantBoneSync {
 
     const boneState = healthState.ragdollBones[zone];
 
-    // A burst head leaves its bare skull on the neck. The burst particles are no longer
-    // simulated, so the skull rides the neck instead of hanging where the head was hit.
+    // A burst head is hidden, but its bones still ride the neck so the stump cap and anything
+    // skinned to them stay on the body instead of hanging where the head was hit.
     if (healthState.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP' && (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW')) {
       const neckState = healthState.ragdollBones.NECK_CERVICAL;
       const neckRest = REST_RAGDOLL_FRAMES.get('NECK_CERVICAL');

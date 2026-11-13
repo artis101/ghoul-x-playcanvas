@@ -39,6 +39,8 @@ import type { TerminalVarianceSummary } from '../../../contracts/combatantConsti
 export interface SimulateShotOptions {
   readonly allowedPelletIndices?: ReadonlySet<number>;
   readonly pelletSpeedOverridesMs?: ReadonlyMap<number, number>;
+  /** Random source for gore rolls (head burst vs. head taken off); defaults to Math.random. */
+  readonly rng?: () => number;
 }
 
 function summarizeVariance(v: PelletVariance | null, ribGlance: boolean): TerminalVarianceSummary | null {
@@ -309,7 +311,8 @@ export function simulateShot(
   const dismRes = evaluateJointDismemberment(
     weapon, ammo, target, targetDistanceM, normAimDir,
     allWoundEvents, zoneEnergyDeposited, zoneImpulses,
-    severedZonesSet, newlySeveredZones, dismembermentEvents, combatantEffectsSet
+    severedZonesSet, newlySeveredZones, dismembermentEvents, combatantEffectsSet,
+    options?.rng
   );
   if (dismRes.weaponDisarmed) weaponDisarmed = true;
 

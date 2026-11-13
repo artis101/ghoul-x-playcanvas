@@ -438,7 +438,8 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
         shooterPos,
         aimDir,
         target,
-        DEFAULT_ENVIRONMENT
+        DEFAULT_ENVIRONMENT,
+        { rng: () => 0.99 }
       );
 
       expect(report.hitTarget).toBe(true);
@@ -454,6 +455,27 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       expect(target.ragdollBones.TORSO_UPPER_THORAX.componentId).toBe('BODY');
       expect(target.ragdollBones.THIGH_RIGHT.componentId).toBe('BODY');
       expect(target.ragdollBones.UPPER_ARM_RIGHT.componentId).toBe('BODY');
+    });
+
+    it('a rare head-bursting hit takes the head off at the neck instead of popping it', () => {
+      const target = createTargetHealthState('target_decap', 'Enemy Leader', vec3(0, 0, 1.6), Math.PI);
+      const shooterPos = vec3(0, 1.7, 0);
+      const aimDir = normalize(sub(vec3(0, 1.7, 1.6), shooterPos));
+
+      const report = simulateShot(
+        WEAPON_SILVER_TALON, AMMO_50AE_JHP, shooterPos, aimDir, target, DEFAULT_ENVIRONMENT,
+        { rng: () => 0 }
+      );
+
+      expect(report.isLethalKill).toBe(true);
+      expect(report.dismembermentEvents.some((d) => d.goreMode === 'CRANIAL_POP')).toBe(false);
+      const decap = report.dismembermentEvents.find((d) => d.zone === 'NECK_CERVICAL');
+      expect(decap?.goreMode).toBe('CLEAN_SEVER');
+      expect(decap?.detachedSubtree).toContain('HEAD_CRANIUM');
+
+      applyShotReportToTarget(target, report);
+      expect(target.zoneGoreMode.HEAD_CRANIUM).not.toBe('CRANIAL_POP');
+      expect(target.ragdollBones.HEAD_CRANIUM.componentId).not.toBe(target.ragdollBones.TORSO_UPPER_THORAX.componentId);
     });
 
     it('Close-range 12G blast to UPPER_ARM_RIGHT triggers CLEAN_SEVER detaching arm subtree as one connected limb', () => {

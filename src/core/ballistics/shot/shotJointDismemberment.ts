@@ -47,6 +47,9 @@ const JOINT_SEVER_SPECS: Array<{
   { severZone: 'NECK_CERVICAL', jointPivotZone: 'NECK_CERVICAL', radiusM: 0.078, label: 'Cervical Neck Joint', relatedZones: ['NECK_CERVICAL'] },
 ];
 
+/** Share of head-bursting hits that take the whole head off at the neck instead. */
+export const HEAD_TAKEN_OFF_CHANCE = 0.12;
+
 function pointToSegmentDist(pt: Vec3Like, a: Vec3Like, b: Vec3Like): number {
   const ab = sub(b, a);
   const lenSq = lengthSq(ab);
@@ -67,7 +70,8 @@ export function evaluateJointDismemberment(
   severedZonesSet: Set<GhoulZoneId>,
   newlySeveredZones: GhoulZoneId[],
   dismembermentEvents: DismembermentEvent[],
-  combatantEffectsSet: Set<string>
+  combatantEffectsSet: Set<string>,
+  rng: () => number = Math.random
 ): { weaponDisarmed: boolean } {
   let weaponDisarmed = false;
 
@@ -133,12 +137,13 @@ export function evaluateJointDismemberment(
     return aHead - bHead;
   });
 
-  for (const zone of candidateZones) {
-    if (severedZonesSet.has(zone)) continue;
-    if (zone === 'NECK_CERVICAL' && (severedZonesSet.has('HEAD_CRANIUM') || severedZonesSet.has('HEAD_FACE_JAW'))) {
+  for (const hitZone of candidateZones) {
+    if (severedZonesSet.has(hitZone)) continue;
+    if (hitZone === 'NECK_CERVICAL' && (severedZonesSet.has('HEAD_CRANIUM') || severedZonesSet.has('HEAD_FACE_JAW'))) {
       continue;
     }
 
+    let zone = hitZone;
     const shotGoreEnergy = zoneEnergyDeposited[zone] || 0;
     const jointHit = jointHitBonusByZone[zone];
     const antiMaterielHit = antiMaterielZones.has(zone);
@@ -179,6 +184,11 @@ export function evaluateJointDismemberment(
     }
 
     if (effectiveShotGoreJ >= severThreshold && !severedZonesSet.has(zone)) {
+      // A head blow that would burst the head now and then tears it off at the neck instead.
+      if ((zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW') && !severedZonesSet.has('NECK_CERVICAL') &&
+          rng() < HEAD_TAKEN_OFF_CHANCE) {
+        zone = 'NECK_CERVICAL';
+      }
       const blastDir = normalize(normAimDir);
       const boneState = target.ragdollBones[zone];
       const stumpWorld = copyVec3(boneState.position);

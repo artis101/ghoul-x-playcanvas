@@ -50,11 +50,8 @@ export class CombatantVisualGoreSync {
     const isHeadPopped = healthState.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP';
 
     if (combatantGlb) {
-      // Internal anatomy stays hidden; only the skull shows once the cranium is popped.
+      // Internal anatomy, skull included, stays hidden: a burst head leaves only the neck stump.
       combatantGlb.setInternalAnatomyVisible(false);
-      if (combatantGlb.internalAnatomyEntities.skeletSkull) {
-        combatantGlb.internalAnatomyEntities.skeletSkull.enabled = isHeadPopped;
-      }
 
       for (const [zone, pairs] of glbZoneMaterialPairs) {
         const goreMode = healthState.zoneGoreMode[zone];
