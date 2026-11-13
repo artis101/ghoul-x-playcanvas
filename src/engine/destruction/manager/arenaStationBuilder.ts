@@ -1,5 +1,6 @@
 import * as pc from 'playcanvas';
 import type { Vec3Like } from '../../../contracts/ballistics.ts';
+import type { QuatLike } from '../../../contracts/destruction.ts';
 import type { ImportedVoronoiChunkMesh } from '../../../core/destruction/voronoiWallGenerator.ts';
 import type { GlbModelRegistry } from '../../assets/glbLoader.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
@@ -8,6 +9,7 @@ import type { BrickWallSystem } from '../brickWallSystem.ts';
 import type { ConcreteWallSystem } from '../concreteWallSystem.ts';
 import type { GlassSystem } from '../glassSystem.ts';
 import type { WoodWallSystem } from '../woodWallSystem.ts';
+import { buildArenaSetPieces } from './setPieceBuilder.ts';
 import {
   extractImportedVoronoiChunkMesh,
   type StaticCoverFixture,
@@ -149,13 +151,30 @@ export function buildBreachingArenaStations(
   });
 
   // 5. 36-Cell MultiDraw Voronoi Reinforced Concrete Barrier (base flush at y = 0)
-  const wallId = layout.voronoiConcreteWall.id;
-  const wallPos: Vec3Like = {
-    x: layout.voronoiConcreteWall.center.x,
-    y: 0,
-    z: layout.voronoiConcreteWall.center.z,
-  };
+  addConcreteStation(
+    ctx,
+    glbRegistry,
+    layout.voronoiConcreteWall.id,
+    { x: layout.voronoiConcreteWall.center.x, y: 0, z: layout.voronoiConcreteWall.center.z },
+    undefined,
+    layout.voronoiConcreteWall.widthM,
+    layout.voronoiConcreteWall.thicknessM
+  );
 
+  // 6. Extra set pieces: rooms, chicanes, glass booth and last-stand line.
+  buildArenaSetPieces(ctx, glbRegistry);
+}
+
+/** Adds one fractured concrete wall: the sculpted GLB chunks when loaded, else procedural Voronoi. */
+export function addConcreteStation(
+  ctx: ArenaBuildContext,
+  glbRegistry: GlbModelRegistry | null | undefined,
+  wallId: string,
+  position: Vec3Like,
+  rotation: QuatLike | undefined,
+  width: number,
+  depth: number
+): void {
   if (glbRegistry && glbRegistry.isLoaded('concrete_wall_fractured')) {
     try {
       const bundle = glbRegistry.getFracturedConcreteWallBundle();
@@ -165,16 +184,13 @@ export function buildBreachingArenaStations(
           bundle.connectivity.nodes[idx]?.name ?? `Chunk_${String(idx).padStart(2, '0')}`
         )
       );
-
       ctx.concreteWalls.addConcreteWall({
         wallId,
-        position: wallPos,
+        position,
+        rotation,
         importedChunks: {
           meshes: importedMeshes,
-          connectivity: {
-            ...bundle.connectivity,
-            wallId,
-          },
+          connectivity: { ...bundle.connectivity, wallId },
         },
       });
       return;
@@ -185,10 +201,11 @@ export function buildBreachingArenaStations(
 
   ctx.concreteWalls.addConcreteWall({
     wallId,
-    position: wallPos,
-    width: layout.voronoiConcreteWall.widthM,
+    position,
+    rotation,
+    width,
     height: 2.2,
-    depth: layout.voronoiConcreteWall.thicknessM,
+    depth,
     cellCount: 36,
     seed: 1337,
   });

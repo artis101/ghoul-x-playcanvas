@@ -1,4 +1,8 @@
 import * as pc from 'playcanvas';
+import { HALL_SHELL } from '../world/arenaLayout.ts';
+
+// Keep the player just inside the hall's tiled walls; everything else is solid collision.
+const WALL_MARGIN_M = 0.45;
 
 export class PlayerMovementSolver {
   public readonly playerPos = new pc.Vec3(0, 1.62, 0);
@@ -49,8 +53,12 @@ export class PlayerMovementSolver {
       this.resolveHorizontalMovement(this.scratchPrevPos, this.playerPos);
     }
 
-    this.playerPos.x = Math.max(-8.2, Math.min(8.2, this.playerPos.x));
-    this.playerPos.z = Math.max(-52.0, Math.min(6.0, this.playerPos.z));
+    const maxX = HALL_SHELL.halfWidthM - WALL_MARGIN_M;
+    this.playerPos.x = Math.max(-maxX, Math.min(maxX, this.playerPos.x));
+    this.playerPos.z = Math.max(
+      HALL_SHELL.backZ + WALL_MARGIN_M,
+      Math.min(HALL_SHELL.frontZ - WALL_MARGIN_M, this.playerPos.z)
+    );
 
     return { moving, strafeSign };
   }
