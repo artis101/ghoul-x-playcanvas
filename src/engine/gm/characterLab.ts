@@ -1,19 +1,32 @@
 import * as pc from 'playcanvas';
 import type { EnemyArchetypeId } from '../../contracts/ballistics.ts';
-import { createTargetHealthState } from '../../core/ghoul/anatomy.ts';
-import { isLoopingClip } from '../assets/combatantFactory.ts';
-import { GlbModelRegistry, WEAPON_ASSET_IDS, type WeaponAssetId } from '../assets/glbLoader.ts';
-import { getOrCreateMaterials } from '../materials.ts';
-import { CombatantCrawlOverlay } from '../mannequin/combatantCrawlOverlay.ts';
-import { CombatantDismemberment } from '../mannequin/combatantDismemberment.ts';
-import { setupCombatantGlbInstance } from '../mannequin/combatantGlbSetup.ts';
-import { CombatantWeaponMount } from '../mannequin/combatantWeaponMount.ts';
+import {
+  getArchetypeWeaponAssetId, GlbModelRegistry, WEAPON_ASSET_IDS, type WeaponAssetId,
+} from '../assets/glbLoader.ts';
 import { WoundPreview, type LostLimb } from './woundPreview.ts';
-import { characters, isWoundedClip, items, setClipOptions } from './characterLabOptions.ts';
+import { characters, items } from './characterLabOptions.ts';
 import { createCharacterLabView } from './characterLabView.ts';
+import {
+  canRaiseGun, isPistol, MOTION_LABELS, motionsFor, normalizeState, STANCE_LABELS, stancesFor, type BodyState,
+} from './labBodyStates.ts';
+import { LabStandingBody } from './labStandingBody.ts';
 import { createPreviewStage } from './previewStage.ts';
-import { PreviewTimeline } from './previewTimeline.ts';
 import { WoundSequenceController } from './woundSequenceController.ts';
+
+type LabView = ReturnType<typeof createCharacterLabView>;
+
+function stateButtons<T extends string>(
+  host: HTMLElement, values: readonly T[], labels: Record<T, string>, current: T,
+): void {
+  host.replaceChildren(...values.map((value) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = labels[value];
+    button.dataset.value = value;
+    button.setAttribute('aria-pressed', String(value === current));
+    return button;
+  }));
+}
 
 export async function openCharacterLab(): Promise<void> {
   const root = document.getElementById('app-root');
@@ -24,14 +37,13 @@ export async function openCharacterLab(): Promise<void> {
   const registry = new GlbModelRegistry(app);
   const listeners = new AbortController();
   const options = { signal: listeners.signal };
-  const mount = new CombatantWeaponMount();
-  const crawlOverlay = new CombatantCrawlOverlay();
   let cleanupStage: (() => void) | undefined;
+  let body: LabStandingBody | null = null;
 
   function cleanup(): void {
     listeners.abort();
     cleanupStage?.();
-    mount.destroy();
+    body?.destroy();
     registry.destroy();
     app.destroy();
   }
@@ -44,24 +56,48 @@ export async function openCharacterLab(): Promise<void> {
     await Promise.all(['ghoul_combatant' as const, ...WEAPON_ASSET_IDS].map((id) => registry.loadContainer(id)));
     let downed: WoundPreview | null = null;
     cleanupStage = createPreviewStage(app, view.canvas, undefined, () => downed?.focus ?? sequences.current?.focus ?? null);
-    const characterTimeline = new PreviewTimeline(view.characterTime, view.characterReadout);
-    const itemTimeline = new PreviewTimeline(view.itemTime, view.itemReadout);
-    const dismemberment = new CombatantDismemberment();
-    const materials = getOrCreateMaterials();
-    let health = newHealth('MILITIA_GUNNER');
-    let character = createCharacter();
+    let state: BodyState = { stance: 'READY', motion: 'STAND', aim: false };
+    let weapon: WeaponAssetId | null = null;
     let playing = true;
-    let speed = 1;
     const camera = app.root.findByName('Preview Camera');
-    const sequences = new WoundSequenceController(app, registry, view, () => view.model.value as EnemyArchetypeId, () => {
-      // A sequence brings its own combatant, so the clip preview and the wound preview step aside.
+    const archetype = () => view.model.value as EnemyArchetypeId;
+    const sequences = new WoundSequenceController(app, registry, view, archetype, () => {
+      // A sequence brings its own combatant, so the standing body and the wound preview step aside.
       downed?.destroy();
       downed = null;
       view.woundReadout.value = '';
-      character.rootEntity.enabled = false;
-      if (mount.heldWeaponNode) mount.heldWeaponNode.enabled = false;
+      if (body) body.enabled = false;
       setPlaying(true);
     }, listeners.signal);
+
+    /** Applies the picked weapon, handedness and state to the body, then redraws the buttons. */
+    function refresh(): void {
+      if (!body) return;
+      state = normalizeState(state, weapon, body.availableClips);
+      body.southpaw = view.southpaw.checked;
+      body.supportArmDead = view.supportDead.checked && isPistol(weapon);
+      body.setState(state);
+      body.setGear(view.headgear.checked, view.armor.checked);
+      view.supportRow.hidden = !isPistol(weapon);
+      stateButtons(view.stances, stancesFor(weapon), STANCE_LABELS, state.stance);
+      stateButtons(view.motions, motionsFor(state.stance, body.availableClips), MOTION_LABELS, state.motion);
+      view.aim.disabled = !canRaiseGun(weapon, state.stance);
+      view.aim.setAttribute('aria-pressed', String(state.aim));
+    }
+
+    function createBody(): void {
+      body?.destroy();
+      body = new LabStandingBody(app, registry, archetype());
+      body.setWeapon(weapon);
+      refresh();
+    }
+
+    function selectWeapon(next: WeaponAssetId | null): void {
+      if (weapon === null && next !== null && state.stance === 'UNARMED') state = { ...state, stance: 'READY' };
+      weapon = next;
+      body?.setWeapon(next);
+      refresh();
+    }
 
     function selectWounds(): void {
       sequences.stop();
@@ -73,67 +109,13 @@ export async function openCharacterLab(): Promise<void> {
       const lostLimbs = (['ARM_RIGHT', 'ARM_LEFT', 'LEG_RIGHT', 'LEG_LEFT'] as const)
         .filter((limb: LostLimb) => checked.has(limb));
       const wounded = checked.has('downed') || lostLimbs.length > 0;
-      character.rootEntity.enabled = !wounded;
-      if (mount.heldWeaponNode) mount.heldWeaponNode.enabled = !wounded;
+      if (body) body.enabled = !wounded;
       view.woundReadout.value = '';
-      if (!wounded) {
-        syncGrip();
-        return;
-      }
-      downed = new WoundPreview(app, registry, view.model.value as EnemyArchetypeId, {
+      if (!wounded) return;
+      downed = new WoundPreview(app, registry, archetype(), {
         downed: checked.has('downed'), lostLimbs, backupSidearm: checked.has('sidearm'), bleeding: checked.has('bleeding'),
       }, camera);
       setPlaying(true);
-    }
-
-    function newHealth(archetype: EnemyArchetypeId) {
-      return createTargetHealthState('gm-preview', characters[archetype], { x: 0, y: 0, z: 0 }, 0, archetype);
-    }
-
-    function createCharacter() {
-      const model = setupCombatantGlbInstance(registry, health, materials, new Map());
-      if (!model) throw new Error('Unable to instantiate the combatant');
-      app.root.addChild(model.rootEntity);
-      return model;
-    }
-
-    function syncGear(): void {
-      dismemberment.syncGearVisibility(character, health, view.headgear.checked);
-      if (character.esapiPlateCarrier && !view.armor.checked) character.esapiPlateCarrier.enabled = false;
-    }
-
-    function syncGrip(): void {
-      characterTimeline.resample();
-      crawlOverlay.sync(character, health, view.characterClip.value.startsWith('Crawl'), 0, 0);
-      mount.syncWeaponPosition(health, character, undefined, view.characterClip.value.startsWith('UnsuspectingIdle'));
-    }
-
-    function selectCharacterClip(): void {
-      const clip = view.characterClip.value;
-      health.isLeftHanded = clip.endsWith('_Southpaw');
-      health.posture = isWoundedClip(clip) ? 'STAGGERED' : 'COMBAT_READY';
-      characterTimeline.select(character.animComponent, clip);
-      if (/^(Kneel)?PistolAim/.test(clip) && view.item.value !== 'silver_talon_50ae') {
-        view.item.value = 'silver_talon_50ae';
-        selectItem();
-        return;
-      }
-      if (clip.startsWith('LongGunAim') && !/^(m4a1_carbine|m590_shotgun|msg90_sniper)$/.test(view.item.value)) {
-        view.item.value = 'm4a1_carbine';
-        selectItem();
-        return;
-      }
-      syncGrip();
-    }
-
-    function selectItem(): void {
-      itemTimeline.select(null, '');
-      mount.destroy();
-      if (view.item.value) mount.attachGlbWeaponIfReady(registry, health, app.root, view.item.value as WeaponAssetId);
-      const weapon = mount.heldWeaponGlb;
-      setClipOptions(view.itemClip, weapon?.availableClips ?? [], weapon ? 'No clips' : 'Unarmed');
-      itemTimeline.select(weapon?.animComponent ?? null, view.itemClip.value);
-      syncGrip();
     }
 
     function setPlaying(value: boolean): void {
@@ -142,82 +124,66 @@ export async function openCharacterLab(): Promise<void> {
     }
 
     view.model.replaceChildren(...Object.entries(characters).map(([id, label]) => new Option(label, id)));
-    view.item.replaceChildren(new Option('Unarmed', ''), ...WEAPON_ASSET_IDS.map((id) => new Option(items[id], id)));
-    view.item.value = 'm4a1_carbine';
-    setClipOptions(view.characterClip, character.availableClips, 'No clips');
-    selectCharacterClip();
-    selectItem();
-    syncGear();
+    view.item.replaceChildren(new Option('None (unarmed)', ''), ...WEAPON_ASSET_IDS.map((id) => new Option(items[id], id)));
+    weapon = getArchetypeWeaponAssetId(archetype());
+    view.item.value = weapon;
+    createBody();
 
     view.model.addEventListener('change', () => {
-      characterTimeline.select(null, '');
-      character.destroy();
-      health = newHealth(view.model.value as EnemyArchetypeId);
-      character = createCharacter();
-      setClipOptions(view.characterClip, character.availableClips, 'No clips');
-      selectCharacterClip();
-      syncGear();
+      sequences.stop();
+      // Each character starts with the gun the game gives it.
+      weapon = getArchetypeWeaponAssetId(archetype());
+      view.item.value = weapon;
+      createBody();
       selectWounds();
     }, options);
+    view.item.addEventListener('change', () => selectWeapon((view.item.value || null) as WeaponAssetId | null), options);
+    for (const input of [view.southpaw, view.supportDead, view.headgear, view.armor]) {
+      input.addEventListener('change', refresh, options);
+    }
+    view.stances.addEventListener('click', (event) => {
+      const value = (event.target as HTMLElement).closest('button')?.dataset.value;
+      if (value) state = { ...state, stance: value as BodyState['stance'] };
+      refresh();
+    }, options);
+    view.motions.addEventListener('click', (event) => {
+      const value = (event.target as HTMLElement).closest('button')?.dataset.value;
+      if (value) state = { ...state, motion: value as BodyState['motion'] };
+      refresh();
+    }, options);
+    view.aim.addEventListener('click', () => {
+      state = { ...state, aim: !state.aim };
+      refresh();
+    }, options);
     view.wounds.addEventListener('change', selectWounds, options);
-    view.headgear.addEventListener('change', syncGear, options);
-    view.armor.addEventListener('change', syncGear, options);
-    view.characterClip.addEventListener('change', selectCharacterClip, options);
-    view.item.addEventListener('change', selectItem, options);
-    view.itemClip.addEventListener('change', () => {
-      itemTimeline.select(mount.heldWeaponGlb?.animComponent ?? null, view.itemClip.value);
-      syncGrip();
-    }, options);
-    view.speed.addEventListener('change', () => { speed = Number(view.speed.value); }, options);
-
-    function bindScrubber(input: HTMLInputElement, timeline: PreviewTimeline): void {
-      input.addEventListener('input', () => {
-        setPlaying(false);
-        timeline.seek(input.valueAsNumber);
-        syncGrip();
-      }, options);
-    }
-
-    function rewind(): void {
-      characterTimeline.seek(0);
-      itemTimeline.seek(0);
-      syncGrip();
-    }
-
-    bindScrubber(view.characterTime, characterTimeline);
-    bindScrubber(view.itemTime, itemTimeline);
-    view.play.addEventListener('click', () => {
-      if (!playing && !characterTimeline.canAdvance && !itemTimeline.canAdvance) rewind();
-      setPlaying(!playing);
-    }, options);
+    view.speed.addEventListener('change', () => { app.timeScale = Number(view.speed.value); }, options);
+    view.play.addEventListener('click', () => setPlaying(!playing), options);
     view.restart.addEventListener('click', () => {
       if (downed) selectWounds();
       else if (sequences.current) sequences.replay();
-      else rewind();
+      else createBody();
     }, options);
+
     app.on('update', (dt: number) => {
-      if (!playing) return;
-      const elapsed = dt * speed;
       if (sequences.current) {
-        sequences.update(elapsed);
+        if (playing) sequences.update(dt);
         return;
       }
       if (downed) {
+        if (!playing) return;
         downed.consciousness = view.consciousness.valueAsNumber;
-        downed.update(elapsed);
+        downed.update(dt);
         view.woundReadout.value = downed.statusLine;
         return;
       }
-      const loop = view.loop.checked;
-      // One-shot clips hold their last frame, as they do in the game.
-      const characterAdvanced = characterTimeline.advance(elapsed, loop && isLoopingClip(view.characterClip.value));
-      const itemAdvanced = itemTimeline.advance(elapsed, loop);
-      if (characterAdvanced || itemAdvanced) syncGrip();
-      if (!characterTimeline.canAdvance && !itemTimeline.canAdvance) setPlaying(false);
+      body?.update(dt, !playing);
+      updateReadout(view, body);
     });
 
     // Console handles for inspecting the wounded combatant's live health state.
-    Object.assign(window, { gmLab: { get wound() { return downed; }, get sequence() { return sequences.current; } } });
+    Object.assign(window, {
+      gmLab: { get wound() { return downed; }, get sequence() { return sequences.current; }, get body() { return body; } },
+    });
     app.start();
     view.status.hidden = true;
     view.controls.disabled = false;
@@ -226,4 +192,9 @@ export async function openCharacterLab(): Promise<void> {
     view.status.textContent = 'Could not load the preview. Reload the page to try again.';
     console.error('Character Lab preview failed:', error);
   }
+}
+
+function updateReadout(view: LabView, body: LabStandingBody | null): void {
+  const text = body ? `Plays: ${body.activeClip}` : '';
+  if (view.clipReadout.value !== text) view.clipReadout.value = text;
 }

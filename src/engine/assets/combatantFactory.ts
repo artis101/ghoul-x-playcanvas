@@ -3,6 +3,7 @@ import type { GhoulZoneId } from '../../contracts/ballistics.ts';
 import { ALL_GHOUL_ZONES } from '../../core/ghoul/anatomy.ts';
 import type { BoneBindPose, CombatantAnimationClipName, CombatantGlbInstance } from './glbTypes.ts';
 import { findEntityByName, upgradeEntityHierarchyPbr } from './materialUpgrade.ts';
+import { combatantTracks } from './combatantClipMirror.ts';
 import { addUpperBodyLayer } from '../mannequin/combatantUpperBodyLayer.ts';
 
 export { instantiateDetachedHeadgearProp } from './headgearFactory.ts';
@@ -136,14 +137,11 @@ export function instantiateCombatantGlb(
 
   if (container.animations && container.animations.length > 0 && app.systems?.anim) {
     animComponent = rootEntity.addComponent('anim', { activate: true }) as pc.AnimComponent;
-    const tracks = new Map<string, pc.AnimTrack>();
-    for (const animAsset of container.animations) {
-      const track = animAsset.resource as pc.AnimTrack | undefined;
-      if (!track) continue;
-      const clipName = track.name || animAsset.name;
+    // The GLB ships one side of each handed or sided clip; the mirrored ones are made at load.
+    const tracks = combatantTracks(container);
+    for (const [clipName, track] of tracks) {
       animComponent.assignAnimation(clipName, track, undefined, 1.0, isLoopingClip(clipName));
       availableClips.add(clipName);
-      tracks.set(clipName, track);
     }
     const baseClip = options?.initialClip ?? 'CombatReadyIdle';
     const resolved = options?.southpaw && availableClips.has(`${baseClip}_Southpaw`) ? `${baseClip}_Southpaw` : baseClip;

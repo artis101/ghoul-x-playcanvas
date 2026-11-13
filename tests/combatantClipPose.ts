@@ -1,6 +1,7 @@
 import * as pc from 'playcanvas';
 import type { GhoulZoneId } from '../src/contracts/ballistics.ts';
 import type { CombatantGlbInstance } from '../src/engine/assets/glbTypes.ts';
+import { mirrorSources, mirrorTrack } from '../src/engine/assets/combatantClipMirror.ts';
 import { readAndParseGlb } from './blenderGlbFixtures.ts';
 
 const { gltf, binChunk } = readAndParseGlb('ghoul_combatant.glb');
@@ -22,9 +23,12 @@ function readFloats(accessorIndex: number, size: number): number[] {
 
 /**
  * Poses a bare bone hierarchy from the shipped combatant GLB with one of its clips, the way
- * PlayCanvas would, so engine code can be run against real authored frames without WebGL.
+ * PlayCanvas would, so engine code can be run against real authored frames without WebGL. A clip
+ * the game mirrors at load (`_Southpaw`, the mirrored Left wound clips) is mirrored here too.
  */
 export function createClipPose(clip: string) {
+  const mirrorOf = gltf.animations!.some((entry) => entry.name === clip) ? null : mirrorSources().get(clip) ?? null;
+  const source = mirrorOf ?? clip;
   const nodes = gltf.nodes!.map((source) => {
     const node = new pc.GraphNode(source.name);
     if (source.translation) node.setLocalPosition(...source.translation);
@@ -40,7 +44,7 @@ export function createClipPose(clip: string) {
     if (!node.parent) root.addChild(node);
   }
 
-  const animation = gltf.animations!.find((entry) => entry.name === clip)!;
+  const animation = gltf.animations!.find((entry) => entry.name === source)!;
   const inputs: pc.AnimData[] = [];
   const outputs: pc.AnimData[] = [];
   const curves: pc.AnimCurve[] = [];
@@ -59,7 +63,8 @@ export function createClipPose(clip: string) {
     curves.push(new pc.AnimCurve([{ entityPath: path, component: 'graph', propertyPath: [property] }], index, index, pc.INTERPOLATION_LINEAR));
   }
   const frames = Array.from(times).sort((a, b) => a - b);
-  const track = new pc.AnimTrack(clip, frames[frames.length - 1], inputs, outputs, curves);
+  const baked = new pc.AnimTrack(source, frames[frames.length - 1], inputs, outputs, curves);
+  const track = mirrorOf ? mirrorTrack(baked, clip) : baked;
   const evaluator = new pc.AnimEvaluator(new pc.DefaultAnimBinder(root));
   const idle = new pc.AnimClip(track, 0, 1, false, false);
   evaluator.addClip(idle);

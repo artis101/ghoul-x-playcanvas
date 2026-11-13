@@ -22,7 +22,7 @@ import {
   type WeaponGlbInstance,
 } from '../assets/glbLoader.ts';
 import { getPreferredPrimaryHand, isArmChainIntactAndFunctional } from '../ai/combatantArmEvaluation.ts';
-import { armsClipName, CombatantWeaponHands, isLooseSupportClip } from './combatantWeaponHands.ts';
+import { armsClipName, CombatantWeaponHands } from './combatantWeaponHands.ts';
 import { CombatantPistolHold } from './combatantPistolHold.ts';
 import { gunKindOf, isOneHandPistolClip } from './combatantWeaponPoseMap.ts';
 import { RELOAD_ANIM_SPEED, reloadDurationS } from '../../core/ballistics/weapons/weaponHandling.ts';
@@ -36,7 +36,7 @@ export function playWeaponReloadClip(glb: WeaponGlbInstance | null | undefined):
   if (glb.rootEntity.enabled) glb.playReload(RELOAD_ANIM_SPEED);
   return reloadDurationS(glb.getClipDuration(glb.reloadClipName));
 }
-import { CombatantWeaponGrip, M4A1_PALM_OFFSET_X } from './combatantWeaponGrip.ts';
+import { CombatantWeaponGrip, GRIPPED_LONG_GUN_CLIPS, M4A1_PALM_OFFSET_X } from './combatantWeaponGrip.ts';
 import { isWoundClip } from './combatantWoundClips.ts';
 import { applyAimDelta, barrelForward, combatantAimTarget, isPlayingAimClip } from './combatantAimDelta.ts';
 import { animatedBarrelDirection } from './combatantGunHeading.ts';
@@ -203,10 +203,7 @@ export class CombatantWeaponMount {
         const forearm = elbow ? normalize(vec3(pT.x - elbow.x, pT.y - elbow.y, pT.z - elbow.z)) : uT;
         gunFwd = animatedBarrelDirection(glb ?? null, forearm, charFwd);
 
-        // In the loose-support clips the authored support palm is nowhere near the forend, so it
-        // says nothing about where the barrel points; the hand is brought to the gun instead.
-        const supportGuidesBarrel = glb !== null && !isLooseSupportClip(glb, weaponId);
-        if (canUseSupport && supportGuidesBarrel && !isPistol && glbSuppNode) {
+        if (canUseSupport && !isPistol && glbSuppNode) {
           const pS = glbSuppNode.getPosition();
           const uS = glbSuppNode.up;
           const palmSupp = vec3(pS.x + uS.x * 0.05, pS.y + uS.y * 0.05, pS.z + uS.z * 0.05);
@@ -226,9 +223,15 @@ export class CombatantWeaponMount {
       const triggerOffset = weaponId === 'm4a1_carbine' && canUseSupport
         ? (triggerHand === 'RIGHT' ? M4A1_PALM_OFFSET_X : -M4A1_PALM_OFFSET_X)
         : 0;
+      // A clip the Blender grip pass baked with the hands on a long gun holds it rigidly in the
+      // trigger fist (combatantWeaponGrip.ts GRIPPED_LONG_GUN_CLIPS).
+      const gripped = glb !== null && glbTrigNode !== undefined && !isPistol && !woundClipPlaying &&
+        GRIPPED_LONG_GUN_CLIPS.has(armsClipName(glb) ?? '');
       if (isPistol && glb && glbTrigNode && CombatantPistolHold.ownsGun(glb)) {
         // A Desert Eagle in a pistol clip sits rigidly in the fist, like the backup pistol.
         this.pistol.seat(this.heldWeaponNode, glb, glbTrigNode, triggerHand, supportArmIntact, dt);
+      } else if (gripped && glbTrigNode) {
+        this.grip.seatInFist(this.heldWeaponNode, this.heldWeaponNode, weaponId, glbTrigNode, triggerHand);
       } else {
         this.grip.align(this.heldWeaponNode, this.heldWeaponNode, weaponId, palmTrig, gunFwd, triggerOffset);
       }
@@ -236,7 +239,7 @@ export class CombatantWeaponMount {
         const aiming = steady && sidearmHand === null && aimClip;
         this.aimTowardTarget(glb, healthState, glbTrigNode, triggerHand, aiming, dt);
       }
-      if (glb) this.hands?.sync(glb, triggerHand, canUseSupport, dt, supportArmIntact);
+      if (glb) this.hands?.sync(glb, triggerHand, canUseSupport, dt, supportArmIntact, gripped);
     }
   }
 

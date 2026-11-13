@@ -21,17 +21,25 @@ export function createCharacterLabView(root: HTMLElement) {
             <div class="gm-control-group">
               <h2>Character</h2>
               <label>Model <select id="gm-model"></select></label>
-              <label>Animation <select id="gm-character-clip"></select></label>
-              <div class="gm-timeline">
-                <label for="gm-character-time">Character time</label>
-                <output id="gm-character-readout" for="gm-character-time"></output>
-                <input id="gm-character-time" type="range" min="0" max="0" step="any">
-              </div>
+              <label>Weapon <select id="gm-item"></select></label>
+              <label class="gm-check"><input id="gm-southpaw" type="checkbox"> Left-handed</label>
+              <label class="gm-check" id="gm-support-row"><input id="gm-support-dead" type="checkbox"> Support arm disabled</label>
               <label class="gm-check"><input id="gm-headgear" type="checkbox" checked> Show headgear</label>
               <label class="gm-check"><input id="gm-armor" type="checkbox" checked> Show body armor</label>
             </div>
-            <div class="gm-control-group" id="gm-wounds">
-              <h2>Wounds</h2>
+            <div class="gm-control-group" id="gm-state-group">
+              <h2>Body state</h2>
+              <div class="gm-state-label">Stance</div>
+              <div class="gm-state-buttons" id="gm-stances"></div>
+              <div class="gm-state-label">Motion</div>
+              <div class="gm-state-buttons" id="gm-motions"></div>
+              <div class="gm-state-label">Weapon</div>
+              <div class="gm-state-buttons"><button id="gm-aim" type="button" aria-pressed="false">Aim</button></div>
+              <output id="gm-clip-readout"></output>
+            </div>
+            <details class="gm-control-group gm-details">
+              <summary>Wounds</summary>
+              <div class="gm-details-body" id="gm-wounds">
               <label class="gm-check"><input type="checkbox" data-wound="downed"> Downed</label>
               <label class="gm-check"><input type="checkbox" data-wound="ARM_LEFT"> Lost left arm</label>
               <label class="gm-check"><input type="checkbox" data-wound="ARM_RIGHT"> Lost right arm</label>
@@ -43,9 +51,11 @@ export function createCharacterLabView(root: HTMLElement) {
                 <input id="gm-consciousness" type="range" min="0.2" max="1" step="0.05" value="0.45">
               </label>
               <output id="gm-wound-readout"></output>
-            </div>
-            <div class="gm-control-group" id="gm-sequences">
-              <h2>Wound sequences</h2>
+              </div>
+            </details>
+            <details class="gm-control-group gm-details" id="gm-sequences">
+              <summary>Wound sequences</summary>
+              <div class="gm-details-body">
               <label class="gm-check"><input id="gm-sequence-sidearm" type="checkbox" checked> Backup sidearm</label>
               <label class="gm-check"><input id="gm-sequence-southpaw" type="checkbox"> Southpaw</label>
               <label>Fortitude
@@ -66,17 +76,8 @@ export function createCharacterLabView(root: HTMLElement) {
               <div class="gm-sequence-buttons" id="gm-sequence-buttons"></div>
               <button id="gm-sequence-replay" type="button" disabled>Replay</button>
               <output id="gm-sequence-readout"></output>
-            </div>
-            <div class="gm-control-group">
-              <h2>Held item</h2>
-              <label>Item <select id="gm-item"></select></label>
-              <label>Animation <select id="gm-item-clip"></select></label>
-              <div class="gm-timeline">
-                <label for="gm-item-time">Item time</label>
-                <output id="gm-item-readout" for="gm-item-time"></output>
-                <input id="gm-item-time" type="range" min="0" max="0" step="any">
               </div>
-            </div>
+            </details>
             <div class="gm-control-group">
               <h2>Playback</h2>
               <div class="gm-buttons">
@@ -91,7 +92,6 @@ export function createCharacterLabView(root: HTMLElement) {
                   <option value="2">2×</option>
                 </select>
               </label>
-              <label class="gm-check"><input id="gm-loop" type="checkbox" checked> Loop clips</label>
             </div>
           </fieldset>
         </aside>
@@ -119,18 +119,18 @@ export function createCharacterLabView(root: HTMLElement) {
     sequenceButtons: element<HTMLDivElement>('sequence-buttons'),
     sequenceReplay: element<HTMLButtonElement>('sequence-replay'),
     sequenceReadout: element<HTMLOutputElement>('sequence-readout'),
-    characterClip: element<HTMLSelectElement>('character-clip'),
-    characterTime: element<HTMLInputElement>('character-time'),
-    characterReadout: element<HTMLOutputElement>('character-readout'),
+    southpaw: element<HTMLInputElement>('southpaw'),
+    supportRow: element<HTMLLabelElement>('support-row'),
+    supportDead: element<HTMLInputElement>('support-dead'),
+    stances: element<HTMLDivElement>('stances'),
+    motions: element<HTMLDivElement>('motions'),
+    aim: element<HTMLButtonElement>('aim'),
+    clipReadout: element<HTMLOutputElement>('clip-readout'),
     headgear: element<HTMLInputElement>('headgear'),
     armor: element<HTMLInputElement>('armor'),
     item: element<HTMLSelectElement>('item'),
-    itemClip: element<HTMLSelectElement>('item-clip'),
-    itemTime: element<HTMLInputElement>('item-time'),
-    itemReadout: element<HTMLOutputElement>('item-readout'),
     play: element<HTMLButtonElement>('play'),
     restart: element<HTMLButtonElement>('restart'),
     speed: element<HTMLSelectElement>('speed'),
-    loop: element<HTMLInputElement>('loop'),
   };
 }

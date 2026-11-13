@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { createTargetHealthState } from '../src/core/ghoul/anatomy.ts';
 import type { GlbModelRegistry } from '../src/engine/assets/glbLoader.ts';
 import { CombatantWeaponMount } from '../src/engine/mannequin/combatantWeaponMount.ts';
-import { LOOSE_SUPPORT_FULL_M } from '../src/engine/mannequin/combatantWeaponHands.ts';
 import { createClipPose } from './combatantClipPose.ts';
 
 function palmOf(hand: pc.GraphNode, offset: number): pc.Vec3 {
@@ -21,30 +20,18 @@ function expectM4TriggerGrip(holder: pc.Entity, hand: pc.GraphNode, side: 'RIGHT
 }
 
 /**
- * CombatReadyIdle is a loose-support clip: Kimodo left the support palm 35-58 cm off the forend,
- * so the hand is brought onto the rail on every frame instead of hanging beside the gun. Where the
- * forend is beyond the arm's length the arm goes straight toward it and stops there.
+ * The grip pass bakes the support palm onto the M4's handguard in CombatReadyIdle, so it sits on
+ * the rail with no runtime pull at all, on every frame of the loop.
  */
-function expectSupportContact(
-  holder: pc.Entity, hand: pc.GraphNode, side: 'RIGHT' | 'LEFT', authored: pc.Vec3, time: number,
-): void {
+function expectSupportContact(holder: pc.Entity, hand: pc.GraphNode, side: 'RIGHT' | 'LEFT', authored: pc.Vec3, time: number): void {
   const inverse = new pc.Mat4().invert(holder.getWorldTransform());
   const x = side === 'RIGHT' ? 0.027 : -0.027;
   const railGap = (point: pc.Vec3) => {
     const local = inverse.transformPoint(point);
     return local.distance(new pc.Vec3(x, -0.054, Math.min(-0.21, Math.max(-0.35, local.z))));
   };
-  const before = railGap(authored);
-  const after = railGap(palmOf(hand, 0.05));
-  expect(before, `${side} authored gap, t=${time}`).toBeLessThan(LOOSE_SUPPORT_FULL_M);
-  expect(after, `${side} moved toward the rail, t=${time}`).toBeLessThan(before);
-  if (after > 0.01) {
-    const forearm = hand.parent!;
-    const upper = forearm.parent!;
-    const length = upper.getPosition().distance(forearm.getPosition()) + forearm.getPosition().distance(hand.getPosition());
-    expect(upper.getPosition().distance(hand.getPosition()), `${side} arm at full reach, t=${time}`)
-      .toBeGreaterThan(length - 0.005);
-  }
+  expect(railGap(authored), `${side} baked palm on the rail, t=${time}`).toBeLessThan(0.03);
+  expect(railGap(palmOf(hand, 0.05)), `${side} palm on the rail, t=${time}`).toBeLessThan(0.01);
 }
 
 describe('Combat Ready Idle held prop', () => {

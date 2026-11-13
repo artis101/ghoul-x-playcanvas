@@ -1,12 +1,12 @@
 # GHOUL-X combatant animation
 
-Character Lab at `/gm/characters` uses the same combatant GLB as gameplay. Select an animation, equip a prop, pause, and scrub Character time to check the pose and grip. The GLB contains 60 Kimodo-derived clips: 22 handed actions with a right- and left-handed (`_Southpaw`) version of each, and 16 wound clips named for the side of the body they hurt (the Left clip is the Right take mirrored). How the wound clips chain together in game is in [docs/wound-movement.md](../../docs/wound-movement.md). PlayCanvas supplies the character's world movement, prop attachment, support-hand IK, and ragdoll transitions.
+Character Lab at `/gm/characters` uses the same combatant GLB as gameplay. Select an animation, equip a prop, pause, and scrub Character time to check the pose and grip. The GLB holds 48 Kimodo-derived clips, one side of each: the right-handed version of every handed action, and the Right version of each wound clip named for the side of the body it hurts (plus the hit flinches, which have a take per side). The game makes the rest when the GLB loads (`src/engine/assets/combatantClipMirror.ts`): every `_Southpaw` twin, and every Left wound clip that is the Right take mirrored. The skeleton's rest pose is symmetric across X = 0, so a clip mirrors bone by bone (swap LEFT and RIGHT, negate x in positions and y and z in rotations), exactly. How the wound clips chain together in game is in [docs/wound-movement.md](../../docs/wound-movement.md). PlayCanvas supplies the character's world movement, prop attachment, support-hand IK, and ragdoll transitions.
 
 Select **Long Gun Aim** or **Pistol Aim** to see the raise and held pose. With that character pose paused, select the held item's fire animation and scrub **Item time**. The held item's animated grip bones drive the NPC's hands through the cycle. The first-person hands use the weapon's animated root and, on the shotgun, the pump bone.
 
 ## Motion sources
 
-`motion/` contains the source SOMA BVH takes. The bake retargets the full skeleton and mirrors the motion for handedness. Backward walk uses the walk cycle in reverse.
+`motion/` contains the source SOMA BVH takes. The bake retargets the full skeleton; a Left wound clip and `StrafeRight` are a Right take mirrored at retarget time. Backward walk uses the walk cycle in reverse.
 
 The [Kimodo demo](http://chonkster.local:7860) and CLI run on chonkster. In a Bash shell, `cd ~/ai/kimodo` and `source env.sh`. Use `Kimodo-SOMA-RP-v1.2`, `--bvh` and `--bvh_standard_tpose` for new takes.
 
@@ -77,6 +77,32 @@ blender -b "$work/combatant.blend" --python-exit-code 1 \
 
 Copy the edited GLB to `public/models/ghoul_combatant.glb`, reload Character Lab, and scrub the edited section. The exporter samples each frame inside the clip's range. Use `bake_kimodo_combatant.py` to change a clip's source take or timing.
 
+## Grip pass
+
+Kimodo's takes have empty hands, so the bake puts the hands on the gun itself (`combatant_grip_pass.py`, run by `bake_kimodo_combatant.py` after each retarget). Per frame it places the gun from the body and bends both arms onto it with two-bone IK:
+
+| Clips | Placement |
+| --- | --- |
+| CombatReadyIdle, UnsuspectingIdle, Walk, Run, Strafe*, LongGunAim | stock in the right shoulder pocket; barrel along the chest heading at low ready (30° down, guard 50°), LongGunAim raising it level and straight down the body's forward; support palm on the forend |
+| HurtIdle, HurtWalk | the same, one-handed and 45° down; the free hand stays on the wound |
+| PistolAim, end of PistolDraw | isosceles: the pistol in front of the breastbone, both hands on the grip, thumbs forward |
+| PistolAimOneHand, KneelPistolAimOneHand, StumpDraw, KneelStumpDraw | the gun arm out level, 35° to the gun side (the game turns the body back by that, `combatantAimFacing.ts`) |
+| SeatedPistolAim, SeatedPistolDraw | the gun arm out level, straight ahead along the seated facing |
+
+The hand-to-gun offsets live in `weapon_grips.json`, which the runtime glues the guns back with (`combatantWeaponGrip.ts`, `sidearmFistGrip.ts`; `tests/weaponGripContract.test.ts` keeps them equal). Long-gun clips are baked on the M4 with the support palm at the reach of the shotgun's pump, the farthest grip; this character's arms are short, so the pass blades the torso (one angle per clip, up to 30°, head kept on the target) until the hand reaches. In game the support IK then pulls the palm a few centimetres back onto each gun's own handguard, pump or forend (`tests/bakedGrips.test.ts`). The bake prints each clip's worst wrist bend, reach shortfall and blade.
+
+To iterate on the grip rules without a full retarget, rerun the pass over a baked GLB and render the result with the guns in hand:
+
+```sh
+blender -b --python-exit-code 1 --python scripts/blender/regrip_combatant_glb.py -- \
+  public/models/ghoul_combatant.glb "$work/gripped.glb"
+blender -b --python-exit-code 1 --python scripts/blender/render_grip_frames.py -- \
+  "$work/gripped.glb" public/models "$work/frames" --clips LongGunAim:m590_shotgun PistolAim:silver_talon_50ae
+python3 scripts/blender/grip_sheet.py "$work/frames" "$work/sheets"
+```
+
+Use `--height 0.55` for the kneeling and seated clips. The regrip tool reruns the pass on clips that are already gripped, so use it only to compare rules; ship a full bake.
+
 ## Body and skins
 
 `build_combatant_rigged.py` builds the whole combatant. `combatant_body.py` holds the torso, neck, arm and leg shapes and `combatant_body_loft.py` turns them into skinned zone meshes. Each chain (spine, arm, leg) is one continuous surface cut into `Zone_*` meshes at shared rings. A zone's vertices are weighted only to its own bone and its parent bone, so joints bend and the runtime can rebind a severed zone to its own bone (`combatantSeveredSkin.ts`).
@@ -105,6 +131,6 @@ blender -b --python-exit-code 1 --python scripts/blender/bake_kimodo_combatant.p
   scripts/blender/motion "$work/ghoul_combatant.glb" "$work/baked.glb"
 ```
 
-Copy `baked.glb` to `public/models/ghoul_combatant.glb` and `ghoul_combatant.blend` to `public/models/blend_sources/`. The baked GLB must stay under 2 MiB; with the current 60 clips it is about 1.95 MB. Each clip's keys share one buffer view and rotations are stored as normalized int16, which halves the animation data.
+Copy `baked.glb` to `public/models/ghoul_combatant.glb` and `ghoul_combatant.blend` to `public/models/blend_sources/`. The baked GLB must stay under 2 MiB; with the current 48 clips it is about 1.67 MB. Each clip's keys share one buffer view and rotations are stored as normalized int16, which halves the animation data.
 
 While working on the paint, add `GHOUL_SKIP_ANIMATION=1` to skip the placeholder animation bake and `GHOUL_SKIN_PREVIEW=<dir>` to also write each skin page as a PNG.

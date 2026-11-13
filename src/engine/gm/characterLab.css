@@ -200,3 +200,37 @@
   font: 500 11px 'JetBrains Mono', monospace;
   color: var(--gm-accent);
 }
+
+.gm-state-label {
+  color: var(--gm-muted);
+  font: 500 11px 'JetBrains Mono', monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.gm-state-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.gm-control-group .gm-state-buttons button { font-size: 12px; cursor: pointer; }
+
+.gm-state-buttons button[aria-pressed='true'] {
+  border-color: var(--gm-accent);
+  background: #26331f;
+  color: var(--gm-accent);
+}
+
+.gm-state-buttons button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+#gm-clip-readout {
+  display: block;
+  min-height: 2.8em;
+  font: 500 11px 'JetBrains Mono', monospace;
+  color: var(--gm-accent);
+}
+
+.gm-details summary { cursor: pointer; font-size: 16px; font-weight: 700; }
+
+.gm-details-body { display: grid; gap: 7px; margin-top: 7px; }

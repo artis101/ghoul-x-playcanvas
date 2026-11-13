@@ -5,21 +5,21 @@ import { UPPER_BODY_LAYER } from './combatantUpperBodyLayer.ts';
  * Turns the whole body so a bladed aim clip points its gun where the body is meant to face.
  *
  * The two-handed aims (LongGunAim, PistolAim) point the barrel straight down the body's forward,
- * but the one-handed takes are shot side-on: the standing one-hand aim puts the barrel about 39°
- * to the gun side, and the kneeling one about 93°. The AI turns `yawRad` to face its target, and
- * the aim delta only corrects ±15°, so without this the pistol points well wide and the fire gate
- * (the posed barrel must be on the player) never opens. Turning the root by the clip's own barrel
- * angle keeps the clip untouched and puts its gun on the target, the way a real shooter blades
+ * but the one-handed ones are shot bladed: the Blender grip pass (scripts/blender/
+ * combatant_grip_pass.py, `one_hand_blade_deg`) bakes the standing and kneeling one-hand aims
+ * with the arm out level, the barrel 35° to the gun side of the body's forward. The AI turns
+ * `yawRad` to face its target, and the aim delta only corrects ±15°, so without this the pistol
+ * points wide and the fire gate (the posed barrel must be on the player) never opens. Turning the
+ * root by the clip's own barrel angle puts its gun on the target, the way a real shooter blades
  * the body to bring a one-handed gun to bear.
  *
- * The angles were measured on the baked GLB at the clips' held frames, by forward kinematics of
- * the trigger hand with the one-handed fist grip (sidearmFistGrip.ts). Positive is toward the
- * body's +X (heading = atan2(x, z)); the `_Southpaw` twins are mirrored, so their sign flips.
- * tests/aimClipFacing.test.ts re-measures them from the GLB so a rebake cannot leave them stale.
+ * Positive is toward the body's +X, its left (heading = atan2(x, z)); a right-handed gun side is
+ * -X. The `_Southpaw` mirrors flip the sign. tests/aimClipFacing.test.ts re-measures the angles
+ * from the GLB so a rebake cannot leave them stale.
  */
 export const AIM_CLIP_BARREL_YAW_DEG: Readonly<Record<string, number>> = {
-  PistolAimOneHand: 39,
-  KneelPistolAimOneHand: 93,
+  PistolAimOneHand: -35,
+  KneelPistolAimOneHand: -35,
 };
 
 // About the clip cross-fade time, so the body turns as the arm comes up rather than snapping.

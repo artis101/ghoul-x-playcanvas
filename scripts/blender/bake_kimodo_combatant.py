@@ -10,9 +10,10 @@ import bpy
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from combatant_blender_scene import save_blend
 from combatant_glb_animation import CombatantGlbAnimation
+from combatant_grip_pass import GripPass
 from retarget_soma_combatant import CombatantRetarget, load_soma
 
-# 20 fps keeps 79 clips inside the 2 MiB GLB budget and suits the late-90s look.
+# 20 fps keeps the clips inside the 2 MiB GLB budget and suits the late-90s look.
 EXPORT_FPS = 20
 
 # clip, take, first frame, last frame, seconds, cross-fade frames, share of root travel kept.
@@ -186,25 +187,23 @@ def arm_lift(clip, t):
 
 
 def clip_variants(clip, take):
-    """(name, take, mirrored) for each baked version of a clip.
+    """(name, take, mirrored) for each baked version of a clip, or [] when the game makes it.
 
-    A clip normally gets a `_Southpaw` twin: the same take mirrored, for a left-handed character.
-    Wound clips named after the body side they hurt carry their own mirror rule in `SIDED`.
+    Only one side is baked. The `_Southpaw` twins and the Left clips that are a Right take
+    mirrored are made when the GLB loads (`combatantClipMirror.ts`), from the gripped Right clip.
+    StrafeRight is the strafe take mirrored, but it is a clip of its own, so it is baked.
     """
     if clip in SIDED:
-        source, mirrored, twin = SIDED[clip]
-        variants = [(clip, source, mirrored)]
-        if twin:
-            twin_take, twin_mirrored = twin
-            variants.append((clip + "_Southpaw", twin_take, twin_mirrored))
-        return variants
+        source, mirrored, _twin = SIDED[clip]
+        return [] if mirrored else [(clip, source, False)]
     if clip.startswith("Strafe"):
-        return [(clip + suffix, take, clip == "StrafeRight") for suffix in ("", "_Southpaw")]
-    return [(clip, take, False), (clip + "_Southpaw", take, True)]
+        return [(clip, take, clip == "StrafeRight")]
+    return [(clip, take, False)]
 
 
 def build_clips(glb, motion):
     sources = {}
+    grip = GripPass(glb)
     for clip, take, start, end, duration, loop, xz_scale in TAKES:
         count = round(duration * EXPORT_FPS)
         times = [index / EXPORT_FPS for index in range(count + 1)]
@@ -220,6 +219,8 @@ def build_clips(glb, motion):
                       for index in range(count + 1)]
             if loop:
                 blend_loop(frames, round(loop * EXPORT_FPS / 30))
+            # The hands go on the gun after the loop blend, so both ends get the same grip.
+            frames = grip.apply(name, frames)
             if clip in LOOPING:
                 check_seam(name, frames)
             glb.add_clip(name, times, frames)
@@ -227,6 +228,10 @@ def build_clips(glb, motion):
                 glb.add_clip(name.replace("Walk", "WalkBackward"), times, list(reversed(frames)))
     for source in sources.values():
         bpy.data.objects.remove(source, do_unlink=True)
+    for clip, stats in grip.report.items():
+        print(f"grip {clip:24s} wrist bend max {stats['wrist_deg']:5.1f} deg, "
+              f"trigger short {stats['trigger_cm']:4.1f} cm, support short {stats['support_cm']:4.1f} cm, "
+              f"blade {stats.get('blade_deg', 0):4.1f} deg")
 
 
 def main():

@@ -8,6 +8,7 @@ import {
   ALL_GLB_ASSET_KEYS, COMBATANT_ANIMATION_CLIPS, COMBATANT_SIDED_CLIPS, WEAPON_ASSET_IDS,
 } from '../src/engine/assets/glbLoader.ts';
 import { BLEND_SOURCES_DIR, readAndParseGlb, readVec4AccessorRow } from './blenderGlbFixtures.ts';
+import { mirrorSources } from '../src/engine/assets/combatantClipMirror.ts';
 import { DEATH_CLIP_SECONDS } from '../src/core/ballistics/lifecycle/deathAnimation.ts';
 
 describe('Blender combatant and weapon assets', () => {
@@ -42,7 +43,7 @@ describe('Blender combatant and weapon assets', () => {
     expect(armNodes.every((node) => node.skin === undefined)).toBe(true);
   });
 
-  it('ghoul_combatant.glb contains 37 low-poly submeshes, parent-only joint blending, and Kimodo clips for both hands', () => {
+  it('ghoul_combatant.glb contains 37 low-poly submeshes, parent-only joint blending, and one side of the Kimodo clips', () => {
     const { gltf, binChunk } = readAndParseGlb('ghoul_combatant.glb');
     const nodes = gltf.nodes ?? [];
     const meshes = gltf.meshes ?? [];
@@ -164,26 +165,18 @@ describe('Blender combatant and weapon assets', () => {
       expect(nodeNames.has(`Bone_${zone}`), `Missing joint Bone_${zone}`).toBe(true);
     }
 
-    // 4. Handed clips have both variants; sided wound clips are baked once, with no twin.
+    // 4. One side only: every handed clip right-handed, every sided clip that is not a mirror.
+    // The `_Southpaw` twins and the mirrored Left wound clips are made at load (combatantClipMirror.ts).
     const animNames = new Set(animations.map((a) => a.name ?? ''));
-    expect(animations.length).toBe(COMBATANT_ANIMATION_CLIPS.length * 2 + COMBATANT_SIDED_CLIPS.length);
-    for (const sidedClip of COMBATANT_SIDED_CLIPS) {
-      expect(animNames.has(sidedClip), `Missing sided wound clip ${sidedClip}`).toBe(true);
-      expect(animNames.has(`${sidedClip}_Southpaw`), `Sided clip ${sidedClip} must not have a twin`).toBe(false);
-    }
-    for (const expectedClip of COMBATANT_ANIMATION_CLIPS) {
-      expect(animNames.has(expectedClip), `Missing right-handed clip ${expectedClip}`).toBe(true);
-      const southpawClipName = `${expectedClip}_Southpaw`;
-      expect(animNames.has(southpawClipName), `Missing southpaw clip ${southpawClipName}`).toBe(true);
-
-      const rhClip = animations.find((a) => a.name === expectedClip)!;
-      const lhClip = animations.find((a) => a.name === southpawClipName)!;
-      expect(rhClip.channels.length).toBeGreaterThan(10);
-      expect(lhClip.channels.length).toBeGreaterThan(10);
+    const mirrored = mirrorSources();
+    const baked = [...COMBATANT_ANIMATION_CLIPS, ...COMBATANT_SIDED_CLIPS].filter((clip) => !mirrored.has(clip));
+    expect([...animNames].sort()).toEqual([...baked].sort());
+    for (const clip of baked) {
+      expect(animations.find((a) => a.name === clip)!.channels.length, clip).toBeGreaterThan(10);
     }
   });
 
-  it('bakes the death clips once, at the lengths the core times them by, and the one-handed pistol hold for both hands', () => {
+  it('bakes the death clips once, at the lengths the core times them by, and the one-handed pistol hold', () => {
     const { gltf } = readAndParseGlb('ghoul_combatant.glb');
     const animations = gltf.animations ?? [];
     const lengthOf = (name: string): number => {
@@ -202,10 +195,9 @@ describe('Blender combatant and weapon assets', () => {
       expect(animations.some((a) => a.name === `${clip}_Southpaw`), `${clip} has no twin`).toBe(false);
     }
     expect(lengthOf('PistolOneHandHold')).toBeCloseTo(0.85, 1);
-    expect(lengthOf('PistolOneHandHold_Southpaw')).toBeCloseTo(0.85, 1);
     expect(COMBATANT_SIDED_CLIPS).toEqual(expect.arrayContaining(Object.keys(DEATH_CLIP_SECONDS)));
     expect(COMBATANT_ANIMATION_CLIPS).toContain('PistolOneHandHold');
-    expect(animations.length).toBe(86);
+    expect(animations.length).toBe(48);
   });
 
   it('weapon GLBs contain expected armature bones, -Z viewmodel muzzle alignment, and Idle/Fire*/Reload* clips', () => {

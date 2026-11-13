@@ -82,14 +82,16 @@ describe('aim clip facing turn', () => {
   it('matches the barrel angle the baked one-handed clips hold', () => {
     for (const [clip, deg] of Object.entries(AIM_CLIP_BARREL_YAW_DEG)) {
       expect(Math.abs(barrelHeadingDeg(clip, 'RIGHT') - deg), clip).toBeLessThan(6);
-      expect(Math.abs(barrelHeadingDeg(`${clip}_Southpaw`, 'LEFT') + deg), `${clip}_Southpaw`).toBeLessThan(6);
     }
   });
 
   it('turns the root so the barrel lands on the facing, for both hands', () => {
     for (const clip of Object.keys(AIM_CLIP_BARREL_YAW_DEG)) {
-      for (const [state, hand] of [[clip, 'RIGHT'], [`${clip}_Southpaw`, 'LEFT']] as const) {
-        const world = barrelHeadingDeg(state, hand) + (aimClipFacingYawRad(state) * 180) / Math.PI;
+      // The `_Southpaw` twin is the clip mirrored at load (combatantClipMirror.ts): its barrel
+      // heading is the negative of the baked one.
+      const baked = barrelHeadingDeg(clip, 'RIGHT');
+      for (const [state, heading] of [[clip, baked], [`${clip}_Southpaw`, -baked]] as const) {
+        const world = heading + (aimClipFacingYawRad(state) * 180) / Math.PI;
         expect(Math.abs(world), state).toBeLessThan(6);
       }
     }
