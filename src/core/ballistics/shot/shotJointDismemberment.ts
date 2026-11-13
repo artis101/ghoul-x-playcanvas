@@ -23,6 +23,7 @@ import {
 } from '../vec3.ts';
 import { ALL_ANATOMICAL_COLLIDERS } from '../math/restBoneBases.ts';
 import { computeSeverCut, severCutWorldPoint } from '../../ghoul/severCut/severCutPlacement.ts';
+import { collectAntiMaterielSeverZones } from './antiMaterielSever.ts';
 
 const JOINT_SEVER_SPECS: Array<{
   severZone: GhoulZoneId;
@@ -70,14 +71,19 @@ export function evaluateJointDismemberment(
 ): { weaponDisarmed: boolean } {
   let weaponDisarmed = false;
 
-  // Real bullets punch holes; they rarely take limbs off. Only contact-range shotgun loads (and
-  // explosives, handled elsewhere) amputate, and only a rifle or .50 at very close range bursts a skull.
+  // Real bullets punch holes; they rarely take limbs off. Only contact-range shotgun loads, an
+  // anti-materiel sniper round (any range) and explosives (handled elsewhere) amputate.
+  const antiMaterielZones = collectAntiMaterielSeverZones(weapon, allWoundEvents);
+  for (const zone of antiMaterielZones) {
+    if (zoneEnergyDeposited[zone] === undefined) zoneEnergyDeposited[zone] = 0;
+  }
   const isHeavyOrSurgicalCapable =
-    ammo.diameterM >= 0.007 &&
+    antiMaterielZones.size > 0 ||
+    (ammo.diameterM >= 0.007 &&
     ((ammo.type === 'BUCKSHOT_00' && targetDistanceM <= 3.0) ||
       (ammo.id === '12G_FLECHETTE_SLUG' && targetDistanceM <= 3.0) ||
       (weapon.role === 'HEAVY_PISTOL' && ammo.diameterM >= 0.012 && targetDistanceM <= 2.0) ||
-      (weapon.role === 'SNIPER' && targetDistanceM <= 11.5));
+      (weapon.role === 'SNIPER' && targetDistanceM <= 11.5)));
   const canAmputate = weapon.role === 'SHOTGUN' && targetDistanceM <= 3.0;
 
   if (!isHeavyOrSurgicalCapable) {
@@ -135,8 +141,11 @@ export function evaluateJointDismemberment(
 
     const shotGoreEnergy = zoneEnergyDeposited[zone] || 0;
     const jointHit = jointHitBonusByZone[zone];
+    const antiMaterielHit = antiMaterielZones.has(zone);
 
-    if (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW') {
+    if (antiMaterielHit) {
+      // A direct anti-materiel hit always removes the zone; no energy threshold to clear.
+    } else if (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW') {
       const canPopSkull =
         (weapon.role === 'SHOTGUN' && targetDistanceM <= 3.0) ||
         (weapon.role === 'HEAVY_PISTOL' && ammo.diameterM >= 0.012 && targetDistanceM <= 2.0) ||
@@ -155,7 +164,9 @@ export function evaluateJointDismemberment(
     const severThreshold = refCol ? refCol.severThresholdJ : 9999;
 
     let effectiveShotGoreJ = shotGoreEnergy;
-    if (jointHit) {
+    if (antiMaterielHit) {
+      effectiveShotGoreJ = Number.POSITIVE_INFINITY;
+    } else if (jointHit) {
       let jointRelatedGoreJ = shotGoreEnergy;
       for (const we of allWoundEvents) {
         if (!we.armorStopped && distance(we.entryPointWorld, target.ragdollBones[zone].position) <= 0.12) {
@@ -198,12 +209,18 @@ export function evaluateJointDismemberment(
         combatantEffectsSet.add('GHOUL Cranial Pop — Catastrophic Head Obliteration');
       } else if (zone === 'NECK_CERVICAL') {
         gibCount = 8;
-        combatantEffectsSet.add('CERVICAL DECAPITATION — Head Severed Clean Off');
+        combatantEffectsSet.add(
+          antiMaterielHit
+            ? 'ANTI-MATERIEL DECAPITATION — .50 Round Tears The Head Off'
+            : 'CERVICAL DECAPITATION — Head Severed Clean Off'
+        );
         if (jointHit) {
           combatantEffectsSet.add(`JOINT SHATTERED — ${jointHit.label} Severed`);
         }
       } else if (jointHit) {
         combatantEffectsSet.add(`JOINT SHATTERED — ${jointHit.label} Severed`);
+      } else if (antiMaterielHit) {
+        combatantEffectsSet.add(`ANTI-MATERIEL HIT — ${GHOUL_ZONE_HIERARCHY[zone].label} Torn Off`);
       } else {
         combatantEffectsSet.add(`GHOUL Clean Sever — ${GHOUL_ZONE_HIERARCHY[zone].label} Amputated`);
       }

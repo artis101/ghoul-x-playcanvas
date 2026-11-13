@@ -630,7 +630,7 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeLessThan(0.22);
     });
 
-    it('keeps ordinary gunfire non-dismembering; a sniper neck shot kills through the spine without decapitating', () => {
+    it('keeps ordinary gunfire non-dismembering; a 7.62 neck shot kills through the spine without decapitating', () => {
       // 1) Ordinary combat: spray mid-bicep with 3x 5.56mm rounds + follow-up 8m .50 AE mid-bicep hit -> gory laceration, ZERO accidental amputation!
       const ordinaryTarget = createTargetHealthState('ord_target', 'Militia Regular', vec3(0, 0, -8), 0);
       const midArmAimPt = vec3(-0.29, 1.24, -8); // off-joint bicep shaft

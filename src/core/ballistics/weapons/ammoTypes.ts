@@ -176,3 +176,47 @@ export const AMMO_556_NATO_SOST_JHP: AmmoSpec = {
   ragdollImpulseMultiplier: 0.95,
   goreFactor: 1.25,
 };
+
+/**
+ * 12.7x99mm (.50 BMG) M33 660gr Ball (Stopping + Penetration):
+ * ~16.8 kJ at the muzzle, four times a 7.62 NATO round. Defeats ceramic rifle plates and helmets,
+ * yaws and tears through flesh, and takes off any limb it crosses.
+ */
+export const AMMO_50BMG_M33_BALL: AmmoSpec = {
+  id: '50BMG_M33_BALL',
+  name: '12.7x99mm .50 BMG M33 660gr Ball',
+  caliber: '.50 BMG BALL',
+  type: 'FMJ',
+  massKg: 0.0428,
+  diameterM: 0.01295,
+  muzzleVelocityMs: 887,
+  dragCoefficient: 0.19,
+  tissueExpansionFactor: 1.55,
+  armorPenetrationFactor: 2.45,
+  pelletCount: 1,
+  spreadRadians: 0.0,
+  ragdollImpulseMultiplier: 1.35,
+  goreFactor: 1.85,
+};
+
+/**
+ * 12.7x99mm (.50 BMG) M903 SLAP (Extreme Penetration):
+ * Tungsten sub-caliber penetrator in a discarding sabot at ~1,200 m/s. Goes through plates,
+ * helmets, bone and several combatants in a row, still with enough energy to sever limbs.
+ */
+export const AMMO_50BMG_M903_SLAP: AmmoSpec = {
+  id: '50BMG_M903_SLAP',
+  name: '12.7x99mm .50 BMG M903 SLAP Tungsten',
+  caliber: '.50 BMG SLAP',
+  type: 'AP',
+  massKg: 0.023,
+  diameterM: 0.0076,
+  muzzleVelocityMs: 1200,
+  dragCoefficient: 0.17,
+  tissueExpansionFactor: 1.08,
+  armorPenetrationFactor: 3.4,
+  pelletCount: 1,
+  spreadRadians: 0.0,
+  ragdollImpulseMultiplier: 1.2,
+  goreFactor: 1.45,
+};

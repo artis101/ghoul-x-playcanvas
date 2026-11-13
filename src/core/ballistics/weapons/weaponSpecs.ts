@@ -1,13 +1,13 @@
 import { EnvironmentState, WeaponSpec } from '../../../contracts/ballistics.ts';
 import {
   AMMO_12G_00_BUCK,
+  AMMO_50BMG_M33_BALL,
+  AMMO_50BMG_M903_SLAP,
   AMMO_12G_FLECHETTE_SLUG,
   AMMO_50AE_FMJ_SOLID,
   AMMO_50AE_JHP,
   AMMO_556_NATO_M855,
   AMMO_556_NATO_SOST_JHP,
-  AMMO_762_NATO_AP_TUNGSTEN,
-  AMMO_762_NATO_M118LR,
 } from './ammoTypes.ts';
 
 export const WEAPON_M590: WeaponSpec = {
@@ -42,15 +42,16 @@ export const WEAPON_SILVER_TALON: WeaponSpec = {
 
 export const WEAPON_MSG90: WeaponSpec = {
   id: 'msg90_sniper',
-  name: 'MSG90A1 7.62x51mm Precision Marksman Rifle',
-  codeName: 'MSG90A1 7.62',
+  name: 'MSG90-H .50 BMG Bolt-Action Heavy Rifle',
+  codeName: 'MSG90-H .50 BMG',
   role: 'SNIPER',
   description:
-    'Semi-automatic 7.62x51mm NATO marksman rifle. Pairs M118LR OTM tissue cavitation with M993 Tungsten-Carbide AP over-penetrators.',
-  defaultAmmo: AMMO_762_NATO_M118LR,
-  availableAmmo: [AMMO_762_NATO_M118LR, AMMO_762_NATO_AP_TUNGSTEN],
-  fireRateRpm: 120,
-  recoilKickDeg: 3.5,
+    'Bolt-action 12.7x99mm anti-materiel rifle. M33 Ball tears limbs off and kills through plates; M903 SLAP tungsten goes through armour and several bodies in a row. Slow to cycle, five rounds a magazine.',
+  defaultAmmo: AMMO_50BMG_M33_BALL,
+  availableAmmo: [AMMO_50BMG_M33_BALL, AMMO_50BMG_M903_SLAP],
+  // Bolt cycle: one round every two seconds.
+  fireRateRpm: 30,
+  recoilKickDeg: 9.0,
   scopeZoomLevels: [4.0, 8.0, 16.0],
   zeroDistanceM: 100,
 };

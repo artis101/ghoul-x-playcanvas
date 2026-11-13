@@ -25,7 +25,8 @@ function inferBallisticSpeedMs(weaponId?: string, explicitSpeedMs?: number, isSu
   if (id.includes('m9') || id.includes('sidearm') || id.includes('9mm')) {
     return isSupersonic === true ? 380 : 330;
   }
-  if (id.includes('msg90') || id.includes('sniper') || id.includes('762')) return 805;
+  if (id.includes('msg90') || id.includes('sniper') || id.includes('50bmg')) return 887;
+  if (id.includes('762')) return 805;
   if (id.includes('m4') || id.includes('carbine') || id.includes('556')) return 880;
   if (id.includes('talon') || id.includes('50ae')) return 445;
   if (id.includes('m590') || id.includes('shotgun')) return 405;
