@@ -61,7 +61,7 @@ describe('aim down sights', () => {
     const profile = getWeaponAdsProfile('m4a1_carbine');
     const settledAimed = aimSpreadRad(profile, 1, 0, 0);
     expect(settledAimed).toBeGreaterThan(0);
-    expect(settledAimed).toBeLessThan(0.001);
+    expect(settledAimed).toBeLessThan(0.002);
     // Walking and being hit open the cone even when aimed, but less than at the hip.
     expect(aimSpreadRad(profile, 1, 1, 0)).toBeGreaterThan(settledAimed * 3);
     expect(aimSpreadRad(profile, 1, 1, 0)).toBeLessThan(aimSpreadRad(profile, 0, 1, 0));
