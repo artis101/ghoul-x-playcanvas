@@ -1,6 +1,7 @@
 import * as pc from 'playcanvas';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { normalize, sub, vec3 } from '../src/core/ballistics/vec3.ts';
+import type { Vec3Like } from '../src/contracts/ballistics.ts';
 import {
   AMMO_12G_00_BUCK,
   AMMO_50AE_FMJ_SOLID,
@@ -101,6 +102,32 @@ function createHeadlessArena() {
   };
 }
 
+/**
+ * Fires a visual player shot and returns the surface impacts it made within `nearM` of the muzzle.
+ * A round that passes a breach still lands somewhere (the far arena wall); only an impact on the
+ * opened surface itself would be the bug these tests guard against.
+ */
+function fireAndCountNearImpacts(
+  mayhem: MayhemDirector,
+  origin: Vec3Like,
+  dir: Vec3Like,
+  nearM = 15
+): number {
+  const original = mayhem.spawnSurfaceImpactFx.bind(mayhem);
+  let near = 0;
+  mayhem.spawnSurfaceImpactFx = (point, normal, material, energy) => {
+    const d = Math.hypot(point.x - origin.x, point.y - origin.y, point.z - origin.z);
+    if (d <= nearM) near++;
+    original(point, normal, material, energy);
+  };
+  try {
+    mayhem.onPlayerWeaponFired(origin, dir, WEAPON_M4A1, AMMO_556_NATO_M855);
+  } finally {
+    mayhem.spawnSurfaceImpactFx = original;
+  }
+  return near;
+}
+
 describe('Destroyed Surfaces Let Bullets, Enemy Fire, and Visual Tracers Through Cleanly', () => {
   beforeAll(async () => {
     await initRapierPhysics();
@@ -127,9 +154,8 @@ describe('Destroyed Surfaces Let Bullets, Enemy Fire, and Visual Tracers Through
       const originWood = vec3(-2.3, 1.35, -3.0);
       const dirWood = normalize(sub(vec3(-2.3, 1.35, -8.35), originWood));
 
-      arena.mayhemDirector.onPlayerWeaponFired(originWood, dirWood, WEAPON_M4A1, AMMO_556_NATO_M855);
       // Zero mid-air impact sparks spawned on the open wood wall collider!
-      expect(arena.mayhemDirector.impactSparkPool.activeCount).toBe(0);
+      expect(fireAndCountNearImpacts(arena.mayhemDirector, originWood, dirWood)).toBe(0);
 
       const woodPass = arena.destructionManager.interceptRaySegment(
         originWood,
@@ -160,9 +186,8 @@ describe('Destroyed Surfaces Let Bullets, Enemy Fire, and Visual Tracers Through
       arena.combatDirector.fireWeapon(WEAPON_MSG90, AMMO_762_NATO_AP_TUNGSTEN, eastOrigin, straightBack);
 
       arena.mayhemDirector.impactSparkPool.clear();
-      arena.mayhemDirector.onPlayerWeaponFired(westOrigin, straightBack, WEAPON_M4A1, AMMO_556_NATO_M855);
-      arena.mayhemDirector.onPlayerWeaponFired(eastOrigin, straightBack, WEAPON_M4A1, AMMO_556_NATO_M855);
-      expect(arena.mayhemDirector.impactSparkPool.activeCount).toBe(0);
+      expect(fireAndCountNearImpacts(arena.mayhemDirector, westOrigin, straightBack)).toBe(0);
+      expect(fireAndCountNearImpacts(arena.mayhemDirector, eastOrigin, straightBack)).toBe(0);
 
       expect(arena.destructionManager.interceptEnemyShot(vec3(-5.5, 1.4, -7.8), vec3(0, 0, 1), 4.0).blocked).toBe(false);
       expect(arena.destructionManager.interceptEnemyShot(vec3(5.5, 1.4, -7.8), vec3(0, 0, 1), 4.0).blocked).toBe(false);
@@ -212,8 +237,7 @@ describe('Destroyed Surfaces Let Bullets, Enemy Fire, and Visual Tracers Through
 
       // Zero mid-air impact sparks when firing visual tracers through the punched brick hole!
       arena.mayhemDirector.impactSparkPool.clear();
-      arena.mayhemDirector.onPlayerWeaponFired(shotOrigin, shotDir, WEAPON_M4A1, AMMO_556_NATO_M855);
-      expect(arena.mayhemDirector.impactSparkPool.activeCount).toBe(0);
+      expect(fireAndCountNearImpacts(arena.mayhemDirector, shotOrigin, shotDir)).toBe(0);
 
       // Weak 500 J pistol round AND enemy shot immediately pass cleanly through the punched brick hole!
       const pistolFollowUp = arena.destructionManager.interceptRaySegment(

@@ -1013,9 +1013,12 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
       expect(sniperRightHandShots).toHaveLength(0);
       expect(regularShots).toHaveLength(0);
 
+      // A severed hand bleeds hard enough to read as mortally wounded, and mortally wounded veterans
+      // hole up to ambush (woundFallback.ts) until the player closes inside 7m. Push in to spring it.
+      const closingPlayer = { x: 0, y: 1.62, z: -3.5 };
       // Step another 2.2s -> hardened veterans complete draw, activate Beretta M9 in intact OTHER hand, and fire!
       for (let i = 0; i < 44; i++) {
-        ai.update(0.05, [stdGunner, hardenedVet, hardenedSniper], { x: 0, y: 1.62, z: 0 });
+        ai.update(0.05, [stdGunner, hardenedVet, hardenedSniper], closingPlayer);
       }
       expect(regularShots).toHaveLength(0);
       expect(stdGunner.posture).toBe('DISARMED');
@@ -1032,8 +1035,10 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
       expect(m9Shot.weaponId).toBe(BACKUP_SIDEARM_WEAPON_ID);
       expect(m9Shot.activeFiringHand).toBe('LEFT');
       expect(m9Shot.spreadMultiplier).toBeGreaterThanOrEqual(1.65);
-      // Up to 1.35x more if the veteran fired while juking (moving-fire penalty).
-      expect(m9Shot.spreadMultiplier).toBeLessThanOrEqual(1.98 * 1.35);
+      // Bounded by its own aim profile (off-hand sidearm plus the bleeding, shock and mortal-wound
+      // tremor from the severed hand), up to 1.35x more if it fired while juking.
+      const vetProfileSpread = ai.computeEnemyAimProfile(hardenedVet, vetAgent).spreadMultiplier;
+      expect(m9Shot.spreadMultiplier).toBeLessThanOrEqual(vetProfileSpread * 1.35);
       expect(OFFHAND_SIDEARM_SPREAD_MULTIPLIER).toBeGreaterThanOrEqual(1.65);
 
       const distToLeftHand = distance(m9Shot.muzzleOriginWorld, handAtShot.get(m9Shot)!);
@@ -1045,12 +1050,14 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
         distance(sniperShot.muzzleOriginWorld, handAtShot.get(sniperShot)!),
       ).toBeLessThan(0.55);
 
-      // Now sever the hardened veteran's REMAINING second hand (HAND_LEFT) -> drops backup M9 and is finally disabled!
+      // Now sever the hardened veteran's REMAINING second hand (HAND_LEFT) -> drops backup M9 and is finally out!
       const secondHandPt = hardenedVet.ragdollBones.HAND_LEFT.position;
       const secondOrigin = add(secondHandPt, vec3(0, 0, 0.9));
+      // Same 00 buck that took the first hands: a single .50 AE round through the hanging hand
+      // wounds it without parting the wrist.
       const secondRep = simulateShot(
-        WEAPON_SILVER_TALON,
-        AMMO_50AE_JHP,
+        WEAPON_M590,
+        AMMO_12G_00_BUCK,
         secondOrigin,
         normalize(sub(secondHandPt, secondOrigin)),
         hardenedVet,
@@ -1066,7 +1073,8 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
       }
       expect(vetAgent.sidearmActive).toBe(false);
       expect(vetAgent.sidearmDropped).toBe(true);
-      expect(hardenedVet.posture).toBe('DISARMED');
+      // Losing both arms is fatal (limbLossDeathRule.ts): the veteran goes down rather than standing disarmed.
+      expect(hardenedVet.alive).toBe(false);
       expect(ai.computeEnemyAimProfile(hardenedVet, vetAgent).canReturnFire).toBe(false);
       expect(veteranShots.length).toBe(shotsBeforeBothLost);
 
