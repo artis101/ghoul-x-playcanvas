@@ -9,7 +9,7 @@ import {
   DOWNED_ONE_HANDED_SPREAD_MULTIPLIER,
   MIN_CONSCIOUSNESS_TO_FIGHT,
   OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
-  SIDEARM_M9_TUNING,
+  BACKUP_SIDEARM_TUNING,
 } from './archetypeTuning.ts';
 import {
   isArmChainIntactAndFunctional,
@@ -84,9 +84,9 @@ export function computeEnemyAimProfile(
 
   if (armament.kind === 'SIDEARM_DRAWING') {
     return {
-      baseSpreadRad: SIDEARM_M9_TUNING.baseSpreadRad,
+      baseSpreadRad: BACKUP_SIDEARM_TUNING.baseSpreadRad,
       spreadMultiplier: OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
-      effectiveSpreadRad: SIDEARM_M9_TUNING.baseSpreadRad * OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
+      effectiveSpreadRad: BACKUP_SIDEARM_TUNING.baseSpreadRad * OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
       aimAccuracyMultiplier: 1.0 / OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
       canReturnFire: false,
       isOneHandedDownedFire: !target.rightLegFunctional || !target.leftLegFunctional,
@@ -118,7 +118,7 @@ export function computeEnemyAimProfile(
     target.isRagdollActive ||
     agent?.state === 'DOWNED_CRAWLING';
 
-  const baseSpreadRad = sidearmActive ? SIDEARM_M9_TUNING.baseSpreadRad : tuning.baseSpreadRad;
+  const baseSpreadRad = sidearmActive ? BACKUP_SIDEARM_TUNING.baseSpreadRad : tuning.baseSpreadRad;
   let spreadMultiplier = 1.0;
 
   if (legCrippled) spreadMultiplier *= DOWNED_ONE_HANDED_SPREAD_MULTIPLIER;

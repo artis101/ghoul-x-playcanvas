@@ -15,8 +15,6 @@ export const WEAPON_CAPACITIES: Readonly<Record<string, WeaponMagazineCapacity>>
   silver_talon_50ae: { magCap: 7, reserve: 35 },
   msg90_sniper: { magCap: 5, reserve: 25 },
   m4a1_carbine: { magCap: 30, reserve: 120 },
-  // The enemies' backup pistol; the player does not carry one.
-  weapon_beretta_m9: { magCap: 15, reserve: 30 },
 };
 
 export const DEFAULT_WEAPON_CAPACITY: WeaponMagazineCapacity = { magCap: 12, reserve: 48 };

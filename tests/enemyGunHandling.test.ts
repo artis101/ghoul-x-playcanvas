@@ -27,13 +27,13 @@ describe('enemy guns run by the player rules', () => {
 
   it('only the carbine is full-auto', () => {
     expect(resolveEnemyGunHandling('m4a1_carbine').fullAuto).toBe(true);
-    for (const id of ['silver_talon_50ae', 'm590_shotgun', 'msg90_sniper', 'weapon_beretta_m9']) {
+    for (const id of ['silver_talon_50ae', 'm590_shotgun', 'msg90_sniper']) {
       expect(resolveEnemyGunHandling(id).fullAuto).toBe(false);
     }
   });
 
   it('never fires faster than the action cycles', () => {
-    for (const id of ['silver_talon_50ae', 'm590_shotgun', 'msg90_sniper', 'weapon_beretta_m9', 'm4a1_carbine']) {
+    for (const id of ['silver_talon_50ae', 'm590_shotgun', 'msg90_sniper', 'm4a1_carbine']) {
       const h = resolveEnemyGunHandling(id);
       for (let seed = 0; seed < 50; seed++) {
         expect(nextVolleyShotDelayS(h, seed, 0.5)).toBeGreaterThanOrEqual(h.fireCycleS);

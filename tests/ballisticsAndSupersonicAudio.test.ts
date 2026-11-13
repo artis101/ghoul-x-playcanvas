@@ -312,12 +312,12 @@ describe('Ballistics, Magnetism, Hitstop & Supersonic Audio Upgrades', () => {
     expect(res!.muzzleDelayS).toBeGreaterThan(res!.crackDelayS + 0.01);
     expect(res!.muzzleDelayS).toBeCloseTo(Math.hypot(0.8, 25) / 343.0, 2);
 
-    // Subsonic M9 sidearm or wide miss (> 3.0m) does not fire supersonic crack
+    // A subsonic round or wide miss (> 3.0m) does not fire supersonic crack
     const subsonicRes = audio.playEnemyBallisticShot({
       muzzleOrigin: vec3(0.8, 1.62, -18),
       impactPoint: vec3(0.8, 1.62, 4),
       listenerPos: vec3(0, 1.62, 0),
-      weaponId: 'weapon_beretta_m9',
+      weaponId: 'silver_talon_50ae',
       isSupersonic: false,
     });
     expect(subsonicRes!.firedSupersonicCrack).toBe(false);

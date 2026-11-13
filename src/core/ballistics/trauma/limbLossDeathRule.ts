@@ -27,3 +27,22 @@ export function isLimbLossFatal(severed: ReadonlySet<GhoulZoneId>): boolean {
   const arms = lost.filter((limb) => limb.startsWith('ARM')).length;
   return arms !== 1;
 }
+
+const ARM_CHAIN_OF_HAND: Readonly<Record<'RIGHT' | 'LEFT', readonly GhoulZoneId[]>> = {
+  RIGHT: LIMB_CHAINS.ARM_RIGHT,
+  LEFT: LIMB_CHAINS.ARM_LEFT,
+};
+
+/**
+ * The handgun is the last gun a fighter has, and it is never shot out of the fist. Shooting off the
+ * arm that holds it is what ends the fight: it counts as a fatal limb loss, like losing two limbs.
+ */
+export function losesSidearmArm(
+  sidearmHand: 'RIGHT' | 'LEFT' | null | undefined,
+  newlySevered: Iterable<GhoulZoneId>
+): boolean {
+  if (!sidearmHand) return false;
+  const chain = ARM_CHAIN_OF_HAND[sidearmHand];
+  for (const zone of newlySevered) if (chain.includes(zone)) return true;
+  return false;
+}

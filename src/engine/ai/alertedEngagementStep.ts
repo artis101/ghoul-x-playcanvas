@@ -7,12 +7,12 @@ import { createAimDuckReflexState, stepAimDuckReflex } from '../../core/ai/aimDu
 import type { EnemyAimProfile, EnemyAiAgentRuntime } from './tacticalAiTypes.ts';
 import { ARCHETYPE_TUNING } from './archetypeTuning.ts';
 import { computeAlertedPeekTarget } from './tacticalCoverFinder.ts';
-import { moveHorizontalClamped } from './tacticalLocomotion.ts';
 import { driveEngagementFootwork, stepCloseQuartersBound } from './engagementFootwork.ts';
 import { stepWeaponBurstFire } from './tacticalBurstAndTracers.ts';
 import type { TacticalFsmContext } from './tacticalFsmContext.ts';
 import { stepWoundedBehaviour } from './woundFallback.ts';
 import { stepWeaponRecovery } from './weaponRecovery.ts';
+import { clearDisarmedFlight, stepDisarmedFlight } from './disarmedFlight.ts';
 import { isAgentReloading } from './enemyWeaponMagazine.ts';
 
 /** Peeking states a combatant abandons when the duck reflex fires. */
@@ -113,23 +113,17 @@ export function stepAlertedEngagingState(
   }
 
   const prevPeekSign = agent.peekSign;
-  if (substate === 'CLUTCHING_RETREAT' && stepWeaponRecovery(dt, hs, agent, ctx)) {
-    cancelActiveBurst(agent);
-    return;
-  }
+  // Disarmed: go and get the long gun back if it can, otherwise run and hide. Never stand idle.
   if (substate === 'CLUTCHING_RETREAT') {
-    agent.isPeekingOut = false;
     cancelActiveBurst(agent);
-    moveHorizontalClamped(
-      hs,
-      agent.coverAnchorWorld.x - agent.peekSign * 0.25,
-      agent.coverAnchorWorld.z - 0.35,
-      0.95 * dt,
-      ctx.rapierWorld
-    );
-    turnTowardPlayer(1.8);
+    if (stepWeaponRecovery(dt, hs, agent, ctx)) {
+      clearDisarmedFlight(agent);
+      return;
+    }
+    stepDisarmedFlight(dt, hs, agent, playerEyeWorldPos, ctx);
     return;
   }
+  clearDisarmedFlight(agent);
 
   if (substate === 'BERSERKER_CHARGE' || substate === 'FLANKING_RUSH') {
     agent.isPeekingOut = true;

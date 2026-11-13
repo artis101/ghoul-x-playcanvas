@@ -12,7 +12,9 @@ import {
 import { applyShotReportToTarget, simulateShot } from '../src/core/ballistics/solver.ts';
 import { computeCombatantTriageStatus, createTargetHealthState } from '../src/core/ghoul/anatomy.ts';
 import {
+  RED_BAND_HIT_DROP_CHANCE,
   STOPPING_POWER_DISARM,
+  STOPPING_POWER_DROP_CHANCE,
   canLoseWeaponToHit,
   isInRedHealthBand,
   isStoppingPowerHit,
@@ -55,11 +57,16 @@ describe('the red health band is the HUD red', () => {
     expect(canLoseWeaponToHit(t)).toBe(false);
   });
 
-  it('decides a hit disarm: nothing above red, certain with stopping power, otherwise on the roll', () => {
+  it('decides a hit disarm: nothing above red, and only a rare roll in it', () => {
     expect(resolveHitDisarm({ canLoseWeapon: false, stoppingPower: true, roll: 0 })).toBeNull();
-    expect(resolveHitDisarm({ canLoseWeapon: true, stoppingPower: true, roll: 0.99 })).toBe('STOPPING_POWER');
-    expect(resolveHitDisarm({ canLoseWeapon: true, stoppingPower: false, roll: 0.05 })).toBe('CHANCE');
-    expect(resolveHitDisarm({ canLoseWeapon: true, stoppingPower: false, roll: 0.5 })).toBeNull();
+    expect(resolveHitDisarm({ canLoseWeapon: true, stoppingPower: true, roll: 0.01 })).toBe('STOPPING_POWER');
+    expect(resolveHitDisarm({ canLoseWeapon: true, stoppingPower: true, roll: STOPPING_POWER_DROP_CHANCE })).toBeNull();
+    expect(resolveHitDisarm({ canLoseWeapon: true, stoppingPower: false, roll: 0.01 })).toBe('CHANCE');
+    expect(resolveHitDisarm({ canLoseWeapon: true, stoppingPower: false, roll: RED_BAND_HIT_DROP_CHANCE })).toBeNull();
+    expect(STOPPING_POWER_DROP_CHANCE).toBeLessThanOrEqual(0.2);
+    expect(RED_BAND_HIT_DROP_CHANCE).toBeLessThanOrEqual(0.05);
+    // Headless (no seeded variance): no drop at all, stopping power or not.
+    expect(resolveHitDisarm({ canLoseWeapon: true, stoppingPower: true, roll: null })).toBeNull();
     // Headless (no seeded variance): no chance drop at all.
     expect(resolveHitDisarm({ canLoseWeapon: true, stoppingPower: false, roll: null })).toBeNull();
   });
@@ -80,18 +87,21 @@ describe('primary weapon: a hit only takes it in the red', () => {
     }
   });
 
-  it('a close shotgun blast that takes it into the red knocks the gun out of its hands', () => {
+  it('a close shotgun blast that takes it into the red only rarely knocks the gun loose', () => {
     const cases = [['HEAVY_ENFORCER', 3, 0.4], ['MILITIA_GUNNER', 5, 0.45]] as const;
-    for (const [archetype, rangeM, hp] of cases) for (const seed of [undefined, 3, 17, 42]) {
-      const t = target(`red-${archetype}-${seed}`, archetype, rangeM, hp, seed);
-      expect(isInRedHealthBand(t)).toBe(false);
-      const rep = shoot(t, rangeM, 1.3);
-      expect(isStoppingPowerHit(rep)).toBe(true);
-      applyShotReportToTarget(t, rep);
-      expect(t.alive).toBe(true);
-      expect(isInRedHealthBand(t)).toBe(true);
-      expect(t.isRagdollActive).toBe(false);
-      expect(t.weaponDropped).toBe(true);
+    for (const [archetype, rangeM, hp] of cases) {
+      let drops = 0;
+      const seeds = Array.from({ length: 40 }, (_, i) => i + 1);
+      for (const seed of seeds) {
+        const t = target(`red-${archetype}-${seed}`, archetype, rangeM, hp, seed);
+        expect(isInRedHealthBand(t)).toBe(false);
+        const rep = shoot(t, rangeM, 1.3);
+        expect(isStoppingPowerHit(rep)).toBe(true);
+        applyShotReportToTarget(t, rep);
+        if (!t.alive || t.isRagdollActive) continue;
+        if (t.weaponDropped) drops++;
+      }
+      expect(drops).toBeLessThan(seeds.length / 3);
     }
   });
 
@@ -108,7 +118,7 @@ describe('primary weapon: a hit only takes it in the red', () => {
     expect(t.weaponDropped).toBe(false);
   });
 
-  it('already in the red, a light hit only sometimes makes it let go, the same way for the same seed', () => {
+  it('already in the red, a light hit rarely makes it let go, the same way for the same seed', () => {
     const outcome = (seed: number): boolean => {
       const t = target(`light-${seed}`, 'MILITIA_GUNNER', 25, 0.3, seed);
       const rep = shoot(t, 25, 1.3);
@@ -119,8 +129,7 @@ describe('primary weapon: a hit only takes it in the red', () => {
     };
     const seeds = Array.from({ length: 80 }, (_, i) => i + 1);
     const drops = seeds.filter(outcome).length;
-    expect(drops).toBeGreaterThan(0);
-    expect(drops).toBeLessThan(seeds.length / 2);
+    expect(drops).toBeLessThan(seeds.length / 8);
     for (const seed of seeds.slice(0, 10)) expect(outcome(seed)).toBe(outcome(seed));
   });
 

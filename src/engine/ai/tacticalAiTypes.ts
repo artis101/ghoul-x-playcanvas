@@ -46,7 +46,7 @@ export type {
   WeaponBurstState,
 };
 
-export const BACKUP_SIDEARM_WEAPON_ID = 'weapon_beretta_m9';
+export const BACKUP_SIDEARM_WEAPON_ID = 'silver_talon_50ae';
 export const DOWNED_ONE_HANDED_SPREAD_MULTIPLIER = 4.5;
 export const OFFHAND_SIDEARM_SPREAD_MULTIPLIER = 1.78;
 export const SIDEARM_DRAW_DURATION_S = 0.6;
@@ -223,6 +223,12 @@ export interface EnemyAiAgentRuntime {
   mortalWoundMode?: 'AMBUSH_HOLD' | 'AMBUSH_SPRUNG' | 'DYING_PUSH';
   mortalHoldTimerS?: number;
   weaponPickupTimerS?: number;
+  /** How long the dropped long gun has been down with no landing spot published yet. */
+  droppedGunWaitS?: number;
+  /** Where a disarmed fighter that cannot get its gun back runs to hide; see `disarmedFlight.ts`. */
+  fleeHidePoint?: Vec3Like;
+  /** Time since the flight last looked for a better hiding place. */
+  fleeRecheckS?: number;
   lastRelocationClockS?: number;
   lastObservedBurstCount?: number;
 

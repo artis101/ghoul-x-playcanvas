@@ -58,11 +58,8 @@ export function registerWaveTargetsInternal(
       resolveProfileOverrides.get(hs.targetId) ??
       hs.resolveProfile ??
       defaults.resolveProfile;
-    const carriesBackupSidearm =
-      hardenedSidearmOverrides.get(hs.targetId) ??
-      (resolveProfileOverrides.has(hs.targetId) || hs.resolveProfile !== undefined
-        ? resolveProfile === 'HARDENED_VETERAN' || defaults.carriesBackupSidearm
-        : defaults.carriesBackupSidearm);
+    // Everyone carries the backup handgun unless a lab or test explicitly takes it away.
+    const carriesBackupSidearm = hardenedSidearmOverrides.get(hs.targetId) ?? defaults.carriesBackupSidearm;
 
     hs.resolveProfile = resolveProfile;
     hs.combatantStatusTag = null;

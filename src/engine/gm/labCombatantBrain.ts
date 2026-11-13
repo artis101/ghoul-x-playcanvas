@@ -99,6 +99,8 @@ export class LabCombatantBrain {
       sidearmRule: labSidearmRule(hs, this.agentView),
     });
     applyArmamentStateToRuntime(this.armament, result.state);
+    hs.sidearmHand =
+      result.state.kind === 'SIDEARM_ACTIVE' || result.state.kind === 'SIDEARM_DRAWING' ? result.state.hand : null;
     if (result.dropPrimaryWeapon) hs.weaponDropped = true;
     if (result.markPrimaryArmDisarmed) hs.primaryArmDisarmed = true;
     if (result.forceDisarmedPosture) hs.posture = 'DISARMED';

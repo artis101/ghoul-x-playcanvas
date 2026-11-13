@@ -4,13 +4,14 @@ import type { GhoulMannequinEntity } from '../mannequin.ts';
 import { createPropAttachmentState } from '../mannequin/propAttachmentState.ts';
 import { CombatantWeaponHands } from '../mannequin/combatantWeaponHands.ts';
 import type { OffhandSidearmRig } from './offhandSidearmTypes.ts';
+import { BACKUP_SIDEARM_WEAPON_ID } from '../ai/archetypeTuning.ts';
 
 export function createOffhandSidearmRig(
   target: GhoulMannequinEntity,
   glbRegistry: GlbModelRegistry | null
 ): OffhandSidearmRig {
   const id = target.healthState.targetId;
-  const holderEntity = new pc.Entity('OffhandBackupHandgun_M9');
+  const holderEntity = new pc.Entity('OffhandBackupHandgun');
   holderEntity.enabled = false;
   target.rootEntity.addChild(holderEntity);
 
@@ -18,9 +19,10 @@ export function createOffhandSidearmRig(
   let isGlbModel = false;
   const clonedMaterials: pc.StandardMaterial[] = [];
 
+  // The backup handgun is a Silver Talon .50 AE, the same model the punks carry as their primary.
   if (glbRegistry) {
     try {
-      glbInstance = glbRegistry.instantiateWeapon('weapon_beretta_m9', {
+      glbInstance = glbRegistry.instantiateWeapon(BACKUP_SIDEARM_WEAPON_ID, {
         castShadows: true,
         receiveShadows: true,
       });
@@ -31,37 +33,6 @@ export function createOffhandSidearmRig(
       isGlbModel = true;
     } catch {
       glbInstance = null;
-    }
-
-    if (!glbInstance && glbRegistry.isLoaded('silver_talon_50ae')) {
-      try {
-        glbInstance = glbRegistry.instantiateWeapon('silver_talon_50ae', {
-          castShadows: true,
-          receiveShadows: true,
-        });
-        if (glbInstance.animComponent) {
-          glbInstance.animComponent.playing = false;
-        }
-        glbInstance.rootEntity.setLocalScale(0.76, 0.78, 0.76);
-        const renders = glbInstance.rootEntity.findComponents('render') as pc.RenderComponent[];
-        for (const rc of renders) {
-          for (const mi of rc.meshInstances) {
-            if (mi.material instanceof pc.StandardMaterial) {
-              const darkM9Mat = mi.material.clone();
-              darkM9Mat.diffuse = new pc.Color(0.14, 0.15, 0.17);
-              darkM9Mat.metalness = Math.min(0.86, darkM9Mat.metalness);
-              darkM9Mat.gloss = 0.58;
-              darkM9Mat.update();
-              mi.material = darkM9Mat;
-              clonedMaterials.push(darkM9Mat);
-            }
-          }
-        }
-        holderEntity.addChild(glbInstance.rootEntity);
-        isGlbModel = true;
-      } catch {
-        glbInstance = null;
-      }
     }
   }
 

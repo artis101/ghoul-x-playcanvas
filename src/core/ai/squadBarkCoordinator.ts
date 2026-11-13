@@ -35,7 +35,7 @@ const SUPPRESS_REPLY_LINES = [
 ];
 const COVER_RETREAT_LINES = ['Taking heavy fire! Shifting cover!', 'Pinned down! Need suppression!'];
 const RELOAD_LINES = ['Reloading!', 'Changing mags—cover me!', 'Mag out! Covering fire!'];
-const SIDEARM_LINES = ['Primary disabled—transitioning to M9!', 'Drawing backup sidearm!'];
+const SIDEARM_LINES = ['Primary down—going to the handgun!', 'Drawing backup sidearm!'];
 const ALLY_DOWN_LINES = [
   'Man down! Check your sectors!',
   'They got him! Pour fire on that angle!',

@@ -4,7 +4,7 @@ import {
 } from '../../../contracts/ballistics.ts';
 import { ALL_AUX_PARTICLES } from '../../ghoul/anatomy.ts';
 import { transitionTargetLifecycle } from '../lifecycle/targetLifecycleFsm.ts';
-import { isLimbLossFatal } from './limbLossDeathRule.ts';
+import { isLimbLossFatal, losesSidearmArm } from './limbLossDeathRule.ts';
 import { add, copyVec3, cross, scale, sub } from '../vec3.ts';
 
 /** Which limbs this shot newly took off. An arm counts when its hand, forearm or upper arm goes. */
@@ -118,8 +118,10 @@ export function applyDismembermentTree(
     }
   }
 
-  // Two lost limbs kill, except one arm with one leg (the shot pass usually got here first).
-  if (target.alive && report.dismembermentEvents.length > 0 && isLimbLossFatal(target.severedZones)) {
+  // Two lost limbs kill, except one arm with one leg, and so does the arm holding the drawn
+  // handgun (the shot pass usually got here first).
+  const sidearmArmLost = losesSidearmArm(target.sidearmHand, report.dismembermentEvents.map((d) => d.zone));
+  if (target.alive && report.dismembermentEvents.length > 0 && (isLimbLossFatal(target.severedZones) || sidearmArmLost)) {
     transitionTargetLifecycle(target, { kind: 'LETHAL_DEATH' });
   }
 

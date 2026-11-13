@@ -4,15 +4,16 @@ import { computeCombatantTriageStatus } from '../ballistics/triage/triageEvaluat
 /**
  * When a hit may take an enemy's long gun away (docs/wound-movement.md).
  *
- * A fighter keeps its gun until its health bar is red (`RED_HEALTH_HP_FRACTION`, the same band the
- * world plates colour red). That gives it a fighting chance: a healthy enemy shot in the body grips
- * through it. Once the hit leaves it in the red:
- * - a close hit with real stopping power always knocks the gun out of its hands;
- * - any other hit only might, on the old odds (`WEAPON_DROP_CHANCE`) or `RED_BAND_HIT_DROP_CHANCE`.
+ * Losing the long gun to a plain hit is rare. A fighter keeps it until its health bar is red
+ * (`RED_HEALTH_HP_FRACTION`, the same band the world plates colour red), and even then:
+ * - a close hit with real stopping power knocks it loose only on `STOPPING_POWER_DROP_CHANCE`;
+ * - any other hit on `RED_BAND_HIT_DROP_CHANCE`, or the wound odds in `WEAPON_DROP_CHANCE`.
  *
- * A lost arm, a fall or a knockdown drops the gun whatever the health, because nothing can hold it
- * then; those paths do not come through here. A drawn sidearm is never taken by a hit at all
- * (`enemyArmamentFsm.ts`): only losing the arm that holds it, or dying, loses it.
+ * Injury is what really takes the gun: a lost or crippled arm, a fall or a knockdown drops it
+ * whatever the health, because nothing can hold it then; those paths do not come through here.
+ * A fighter that still has two working arms and legs goes and picks it back up (weaponRecovery.ts).
+ * The drawn handgun is never taken by a hit at all (`enemyArmamentFsm.ts`): losing the arm that
+ * holds it kills (limbLossDeathRule.ts).
  */
 
 /**
@@ -30,7 +31,13 @@ export const STOPPING_POWER_DISARM = {
 } as const;
 
 /** Odds that any other hit landing on a fighter already in (or now in) the red makes it let go. */
-export const RED_BAND_HIT_DROP_CHANCE = 0.15;
+export const RED_BAND_HIT_DROP_CHANCE = 0.03;
+
+/** Odds that a close, heavy hit on a fighter in the red knocks the gun out of its hands. */
+export const STOPPING_POWER_DROP_CHANCE = 0.15;
+
+/** Odds that a round striking the held gun itself tears it out of the fighter's hands. */
+export const HELD_WEAPON_STRIKE_DROP_CHANCE = 0.2;
 
 /** The health bar is red: the same test the HUD uses to colour it. */
 export function isInRedHealthBand(target: TargetHealthState): boolean {
@@ -42,7 +49,7 @@ export function canLoseWeaponToHit(target: TargetHealthState): boolean {
   return target.alive && !target.weaponDropped && isInRedHealthBand(target);
 }
 
-/** Close, and hard enough to rock the body: the hit that knocks a gun loose deterministically. */
+/** Close, and hard enough to rock the body: the hit most likely to knock a gun loose. */
 export function isStoppingPowerHit(report: Pick<ShotSimulationReport, 'totalEnergyDepositedJ' | 'targetDistanceM'>): boolean {
   return (
     report.totalEnergyDepositedJ >= STOPPING_POWER_DISARM.MIN_DEPOSITED_J &&
@@ -56,15 +63,15 @@ export interface HitDisarmInput {
   /** The bar is red after the hit and the long gun is still in hand. */
   readonly canLoseWeapon: boolean;
   readonly stoppingPower: boolean;
-  /** Uniform [0, 1) from the target's seeded shot variance; null in headless runs (no chance drop). */
+  /** Uniform [0, 1) from the target's seeded shot variance; null in headless runs (no drop). */
   readonly roll: number | null;
   readonly chance?: number;
 }
 
 /** Decides whether one surviving hit knocks the long gun loose, and why. Pure. */
 export function resolveHitDisarm(input: HitDisarmInput): HitDisarmCause {
-  if (!input.canLoseWeapon) return null;
-  if (input.stoppingPower) return 'STOPPING_POWER';
+  if (!input.canLoseWeapon || input.roll === null) return null;
+  if (input.stoppingPower) return input.roll < STOPPING_POWER_DROP_CHANCE ? 'STOPPING_POWER' : null;
   const chance = input.chance ?? RED_BAND_HIT_DROP_CHANCE;
-  return input.roll !== null && input.roll < chance ? 'CHANCE' : null;
+  return input.roll < chance ? 'CHANCE' : null;
 }

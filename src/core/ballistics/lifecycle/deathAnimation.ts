@@ -5,7 +5,7 @@ import type {
   TargetHealthState,
   Vec3Like,
 } from '../../../contracts/ballistics.ts';
-import { isLimbLossFatal } from '../trauma/limbLossDeathRule.ts';
+import { isLimbLossFatal, losesSidearmArm } from '../trauma/limbLossDeathRule.ts';
 import { isFallingReaction } from '../trauma/woundReactionTimings.ts';
 import { copyVec3 } from '../vec3.ts';
 
@@ -104,7 +104,7 @@ export function chooseShotDeathClip(hs: TargetHealthState, report: ShotSimulatio
   if (report.dismembermentEvents.some((d) => ARM_ZONES.has(d.zone))) {
     const severed = new Set<GhoulZoneId>(hs.severedZones);
     for (const z of report.severedZones) severed.add(z);
-    if (isLimbLossFatal(severed)) return 'DeathBleedOut';
+    if (isLimbLossFatal(severed) || losesSidearmArm(hs.sidearmHand, report.severedZones)) return 'DeathBleedOut';
   }
 
   const dir = report.woundEvents[0]?.impactDirectionWorld ?? report.aimDirectionWorld;

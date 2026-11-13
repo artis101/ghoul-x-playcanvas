@@ -1,6 +1,6 @@
 import { triggerSide } from '../../core/ghoul/anatomy/handedness.ts';
-import type { EnemyArchetypeId, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
-import type { ActiveFiringHand, CombatantResolveProfile } from './tacticalAiTypes.ts';
+import type { TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
+import type { ActiveFiringHand } from './tacticalAiTypes.ts';
 
 export function hashCombatantTargetId(targetId: string): number {
   let h = 0x811c9dc5;
@@ -71,48 +71,5 @@ export function yawToward(from: Vec3Like, to: Vec3Like, fallbackYaw: number): nu
   return Math.hypot(x, z) > 1e-3 ? Math.atan2(x, z) : fallbackYaw;
 }
 
-export function resolveDefaultCombatantProfile(
-  targetId: string,
-  archetype: EnemyArchetypeId
-): { resolveProfile: CombatantResolveProfile; carriesBackupSidearm: boolean } {
-  if (archetype === 'HEAVY_ENFORCER' || archetype === 'SNIPER_OPERATIVE') {
-    return { resolveProfile: 'HARDENED_VETERAN', carriesBackupSidearm: true };
-  }
-
-  switch (targetId) {
-    case 'target_0':
-      return { resolveProfile: 'FANATIC_BERSERKER', carriesBackupSidearm: false };
-    case 'target_1':
-      return { resolveProfile: 'FANATIC_BERSERKER', carriesBackupSidearm: true };
-    case 'target_2':
-      return { resolveProfile: 'GRITTY_REGULAR', carriesBackupSidearm: false };
-    case 'target_3':
-      return { resolveProfile: 'GRITTY_REGULAR', carriesBackupSidearm: false };
-    case 'target_4':
-      return { resolveProfile: 'HARDENED_VETERAN', carriesBackupSidearm: true };
-    case 'hostile_alpha':
-      return { resolveProfile: 'GRITTY_REGULAR', carriesBackupSidearm: false };
-    default:
-      break;
-  }
-
-  const h = hashCombatantTargetId(targetId);
-  if (archetype === 'SKINHEAD_PUNK') {
-    return {
-      resolveProfile: h % 2 === 0 ? 'FANATIC_BERSERKER' : 'GRITTY_REGULAR',
-      carriesBackupSidearm: false,
-    };
-  }
-
-  const bucket = h % 4;
-  if (bucket === 1) {
-    return { resolveProfile: 'HARDENED_VETERAN', carriesBackupSidearm: true };
-  }
-  if (bucket === 2) {
-    return { resolveProfile: 'FANATIC_BERSERKER', carriesBackupSidearm: false };
-  }
-  if (bucket === 3) {
-    return { resolveProfile: 'PANICKED_SCRAPPER', carriesBackupSidearm: false };
-  }
-  return { resolveProfile: 'GRITTY_REGULAR', carriesBackupSidearm: false };
-}
+/** One copy of the profile rule lives in archetypeTuning.ts; it is re-exported here for old callers. */
+export { resolveDefaultCombatantProfile } from './archetypeTuning.ts';

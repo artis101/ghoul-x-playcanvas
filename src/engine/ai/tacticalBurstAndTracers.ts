@@ -33,7 +33,7 @@ import type {
   PlayerCombatVitals,
 } from './tacticalAiTypes.ts';
 import { wrapAngleRad, yawToward } from './combatantArmEvaluation.ts';
-import { ARCHETYPE_TUNING, BACKUP_SIDEARM_WEAPON_ID, SIDEARM_M9_TUNING } from './archetypeTuning.ts';
+import { ARCHETYPE_TUNING, BACKUP_SIDEARM_WEAPON_ID, BACKUP_SIDEARM_TUNING } from './archetypeTuning.ts';
 import { getAgentMagazine } from './enemyWeaponMagazine.ts';
 import { kickEnemyWeaponSway, refreshEnemyWeaponSway, sampleEnemyWeaponSway } from './enemyWeaponSway.ts';
 import { woundedSequenceAllowsShot } from './woundedSequenceDriver.ts';
@@ -173,7 +173,7 @@ export function stepWeaponBurstFire(
     cadenceScale * raggedWoundDelay * oneHandedSlowdown
   );
 
-  const baseCooldown = usingSidearm ? SIDEARM_M9_TUNING.burstCooldownS : tuning.burstCooldownS;
+  const baseCooldown = usingSidearm ? BACKUP_SIDEARM_TUNING.burstCooldownS : tuning.burstCooldownS;
   const offScreenCooldownMul = agent.isOffScreen ? 2.0 : 1.0;
   const nextBurstCooldownS = Math.max(
     handling.fireCycleS,
@@ -264,7 +264,7 @@ export function emitEnemyTracerShot(
   const shotDir = deterministicConeSpread(baseDir, aimProfile.effectiveSpreadRad, (seed % 7) + 1, 8, seed * 31);
 
   // The muzzle climbs only after the bullet has gone.
-  kickEnemyWeaponSway(hs.targetId, usingSidearm ? SIDEARM_M9_TUNING.weaponId : tuning.primaryWeaponId, ctx.elapsedClockS);
+  kickEnemyWeaponSway(hs.targetId, usingSidearm ? BACKUP_SIDEARM_TUNING.weaponId : tuning.primaryWeaponId, ctx.elapsedClockS);
 
   const playerChestTarget = chestOf(playerEyeWorldPos);
   const chest = closestApproach(origin, shotDir, playerChestTarget);
@@ -315,10 +315,10 @@ export function emitEnemyTracerShot(
   // The fire clip only animates the gun; the shot already starts at the barrel read above.
   ctx.playFireVisual?.(hs.targetId, usingSidearm);
   const muzzleOrigin = origin;
-  const tracerSpeedMs = usingSidearm ? SIDEARM_M9_TUNING.tracerSpeedMs : tuning.tracerSpeedMs;
-  const firedWeaponId = usingSidearm ? SIDEARM_M9_TUNING.weaponId : tuning.primaryWeaponId;
+  const tracerSpeedMs = usingSidearm ? BACKUP_SIDEARM_TUNING.tracerSpeedMs : tuning.tracerSpeedMs;
+  const firedWeaponId = usingSidearm ? BACKUP_SIDEARM_TUNING.weaponId : tuning.primaryWeaponId;
   const rawChip =
-    (usingSidearm ? SIDEARM_M9_TUNING.baseChipDamage : tuning.baseChipDamage) *
+    (usingSidearm ? BACKUP_SIDEARM_TUNING.baseChipDamage : tuning.baseChipDamage) *
     enemyShotDamageScaleAtRange(firedWeaponId, distance(origin, playerChestTarget));
 
   let hitPlayer = false;

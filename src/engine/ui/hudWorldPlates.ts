@@ -59,7 +59,7 @@ export function updateWorldPlateEntry(
   const baseLabel = formatTriageLabel(status);
   const label =
     statusTag === 'SIDEARM_DRAWN' ? `${baseLabel} • SIDEARM DRAWN`
-    : statusTag === 'SIDEARM_DRAWING' ? `${baseLabel} • DRAWING M9`
+    : statusTag === 'SIDEARM_DRAWING' ? `${baseLabel} • DRAWING .50 AE`
     : statusTag === 'DISARMED' ? 'DISARMED'
     : statusTag === 'LAST_STAND' ? `${baseLabel} • LAST STAND`
     : statusTag === 'PANIC_SHAKEN' ? `${baseLabel} • SHAKEN`

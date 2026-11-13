@@ -1,5 +1,4 @@
 import type { AmmoSpec, EnvironmentState, Vec3Like, WeaponSpec } from '../../contracts/ballistics.ts';
-import { transitionTargetLifecycle } from '../../core/ballistics/lifecycle/targetLifecycleFsm.ts';
 import { triggerSide } from '../../core/ghoul/anatomy/handedness.ts';
 import { scale } from '../../core/ballistics/vec3.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
@@ -8,11 +7,13 @@ import type { EnvironmentRayInterceptor } from './combatTypes.ts';
 import { buildSyntheticFlightSamples } from './hitRoutingUtils.ts';
 import { findHeldWeaponStrike } from './heldWeaponStrike.ts';
 import type { ImpactDispatcherContext } from './impactDamageDispatcher.ts';
+import { HELD_WEAPON_STRIKE_DROP_CHANCE } from '../../core/combatant/hitDisarmPolicy.ts';
 
 /**
- * A round that hits an enemy's gun before it reaches flesh smashes it out of their hands: the
- * bullet stops in the receiver, sparks fly and the combatant is disarmed but unhurt.
- * Returns true when the shot was spent on a gun.
+ * A round that hits an enemy's gun before it reaches flesh only rarely tears it out of their hands
+ * (`HELD_WEAPON_STRIKE_DROP_CHANCE`): then the bullet stops in the receiver, sparks fly and the
+ * combatant lets go, unhurt, and goes to pick it back up. Otherwise the gun is held on to and the
+ * round carries on into the body. Returns true when the shot was spent on a gun.
  */
 export function strikeHeldWeapon(
   _weapon: WeaponSpec,
@@ -40,8 +41,11 @@ export function strikeHeldWeapon(
     if (env.blocked || env.remainingSpeedMs <= 25) return false;
   }
 
+  if (Math.random() >= HELD_WEAPON_STRIKE_DROP_CHANCE) return false;
+
   const hs = strike.target.healthState;
-  transitionTargetLifecycle(hs, { kind: 'PRIMARY_ARM_DISARM' });
+  // A plain drop: both arms still work, so the fighter can pick the gun back up.
+  hs.weaponDropped = true;
 
   fxManager.spawnFlyingProjectile(
     buildSyntheticFlightSamples(origin, normAim, muzzleSpeedMs, ammo.massKg, strike.distanceM, environment.speedOfSoundMs),

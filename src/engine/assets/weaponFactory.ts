@@ -5,14 +5,12 @@ import { collectBoneNodes, upgradeEntityHierarchyPbr } from './materialUpgrade.t
 export function instantiateWeaponGlb(
   app: pc.AppBase,
   getContainer: (id: WeaponAssetId) => pc.ContainerResource | null,
-  weaponId: WeaponAssetId | 'weapon_beretta_m9',
+  weaponId: WeaponAssetId,
   options?: { castShadows?: boolean; receiveShadows?: boolean }
 ): WeaponGlbInstance {
-  const isBerettaAlias = weaponId === 'weapon_beretta_m9';
-  const resolvedWeaponId: WeaponAssetId = isBerettaAlias ? 'silver_talon_50ae' : weaponId;
-  const container = getContainer(resolvedWeaponId);
+  const container = getContainer(weaponId);
   if (!container) {
-    throw new Error(`${resolvedWeaponId}.glb is not loaded yet; await preloadAll() or loadContainer("${resolvedWeaponId}") first.`);
+    throw new Error(`${weaponId}.glb is not loaded yet; await preloadAll() or loadContainer("${weaponId}") first.`);
   }
 
   const rootEntity = container.instantiateRenderEntity({
@@ -21,23 +19,6 @@ export function instantiateWeaponGlb(
   });
   upgradeEntityHierarchyPbr(rootEntity, app.graphicsDevice);
   rootEntity.name = `Weapon_${weaponId}`;
-
-  const clonedSidearmMats: pc.StandardMaterial[] = [];
-  if (isBerettaAlias) {
-    rootEntity.setLocalScale(0.84, 0.84, 0.84);
-    const renderComps = rootEntity.findComponents('render') as pc.RenderComponent[];
-    for (const rc of renderComps) {
-      for (const mi of rc.meshInstances) {
-        if (mi.material instanceof pc.StandardMaterial) {
-          const m9Mat = mi.material.clone();
-          m9Mat.diffuse.set(0.24, 0.26, 0.29);
-          m9Mat.update();
-          mi.material = m9Mat;
-          clonedSidearmMats.push(m9Mat);
-        }
-      }
-    }
-  }
 
   const boneNodes = new Map<string, pc.GraphNode>();
   collectBoneNodes(rootEntity, boneNodes);
@@ -49,7 +30,7 @@ export function instantiateWeaponGlb(
   let muzzleNode = rootEntity.findByName('Bone_Muzzle') ?? rootEntity.findByName('MuzzleSocket');
   if (!muzzleNode) {
     const fallback = new pc.Entity('Bone_Muzzle');
-    const offset = DEFAULT_MUZZLE_OFFSETS[resolvedWeaponId];
+    const offset = DEFAULT_MUZZLE_OFFSETS[weaponId];
     fallback.setLocalPosition(offset.x, offset.y, offset.z);
     rootEntity.addChild(fallback);
     muzzleNode = fallback;
@@ -93,7 +74,7 @@ export function instantiateWeaponGlb(
   };
 
   return {
-    weaponId: resolvedWeaponId,
+    weaponId: weaponId,
     rootEntity,
     animComponent,
     muzzleNode,
@@ -109,7 +90,6 @@ export function instantiateWeaponGlb(
     playReload(speed = 1.0): boolean { return reloadClipName ? playClip(reloadClipName, 0.05, speed) : false; },
     destroy(): void {
       rootEntity.destroy();
-      for (const m of clonedSidearmMats) m.destroy();
     },
   };
 }

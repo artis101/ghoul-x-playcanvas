@@ -9,7 +9,7 @@ import {
   WoundChannelEvent,
 } from '../../../contracts/ballistics.ts';
 import { add, length, scale, vec3 } from '../vec3.ts';
-import { isLimbLossFatal } from '../trauma/limbLossDeathRule.ts';
+import { isLimbLossFatal, losesSidearmArm } from '../trauma/limbLossDeathRule.ts';
 import type { DelayedLethality } from '../../../contracts/combatantConstitution.ts';
 import { borrowedTimeHp, rollDelayedLethality } from './lethalityRoll.ts';
 import { weakEnoughForKnockdown } from './archetypeToughness.ts';
@@ -87,8 +87,12 @@ export function evaluateLethalityAndRagdollPlan(
     shatteredBonesSet.has('Cervical Spine (C1-C7)');
 
   // A second lost limb kills even from a pure limb shot, unless it leaves one arm and one leg.
+  // So does the arm holding the drawn handgun: the last gun goes down with the fighter.
   const isFatalLimbLoss =
-    hasHitTarget && dismembermentEvents.length > 0 && isLimbLossFatal(severedZonesSet);
+    hasHitTarget &&
+    dismembermentEvents.length > 0 &&
+    (isLimbLossFatal(severedZonesSet) ||
+      losesSidearmArm(target.sidearmHand, dismembermentEvents.map((d) => d.zone)));
 
   const isInstantKill =
     hasHitTarget &&

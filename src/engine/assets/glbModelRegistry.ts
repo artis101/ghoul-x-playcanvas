@@ -63,15 +63,13 @@ export class GlbModelRegistry {
   public getAssetUrl(key: GlbAssetKey): string { return `${this.baseUrl}/${key}.glb`; }
   public getConnectivityUrl(): string { return `${this.baseUrl}/concrete_wall_connectivity.json`; }
 
-  public isLoaded(key: GlbAssetKey | 'weapon_beretta_m9'): boolean {
-    const resolvedKey: GlbAssetKey = key === 'weapon_beretta_m9' ? 'silver_talon_50ae' : key;
-    const entry = this.containerEntries.get(resolvedKey);
+  public isLoaded(key: GlbAssetKey): boolean {
+    const entry = this.containerEntries.get(key);
     return entry?.kind === 'READY';
   }
 
-  public getContainer(key: GlbAssetKey | 'weapon_beretta_m9'): pc.ContainerResource | null {
-    const resolvedKey: GlbAssetKey = key === 'weapon_beretta_m9' ? 'silver_talon_50ae' : key;
-    const entry = this.containerEntries.get(resolvedKey);
+  public getContainer(key: GlbAssetKey): pc.ContainerResource | null {
+    const entry = this.containerEntries.get(key);
     return entry?.kind === 'READY' ? entry.value : null;
   }
 
@@ -255,7 +253,7 @@ export class GlbModelRegistry {
   }
 
   public instantiateWeapon(
-    weaponId: WeaponAssetId | 'weapon_beretta_m9',
+    weaponId: WeaponAssetId,
     options?: { castShadows?: boolean; receiveShadows?: boolean }
   ): WeaponGlbInstance {
     return instantiateWeaponGlb(this.app, (id) => this.getContainer(id), weaponId, options);

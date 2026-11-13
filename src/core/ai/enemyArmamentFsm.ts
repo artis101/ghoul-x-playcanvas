@@ -61,6 +61,11 @@ export interface EnemyArmamentTransitionInput {
    * posture is never overwritten with DISARMED. Pass the seated draw time as the draw duration.
    */
   readonly seatedOnFloor?: boolean;
+  /**
+   * The long gun lies within reach and the fighter can go and get it (weaponRecovery.ts). It does
+   * that instead of drawing the handgun; a pistol already out of the holster stays in the fist.
+   */
+  readonly primaryPickupPending?: boolean;
 }
 
 export interface EnemyArmamentTransitionResult {
@@ -302,6 +307,15 @@ function stepSidearmFallback(
 
   const events: ArmamentTransitionEvent[] = [];
   if (input.isGuarding) events.push('ALERT');
+
+  // The long gun is within reach: go and pick it up rather than draw (or finish drawing) the pistol.
+  if (input.primaryPickupPending && !groundedRagdoll && current.kind !== 'SIDEARM_ACTIVE') {
+    const outOfHolster =
+      current.kind === 'SIDEARM_DRAWING' && drawFraction(current, input) >= SIDEARM_OUT_OF_HOLSTER_DRAW_FRACTION;
+    if (!outOfHolster) {
+      return fallbackResult({ kind: 'DISARMED', sidearmDropped: false }, events, false, 'DISARMED');
+    }
+  }
 
   const rule = input.sidearmRule ?? 'ALLOW';
   const drawnTag: CombatantStatusTag = groundedRagdoll ? 'LAST_STAND' : 'SIDEARM_DRAWN';

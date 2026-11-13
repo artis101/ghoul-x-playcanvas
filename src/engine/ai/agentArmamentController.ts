@@ -21,6 +21,7 @@ import { isWoundClipHoldingBody } from './woundClipHold.ts';
 import { isSeatedAnimated, SEATED_DRAW_S } from '../../core/ballistics/triage/seatedLastStand.ts';
 import { resolveSidearmRule } from './woundedSequenceDriver.ts';
 import { drawClipSecondsFor } from '../mannequin/combatantDrawClips.ts';
+import { canRecoverDroppedWeapon, tickDroppedGunWait } from './weaponRecovery.ts';
 
 /**
  * How long a draw takes for this body now: the length of the draw clip it plays, so the pistol
@@ -106,6 +107,7 @@ export function syncAgentArmamentAndSidearm(
   onSidearmDrawStart?: () => void
 ): readonly ArmamentTransitionEvent[] {
   hs.resolveProfile = agent.resolveProfile;
+  tickDroppedGunWait(dt, hs, agent);
 
   const preferredHand = getPreferredPrimaryHand(hs);
   const rightIntact = isArmChainIntactAndFunctional(hs, 'RIGHT');
@@ -134,9 +136,13 @@ export function syncAgentArmamentAndSidearm(
     woundClipPlaying: isWoundClipHoldingBody(hs),
     // The wounded sequence decides when the pistol may come out (docs/wound-movement.md).
     sidearmRule: resolveSidearmRule(hs, agent),
+    primaryPickupPending: canRecoverDroppedWeapon(hs, agent),
   });
 
   applyArmamentStateToRuntime(agent, result.state);
+  // Which fist holds the handgun: losing that arm kills (limbLossDeathRule.ts).
+  hs.sidearmHand =
+    result.state.kind === 'SIDEARM_ACTIVE' || result.state.kind === 'SIDEARM_DRAWING' ? result.state.hand : null;
 
   if (result.dropPrimaryWeapon) {
     hs.weaponDropped = true;

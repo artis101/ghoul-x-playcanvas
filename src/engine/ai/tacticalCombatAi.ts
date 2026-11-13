@@ -134,7 +134,7 @@ export class TacticalCombatAiSystem {
     carriesBackupSidearm?: boolean
   ): void {
     this.resolveProfileOverrides.set(targetId, profile);
-    const sidearm = carriesBackupSidearm ?? profile === 'HARDENED_VETERAN';
+    const sidearm = carriesBackupSidearm ?? true;
     this.hardenedSidearmOverrides.set(targetId, sidearm);
 
     const existing = this.agents.get(targetId);

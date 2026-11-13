@@ -211,6 +211,11 @@ export interface TargetHealthState {
   primaryArmDisarmed?: boolean;
   /** Where the dropped primary weapon lies, while it is on the ground and can be picked back up. */
   droppedWeaponWorld?: Vec3Like;
+  /**
+   * The hand holding the drawn (or drawing) backup handgun, written by the AI each tick; null or
+   * absent while it is holstered. Cutting this arm off kills (limbLossDeathRule.ts).
+   */
+  sidearmHand?: 'RIGHT' | 'LEFT' | null;
   /** Optional live tactical resolve archetype for AI & HUD telemetry */
   resolveProfile?:
     | 'HARDENED_VETERAN'

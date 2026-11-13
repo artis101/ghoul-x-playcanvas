@@ -113,13 +113,11 @@ const RECOIL_PITCH_SHARE = 0.72;
 const RECOIL_YAW_SHARE = 0.11;
 export const PLAYER_RECOIL_RECOVERY_PER_S = 15;
 const BASE_RECOVERY_PER_S = PLAYER_RECOIL_RECOVERY_PER_S;
-// The backup M9 has no player spec; a 9 mm service pistol kicks about half a .50 AE.
-const M9_RECOIL_KICK_DEG = 3.2;
 
 /** The kick of one shot for a weapon held a given way, from the same numbers the player uses. */
 export function recoilKickForWeapon(weaponId: string, hold: SwayHold = 'RIFLE_SHOULDERED'): RecoilKick {
   const spec = WEAPON_MAP[weaponId];
-  const kickDeg = spec?.recoilKickDeg ?? (weaponId === 'weapon_beretta_m9' ? M9_RECOIL_KICK_DEG : 2.5);
+  const kickDeg = spec?.recoilKickDeg ?? 2.5;
   const adsId = spec ? weaponId : 'silver_talon_50ae';
   // A one-handed pistol has nothing bracing it, like the player firing from the hip.
   const brace = hold === 'PISTOL_ONE_HAND' ? 1 : getWeaponAdsProfile(adsId).adsRecoilScale;

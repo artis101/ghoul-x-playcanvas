@@ -1139,7 +1139,7 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
       ai.destroy();
     });
 
-    it('mounts visible 3D weapon_beretta_m9 on t.rootEntity in the intact off hand in CombatDirector', () => {
+    it('mounts the visible Silver Talon backup handgun on t.rootEntity in the intact off hand in CombatDirector', () => {
       const app = createHeadlessPlayCanvasApp();
       const requestedWeapons: string[] = [];
 
@@ -1197,15 +1197,15 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
           director.update(0.05, (i + 1) * 0.05, null, hud);
         }
 
-        expect(requestedWeapons).toContain('weapon_beretta_m9');
-        const m9Holder = enforcerMannequin.rootEntity.findByName('OffhandBackupHandgun_M9') as pc.Entity | null;
-        expect(m9Holder).not.toBeNull();
-        expect(m9Holder!.enabled).toBe(true);
+        expect(requestedWeapons).toContain('silver_talon_50ae');
+        const sidearmHolder = enforcerMannequin.rootEntity.findByName('OffhandBackupHandgun') as pc.Entity | null;
+        expect(sidearmHolder).not.toBeNull();
+        expect(sidearmHolder!.enabled).toBe(true);
 
         // The arm is no longer posed in code: the draw and aim clips move it and the pistol rides
         // the hand. With no animated body here, it sits on the hit skeleton's left hand.
         const handL = hs.ragdollBones.HAND_LEFT.position;
-        expect(m9Holder!.getPosition().distance(new pc.Vec3(handL.x, handL.y, handL.z))).toBeLessThan(0.15);
+        expect(sidearmHolder!.getPosition().distance(new pc.Vec3(handL.x, handL.y, handL.z))).toBeLessThan(0.15);
 
         // Sever remaining left hand -> 3D Beretta M9 immediately hides/drops!
         hs.severedZones.add('HAND_LEFT');
@@ -1213,7 +1213,7 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
         ai.notifyEnemyHit(hs, { hitZone: 'HAND_LEFT', energyDepositedJ: 800 });
         director.update(0.05, 1.0, null, hud);
 
-        expect(m9Holder!.enabled).toBe(false);
+        expect(sidearmHolder!.enabled).toBe(false);
       } finally {
         director.destroy();
         ai.destroy();

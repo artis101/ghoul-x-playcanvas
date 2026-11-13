@@ -39,10 +39,41 @@ function setPickupProgress(hs: TargetHealthState, agent: EnemyAiAgentRuntime, ti
   markWeaponPickupProgress(hs, timerS > 0 ? timerS / PICKUP_WEAPON_CLIP_S : null);
 }
 
+/** How long a fresh drop waits for the weapon mount to publish where the gun landed. */
+const DROP_LANDING_GRACE_S = 0.3;
+
+function limbsCanRecover(hs: TargetHealthState): boolean {
+  return (
+    isArmChainIntactAndFunctional(hs, 'RIGHT') &&
+    isArmChainIntactAndFunctional(hs, 'LEFT') &&
+    hs.rightLegFunctional &&
+    hs.leftLegFunctional
+  );
+}
+
 /**
- * A fighter who had the gun knocked out of its hands does not stand there: if both arms still
- * work and it is not dying, it dashes to where the gun landed, snatches it up and fights on.
- * Returns true while it is busy recovering the weapon this frame.
+ * Whether this fighter can go and get its dropped long gun: it is on its feet with both arms and
+ * legs working, not in a wounded sequence, the gun still has rounds, and it lies close enough.
+ * A gun just dropped counts for a moment before its landing spot is known, so the fighter does not
+ * start drawing its handgun only to put it straight back.
+ */
+export function canRecoverDroppedWeapon(hs: TargetHealthState, agent: EnemyAiAgentRuntime): boolean {
+  if (!hs.weaponDropped || !hs.alive || hs.isRagdollActive || isPrimaryShotDry(agent)) return false;
+  if ((hs.woundedPhase ?? 'NONE') !== 'NONE' || !limbsCanRecover(hs)) return false;
+  const gun = hs.droppedWeaponWorld;
+  if (!gun) return (agent.droppedGunWaitS ?? 0) < DROP_LANDING_GRACE_S;
+  return Math.hypot(gun.x - hs.worldPosition.x, gun.z - hs.worldPosition.z) <= MAX_RECOVERY_DISTANCE_M;
+}
+
+/** Ticks the wait for a fresh drop's landing spot (see `canRecoverDroppedWeapon`). */
+export function tickDroppedGunWait(dt: number, hs: TargetHealthState, agent: EnemyAiAgentRuntime): void {
+  agent.droppedGunWaitS = hs.weaponDropped && !hs.droppedWeaponWorld ? (agent.droppedGunWaitS ?? 0) + dt : 0;
+}
+
+/**
+ * A fighter who had the gun knocked out of its hands does not stand there: if it can (see
+ * `canRecoverDroppedWeapon`), it dashes to where the gun landed, snatches it up and fights on.
+ * It does not draw the handgun first. Returns true while it is busy recovering the weapon.
  *
  * The gun is back in hand halfway through the pickup clip; the mannequin plays the rest of the
  * clip (standing back up) by itself, and holds the AI still until it ends.
@@ -54,20 +85,14 @@ export function stepWeaponRecovery(
   ctx: TacticalFsmContext,
 ): boolean {
   const gun = hs.droppedWeaponWorld;
-  // A gun shot empty with no rounds left to load is left where it fell.
-  if (!gun || !hs.alive || hs.isRagdollActive || agent.triageStatus === 'MORTALLY_WOUNDED' || isPrimaryShotDry(agent)) {
+  if (!gun || !canRecoverDroppedWeapon(hs, agent)) {
     setPickupProgress(hs, agent, 0);
-    return false;
+    // Still waiting to see where it landed: hold still rather than run off.
+    return canRecoverDroppedWeapon(hs, agent);
   }
-  const armsAndLegsWork = isArmChainIntactAndFunctional(hs, 'RIGHT') && isArmChainIntactAndFunctional(hs, 'LEFT') &&
-    hs.rightLegFunctional && hs.leftLegFunctional;
   const dx = gun.x - hs.worldPosition.x;
   const dz = gun.z - hs.worldPosition.z;
   const dist = Math.hypot(dx, dz);
-  if (!armsAndLegsWork || dist > MAX_RECOVERY_DISTANCE_M) {
-    setPickupProgress(hs, agent, 0);
-    return false;
-  }
 
   agent.isPeekingOut = false;
   hs.yawRad = Math.atan2(dx, dz);
