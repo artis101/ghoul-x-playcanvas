@@ -32,7 +32,23 @@ export interface TacticalDoctrineInput {
   readonly moraleShockTimerS: number;
   readonly berserkerFrenzyTimerS: number;
   readonly anchorBlockedByCover: boolean;
+  /**
+   * Last frame's substate. Range triggers use it for hysteresis: a manoeuvre that started at
+   * one range keeps going until a tighter range, so a combatant does not flip between pressing
+   * forward and walking back to cover every time it crosses the threshold.
+   */
+  readonly previousSubstate?: AlertedEngagementSubstate;
 }
+
+// Range bands (enter, stay) in metres for range-triggered manoeuvres.
+const SNIPER_BACKPEDAL_ENTER_M = 8.8;
+const SNIPER_BACKPEDAL_STAY_M = 11.0;
+const JUGGERNAUT_ENTER_M = 4.8;
+// Below the 3.2 m stand-off it presses to, so arriving there does not end the press.
+const JUGGERNAUT_STAY_M = 2.4;
+const FLANK_RUSH_ENTER_M = 4.2;
+// Below the 2.4 m stand-off it rushes to.
+const FLANK_RUSH_STAY_M = 1.7;
 
 export interface CoverStationCandidate {
   readonly stationId: string;
@@ -76,8 +92,12 @@ export function evaluateTacticalEngagementSubstate(
     return 'PANIC_SCRAMBLE';
   }
 
+  const prev = input.previousSubstate;
+
   if (input.archetype === 'SNIPER_OPERATIVE') {
-    if (input.primaryWeaponIntact && !input.anchorBlockedByCover && input.playerDistanceM < 8.8) {
+    const backpedalRange =
+      prev === 'EVASIVE_BACKPEDAL' ? SNIPER_BACKPEDAL_STAY_M : SNIPER_BACKPEDAL_ENTER_M;
+    if (input.primaryWeaponIntact && !input.anchorBlockedByCover && input.playerDistanceM < backpedalRange) {
       return 'EVASIVE_BACKPEDAL';
     }
     return input.cyclePhase01 >= 0.34 && input.cyclePhase01 <= 0.76
@@ -92,7 +112,7 @@ export function evaluateTacticalEngagementSubstate(
     input.chestArmorIntegrity > 0.35 &&
     input.suppression < 0.72 &&
     !input.anchorBlockedByCover &&
-    input.playerDistanceM > 4.8
+    input.playerDistanceM > (prev === 'JUGGERNAUT_PRESS' ? JUGGERNAUT_STAY_M : JUGGERNAUT_ENTER_M)
   ) {
     return 'JUGGERNAUT_PRESS';
   }
@@ -101,7 +121,7 @@ export function evaluateTacticalEngagementSubstate(
     input.archetype === 'SKINHEAD_PUNK' &&
     input.resolveProfile === 'FANATIC_BERSERKER' &&
     !input.anchorBlockedByCover &&
-    input.playerDistanceM > 4.2
+    input.playerDistanceM > (prev === 'FLANKING_RUSH' ? FLANK_RUSH_STAY_M : FLANK_RUSH_ENTER_M)
   ) {
     return 'FLANKING_RUSH';
   }

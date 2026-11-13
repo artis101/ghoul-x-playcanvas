@@ -2,21 +2,17 @@ import type { CombatantPostureState, TargetHealthState, Vec3Like } from '../../c
 import type { AlertedEngagementSubstate } from '../../core/ai/tacticalDoctrine.ts';
 import { evaluateTacticalEngagementSubstate } from '../../core/ai/tacticalDoctrine.ts';
 import { cancelActiveBurst } from '../../core/ai/weaponBurstFsm.ts';
-import { createCloseQuartersJukeState, stepCloseQuartersJuke } from '../../core/ai/closeQuartersStrafe.ts';
+import { aimSettleTimeS, firesOnTheMove } from '../../core/ai/plantedFootwork.ts';
 import { createAimDuckReflexState, stepAimDuckReflex } from '../../core/ai/aimDuckReflex.ts';
 import type { EnemyAimProfile, EnemyAiAgentRuntime } from './tacticalAiTypes.ts';
 import { ARCHETYPE_TUNING } from './archetypeTuning.ts';
 import { computeAlertedPeekTarget } from './tacticalCoverFinder.ts';
 import { moveHorizontalClamped } from './tacticalLocomotion.ts';
+import { driveEngagementFootwork, stepCloseQuartersBound } from './engagementFootwork.ts';
 import { stepWeaponBurstFire } from './tacticalBurstAndTracers.ts';
 import type { TacticalFsmContext } from './tacticalFsmContext.ts';
 import { stepWoundedBehaviour } from './woundFallback.ts';
 import { stepWeaponRecovery } from './weaponRecovery.ts';
-
-// Usable half-width of the arena floor for lateral jukes, a little inside the movement clamp.
-const JUKE_ARENA_HALF_WIDTH_M = 7.7;
-// Smoothing rate for the engaging ground-speed estimate that drives the moving-fire penalty.
-const MOVE_SPEED_SMOOTHING = 8;
 
 /** Peeking states a combatant abandons when the duck reflex fires. */
 function duckedSubstate(substate: AlertedEngagementSubstate): AlertedEngagementSubstate {
@@ -87,6 +83,7 @@ export function stepAlertedEngagingState(
     moraleShockTimerS: moraleShockS,
     berserkerFrenzyTimerS: agent.berserkerFrenzyTimerS ?? 0,
     anchorBlockedByCover: prelimPeek.anchorBlockedByCover,
+    previousSubstate: agent.engagementSubstate,
   });
   // Seeing the player's gun settle on it, a combatant in cover ducks back before it is shot.
   agent.aimDuckReflex ??= createAimDuckReflexState();
@@ -168,41 +165,31 @@ export function stepAlertedEngagingState(
   );
   if (agent.peekSign !== prevPeekSign) ctx.onAgentFlankShift?.(hs, agent);
 
-  const weaveOffset =
-    substate === 'FLANKING_RUSH' || substate === 'BERSERKER_CHARGE'
-      ? Math.sin(agent.peekCycleTimerS * 3.8) * 0.42
-      : substate === 'PANIC_SCRAMBLE'
-        ? Math.sin(agent.peekCycleTimerS * 5.2) * 0.62
-        : !peekPlan.anchorBlockedByCover
-          ? stepJuke(dt, agent, playerDistM)
-          : 0;
-  // A hit that lands while the combatant is not juking should not break a later juke.
+  const rushing = substate === 'FLANKING_RUSH' || substate === 'BERSERKER_CHARGE';
+  const minStandOff = substate === 'JUGGERNAUT_PRESS' ? 3.2 : 2.4;
+  // A rusher weaves on the way in, then plants at its stand-off distance to shoot.
+  const weaveFade = Math.max(0, Math.min(1, (playerDistM - minStandOff - 0.4) / 1.6));
+  const weaveOffset = rushing
+    ? Math.sin(agent.peekCycleTimerS * 3.8) * 0.42 * weaveFade
+    : substate === 'PANIC_SCRAMBLE'
+      ? Math.sin(agent.peekCycleTimerS * 5.2) * 0.62
+      : !peekPlan.anchorBlockedByCover
+        ? stepCloseQuartersBound(dt, agent, playerDistM)
+        : 0;
+  // A hit that lands while the combatant is not bounding should not cut a later bound short.
   agent.jukeBreakPending = false;
-  const desiredLateral = peekPlan.targetOffset + weaveOffset;
-  const deltaOffset = desiredLateral - agent.currentLateralOffsetM;
 
   const profileSpeedMul =
     substate === 'PANIC_SCRAMBLE' || (agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded)
       ? 1.42
-      : substate === 'BERSERKER_CHARGE' || substate === 'FLANKING_RUSH'
+      : rushing
         ? 1.28
         : substate === 'JUGGERNAUT_PRESS'
           ? 0.92
           : 1.0;
-  const baseStrafeSpeed = tuning.strafeSpeedMs * profileSpeedMul;
-  const effectiveStrafeSpeed = Math.abs(deltaOffset) > 1.0 ? Math.max(baseStrafeSpeed, 2.35) : baseStrafeSpeed;
-  const maxStrideStep = effectiveStrafeSpeed * dt;
-  agent.currentLateralOffsetM +=
-    Math.abs(deltaOffset) <= maxStrideStep ? deltaOffset : Math.sign(deltaOffset) * maxStrideStep;
 
-  const goalX = agent.coverAnchorWorld.x + agent.currentLateralOffsetM;
   let goalZ = peekPlan.goalZ;
-  if (
-    substate === 'BERSERKER_CHARGE' ||
-    substate === 'FLANKING_RUSH' ||
-    substate === 'JUGGERNAUT_PRESS'
-  ) {
-    const minStandOff = substate === 'JUGGERNAUT_PRESS' ? 3.2 : 2.4;
+  if (rushing || substate === 'JUGGERNAUT_PRESS') {
     goalZ = Math.min(playerEyeWorldPos.z - minStandOff, peekPlan.goalZ + agent.berserkerAdvanceOffsetM);
   } else if (substate === 'EVASIVE_BACKPEDAL') {
     goalZ = Math.max(-21.5, peekPlan.goalZ + agent.berserkerAdvanceOffsetM);
@@ -210,10 +197,17 @@ export function stepAlertedEngagingState(
     goalZ = Math.max(-21.5, peekPlan.goalZ - 0.32);
   }
 
-  const beforeX = hs.worldPosition.x;
-  const beforeZ = hs.worldPosition.z;
-  moveHorizontalClamped(hs, goalX, goalZ, effectiveStrafeSpeed * dt, ctx.rapierWorld);
-  trackEngagingMotion(dt, hs, agent, goalX, beforeX, beforeZ, maxStrideStep);
+  driveEngagementFootwork(
+    dt,
+    hs,
+    agent,
+    {
+      lateralOffsetM: peekPlan.targetOffset + weaveOffset,
+      goalZ,
+      strafeSpeedMs: tuning.strafeSpeedMs * profileSpeedMul,
+    },
+    ctx
+  );
 
   turnTowardPlayer(substate === 'SNIPER_SNAP_PEEK' ? 6.8 : 5.4);
   if (!hs.isRagdollActive) {
@@ -221,46 +215,19 @@ export function stepAlertedEngagingState(
     hs.posture = 'COMBAT_READY' as CombatantPostureState;
   }
 
-  if (!agent.isPeekingOut && peekPlan.anchorBlockedByCover) {
+  // Soldiers move, stop, aim, then shoot. Only assaulting substates fire on the move; a burst
+  // already under way is allowed to finish.
+  const settled =
+    firesOnTheMove(substate) ||
+    agent.burstShotsRemaining > 0 ||
+    (agent.footwork?.plantedS ?? 0) >= aimSettleTimeS(agent.resolveProfile, hs.archetype === 'SNIPER_OPERATIVE');
+  // Caught in the open with nothing to shelter behind, a combatant keeps fighting from its spot
+  // instead of standing there with the gun down.
+  const firing = agent.isPeekingOut || peekPlan.firingPosition;
+  if (!firing) {
+    // Back behind cover: the burst ends here rather than resuming later on the move.
     cancelActiveBurst(agent);
-  } else if (aimProfile.canReturnFire && agent.isPeekingOut) {
-    stepWeaponBurstFire(dt, hs, agent, aimProfile, playerEyeWorldPos, ctx.burstCtx);
+  } else if (aimProfile.canReturnFire) {
+    stepWeaponBurstFire(dt, hs, agent, aimProfile, playerEyeWorldPos, ctx.burstCtx, !settled);
   }
-}
-
-/** Advances the close-quarters juke, reacting to hits and to the player's aim. */
-function stepJuke(dt: number, agent: EnemyAiAgentRuntime, playerDistM: number): number {
-  agent.closeQuartersJuke ??= createCloseQuartersJukeState(
-    agent.coverAnchorWorld.x * 1.7 + agent.coverAnchorWorld.z + agent.tracerSeedCounter,
-    agent.peekSign
-  );
-  const offset = stepCloseQuartersJuke(agent.closeQuartersJuke, {
-    dt,
-    playerDistanceM: playerDistM,
-    aimThreat: agent.aimThreat ?? 0,
-    wasHit: agent.jukeBreakPending === true,
-    lateralStalled: agent.lateralStalled === true,
-    anchorX: agent.coverAnchorWorld.x,
-    arenaHalfWidthM: JUKE_ARENA_HALF_WIDTH_M,
-  });
-  agent.jukeBreakPending = false;
-  return offset;
-}
-
-/** Records ground speed (for the moving-fire penalty) and whether a sidestep was blocked. */
-function trackEngagingMotion(
-  dt: number,
-  hs: TargetHealthState,
-  agent: EnemyAiAgentRuntime,
-  goalX: number,
-  beforeX: number,
-  beforeZ: number,
-  maxStrideStep: number
-): void {
-  if (dt <= 0) return;
-  const moved = Math.hypot(hs.worldPosition.x - beforeX, hs.worldPosition.z - beforeZ);
-  const prev = agent.moveSpeedMs ?? 0;
-  agent.moveSpeedMs = prev + (moved / dt - prev) * (1 - Math.exp(-MOVE_SPEED_SMOOTHING * dt));
-  const wantedLateral = Math.min(Math.abs(goalX - beforeX), maxStrideStep);
-  agent.lateralStalled = wantedLateral > 0.01 && Math.abs(hs.worldPosition.x - beforeX) < wantedLateral * 0.2;
 }

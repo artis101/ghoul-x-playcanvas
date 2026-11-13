@@ -57,7 +57,9 @@ export function stepWeaponBurstFire(
   agent: EnemyAiAgentRuntime,
   aimProfile: EnemyAimProfile,
   playerEyeWorldPos: Vec3Like,
-  ctx: BurstContext
+  ctx: BurstContext,
+  /** True while the shooter is still moving or settling its aim: no new burst starts. */
+  holdFire = false
 ): void {
   // A body on the ground cannot twist round to shoot behind itself. It waits for a target it
   // can actually bring the weapon to bear on.
@@ -79,7 +81,7 @@ export function stepWeaponBurstFire(
     ? yawToward(hs.worldPosition, exposedAimTarget, hs.yawRad)
     : hs.yawRad;
   const isAimAligned =
-    hs.isRagdollActive || Math.abs(wrapAngleRad(aimYaw - hs.yawRad)) <= Math.PI / 12;
+    !holdFire && (hs.isRagdollActive || Math.abs(wrapAngleRad(aimYaw - hs.yawRad)) <= Math.PI / 12);
 
   let desiredBurstShots: number;
   if (aimProfile.usingBackupSidearm) {

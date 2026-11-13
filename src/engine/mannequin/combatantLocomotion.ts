@@ -42,7 +42,9 @@ export class CombatantLocomotion {
     const forward = dx * Math.sin(yaw) + dz * Math.cos(yaw);
     let clip: CombatantMovementClip['clip'];
     let nominalSpeed = 1.7;
-    if (Math.abs(side) > Math.abs(forward) * 1.1) {
+    // Hysteresis on the strafe/walk split: moving on a diagonal must not flip clips each frame.
+    const strafing = this.movement?.clip === 'StrafeLeft' || this.movement?.clip === 'StrafeRight';
+    if (Math.abs(side) > Math.abs(forward) * (strafing ? 0.75 : 1.4)) {
       clip = side < 0 ? 'StrafeRight' : 'StrafeLeft';
       nominalSpeed = 2.6;
     } else if (forward < 0) {

@@ -22,6 +22,7 @@ import type {
 import type { CombatantTriageStatus } from '../../core/ballistics/solver.ts';
 import type { AimDuckReflexState } from '../../core/ai/aimDuckReflex.ts';
 import type { CloseQuartersJukeState } from '../../core/ai/closeQuartersStrafe.ts';
+import type { PlantedFootworkState } from '../../core/ai/plantedFootwork.ts';
 import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
 import { DESTRUCTION_ZONE_LAYOUT } from '../world/arenaLayout.ts';
 
@@ -230,6 +231,8 @@ export interface EnemyAiAgentRuntime {
   lateralStalled?: boolean;
   /** Smoothed ground speed while engaging, in m/s; firing on the move costs accuracy. */
   moveSpeedMs?: number;
+  /** Held movement goal and time standing still; see `plantedFootwork.ts`. */
+  footwork?: PlantedFootworkState;
 }
 
 export interface EnemyHitNotification {

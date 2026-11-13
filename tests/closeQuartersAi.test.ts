@@ -9,6 +9,8 @@ import {
 } from '../src/core/ai/closeQuartersStrafe.ts';
 import { createTargetHealthState } from '../src/core/ghoul/anatomy.ts';
 import { TacticalCombatAiSystem } from '../src/engine/ai/tacticalCombatAi.ts';
+import { evaluateTacticalEngagementSubstate, type TacticalDoctrineInput } from '../src/core/ai/tacticalDoctrine.ts';
+import { createPlantedFootworkState, holdFootworkGoal, recordFootworkMotion } from '../src/core/ai/plantedFootwork.ts';
 
 const EYE = { x: 0, y: 1.65, z: 0 };
 
@@ -18,6 +20,7 @@ function jukeInput(overrides: Partial<CloseQuartersJukeInput> = {}): CloseQuarte
     playerDistanceM: 5,
     aimThreat: 0,
     wasHit: false,
+    planted: true,
     lateralStalled: false,
     anchorX: 0,
     arenaHalfWidthM: 7.7,
@@ -74,12 +77,23 @@ describe('close-quarters juke', () => {
     expect(new Set(gaps).size).toBeGreaterThan(1);
   });
 
-  it('breaks to the other side when hit, once committed', () => {
+  it('breaks to the other side when hit, once it has been planted long enough to shoot', () => {
     const state = createCloseQuartersJukeState(7, 1);
-    for (let i = 0; i < 30; i++) stepCloseQuartersJuke(state, jukeInput());
+    for (let i = 0; i < 50; i++) stepCloseQuartersJuke(state, jukeInput());
     const before = state.side;
     stepCloseQuartersJuke(state, jukeInput({ wasHit: true }));
     expect(state.side).toBe(before === 1 ? -1 : 1);
+  });
+
+  it('never turns back mid-dash or straight after arriving, however often it is hit or aimed at', () => {
+    const state = createCloseQuartersJukeState(11, 1);
+    const side = state.side;
+    for (let i = 0; i < 120; i++) {
+      stepCloseQuartersJuke(state, jukeInput({ planted: false, wasHit: true, aimThreat: 1 }));
+    }
+    expect(state.side).toBe(side);
+    for (let i = 0; i < 30; i++) stepCloseQuartersJuke(state, jukeInput({ wasHit: true, aimThreat: 1 }));
+    expect(state.side).toBe(side);
   });
 
   it('turns away from a wall instead of pressing into it', () => {
@@ -163,6 +177,40 @@ describe('TacticalCombatAiSystem — close-quarters engagement', () => {
     expect(maxX - minX).toBeGreaterThan(2);
   });
 
+  it('a nearby enemy in the open stops dead between bounds and only shoots while planted', () => {
+    const shots: { x: number; z: number }[] = [];
+    const ai = new TacticalCombatAiSystem({
+      onEnemyFireTracer: () => shots.push({ x: target.worldPosition.x, z: target.worldPosition.z }),
+    });
+    const target = createTargetHealthState('cq_1', 'CQ', { x: 0, y: 0, z: -4 }, 0, 'MILITIA_GUNNER');
+    ai.registerWaveTargets([target], false);
+    ai.setPlayerDamageEnabled(false);
+    const dt = 1 / 60;
+    let prevX = target.worldPosition.x;
+    let prevZ = target.worldPosition.z;
+    let moving = false;
+    let moveStarts = 0;
+    let shotsWhileMoving = 0;
+    let shotCount = 0;
+    for (let i = 0; i < 60 * 10; i++) {
+      // Player aims straight at it the whole time.
+      ai.update(dt, [target], EYE, undefined, { x: target.worldPosition.x, y: 1.3 - EYE.y, z: target.worldPosition.z });
+      const speed = Math.hypot(target.worldPosition.x - prevX, target.worldPosition.z - prevZ) / dt;
+      prevX = target.worldPosition.x;
+      prevZ = target.worldPosition.z;
+      const nowMoving = speed > 0.25;
+      if (nowMoving && !moving) moveStarts++;
+      moving = nowMoving;
+      if (shots.length > shotCount && nowMoving) shotsWhileMoving += shots.length - shotCount;
+      shotCount = shots.length;
+    }
+    expect(shots.length).toBeGreaterThan(0);
+    expect(shotsWhileMoving).toBe(0);
+    // Deliberate bounds a second or more apart, not a stream of micro-steps.
+    expect(moveStarts).toBeGreaterThan(1);
+    expect(moveStarts).toBeLessThan(10);
+  });
+
   it('shooting on the move is less accurate than shooting planted', () => {
     const ai = new TacticalCombatAiSystem();
     const target = createTargetHealthState('mv_0', 'Mover', { x: 0, y: 0, z: -10 }, 0, 'MILITIA_GUNNER');
@@ -173,5 +221,41 @@ describe('TacticalCombatAiSystem — close-quarters engagement', () => {
     agent.moveSpeedMs = 2.4;
     const moving = ai.computeEnemyAimProfile(target, agent).spreadMultiplier;
     expect(moving).toBeGreaterThan(planted * 1.2);
+  });
+});
+
+describe('planted footwork and range hysteresis', () => {
+  it('holds a planted goal through small changes but follows a real move', () => {
+    const fw = createPlantedFootworkState();
+    expect(holdFootworkGoal(fw, 1, -5)).toEqual({ x: 1, z: -5 });
+    recordFootworkMotion(fw, 0, 1 / 60);
+    expect(holdFootworkGoal(fw, 1.2, -5.1)).toEqual({ x: 1, z: -5 });
+    expect(holdFootworkGoal(fw, 2, -5)).toEqual({ x: 2, z: -5 });
+    // While moving, the goal tracks the desire exactly so approaches stay smooth.
+    recordFootworkMotion(fw, 0.04, 1 / 60);
+    expect(holdFootworkGoal(fw, 2.1, -5)).toEqual({ x: 2.1, z: -5 });
+  });
+
+  it('a pressing heavy keeps pressing once it reaches its stand-off instead of walking back', () => {
+    const base: TacticalDoctrineInput = {
+      archetype: 'HEAVY_ENFORCER',
+      resolveProfile: 'GRITTY_REGULAR',
+      clutchingWound: false,
+      isWounded: false,
+      cyclePhase01: 0.5,
+      playerDistanceM: 6,
+      hasChestArmor: true,
+      chestArmorIntegrity: 1,
+      primaryWeaponIntact: true,
+      suppression: 0,
+      moraleShockTimerS: 0,
+      berserkerFrenzyTimerS: 0,
+      anchorBlockedByCover: false,
+    };
+    expect(evaluateTacticalEngagementSubstate(base)).toBe('JUGGERNAUT_PRESS');
+    expect(evaluateTacticalEngagementSubstate({ ...base, playerDistanceM: 3.2 })).toBe('COVER_PEEK');
+    expect(
+      evaluateTacticalEngagementSubstate({ ...base, playerDistanceM: 3.2, previousSubstate: 'JUGGERNAUT_PRESS' })
+    ).toBe('JUGGERNAUT_PRESS');
   });
 });

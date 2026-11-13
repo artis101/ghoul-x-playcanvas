@@ -22,6 +22,15 @@ export function isWaistStepBlocked(
   return clearanceHits.length > 0 && clearanceHits[0].distanceM <= stepDist + 0.42;
 }
 
+/** The walkable arena floor; movement goals are clamped to it. */
+export function clampArenaGoalX(x: number): number {
+  return Math.max(-8.1, Math.min(8.1, x));
+}
+
+export function clampArenaGoalZ(z: number): number {
+  return Math.max(-46.0, Math.min(-3.2, z));
+}
+
 export function moveHorizontalClamped(
   hs: TargetHealthState,
   goalX: number,
@@ -31,8 +40,8 @@ export function moveHorizontalClamped(
 ): void {
   if (!hs.alive || hs.currentHp <= 0 || hs.isRagdollActive || maxStepM <= 0) return;
 
-  const clampedGoalX = Math.max(-8.1, Math.min(8.1, goalX));
-  const clampedGoalZ = Math.max(-46.0, Math.min(-3.2, goalZ));
+  const clampedGoalX = clampArenaGoalX(goalX);
+  const clampedGoalZ = clampArenaGoalZ(goalZ);
 
   const dx = clampedGoalX - hs.worldPosition.x;
   const dz = clampedGoalZ - hs.worldPosition.z;
