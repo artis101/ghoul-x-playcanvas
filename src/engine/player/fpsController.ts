@@ -51,11 +51,11 @@ export class FpsController {
 
     this.cameraEntity = new pc.Entity('PlayerCamera');
     this.cameraEntity.addComponent('camera', {
-      clearColor: new pc.Color(0.05, 0.07, 0.1),
+      clearColor: new pc.Color(0.1, 0.09, 0.06),
       fov: HIP_FOV_DEG,
       nearClip: 0.05,
       farClip: 400,
-      toneMapping: pc.TONEMAP_ACES,
+      toneMapping: pc.TONEMAP_LINEAR,
       gammaCorrection: pc.GAMMA_SRGB,
     });
     this.cameraEntity.setPosition(this.playerPos.x, this.playerPos.y, this.playerPos.z);

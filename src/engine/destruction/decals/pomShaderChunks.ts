@@ -80,8 +80,7 @@ uniform float uPomScorchDarkening;
 void getAlbedo() {
     dAlbedo = material_diffuse.rgb;
     #ifdef STD_DIFFUSE_TEXTURE
-        vec4 texel = {STD_DIFFUSE_TEXTURE_DECODE}(texture2DBias({STD_DIFFUSE_TEXTURE_NAME}, {STD_DIFFUSE_TEXTURE_UV}, {STD_TEXTURE_BIAS}));
-        dAlbedo *= texel.rgb;
+        dAlbedo *= {STD_DIFFUSE_TEXTURE_DECODE}(texture2DBias({STD_DIFFUSE_TEXTURE_NAME}, {STD_DIFFUSE_TEXTURE_UV}, {STD_TEXTURE_BIAS})).rgb;
         #ifdef STD_HEIGHT_TEXTURE
             float cavityDepth = 1.0 - texture2DLod({STD_HEIGHT_TEXTURE_NAME}, {STD_HEIGHT_TEXTURE_UV}, 0.0).r;
             float cavityShadow = 1.0 - clamp(cavityDepth * uPomScorchDarkening * 1.15, 0.0, 0.88);
@@ -142,8 +141,7 @@ uniform uPomScorchDarkening: f32;
 fn getAlbedo() {
     dAlbedo = uniform.material_diffuse.rgb;
     #ifdef STD_DIFFUSE_TEXTURE
-        let texel: vec4f = {STD_DIFFUSE_TEXTURE_DECODE}(textureSampleBias({STD_DIFFUSE_TEXTURE_NAME}, {STD_DIFFUSE_TEXTURE_NAME}_sampler, {STD_DIFFUSE_TEXTURE_UV}, {STD_TEXTURE_BIAS}));
-        dAlbedo = dAlbedo * texel.rgb;
+        dAlbedo = dAlbedo * {STD_DIFFUSE_TEXTURE_DECODE}(textureSampleBias({STD_DIFFUSE_TEXTURE_NAME}, {STD_DIFFUSE_TEXTURE_NAME}_sampler, {STD_DIFFUSE_TEXTURE_UV}, {STD_TEXTURE_BIAS})).rgb;
         #ifdef STD_HEIGHT_TEXTURE
             let cavityDepth: f32 = 1.0 - textureSampleLevel({STD_HEIGHT_TEXTURE_NAME}, {STD_HEIGHT_TEXTURE_NAME}_sampler, {STD_HEIGHT_TEXTURE_UV}, 0.0).r;
             let cavityShadow: f32 = 1.0 - clamp(cavityDepth * uniform.uPomScorchDarkening * 1.15, 0.0, 0.88);

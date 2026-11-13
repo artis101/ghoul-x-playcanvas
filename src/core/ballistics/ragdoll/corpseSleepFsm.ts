@@ -5,6 +5,7 @@ import type {
 } from '../../../contracts/ballistics.ts';
 import { ALL_AUX_PARTICLES, ALL_GHOUL_ZONES } from '../../ghoul/anatomy.ts';
 import { copyVec3, lengthSq } from '../vec3.ts';
+import type { SprawlProgress } from './corpseSprawlDrive.ts';
 import { releaseMuscleTone } from './ragdollMuscleDrive.ts';
 
 const RESTING_ON_FLOOR_SLACK_M = 0.008;
@@ -14,6 +15,9 @@ const FALLING_LIMIT_ACCEL_MS2 = 5000;
 // A little over gravity: enough to swing a limb back into range, not to hoist the body.
 const SETTLED_LIMIT_ACCEL_MS2 = 14;
 const LIVING_LIMIT_ACCEL_MS2 = 60;
+const UNFOLD_PATIENCE_S = 2.2;
+// A wedged limb uses the patience up several times faster than one that is getting somewhere.
+const STALLED_CLOCK_RATE = 6;
 
 export function freezeCorpseParticles(target: TargetHealthState): void {
   for (const z of ALL_GHOUL_ZONES) {
@@ -143,7 +147,8 @@ export function stepCorpseSettleAndSleep(
   target: TargetHealthState,
   dt: number,
   finalGroundedCount: number,
-  floorY = 0
+  floorY = 0,
+  sprawl: SprawlProgress = 'SETTLED'
 ): void {
   if (target.alive || !target.isRagdollActive || finalGroundedCount < 4) {
     return;
@@ -181,20 +186,23 @@ export function stepCorpseSettleAndSleep(
 
   const maxSpeed = Math.sqrt(maxSpeedSq);
   let nextAccum = currentAccum;
-  if (maxSpeed < 0.15) {
-    nextAccum += dt;
-  } else if (maxSpeed < 0.75) {
+  if (maxSpeed < 0.75) {
     nextAccum += dt;
   } else {
     // Still lively, but on the floor: count it slowly, so nothing can keep a corpse awake for good.
     nextAccum += dt * 0.25;
   }
 
-  if (
-    (maxSpeed < 0.15 && nextAccum >= 0.3) ||
-    (maxSpeed < 0.6 && nextAccum >= 1.6) ||
-    nextAccum >= 2.1
-  ) {
+  // A corpse still spreading out is left awake, but only for so long: a limb wedged under the
+  // body may never get there, and the corpse must sleep all the same.
+  const priorUnfoldingS =
+    target.ragdollPhase.kind === 'CORPSE_DYNAMIC' ? (target.ragdollPhase.unfoldingS ?? 0) : 0;
+  const unfoldingS =
+    priorUnfoldingS + (sprawl === 'MOVING' ? dt : sprawl === 'STALLED' ? dt * STALLED_CLOCK_RATE : 0);
+  const atRest = sprawl !== 'SETTLED'
+    ? unfoldingS >= UNFOLD_PATIENCE_S
+    : (maxSpeed < 0.15 && nextAccum >= 0.3) || (maxSpeed < 0.6 && nextAccum >= 1.6) || nextAccum >= 2.1;
+  if (atRest) {
     freezeCorpseParticles(target);
     target.posture = 'RAGDOLL_GROUNDED';
     target.ragdollPhase = { kind: 'CORPSE_SLEEPING' };
@@ -203,6 +211,7 @@ export function stepCorpseSettleAndSleep(
       kind: 'CORPSE_DYNAMIC',
       settleAccumS: nextAccum,
       wokenWarmStart,
+      unfoldingS,
     };
   }
 }

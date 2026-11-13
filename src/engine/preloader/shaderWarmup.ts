@@ -103,7 +103,7 @@ export async function compileAllGameShaders(
       fov: 60,
       priority: -100,
       rect: new pc.Vec4(0, 0, 0.04, 0.04),
-      toneMapping: pc.TONEMAP_ACES,
+      toneMapping: pc.TONEMAP_LINEAR,
       gammaCorrection: pc.GAMMA_SRGB,
     });
     warmupCam.setPosition(0, -250, 0);

@@ -14,6 +14,10 @@ import { CombatantBoneSync } from '../mannequin/combatantBoneSync.ts';
 import { transitionPropAttachment } from '../mannequin/propAttachmentState.ts';
 
 const NO_SUPPORT_GRIP = new pc.Vec3();
+const UPPER_ARM_M = 0.26;
+const STANDING_ELBOW_BEND = { out: 0.12, down: 0.14, reach: 0.495 } as const;
+// Upper arm plus forearm is 0.51 m: reaching 0.508 leaves the elbow only just unlocked.
+const DOWNED_ELBOW_BEND = { out: 0.015, down: 0.02, reach: 0.508 } as const;
 
 export class OffhandSidearmSync {
   private readonly scratchMat4 = new pc.Mat4();
@@ -75,6 +79,7 @@ export class OffhandSidearmSync {
     }
 
     if (!transition.isVisible || !hand) {
+      hs.downedAimDirWorld = null;
       rig.holderEntity.enabled = false;
       return false;
     }
@@ -111,6 +116,8 @@ export class OffhandSidearmSync {
       }
     }
     const aimDir = normalize(vec3(horizDir.x * Math.sqrt(1 - clampedY * clampedY), clampedY, horizDir.z * Math.sqrt(1 - clampedY * clampedY)));
+    // A downed shooter's head turns to look along the gun (see groundedPoseTargets).
+    hs.downedAimDirWorld = downed && (sidearmState?.drawProgress ?? 1) >= 1 ? aimDir : null;
 
     const glb = target.combatantGlb;
     const animatedHand = glb?.boneNodes.get(handZone);
@@ -118,7 +125,9 @@ export class OffhandSidearmSync {
     // With that hand gone, or while the pistol is still coming out of the holster, the arm is
     // posed here instead, straight out from its own shoulder.
     const supportHand: ActiveFiringHand = oppositeSide(activeHand);
-    const twoHanded = isArmChainIntactAndFunctional(hs, supportHand) && (sidearmState?.drawProgress ?? 1) >= 1;
+    // On the ground the other arm props the body up, so the pistol is always held one-handed.
+    const twoHanded =
+      !downed && isArmChainIntactAndFunctional(hs, supportHand) && (sidearmState?.drawProgress ?? 1) >= 1;
     if (twoHanded && target.isPlayingPistolAim && glb && animatedHand && rig.glbInstance) {
       const palm = add(animatedHand.getPosition(), scale(animatedHand.up, 0.052));
       this.grip.align(rig.holderEntity, rig.glbInstance.rootEntity, 'silver_talon_50ae', palm, aimDir);
@@ -131,9 +140,14 @@ export class OffhandSidearmSync {
     const holsterDir = normalize(add(scale(charFwd, 0.26), vec3(charRight.x * sideSign * 0.22, -0.86, charRight.z * sideSign * 0.22)));
     const armAimDir = normalize(add(scale(holsterDir, 1 - smoothDraw), scale(aimDir, smoothDraw)));
 
-    const elbowDir = normalize(add(armAimDir, vec3(charRight.x * sideSign * 0.12, -0.14, charRight.z * sideSign * 0.12)));
-    const pForearm = add(pUpper, scale(elbowDir, 0.26));
-    const wristGoal = add(pUpper, scale(armAimDir, 0.495));
+    // Standing, the elbow stays soft and tucked a little out and down. Lying on the ground, the
+    // pistol is pushed out at the end of a straight arm, elbow locked, and points where it can.
+    const elbowBend = downed ? DOWNED_ELBOW_BEND : STANDING_ELBOW_BEND;
+    const elbowDir = normalize(
+      add(armAimDir, vec3(charRight.x * sideSign * elbowBend.out, -elbowBend.down, charRight.z * sideSign * elbowBend.out))
+    );
+    const pForearm = add(pUpper, scale(elbowDir, UPPER_ARM_M));
+    const wristGoal = add(pUpper, scale(armAimDir, elbowBend.reach));
     const forearmDir = normalize(sub(wristGoal, pForearm));
     const pHand = add(pForearm, scale(forearmDir, 0.25));
 

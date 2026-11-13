@@ -78,3 +78,21 @@ export const DESTRUCTION_ZONE_LAYOUT: DestructionZoneLayout = {
 
 export const RANGE_MARKER_DISTANCES_M: readonly number[] = [5, 10, 15, 25, 42];
 export const PERIMETER_BARRIER_Z_OFFSETS_M: readonly number[] = [-8, -20, -34, -48];
+
+/**
+ * Interior shell of the tiled underground hall that encloses the range.
+ * Wall faces sit at x = ±halfWidthM, z = frontZ / backZ; the ceiling underside at heightM.
+ */
+export const HALL_SHELL = {
+  halfWidthM: 12,
+  frontZ: 9,
+  backZ: -64,
+  heightM: 4.4,
+  wallThicknessM: 0.4,
+  beamZOffsetsM: [-2, -14, -26, -38, -50] as readonly number[],
+  fixtureBayZOffsetsM: [4, -8, -20, -32, -44, -57] as readonly number[],
+  fixtureXOffsetsM: [-5, 5] as readonly number[],
+} as const;
+
+export const HALL_LENGTH_M = HALL_SHELL.frontZ - HALL_SHELL.backZ;
+export const HALL_CENTER_Z = (HALL_SHELL.frontZ + HALL_SHELL.backZ) / 2;

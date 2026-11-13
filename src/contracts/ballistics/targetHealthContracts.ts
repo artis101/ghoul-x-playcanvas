@@ -216,6 +216,8 @@ export interface TargetHealthState {
   ragdollRootPosition: Vec3Like;
   ragdollRootVelocity: Vec3Like;
   ragdollAngularVelocity: Vec3Like;
+  /** Where a downed shooter points its weapon, so its head can look along it. Null while not aiming. */
+  downedAimDirWorld?: Vec3Like | null;
   ragdollBones: Record<GhoulZoneId, RagdollBoneState>;
   auxParticles: Record<AuxParticleId, AuxRagdollParticle>;
   ragdollConstraints: RagdollDistanceConstraint[];

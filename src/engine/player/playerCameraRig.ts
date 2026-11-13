@@ -5,11 +5,10 @@ import { aimSpreadRad } from '../../core/ballistics/aim/aimDownSights.ts';
 import type { WeaponGlbInstance } from '../assets/glbLoader.ts';
 import { PlayerSightController, type PlayerSightState } from './playerSightController.ts';
 import { ViewmodelAimStabilizer } from './viewmodelAimStabilizer.ts';
+import { HIP_VM_ROT, hipViewmodelPosition } from './viewmodelHipPose.ts';
 
 export type { PlayerSightState };
 
-const HIP_VM_POS = new pc.Vec3(0.24, -0.22, -0.48);
-const HIP_VM_ROT = new pc.Quat().setFromEulerAngles(0, 0, -1.75);
 
 /** What the weapon hands are doing this frame, as far as aiming is concerned. */
 export interface ViewmodelHandsState {
@@ -190,9 +189,10 @@ export class PlayerCameraRig {
     const adsRot = this.sight.adsPose.rotation;
     const transitionArcDipY = Math.sin(nextBlend * Math.PI) * -0.014;
     const transitionRollDeg = Math.sin(nextBlend * Math.PI) * -4.5;
-    const baseVmX = HIP_VM_POS.x + (adsPos.x - HIP_VM_POS.x) * nextBlend;
-    const baseVmY = HIP_VM_POS.y + (adsPos.y - HIP_VM_POS.y) * nextBlend + transitionArcDipY;
-    const baseVmZ = HIP_VM_POS.z + (adsPos.z - HIP_VM_POS.z) * nextBlend;
+    const hipPos = hipViewmodelPosition(currentWeapon.role);
+    const baseVmX = hipPos.x + (adsPos.x - hipPos.x) * nextBlend;
+    const baseVmY = hipPos.y + (adsPos.y - hipPos.y) * nextBlend + transitionArcDipY;
+    const baseVmZ = hipPos.z + (adsPos.z - hipPos.z) * nextBlend;
     this.scratchAdsRot.set(adsRot.x, adsRot.y, adsRot.z, adsRot.w);
     this.scratchBaseRot.slerp(HIP_VM_ROT, this.scratchAdsRot, nextBlend);
 

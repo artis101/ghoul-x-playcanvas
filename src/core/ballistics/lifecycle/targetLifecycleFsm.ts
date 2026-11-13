@@ -8,7 +8,11 @@ import type {
 import { ALL_AUX_PARTICLES, ALL_GHOUL_ZONES } from '../../ghoul/anatomy.ts';
 import { deriveCorpseSleepPhase } from '../ragdoll/corpseSleepFsm.ts';
 import { stabilizeRagdollPoseForTransition } from '../ragdoll/ragdollPoseStabilizer.ts';
+import { listLostLimbs } from '../trauma/limbLossDeathRule.ts';
 import { add, copyVec3, scale, vec3 } from '../vec3.ts';
+
+/** Matches the armament FSM's last-stand vitals: below this a wounded combatant goes down fighting. */
+const LAST_STAND_HP_FRACTION = 0.32;
 
 const STANDING_POSTURES: ReadonlySet<string> = new Set<StandingCombatPosture>([
   'COMBAT_READY',
@@ -263,9 +267,15 @@ export function stepLivingTargetVitalsAndFall(
     transitionTargetLifecycle(target, { kind: 'TICK_PAIN_REACTION', dt });
   }
 
+  // A lost or useless leg drops the body as soon as the buckle has played. A lost arm keeps it on
+  // its feet until it is weak enough for a last stand, then it sits down to fight on from there.
+  const legGone = !target.rightLegFunctional || !target.leftLegFunctional;
+  const armGoneAndSpent =
+    listLostLimbs(target.severedZones).some((limb) => limb.startsWith('ARM')) &&
+    target.currentHp <= target.maxHp * LAST_STAND_HP_FRACTION;
   if (
     target.alive &&
-    (!target.rightLegFunctional || !target.leftLegFunctional) &&
+    (legGone || armGoneAndSpent) &&
     !target.isRagdollActive &&
     target.activeReaction.type === 'NONE'
   ) {
@@ -277,12 +287,13 @@ export function stepLivingTargetVitalsAndFall(
 
     const cosY = Math.cos(target.yawRad);
     const sinY = Math.sin(target.yawRad);
-    const sideSign = !target.rightLegFunctional ? -1.0 : 1.0;
+    // Down onto its butt: mostly back and down, leaning a little toward a bad leg.
+    const sideSign = !target.rightLegFunctional ? -1.0 : !target.leftLegFunctional ? 1.0 : 0;
     const sideWorld = vec3(cosY * sideSign, 0, -sinY * sideSign);
     const fwdWorld = vec3(sinY, 0, cosY);
     const dropVel = add(
-      scale(sideWorld, 0.55),
-      add(scale(fwdWorld, -0.35), vec3(0, -1.1, 0))
+      scale(sideWorld, 0.2),
+      add(scale(fwdWorld, -0.6), vec3(0, -1.1, 0))
     );
 
     for (const z of ALL_GHOUL_ZONES) {

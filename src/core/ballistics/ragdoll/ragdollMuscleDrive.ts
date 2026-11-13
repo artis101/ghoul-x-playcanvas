@@ -8,7 +8,8 @@ const GRAVITY_MS2 = 9.81;
 const POSE_STIFFNESS = 42.0;
 const POSE_DAMPING = 8.5;
 const MAX_POSE_ACCEL_MS2 = 28.0;
-const SEAT_ZONES: readonly GhoulZoneId[] = ['PELVIS_GROIN', 'THIGH_RIGHT', 'THIGH_LEFT'];
+/** The parts a downed body sits on and braces every muscle pull against. */
+export const SEAT_ZONES: readonly GhoulZoneId[] = ['PELVIS_GROIN', 'THIGH_RIGHT', 'THIGH_LEFT'];
 const MAX_SEAT_REACTION_MS2 = 4.5;
 
 export type MuscleDrive = Partial<Record<GhoulZoneId, Vec3Like>>;

@@ -4,6 +4,7 @@ import {
 } from '../../../contracts/ballistics.ts';
 import { ALL_AUX_PARTICLES } from '../../ghoul/anatomy.ts';
 import { transitionTargetLifecycle } from '../lifecycle/targetLifecycleFsm.ts';
+import { isLimbLossFatal } from './limbLossDeathRule.ts';
 import { add, copyVec3, cross, scale, sub } from '../vec3.ts';
 
 export function applyDismembermentTree(
@@ -99,6 +100,11 @@ export function applyDismembermentTree(
       target.leftArmFunctional = false;
       transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
     }
+  }
+
+  // Two lost limbs kill, except one arm with one leg (the shot pass usually got here first).
+  if (target.alive && report.dismembermentEvents.length > 0 && isLimbLossFatal(target.severedZones)) {
+    transitionTargetLifecycle(target, { kind: 'LETHAL_DEATH' });
   }
 
   return { newlySeveredRightLeg, newlySeveredLeftLeg };

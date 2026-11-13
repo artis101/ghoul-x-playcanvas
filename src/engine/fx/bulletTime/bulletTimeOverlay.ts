@@ -63,14 +63,14 @@ export class BulletTimeOverlayManager {
     barWrap.style.bottom = '66px';
     barWrap.style.width = '136px';
     barWrap.style.height = '5px';
-    barWrap.style.background = 'rgba(8, 16, 22, 0.55)';
-    barWrap.style.border = '1px solid rgba(72, 220, 255, 0.35)';
-    barWrap.style.borderRadius = '2px';
+    barWrap.style.background = '#14130d';
+    barWrap.style.border = '1px solid #0c0b07';
+    barWrap.style.borderRadius = '0';
 
     const barFill = document.createElement('div');
     barFill.style.width = '100%';
     barFill.style.height = '100%';
-    barFill.style.background = 'linear-gradient(90deg, #18c8ff, #8cf4ff)';
+    barFill.style.background = '#e6b53c';
     barWrap.appendChild(barFill);
     overlay.appendChild(barWrap);
 

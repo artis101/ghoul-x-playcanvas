@@ -75,6 +75,8 @@ export function handleEnemyHit(
   }
 
   onArmamentSync();
+  // Taking a round, a combatant breaks its current juke so the shooter's next one misses.
+  agent.jukeBreakPending = true;
   const hitTorso =
     hit.isTorsoHit === true || (hit.hitZone !== undefined && TORSO_ZONES.has(hit.hitZone));
   const wasUnsuspecting = agent.state === 'PATROL_GUARD' && agent.adrenaline < 0.35;

@@ -124,8 +124,9 @@ export class WoundPreview {
     });
     applyDismembermentTree(hs, { dismembermentEvents } as unknown as ShotSimulationReport);
     if (!this.spec.bleeding) hs.bloodLossRateMlPerSec = 0;
-    if (!this.spec.downed) return;
-    hs.currentHp = hs.maxHp * 0.25;
+    // Two lost limbs (other than one arm and one leg) kill it, and it drops whatever was asked.
+    if (!this.spec.downed && hs.alive) return;
+    if (hs.alive) hs.currentHp = hs.maxHp * 0.25;
     transitionTargetLifecycle(hs, { kind: 'ACTIVATE_RAGDOLL', isOverkillCorpseHit: false });
     stabilizeRagdollPoseForTransition(hs, 0);
     hs.ragdollRootVelocity = vec3(0, 0.3, -2.4);

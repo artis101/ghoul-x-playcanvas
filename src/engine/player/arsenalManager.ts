@@ -9,6 +9,7 @@ import { BarrelSmokeSystem } from './muzzleSmokeFx.ts';
 import { AmmoInventory } from './ammoInventory.ts';
 import { buildWeaponViewmodel } from './viewmodelBuilder.ts';
 import { mountViewmodelHands } from './viewmodelHands.ts';
+import { hipViewmodelPosition } from './viewmodelHipPose.ts';
 import {
   GRENADE_GESTURE_SECONDS,
   type MuzzleFlashPhase,
@@ -58,7 +59,7 @@ export class ArsenalManager {
     this.ammoInventory = this.inventory.states;
 
     this.weaponViewmodelEntity = new pc.Entity('WeaponViewmodel');
-    this.weaponViewmodelEntity.setPosition(0.24, -0.22, -0.48);
+    this.weaponViewmodelEntity.setPosition(hipViewmodelPosition(this.currentWeapon.role));
     cameraEntity.addChild(this.weaponViewmodelEntity);
 
     this.muzzleFlashEntity = this.rebuildActiveViewmodel();

@@ -26,7 +26,7 @@ export class ArenaBuilder {
   private preRenderHookBound = false;
 
   private readonly onPreRenderCamera = (camera: pc.CameraComponent): void => {
-    camera.toneMapping = pc.TONEMAP_ACES;
+    camera.toneMapping = pc.TONEMAP_LINEAR;
     camera.gammaCorrection = pc.GAMMA_SRGB;
   };
 
@@ -57,63 +57,45 @@ export class ArenaBuilder {
 
     upgradePaletteWithProceduralPbrMaps(this.app.graphicsDevice, this.materials);
 
-    const sunLight = new pc.Entity('SunLight');
-    sunLight.addComponent('light', {
+    // Soft overhead key standing in for the ceiling fixtures: it gives bodies and props
+    // grounded shadows, while the fixtures' own lamps pool warm light along the hall.
+    const overheadLight = new pc.Entity('OverheadKeyLight');
+    overheadLight.addComponent('light', {
       type: 'directional',
-      color: new pc.Color(1.0, 0.95, 0.86),
-      intensity: 1.85,
+      color: new pc.Color(1.0, 0.93, 0.74),
+      intensity: 0.5,
       castShadows: true,
       shadowType: pc.SHADOW_PCF3_16F,
       shadowResolution: 1536,
-      shadowDistance: 55,
+      shadowDistance: 45,
       shadowBias: 0.1,
       normalOffsetBias: 0.05,
-      shadowIntensity: 0.88,
+      shadowIntensity: 0.6,
       numCascades: 2,
       cascadeBlend: 0.15,
     });
-    sunLight.setEulerAngles(48, 32, 0);
-    this.arenaRootEntity.addChild(sunLight);
-    sunLight.syncHierarchy();
-
-    const fillLight = new pc.Entity('FillLight');
-    fillLight.addComponent('light', {
-      type: 'directional',
-      color: new pc.Color(0.34, 0.48, 0.68),
-      intensity: 0.62,
-      castShadows: false,
-    });
-    fillLight.setEulerAngles(-42, -142, 0);
-    this.arenaRootEntity.addChild(fillLight);
-
-    const rimLight = new pc.Entity('RimLight');
-    rimLight.addComponent('light', {
-      type: 'directional',
-      color: new pc.Color(0.74, 0.86, 1.0),
-      intensity: 0.68,
-      castShadows: false,
-    });
-    rimLight.setEulerAngles(36, 172, 0);
-    this.arenaRootEntity.addChild(rimLight);
+    overheadLight.setEulerAngles(14, 28, 0);
+    this.arenaRootEntity.addChild(overheadLight);
+    overheadLight.syncHierarchy();
 
     const scene = this.app.scene;
-    scene.exposure = 1.15;
-    scene.ambientLight = new pc.Color(0.14, 0.17, 0.22);
+    scene.exposure = 1.0;
+    scene.ambientLight = new pc.Color(0.2, 0.18, 0.12);
     scene.fog.type = pc.FOG_EXP2;
-    scene.fog.color = new pc.Color(0.07, 0.09, 0.13);
-    scene.fog.density = 0.0055;
+    scene.fog.color = new pc.Color(0.1, 0.09, 0.06);
+    scene.fog.density = 0.011;
+    scene.lighting.maxLightsPerCell = Math.max(scene.lighting.maxLightsPerCell, 12);
 
-    const ibl = getOrCreateProceduralIblEnvironment(this.app.graphicsDevice, sunLight.up);
+    // Indoors there is no sky to draw; the environment atlas only tints ambient light and reflections.
+    const ibl = getOrCreateProceduralIblEnvironment(this.app.graphicsDevice, overheadLight.up);
     if (ibl) {
       scene.envAtlas = ibl.envAtlas;
-      scene.skybox = ibl.skyboxCubemap;
-      scene.skyboxMip = 0;
-      scene.skyboxIntensity = 1.05;
+      scene.skyboxIntensity = 1.0;
     }
 
     const existingCameras = this.app.root.findComponents('camera') as pc.CameraComponent[];
     for (const cam of existingCameras) {
-      cam.toneMapping = pc.TONEMAP_ACES;
+      cam.toneMapping = pc.TONEMAP_LINEAR;
       cam.gammaCorrection = pc.GAMMA_SRGB;
     }
     if (!this.preRenderHookBound) {
@@ -123,6 +105,7 @@ export class ArenaBuilder {
 
     buildArenaGeometry(
       this.arenaRootEntity,
+      this.app.graphicsDevice,
       this.materials,
       this.rapierWorld,
       colliderHandles,

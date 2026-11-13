@@ -34,6 +34,8 @@ export type RagdollPhaseState =
       readonly kind: 'CORPSE_DYNAMIC';
       settleAccumS: number;
       wokenWarmStart: boolean;
+      /** Seconds this corpse has spent on the floor still spreading out of the heap it fell in. */
+      unfoldingS?: number;
     }
   | { readonly kind: 'CORPSE_SLEEPING' };
 

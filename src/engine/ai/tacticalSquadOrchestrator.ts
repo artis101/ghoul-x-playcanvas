@@ -1,3 +1,4 @@
+import { computeAimThreat } from '../../core/ai/aimThreat.ts';
 import * as pc from 'playcanvas';
 import type { AiBarkCategory, AiBarkPayload, BrutalKillRewardKind } from '../../contracts/ai/aiContracts.ts';
 import type { TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
@@ -107,8 +108,10 @@ export function updateSquadTokensAndFrustum(
       const horizLen = Math.hypot(toEnemy.x, toEnemy.z);
       const dirToEnemy = horizLen > 1e-4 ? normalize(toEnemy) : normPlayerFwd;
       ag.isOffScreen = dot(normPlayerFwd, dirToEnemy) < 0.35;
+      ag.aimThreat = computeAimThreat(playerEyeWorldPos, normPlayerFwd, hs.worldPosition);
     } else {
       ag.isOffScreen = false;
+      ag.aimThreat = 0;
     }
 
     const aimProf = computeAimProfile(hs, ag);

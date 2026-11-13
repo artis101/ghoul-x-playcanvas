@@ -283,11 +283,14 @@ describe('TacticalCombatAiSystem — Off-Screen Frustum Nerf & Dead Zero-Motion 
     ai.update(0.05, [target], { x: 0, y: 1.65, z: 0 }, undefined, { x: 0, y: 0, z: 1 });
     const agent = ai.getAgent('target_0')!;
     expect(agent.isOffScreen).toBe(true);
+    // Isolate the frustum nerf from the moving-fire penalty.
+    agent.moveSpeedMs = 0;
     const offScreenProfile = ai.computeEnemyAimProfile(target, agent);
 
     // Player looking directly at target (-Z) -> target is on-screen
     ai.update(0.05, [target], { x: 0, y: 1.65, z: 0 }, undefined, { x: 0, y: 0, z: -1 });
     expect(agent.isOffScreen).toBe(false);
+    agent.moveSpeedMs = 0;
     const onScreenProfile = ai.computeEnemyAimProfile(target, agent);
     expect(offScreenProfile.spreadMultiplier).toBeCloseTo(onScreenProfile.spreadMultiplier * 4.0, 4);
 

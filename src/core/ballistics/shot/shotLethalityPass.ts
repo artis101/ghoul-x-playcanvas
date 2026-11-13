@@ -9,6 +9,7 @@ import {
   WoundChannelEvent,
 } from '../../../contracts/ballistics.ts';
 import { add, length, scale, vec3 } from '../vec3.ts';
+import { isLimbLossFatal } from '../trauma/limbLossDeathRule.ts';
 
 export function evaluateLethalityAndRagdollPlan(
   weapon: WeaponSpec,
@@ -78,14 +79,19 @@ export function evaluateLethalityAndRagdollPlan(
     rupturedOrgansSet.has('Brain (Cerebrum & Brainstem)') ||
     shatteredBonesSet.has('Cervical Spine (C1-C7)');
 
+  // A second lost limb kills even from a pure limb shot, unless it leaves one arm and one leg.
+  const isFatalLimbLoss =
+    hasHitTarget && dismembermentEvents.length > 0 && isLimbLossFatal(severedZonesSet);
+
   const isLethalKill =
     hasHitTarget &&
-    !isPureLimbShot &&
-    (totalDamageHp >= target.currentHp ||
-      isCranialExploded ||
-      isNeckSevered ||
-      isGutEviscerated ||
-      isCnsDestroyed);
+    (isFatalLimbLoss ||
+      (!isPureLimbShot &&
+        (totalDamageHp >= target.currentHp ||
+          isCranialExploded ||
+          isNeckSevered ||
+          isGutEviscerated ||
+          isCnsDestroyed)));
 
   const rightLegSeveredAfter =
     severedZonesSet.has('THIGH_RIGHT') ||

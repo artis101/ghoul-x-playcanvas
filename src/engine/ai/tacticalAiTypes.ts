@@ -21,6 +21,8 @@ import type {
   WeaponBurstState,
 } from '../../core/ai/weaponBurstFsm.ts';
 import type { CombatantTriageStatus } from '../../core/ballistics/solver.ts';
+import type { AimDuckReflexState } from '../../core/ai/aimDuckReflex.ts';
+import type { CloseQuartersJukeState } from '../../core/ai/closeQuartersStrafe.ts';
 import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
 import { DESTRUCTION_ZONE_LAYOUT } from '../world/arenaLayout.ts';
 
@@ -213,6 +215,17 @@ export interface EnemyAiAgentRuntime {
   burstState?: WeaponBurstState;
   engagementSubstate?: AlertedEngagementSubstate;
   shockState?: TraumaShockState;
+
+  /** 0–1: how squarely the player's crosshair sits on this combatant this frame. */
+  aimThreat?: number;
+  /** Set by a hit; the close-quarters juke consumes it to break the player's aim. */
+  jukeBreakPending?: boolean;
+  closeQuartersJuke?: CloseQuartersJukeState;
+  aimDuckReflex?: AimDuckReflexState;
+  /** True when the last sidestep made no headway, e.g. against a wall or prop. */
+  lateralStalled?: boolean;
+  /** Smoothed ground speed while engaging, in m/s; firing on the move costs accuracy. */
+  moveSpeedMs?: number;
 }
 
 export interface EnemyHitNotification {

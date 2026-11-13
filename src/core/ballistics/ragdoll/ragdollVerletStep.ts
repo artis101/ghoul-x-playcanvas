@@ -1,4 +1,4 @@
-import { TargetHealthState } from '../../../contracts/ballistics.ts';
+import type { GhoulZoneId, TargetHealthState } from '../../../contracts/ballistics.ts';
 import {
   ALL_AUX_PARTICLES,
   ALL_GHOUL_ZONES,
@@ -25,9 +25,10 @@ import {
   stepCorpseSettleAndSleep,
   stepRagdollPhasePreSolve,
 } from './corpseSleepFsm.ts';
+import { type SprawlProgress, applyCorpseSprawl } from './corpseSprawlDrive.ts';
 import { projectConstraintsAndAnatomyOnce } from './ragdollConstraintsProjector.ts';
 import { applyAnatomicalJointLimits } from './ragdollJointLimits.ts';
-import { computeMuscleDrive } from './ragdollMuscleDrive.ts';
+import { type MuscleDrive, SEAT_ZONES, computeMuscleDrive } from './ragdollMuscleDrive.ts';
 import {
   getRagdollParticleRef,
   isRagdollBoneParticleActive,
@@ -78,6 +79,19 @@ function applyGroundFriction(vel: Vec3Like, viscousDamp: number, h: number, grip
 }
 
 /**
+ * How fast a resting particle must be moving before the floor lets it slide. A living body
+ * braces its seat, so writhing never creeps it along the ground. The limbs it is posing are
+ * pulled across the floor by their own muscles: a grip there would pin a leg or arm that
+ * landed folded under the body, and the body would lie in a heap. Everything else rests like
+ * a corpse.
+ */
+function floorGripSpeed(target: TargetHealthState, zone: GhoulZoneId, muscleDrive: MuscleDrive | null): number {
+  if (!target.alive) return CORPSE_GRIP_SPEED_MS;
+  if (SEAT_ZONES.includes(zone)) return LIVING_GRIP_SPEED_MS;
+  return muscleDrive?.[zone] ? 0 : CORPSE_GRIP_SPEED_MS;
+}
+
+/**
  * Steps ongoing physiological bleedout, leg-shot stumble-to-ground transitions, active-ragdoll
  * living ground muscle tone, AND the rigid-skeleton 27-particle PBD 3D Ragdoll Physics solver.
  */
@@ -118,8 +132,8 @@ export function stepRagdollPhysics(
   // shows as sag and tremor, not as a body that cannot lift its own head.
   const poseHold = target.alive ? POSE_HOLD_FLOOR + (1 - POSE_HOLD_FLOOR) * muscleTone : 0.0;
 
-  const gripSpeed = target.alive ? LIVING_GRIP_SPEED_MS : CORPSE_GRIP_SPEED_MS;
   let finalGroundedCount = 0;
+  let sprawl: SprawlProgress = 'SETTLED';
   for (let step = 0; step < subSteps; step++) {
     const activePoseTargets =
       poseHold > 0.01 ? buildLivingGroundedPoseTargets(target, floorY, agonyClockS) : null;
@@ -195,7 +209,7 @@ export function stepRagdollPhysics(
         b.grounded = true;
         if (b.componentId === 'BODY') groundedCount++;
 
-        applyGroundFriction(newVel, Math.exp(-8.5 * h), h, gripSpeed);
+        applyGroundFriction(newVel, Math.exp(-8.5 * h), h, floorGripSpeed(target, z, muscleDrive));
         if (newVel.x === 0 && newVel.z === 0) {
           b.position.x = b.prevPosition.x;
           b.position.z = b.prevPosition.z;
@@ -234,7 +248,8 @@ export function stepRagdollPhysics(
       const newVel = scale(sub(a.position, a.prevPosition), 1 / h);
       const auxGrounded = a.position.y <= floorY + a.radiusM + 0.006;
       if (auxGrounded) {
-        applyGroundFriction(newVel, Math.exp(-9.5 * h), h, gripSpeed);
+        // Fingertips and toes trail their limb: they never hold it in place.
+        applyGroundFriction(newVel, Math.exp(-9.5 * h), h, CORPSE_GRIP_SPEED_MS);
         if (length(newVel) < 0.08) {
           newVel.x = 0;
           newVel.y = 0;
@@ -250,6 +265,7 @@ export function stepRagdollPhysics(
       const { recovery, accelMs2 } = jointLimitEffort(target);
       const effort = { recovery, maxKickMs: (accelMs2 * h) / JOINT_LIMIT_PASSES };
       for (let pass = 0; pass < JOINT_LIMIT_PASSES; pass++) applyAnatomicalJointLimits(target, effort);
+      if (!target.alive) sprawl = applyCorpseSprawl(target, floorY, h);
     }
 
     // E. Momentum-Conserving Passive Joint Viscosity
@@ -283,7 +299,7 @@ export function stepRagdollPhysics(
   }
 
   // 4. Progressive Corpse Settle Damping & Permanent Sleep Lock
-  stepCorpseSettleAndSleep(target, dt, finalGroundedCount, floorY);
+  stepCorpseSettleAndSleep(target, dt, finalGroundedCount, floorY, sprawl);
   syncTargetLifecycleDerivedState(target);
 
   // 5. Sync Root Position/Velocity & Recompute Exact 3D Orthonormal Bone Bases

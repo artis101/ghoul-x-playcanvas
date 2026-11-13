@@ -15,6 +15,18 @@ import {
   resolveDefaultCombatantProfile,
 } from './combatantArmEvaluation.ts';
 
+// Below this ground speed a combatant counts as planted and fires without a movement penalty.
+const MOVING_FIRE_FREE_SPEED_MS = 0.4;
+// Speed range over which the penalty ramps from nothing to its full value.
+const MOVING_FIRE_FULL_SPAN_MS = 2.0;
+// Extra spread at full speed, by temperament: veterans shoot on the move best.
+const MOVING_FIRE_PENALTY: Readonly<Record<EnemyAiAgentRuntime['resolveProfile'], number>> = {
+  HARDENED_VETERAN: 0.35,
+  GRITTY_REGULAR: 0.6,
+  PANICKED_SCRAPPER: 0.75,
+  FANATIC_BERSERKER: 0.5,
+};
+
 export function computeEnemyAimProfile(
   target: TargetHealthState,
   agent?: EnemyAiAgentRuntime,
@@ -150,6 +162,14 @@ export function computeEnemyAimProfile(
 
   if ((agent?.moraleShockTimerS ?? 0) > 0) {
     spreadMultiplier *= computeMoraleSpreadMultiplier(agent!.moraleShockTimerS!);
+  }
+
+  // Shooting while crossing open ground throws shots wide; a planted shooter is steadier.
+  // This is what makes the close-quarters juke a trade-off rather than a free dodge.
+  const moveSpeed = agent?.moveSpeedMs ?? 0;
+  if (moveSpeed > MOVING_FIRE_FREE_SPEED_MS) {
+    const movingT = Math.min(1, (moveSpeed - MOVING_FIRE_FREE_SPEED_MS) / MOVING_FIRE_FULL_SPAN_MS);
+    spreadMultiplier *= 1 + movingT * MOVING_FIRE_PENALTY[resolveProfile];
   }
 
   if (externalAccuracyMultiplier !== undefined && externalAccuracyMultiplier > 0) {

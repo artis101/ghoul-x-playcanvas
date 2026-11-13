@@ -5,8 +5,9 @@ import {
 } from '../../../contracts/ballistics.ts';
 import { type BodySide, oppositeSide, sideSignX, triggerSide } from '../../ghoul/anatomy/handedness.ts';
 import { computeChestFrame } from '../../ghoul/anatomy/ragdollBodyFrames.ts';
-import { add, cross, normalize, scale, vec3 } from '../vec3.ts';
+import { add, cross, dot, normalize, scale, sub, vec3 } from '../vec3.ts';
 import { FACE_DOWN_BELOW, MIN_LYING_SPAN_M } from './downedAimReach.ts';
+import { isDownedArmUsable } from './downedGunSide.ts';
 
 const DEG = Math.PI / 180;
 interface LyingShape {
@@ -16,8 +17,9 @@ interface LyingShape {
   readonly rollRad: number;
   readonly lean: number;
 }
-const PROPPED: LyingShape = { reclineRad: 30 * DEG, rollRad: 22 * DEG, lean: 0.2 };
-const FLAT: LyingShape = { reclineRad: 13 * DEG, rollRad: 0, lean: 0 };
+// Down on its butt, braced on the free hand behind it; with no free hand it leans back further.
+const SEATED: LyingShape = { reclineRad: 64 * DEG, rollRad: 0, lean: 0 };
+const SEATED_UNBRACED: LyingShape = { reclineRad: 50 * DEG, rollRad: 0, lean: 0 };
 const PRONE: LyingShape = { reclineRad: 24 * DEG, rollRad: 12 * DEG, lean: 0.12 };
 // Distances along the spine from the pelvis, and across the body from its midline.
 const ABDOMEN_M = 0.15;
@@ -27,15 +29,9 @@ const NECK_M = 0.6;
 const HEAD_M = 0.11;
 const SHOULDER_HALF_WIDTH_M = 0.2;
 const HIP_HALF_WIDTH_M = 0.115;
-
-function armUsable(target: TargetHealthState, side: BodySide): boolean {
-  const functional = side === 'RIGHT' ? target.rightArmFunctional : target.leftArmFunctional;
-  return (
-    functional &&
-    target.ragdollBones[`FOREARM_${side}`].componentId === 'BODY' &&
-    target.ragdollBones[`HAND_${side}`].componentId === 'BODY'
-  );
-}
+// How far the head turns from where the body faces toward where the gun points.
+const HEAD_FOLLOWS_AIM = 0.75;
+const armUsable = isDownedArmUsable;
 
 function legUsable(target: TargetHealthState, side: BodySide): boolean {
   const functional = side === 'RIGHT' ? target.rightLegFunctional : target.leftLegFunctional;
@@ -46,12 +42,13 @@ function legUsable(target: TargetHealthState, side: BodySide): boolean {
  * Muscle-tone targets for a living combatant lying on the ground, posed the way a wounded
  * shooter lies to keep fighting. The pose follows how the body landed:
  *
- * - On its back with a free arm, it lies half on its side, propped on that elbow, chest and
- *   head raised, leaving the gun arm clear to point over its legs.
- * - On its back with only the gun arm left, it lies flat and lifts just its head and shoulders.
+ * - Fallen back, it sits up on its butt, braced on the free hand planted behind it, legs out in
+ *   front, leaving the gun arm clear to point out over its legs.
+ * - With only the gun arm left, it sits leaning further back with nothing to brace on.
  * - On its front, it pushes its chest up on the free elbow, legs trailing, head craned up.
  *
- * The gun arm itself is left alone: whatever holds the weapon aims it.
+ * The head looks where the gun points. The gun arm itself is left alone: whatever holds the
+ * weapon aims it.
  */
 export function buildLivingGroundedPoseTargets(
   target: TargetHealthState,
@@ -84,7 +81,7 @@ export function buildLivingGroundedPoseTargets(
   const propped = armUsable(target, propSide);
   // Points across the body toward the elbow it leans on.
   const propW = scale(leftW, sideSignX(propSide));
-  const shape = faceDown ? PRONE : propped ? PROPPED : FLAT;
+  const shape = faceDown ? PRONE : propped ? SEATED : SEATED_UNBRACED;
 
   const heave = Math.sin(agonyTimeS * 1.9) * 0.025;
   const recline = shape.reclineRad + heave;
@@ -96,13 +93,18 @@ export function buildLivingGroundedPoseTargets(
   const along = (distanceM: number): Vec3Like => add(anchorP, scale(spineDir, distanceM));
 
   const neckPos = along(NECK_M);
-  // On its back the chin tucks to look down the body past the feet. On its front the head
-  // cranes up to look ahead.
+  // Sitting, it looks out past its feet. On its front the head cranes up to look ahead. Either
+  // way it turns to look down the gun, as far as a neck turns.
+  const restingLook = faceDown ? normalize(add(headW, scale(up, 0.35))) : normalize(add(feetW, scale(up, 0.15)));
+  const aim = target.downedAimDirWorld;
+  const faceW =
+    aim && dot(aim, restingLook) > -0.2
+      ? normalize(add(scale(restingLook, 1 - HEAD_FOLLOWS_AIM), scale(normalize(aim), HEAD_FOLLOWS_AIM)))
+      : restingLook;
   const lookW = faceDown
     ? add(scale(spineDir, 0.3), scale(up, 0.8))
-    : add(add(scale(spineDir, 0.35), scale(up, 0.7)), scale(feetW, 0.6));
+    : add(scale(spineDir, 0.6), scale(faceW, 0.4));
   const headPos = add(neckPos, scale(normalize(lookW), HEAD_M));
-  const faceW = faceDown ? headW : feetW;
   const chestTop = along(CHEST_TOP_M);
   const shoulderReach = scale(propW, SHOULDER_HALF_WIDTH_M * Math.cos(roll));
   const shoulderDrop = SHOULDER_HALF_WIDTH_M * Math.sin(roll);
@@ -121,17 +123,44 @@ export function buildLivingGroundedPoseTargets(
 
   const onFloor = (point: Vec3Like, heightM: number): Vec3Like => vec3(point.x, floorY + heightM, point.z);
 
-  if (propped) {
+  if (propped && !faceDown) {
+    // Arm braced straight back, hand planted on the floor behind and out from the hip.
+    const hand = onFloor(add(add(anchorP, scale(propW, HIP_HALF_WIDTH_M + 0.14)), scale(headW, 0.2)), 0.045);
+    targets[`HAND_${propSide}`] = hand;
+    targets[`FOREARM_${propSide}`] = add(scale(add(propShoulder, hand), 0.5), scale(propW, 0.04));
+  } else if (propped) {
     // Forearm flat on the floor by the shoulder, pointing the way the body faces.
-    const elbow = onFloor(add(add(propShoulder, scale(propW, faceDown ? 0.06 : 0.1)), scale(faceW, 0.05)), 0.05);
+    const elbow = onFloor(add(add(propShoulder, scale(propW, faceDown ? 0.06 : 0.1)), scale(headW, 0.05)), 0.05);
     targets[`FOREARM_${propSide}`] = elbow;
-    targets[`HAND_${propSide}`] = onFloor(add(add(elbow, scale(faceW, 0.24)), scale(propW, -0.07)), 0.045);
+    targets[`HAND_${propSide}`] = onFloor(add(add(elbow, scale(headW, 0.24)), scale(propW, -0.07)), 0.045);
   }
 
-  const propHip = add(anchorP, scale(propW, HIP_HALF_WIDTH_M));
-  const gunHip = add(anchorP, scale(propW, -HIP_HALF_WIDTH_M));
+  // The legs are laid out by the hips' own left and right, so a body that landed twisted does
+  // not drag one leg across the other.
+  const lb = target.ragdollBones;
+  const hipsTwisted =
+    lb.THIGH_LEFT.componentId === 'BODY' &&
+    lb.THIGH_RIGHT.componentId === 'BODY' &&
+    dot(sub(lb.THIGH_LEFT.position, lb.THIGH_RIGHT.position), leftW) < 0;
+  const legW = hipsTwisted ? scale(propW, -1) : propW;
+  const propHip = add(anchorP, scale(legW, HIP_HALF_WIDTH_M));
+  const gunHip = add(anchorP, scale(legW, -HIP_HALF_WIDTH_M));
+  if (!faceDown) {
+    // Sat square on its butt: both hips level on the floor, not rolled onto one side.
+    for (const [side, hip] of [[propSide, propHip], [gunSide, gunHip]] as const) {
+      if (lb[`THIGH_${side}`].componentId === 'BODY') targets[`THIGH_${side}`] = vec3(hip.x, anchorP.y, hip.z);
+    }
+  }
   const layLeg = (side: BodySide, knee: Vec3Like, foot: Vec3Like): void => {
-    if (!legUsable(target, side)) return;
+    if (target.ragdollBones[`KNEE_${side}`].componentId !== 'BODY') return;
+    if (!legUsable(target, side)) {
+      // A useless leg is not held anywhere, but it is not left doubled under the body either:
+      // it lies out straight from the hip, the way a dragged leg trails.
+      const hip = side === propSide ? propHip : gunHip;
+      const splay = scale(legW, (side === propSide ? 1 : -1) * 0.06);
+      knee = onFloor(add(add(hip, scale(feetW, 0.38)), splay), 0.065);
+      foot = onFloor(add(add(knee, scale(feetW, 0.43)), splay), 0.065);
+    }
     targets[`KNEE_${side}`] = knee;
     targets[`SHIN_${side}`] = scale(add(knee, foot), 0.5);
     targets[`FOOT_${side}`] = foot;
@@ -139,17 +168,17 @@ export function buildLivingGroundedPoseTargets(
   if (faceDown) {
     // Both legs trail flat behind, a little apart.
     for (const [side, hip, splay] of [[propSide, propHip, 0.05], [gunSide, gunHip, -0.05]] as const) {
-      const knee = onFloor(add(add(hip, scale(feetW, 0.35)), scale(propW, splay)), 0.065);
-      layLeg(side, knee, onFloor(add(add(knee, scale(feetW, 0.43)), scale(propW, splay)), 0.065));
+      const knee = onFloor(add(add(hip, scale(feetW, 0.35)), scale(legW, splay)), 0.065);
+      layLeg(side, knee, onFloor(add(add(knee, scale(feetW, 0.43)), scale(legW, splay)), 0.065));
     }
   } else {
     // The leg it lies on rests along the floor. The upper leg plants its foot, knee raised.
-    const restingKnee = onFloor(add(add(propHip, scale(feetW, 0.33)), scale(propW, 0.12)), 0.065);
-    layLeg(propSide, restingKnee, onFloor(add(add(restingKnee, scale(feetW, 0.42)), scale(propW, -0.1)), 0.065));
+    const restingKnee = onFloor(add(add(propHip, scale(feetW, 0.33)), scale(legW, 0.12)), 0.065);
+    layLeg(propSide, restingKnee, onFloor(add(add(restingKnee, scale(feetW, 0.42)), scale(legW, -0.1)), 0.065));
     layLeg(
       gunSide,
-      onFloor(add(gunHip, scale(feetW, 0.3)), propped ? 0.27 : 0.2),
-      onFloor(add(gunHip, scale(feetW, propped ? 0.66 : 0.7)), 0.065)
+      onFloor(add(gunHip, scale(feetW, 0.36)), propped ? 0.27 : 0.2),
+      onFloor(add(gunHip, scale(feetW, propped ? 0.74 : 0.76)), 0.065)
     );
   }
 

@@ -431,8 +431,8 @@ describe('Phase 3 Grand Unified Max Mayhem Arena Integration', () => {
   it('registers Rapier colliders on ArenaBuilder perimeter concrete barriers & marker posts, blocking sight, shots, and walk-through', () => {
     const arena = createUnifiedArenaHarness();
     try {
-      // 10 concrete distance marker posts + 8 perimeter concrete barriers = 18 static colliders
-      expect(arena.arenaBuilder.registeredColliderCount).toBe(18);
+      // 10 concrete distance marker posts + 8 perimeter concrete barriers + 4 hall walls + ceiling = 23 static colliders
+      expect(arena.arenaBuilder.registeredColliderCount).toBe(23);
 
       // Barrier_-9.5_-8 sits at (-9.5, 0.675, -8.0) with scale 1.1 x 1.35 x 7.5 -> x in [-10.05, -8.95], y in [0, 1.35]
       const enemyEye = vec3(-6.0, 1.15, -8.0);

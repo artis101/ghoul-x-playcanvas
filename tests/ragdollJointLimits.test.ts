@@ -101,6 +101,28 @@ describe('Ragdoll anatomical joint limits', () => {
     expect(bendDeg(target, 'TORSO_LOWER_ABDOMEN', 'TORSO_UPPER_THORAX', 'NECK_CERVICAL')).toBeLessThan(40);
   });
 
+  it('lays a corpse out flat instead of leaving it folded where it fell', () => {
+    const pushes = [vec3(0, 0, 0), vec3(0, 0.3, -3), vec3(0, 0, 1), vec3(2, 0.2, 0), vec3(1.5, 0.2, -1.5)];
+    for (const [index, push] of pushes.entries()) {
+      const target = createTargetHealthState(`sprawl_${index}`, 'Militia', vec3(0, 0, 0), 0);
+      transitionTargetLifecycle(target, { kind: 'LETHAL_DEATH' });
+      knockDown(target);
+      for (const bone of Object.values(target.ragdollBones)) bone.velocity = { ...push };
+      simulate(target, 6);
+
+      const bones = target.ragdollBones;
+      expect(target.ragdollPhase.kind).toBe('CORPSE_SLEEPING');
+      for (const bone of Object.values(bones)) expect(bone.position.y - bone.radiusM).toBeLessThan(0.2);
+      for (const side of ['RIGHT', 'LEFT'] as const) {
+        // Legs lie in line with the body: not drawn up at the hip, not doubled back at the knee.
+        const spine = normalize(sub(bones.PELVIS_GROIN.position, bones.TORSO_UPPER_THORAX.position));
+        const thigh = normalize(sub(bones[`KNEE_${side}`].position, bones[`THIGH_${side}`].position));
+        expect(Math.acos(Math.max(-1, Math.min(1, dot(spine, thigh)))) / DEG).toBeLessThan(40);
+        expect(bendDeg(target, `THIGH_${side}`, `KNEE_${side}`, `FOOT_${side}`)).toBeLessThan(40);
+      }
+    }
+  });
+
   it('holds a living downed combatant in place, with or without a lost limb', () => {
     for (const lost of [null, 'THIGH_RIGHT', 'UPPER_ARM_LEFT'] as const) {
       const target = createTargetHealthState(`downed_${lost}`, 'Militia', vec3(0, 0, 0), 0);
@@ -124,14 +146,14 @@ describe('Ragdoll anatomical joint limits', () => {
     }
   });
 
-  it('slumps a combatant who dies propped up on an elbow, then lets the corpse sleep', () => {
+  it('slumps a combatant who dies sitting up on its butt, then lets the corpse sleep', () => {
     const target = createTargetHealthState('sit_death', 'Militia', vec3(0, 0, 0), 0);
     target.rightLegFunctional = false;
-    simulate(target, 2.5, 1);
+    simulate(target, 3, 1);
     expect(target.isRagdollActive).toBe(true);
-    // Lying down to fight, head and chest lifted clear of the floor.
-    expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeGreaterThan(0.38);
-    expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeLessThan(0.6);
+    // Sitting on its butt to fight, chest and head up, but well below standing height.
+    expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeGreaterThan(0.6);
+    expect(target.ragdollBones.HEAD_CRANIUM.position.y).toBeLessThan(1.0);
 
     transitionTargetLifecycle(target, { kind: 'LETHAL_DEATH' });
     simulate(target, 3);

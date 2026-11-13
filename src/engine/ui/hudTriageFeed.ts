@@ -77,13 +77,13 @@ export class HudTriageFeed {
       const colorCls = triageColorClass(status);
       const cardCls = triageCardClass(status);
 
-      this.targetCardEl.className = `target-triage-card active ${cardCls}`;
+      this.targetCardEl.className = `hud-target-triage-card active ${cardCls}`;
       if (this.targetNameEl) {
         this.targetNameEl.textContent = (focusedTarget.name || focusedTarget.targetId).toUpperCase();
       }
       if (this.targetTriageBadgeEl) {
         this.targetTriageBadgeEl.textContent = formatTriageLabel(status);
-        this.targetTriageBadgeEl.className = `badge-triage ${colorCls}`;
+        this.targetTriageBadgeEl.className = `ttc-badge ${colorCls}`;
       }
 
       const hpClamped = focusedTarget.alive ? Math.max(1, Math.round(focusedTarget.currentHp)) : 0;
@@ -92,7 +92,7 @@ export class HudTriageFeed {
         : 0;
       if (this.targetHpFillEl) {
         this.targetHpFillEl.style.width = `${hpPct.toFixed(1)}%`;
-        this.targetHpFillEl.className = `meter-fill ${colorCls}`;
+        this.targetHpFillEl.className = `ttc-hp-fill ${colorCls}`;
       }
       if (this.targetHpTextEl) this.targetHpTextEl.textContent = `${hpClamped} / ${Math.round(focusedTarget.maxHp)}`;
 

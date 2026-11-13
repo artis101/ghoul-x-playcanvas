@@ -29,7 +29,7 @@ export function writeRgbmPixel(
 
 export function getOrCreateProceduralIblEnvironment(
   device: pc.GraphicsDevice,
-  sunDir: pc.Vec3
+  _keyLightDir: pc.Vec3
 ): CachedIblEnvironment | null {
   if (device instanceof pc.NullGraphicsDevice) return null;
 
@@ -40,7 +40,7 @@ export function getOrCreateProceduralIblEnvironment(
     const width = 512;
     const height = 256;
     const equirect = new pc.Texture(device, {
-      name: 'procedural_tactical_hdr_equirect',
+      name: 'procedural_tiled_hall_equirect',
       width,
       height,
       format: pc.PIXELFORMAT_RGBA8,
@@ -52,10 +52,6 @@ export function getOrCreateProceduralIblEnvironment(
       addressU: pc.ADDRESS_REPEAT,
       addressV: pc.ADDRESS_CLAMP_TO_EDGE,
     });
-
-    const sx = sunDir.x;
-    const sy = sunDir.y;
-    const sz = sunDir.z;
 
     const pixels = equirect.lock() as Uint8Array;
     for (let y = 0; y < height; y++) {
@@ -73,44 +69,24 @@ export function getOrCreateProceduralIblEnvironment(
         let gLin = 0;
         let bLin = 0;
 
-        if (dy >= 0) {
-          const zenithT = Math.pow(dy, 0.55);
-          const horizonGlow = Math.pow(1.0 - dy, 4.0);
-          rLin = 0.16 * (1.0 - zenithT) + 0.065 * zenithT + horizonGlow * 0.42;
-          gLin = 0.24 * (1.0 - zenithT) + 0.135 * zenithT + horizonGlow * 0.36;
-          bLin = 0.36 * (1.0 - zenithT) + 0.285 * zenithT + horizonGlow * 0.28;
+        // Dim tiled interior: stained ceiling with fixture glow overhead, cream walls
+        // around the horizon, dark stone floor below.
+        const up = Math.max(0, dy);
+        const down = Math.max(0, -dy);
+        const wallBand = 1.0 - Math.abs(dy);
+        rLin = 0.13 + wallBand * 0.2 - down * 0.06;
+        gLin = 0.125 + wallBand * 0.19 - down * 0.06;
+        bLin = 0.1 + wallBand * 0.14 - down * 0.05;
 
-          const cloudWave = Math.sin(dx * 5.0 + dz * 3.2) * Math.cos(dz * 4.4 - dx * 2.1) * 0.5 + 0.5;
-          const cloudFactor = cloudWave * (1.0 - zenithT * 0.55) * 0.16;
-          rLin += cloudFactor * 0.95;
-          gLin += cloudFactor * 0.98;
-          bLin += cloudFactor * 1.05;
-
-          if (dy > 0.48) {
-            const stripBand = Math.abs(Math.sin((dz / Math.max(0.22, dy)) * 3.6));
-            const lateralMask = Math.max(0, 1.0 - Math.abs(dx / Math.max(0.22, dy)) * 0.85);
-            if (stripBand > 0.92 && lateralMask > 0.25) {
-              const stripBoost = ((stripBand - 0.92) / 0.08) * lateralMask * 2.4;
-              rLin += stripBoost * 1.05;
-              gLin += stripBoost * 1.08;
-              bLin += stripBoost * 1.15;
-            }
+        if (dy > 0.5) {
+          const bay = Math.abs(Math.sin((dz / dy) * 1.6));
+          const lateral = Math.abs(Math.abs(dx / dy) - 1.1);
+          if (bay > 0.9 && lateral < 0.35) {
+            const glow = ((bay - 0.9) / 0.1) * (1.0 - lateral / 0.35) * up * 2.2;
+            rLin += glow;
+            gLin += glow * 0.93;
+            bLin += glow * 0.7;
           }
-
-          const sunDot = Math.max(0, dx * sx + dy * sy + dz * sz);
-          const mieWide = Math.pow(sunDot, 8.0) * 0.65;
-          const mieTight = Math.pow(sunDot, 96.0) * 3.8;
-          const sunDisc = sunDot > 0.9985 ? 24.0 : 0.0;
-
-          rLin += (mieWide + mieTight + sunDisc) * 1.08;
-          gLin += (mieWide * 0.92 + mieTight * 0.94 + sunDisc * 0.96);
-          bLin += (mieWide * 0.74 + mieTight * 0.80 + sunDisc * 0.84);
-        } else {
-          const groundDepth = Math.min(1.0, -dy * 2.5);
-          const horizonBounce = Math.pow(1.0 + dy, 5.0);
-          rLin = 0.032 * (1.0 - groundDepth * 0.45) + horizonBounce * 0.18;
-          gLin = 0.038 * (1.0 - groundDepth * 0.45) + horizonBounce * 0.19;
-          bLin = 0.048 * (1.0 - groundDepth * 0.45) + horizonBounce * 0.22;
         }
 
         writeRgbmPixel(pixels, (y * width + x) * 4, rLin, gLin, bLin);

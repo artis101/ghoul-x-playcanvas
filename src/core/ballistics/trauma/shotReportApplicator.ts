@@ -45,6 +45,11 @@ export function applyShotReportToTarget(
   }
 
   const { newlySeveredRightLeg, newlySeveredLeftLeg } = applyDismembermentTree(target, report);
+  if (!target.alive && !target.isRagdollActive && !report.ragdollPlan.willEnableRagdoll) {
+    // Killed by the limbs it lost: it falls rather than standing on as a corpse.
+    transitionTargetLifecycle(target, { kind: 'ACTIVATE_RAGDOLL', isOverkillCorpseHit: false });
+    stabilizeRagdollPoseForTransition(target, 0.0);
+  }
 
   if (target.alive) {
     applySurvivingReaction(target, report, newlySeveredRightLeg, newlySeveredLeftLeg);

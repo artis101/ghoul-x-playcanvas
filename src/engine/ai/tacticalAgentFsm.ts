@@ -1,8 +1,5 @@
-import type { CombatantPostureState, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
-import {
-  type AlertedEngagementSubstate,
-  evaluateTacticalEngagementSubstate,
-} from '../../core/ai/tacticalDoctrine.ts';
+import type { TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
+import type { AlertedEngagementSubstate } from '../../core/ai/tacticalDoctrine.ts';
 import {
   cancelActiveBurst,
   tickAlertReactionHold,
@@ -12,41 +9,19 @@ import { add, dot, normalize, sub, vec3 } from '../../core/ballistics/vec3.ts';
 import { updateStandingCombatPose } from '../../core/ghoul/anatomy.ts';
 import { evaluateCrawlCondition } from '../../core/ghoul/anatomy/crawlCondition.ts';
 import { computeCombatantTriageStatus } from '../../core/ballistics/solver.ts';
-import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
-import type {
-  EnemyAimProfile, EnemyAiAgentRuntime, EnemyHitNotification, EnemyTacticalAiState,
-} from './tacticalAiTypes.ts';
-import { ARCHETYPE_TUNING } from './archetypeTuning.ts';
+import type { EnemyAiAgentRuntime, EnemyTacticalAiState } from './tacticalAiTypes.ts';
 import { approachAngleRad, yawToward } from './combatantArmEvaluation.ts';
 import { syncAgentArmamentAndSidearm } from './agentArmamentController.ts';
-import { computeAlertedPeekTarget, type PeekPlanCacheEntry } from './tacticalCoverFinder.ts';
 import { moveHorizontalClamped } from './tacticalLocomotion.ts';
-import { type BurstContext, stepWeaponBurstFire } from './tacticalBurstAndTracers.ts';
+import { stepWeaponBurstFire } from './tacticalBurstAndTracers.ts';
+import { stepAlertedEngagingState } from './alertedEngagementStep.ts';
+import { DOWNED_TURN_RATE_RAD_S, type TacticalFsmContext } from './tacticalFsmContext.ts';
 
 // Ground speed of an unhurt crawl.
 const CRAWL_SPEED_MPS = 0.35;
 const CRAWL_ARRIVAL_RADIUS_M = 0.3;
-// A body on the ground shuffles round slowly; it cannot pivot like one on its feet.
-const DOWNED_TURN_RATE_RAD_S = 0.9;
 
-export type { AlertedEngagementSubstate };
-
-export interface TacticalFsmContext {
-  elapsedClockS: number;
-  sightDetectionRangeM: number;
-  rapierWorld: RapierPhysicsWorld | null;
-  peekPlanCache: Map<string, PeekPlanCacheEntry>;
-  hasCoverQueries: boolean;
-  isSightBlocked: (from: Vec3Like, to: Vec3Like) => boolean;
-  burstCtx: BurstContext;
-  transitionState: (agent: EnemyAiAgentRuntime, next: EnemyTacticalAiState) => void;
-  notifyEnemyHit: (hs: TargetHealthState, hit: EnemyHitNotification) => EnemyTacticalAiState;
-  computeAimProfile: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => EnemyAimProfile;
-  onAgentFlankShift?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => void;
-  onAgentSidearmDrawStart?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => void;
-  onAgentCoverRetreat?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => void;
-  tryRelocateCoverAnchor?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => boolean;
-}
+export type { AlertedEngagementSubstate, TacticalFsmContext };
 
 export function stepSingleEnemyAgent(
   dt: number,
@@ -206,201 +181,5 @@ export function stepSingleEnemyAgent(
 
   if (!hs.isRagdollActive && hs.alive && hs.currentHp > 0 && (agent.state as EnemyTacticalAiState) !== 'DEAD') {
     updateStandingCombatPose(hs, ctx.elapsedClockS);
-  }
-}
-
-function stepAlertedEngagingState(
-  dt: number,
-  hs: TargetHealthState,
-  agent: EnemyAiAgentRuntime,
-  aimProfile: EnemyAimProfile,
-  playerEyeWorldPos: Vec3Like,
-  turnTowardPlayer: (speed: number) => void,
-  ctx: TacticalFsmContext
-): void {
-  // Doubled over on its knees, a combatant holds its ground: it neither strafes nor rushes.
-  const gutShot = hs.rupturedOrgans.size > 0 && hs.zoneIntegrity.TORSO_LOWER_ABDOMEN < 65;
-  if (gutShot && !hs.isRagdollActive) {
-    hs.posture = 'GUT_HURT';
-    agent.isPeekingOut = true;
-    agent.engagementSubstate = 'COVER_PEEK';
-    turnTowardPlayer(DOWNED_TURN_RATE_RAD_S);
-    if (aimProfile.canReturnFire) {
-      stepWeaponBurstFire(dt, hs, agent, aimProfile, playerEyeWorldPos, ctx.burstCtx);
-    }
-    return;
-  }
-
-  const tuning = ARCHETYPE_TUNING[hs.archetype];
-  const isWounded = hs.currentHp < hs.maxHp * 0.92 || hs.painShock > 0.15 || hs.rupturedOrgans.size > 0;
-  const moraleShockS = agent.moraleShockTimerS ?? 0;
-  const cycleRate =
-    agent.resolveProfile === 'PANICKED_SCRAPPER' && (isWounded || moraleShockS > 0) ? 1.58 : 1.0;
-  const previousPeekTime = agent.peekCycleTimerS;
-  agent.peekCycleTimerS += dt * cycleRate;
-
-  const cyclePeriodS =
-    hs.archetype === 'SNIPER_OPERATIVE'
-      ? 3.35
-      : agent.resolveProfile === 'HARDENED_VETERAN'
-        ? 2.85
-        : agent.resolveProfile === 'PANICKED_SCRAPPER'
-          ? 2.35
-          : 3.1;
-  const phase = (agent.peekCycleTimerS % cyclePeriodS) / cyclePeriodS;
-  const playerDistM = Math.hypot(
-    playerEyeWorldPos.x - hs.worldPosition.x,
-    playerEyeWorldPos.z - hs.worldPosition.z
-  );
-
-  // Sniper tactical discipline: automatically shift peek side after completing a precision shot
-  const prevBurstCount = agent.lastObservedBurstCount ?? agent.completedBurstCount;
-  if (hs.archetype === 'SNIPER_OPERATIVE' && agent.completedBurstCount > prevBurstCount) {
-    agent.peekSign = agent.peekSign === 1 ? -1 : 1;
-    ctx.onAgentFlankShift?.(hs, agent);
-  }
-  agent.lastObservedBurstCount = agent.completedBurstCount;
-
-  // Probe cover blockage first so rush/juggernaut maneuvers respect solid opaque barriers
-  const prelimPeek = computeAlertedPeekTarget(
-    hs,
-    agent,
-    playerEyeWorldPos,
-    ctx.elapsedClockS,
-    ctx.peekPlanCache,
-    ctx.isSightBlocked,
-    ctx.hasCoverQueries
-  );
-
-  const substate = evaluateTacticalEngagementSubstate({
-    archetype: hs.archetype,
-    resolveProfile: agent.resolveProfile,
-    clutchingWound: aimProfile.clutchingWound,
-    isWounded,
-    cyclePhase01: phase,
-    playerDistanceM: playerDistM,
-    hasChestArmor: hs.hasChestArmor,
-    chestArmorIntegrity: hs.chestArmorIntegrity,
-    primaryWeaponIntact: !aimProfile.usingBackupSidearm && !aimProfile.sidearmDrawing && !hs.weaponDropped,
-    suppression: agent.suppression,
-    moraleShockTimerS: moraleShockS,
-    berserkerFrenzyTimerS: agent.berserkerFrenzyTimerS ?? 0,
-    anchorBlockedByCover: prelimPeek.anchorBlockedByCover,
-  });
-  agent.engagementSubstate = substate;
-
-  if (hs.combatantStatusTag === null) {
-    if (moraleShockS > 0) hs.combatantStatusTag = 'PANIC_SHAKEN';
-    else if (substate === 'JUGGERNAUT_PRESS') hs.combatantStatusTag = 'JUGGERNAUT';
-    else if (substate === 'BERSERKER_CHARGE' || substate === 'FLANKING_RUSH') hs.combatantStatusTag = 'RUSHING';
-  }
-
-  const prevPeekSign = agent.peekSign;
-  if (substate === 'CLUTCHING_RETREAT') {
-    agent.isPeekingOut = false;
-    cancelActiveBurst(agent);
-    moveHorizontalClamped(
-      hs,
-      agent.coverAnchorWorld.x - agent.peekSign * 0.25,
-      agent.coverAnchorWorld.z - 0.35,
-      0.95 * dt,
-      ctx.rapierWorld
-    );
-    turnTowardPlayer(1.8);
-    return;
-  }
-
-  if (substate === 'BERSERKER_CHARGE' || substate === 'FLANKING_RUSH') {
-    agent.isPeekingOut = true;
-    const maxAdv = substate === 'FLANKING_RUSH' ? 3.4 : 2.9;
-    agent.berserkerAdvanceOffsetM = Math.min(maxAdv, agent.berserkerAdvanceOffsetM + 1.32 * dt);
-  } else if (substate === 'JUGGERNAUT_PRESS') {
-    agent.isPeekingOut = true;
-    agent.berserkerAdvanceOffsetM = Math.min(3.2, agent.berserkerAdvanceOffsetM + 0.78 * dt);
-  } else if (substate === 'EVASIVE_BACKPEDAL') {
-    agent.isPeekingOut = true;
-    agent.berserkerAdvanceOffsetM = Math.max(-2.6, agent.berserkerAdvanceOffsetM - 1.15 * dt);
-  } else if (substate === 'PANIC_SCRAMBLE') {
-    agent.isPeekingOut = true;
-  } else {
-    const completedCycle =
-      Math.floor(previousPeekTime / cyclePeriodS) !== Math.floor(agent.peekCycleTimerS / cyclePeriodS);
-    if (completedCycle && agent.suppression > 0.62) {
-      if (
-        ctx.hasCoverQueries &&
-        (agent.resolveProfile === 'GRITTY_REGULAR' || agent.resolveProfile === 'HARDENED_VETERAN') &&
-        ctx.tryRelocateCoverAnchor?.(hs, agent)
-      ) {
-        ctx.onAgentCoverRetreat?.(hs, agent);
-      } else if (agent.resolveProfile === 'GRITTY_REGULAR' || agent.resolveProfile === 'HARDENED_VETERAN') {
-        agent.peekSign = agent.peekSign === 1 ? -1 : 1;
-      }
-    }
-    agent.isPeekingOut = substate === 'COVER_PEEK' || substate === 'SNIPER_SNAP_PEEK';
-  }
-
-  const peekPlan = computeAlertedPeekTarget(
-    hs,
-    agent,
-    playerEyeWorldPos,
-    ctx.elapsedClockS,
-    ctx.peekPlanCache,
-    ctx.isSightBlocked,
-    ctx.hasCoverQueries
-  );
-  if (agent.peekSign !== prevPeekSign) ctx.onAgentFlankShift?.(hs, agent);
-
-  const weaveOffset =
-    substate === 'FLANKING_RUSH' || substate === 'BERSERKER_CHARGE'
-      ? Math.sin(agent.peekCycleTimerS * 3.8) * 0.42
-      : substate === 'PANIC_SCRAMBLE'
-        ? Math.sin(agent.peekCycleTimerS * 5.2) * 0.62
-        : 0;
-  const desiredLateral = peekPlan.targetOffset + weaveOffset;
-  const deltaOffset = desiredLateral - agent.currentLateralOffsetM;
-
-  const profileSpeedMul =
-    substate === 'PANIC_SCRAMBLE' || (agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded)
-      ? 1.42
-      : substate === 'BERSERKER_CHARGE' || substate === 'FLANKING_RUSH'
-        ? 1.28
-        : substate === 'JUGGERNAUT_PRESS'
-          ? 0.92
-          : 1.0;
-  const baseStrafeSpeed = tuning.strafeSpeedMs * profileSpeedMul;
-  const effectiveStrafeSpeed = Math.abs(deltaOffset) > 1.0 ? Math.max(baseStrafeSpeed, 2.35) : baseStrafeSpeed;
-  const maxStrideStep = effectiveStrafeSpeed * dt;
-  agent.currentLateralOffsetM +=
-    Math.abs(deltaOffset) <= maxStrideStep ? deltaOffset : Math.sign(deltaOffset) * maxStrideStep;
-
-  const goalX = agent.coverAnchorWorld.x + agent.currentLateralOffsetM;
-  let goalZ = peekPlan.goalZ;
-  if (
-    substate === 'BERSERKER_CHARGE' ||
-    substate === 'FLANKING_RUSH' ||
-    substate === 'JUGGERNAUT_PRESS'
-  ) {
-    const minStandOff = substate === 'JUGGERNAUT_PRESS' ? 3.2 : 2.4;
-    goalZ = Math.min(playerEyeWorldPos.z - minStandOff, peekPlan.goalZ + agent.berserkerAdvanceOffsetM);
-  } else if (substate === 'EVASIVE_BACKPEDAL') {
-    goalZ = Math.max(-21.5, peekPlan.goalZ + agent.berserkerAdvanceOffsetM);
-  } else if (substate === 'PANIC_SCRAMBLE') {
-    goalZ = Math.max(-21.5, peekPlan.goalZ - 0.32);
-  }
-
-  moveHorizontalClamped(hs, goalX, goalZ, effectiveStrafeSpeed * dt, ctx.rapierWorld);
-
-  turnTowardPlayer(substate === 'SNIPER_SNAP_PEEK' ? 6.8 : 5.4);
-  if (!hs.isRagdollActive) {
-    hs.posture =
-      hs.rupturedOrgans.size > 0 && hs.zoneIntegrity.TORSO_LOWER_ABDOMEN < 65
-        ? 'GUT_HURT'
-        : ('COMBAT_READY' as CombatantPostureState);
-  }
-
-  if (!agent.isPeekingOut && peekPlan.anchorBlockedByCover) {
-    cancelActiveBurst(agent);
-  } else if (aimProfile.canReturnFire && agent.isPeekingOut) {
-    stepWeaponBurstFire(dt, hs, agent, aimProfile, playerEyeWorldPos, ctx.burstCtx);
   }
 }

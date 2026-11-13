@@ -986,6 +986,7 @@ describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
     it('disables standard combatants on hand/arm dismemberment while hardened veterans draw an off-hand Beretta M9 and stop only when BOTH hands are lost', () => {
       const regularShots: EnemyTracerFireEvent[] = [];
       const veteranShots: EnemyTracerFireEvent[] = [];
+      const handAtShot = new Map<EnemyTracerFireEvent, { x: number; y: number; z: number }>();
       const sniperRightHandShots: EnemyTracerFireEvent[] = [];
 
       const ai = new TacticalCombatAiSystem({
@@ -1001,8 +1002,16 @@ describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
         },
         onEnemyFireTracer: (ev) => {
           if (ev.targetId === 'std_gunner') regularShots.push(ev);
-          if (ev.targetId === 'hardened_vet') veteranShots.push(ev);
-          if (ev.targetId === 'hardened_sniper') sniperRightHandShots.push(ev);
+          // Record the firing hand where it was at the moment of the shot: combatants now
+          // juke between shots, so the hand's end-of-test position no longer matches.
+          if (ev.targetId === 'hardened_vet') {
+            veteranShots.push(ev);
+            handAtShot.set(ev, { ...hardenedVet.ragdollBones.HAND_LEFT.position });
+          }
+          if (ev.targetId === 'hardened_sniper') {
+            sniperRightHandShots.push(ev);
+            handAtShot.set(ev, { ...hardenedSniper.ragdollBones.HAND_RIGHT.position });
+          }
         },
       });
 
@@ -1112,19 +1121,17 @@ describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
       expect(m9Shot.weaponId).toBe(BACKUP_SIDEARM_WEAPON_ID);
       expect(m9Shot.activeFiringHand).toBe('LEFT');
       expect(m9Shot.spreadMultiplier).toBeGreaterThanOrEqual(1.65);
-      expect(m9Shot.spreadMultiplier).toBeLessThanOrEqual(1.98);
+      // Up to 1.35x more if the veteran fired while juking (moving-fire penalty).
+      expect(m9Shot.spreadMultiplier).toBeLessThanOrEqual(1.98 * 1.35);
       expect(OFFHAND_SIDEARM_SPREAD_MULTIPLIER).toBeGreaterThanOrEqual(1.65);
 
-      const distToLeftHand = distance(
-        m9Shot.muzzleOriginWorld,
-        hardenedVet.ragdollBones.HAND_LEFT.position,
-      );
+      const distToLeftHand = distance(m9Shot.muzzleOriginWorld, handAtShot.get(m9Shot)!);
       expect(distToLeftHand).toBeLessThan(0.55);
 
       const sniperShot = sniperRightHandShots[0];
       expect(sniperShot.activeFiringHand).toBe('RIGHT');
       expect(
-        distance(sniperShot.muzzleOriginWorld, hardenedSniper.ragdollBones.HAND_RIGHT.position),
+        distance(sniperShot.muzzleOriginWorld, handAtShot.get(sniperShot)!),
       ).toBeLessThan(0.55);
 
       // Now sever the hardened veteran's REMAINING second hand (HAND_LEFT) -> drops backup M9 and is finally disabled!

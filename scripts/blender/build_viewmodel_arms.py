@@ -5,34 +5,63 @@ import bmesh
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
-# Glove knuckle line, finger direction and forearm endpoint in PlayCanvas model space.
+# Every grip is described in PlayCanvas weapon space (x right, y up, -z toward the muzzle):
+#   knuckles  where the middle of the knuckle line sits
+#   fingers   direction from the wrist to the knuckles
+#   back      direction the back of the hand faces
+#   elbow     direction from the wrist toward the elbow
+#   curl      how far the gripping fingers, the index finger and the thumb close (1 = tight fist)
 # The shotgun's support arm is mounted to Bone_Pump at runtime.
+RIGHT_ELBOW = (0.30, -0.50, 0.80)
+LEFT_ELBOW = (-0.36, -0.36, 0.86)
+
+
+def trigger_hand(knuckles, fingers=(-0.22, -0.10, -1), back=(1, 0.05, -0.25), index=0.12):
+    return dict(knuckles=knuckles, fingers=fingers, back=back, elbow=RIGHT_ELBOW,
+                curl=dict(grip=1.0, index=index, thumb=0.55))
+
+
+def forend_hand(knuckles, grip=0.72):
+    return dict(knuckles=knuckles, fingers=(0.8, 0.18, -0.6), back=(-0.25, -1, 0.05), elbow=LEFT_ELBOW,
+                curl=dict(grip=grip, index=grip, thumb=0.25))
+
+
 POSES = {
-    'm4a1_carbine': [
-        ('r', (0.032, -0.061, 0.015), (0, 0.34, -1), (0.13, -0.20, 0.30)),
-        ('l', (-0.032, -0.066, -0.283), (0, 0.22, -1), (-0.14, -0.22, 0.05)),
-    ],
-    'm590_shotgun': [
-        ('r', (0.032, -0.024, 0.059), (0, 0.28, -1), (0.13, -0.17, 0.34)),
-        ('l', (-0.023, -0.044, -0.343), (1, 0.28, -0.32), (-0.14, -0.20, 0.00)),
-    ],
-    'silver_talon_50ae': [
-        ('r', (0.035, -0.058, 0.009), (0, 0.34, -1), (0.13, -0.20, 0.29)),
-        ('l', (-0.038, -0.075, -0.012), (0, 0.38, -1), (-0.15, -0.22, 0.24)),
-    ],
-    'msg90_sniper': [
-        ('r', (0.035, -0.069, 0.016), (0, 0.28, -1), (0.14, -0.21, 0.30)),
-        ('l', (-0.022, -0.032, -0.300), (1, 0.28, -0.32), (-0.15, -0.19, 0.04)),
-    ],
-    'frag_grenade': [
-        ('r', (0.043, -0.010, -0.012), (-0.12, 0.20, -1), (0.13, -0.18, 0.28)),
-    ],
+    'm4a1_carbine': {
+        'r': trigger_hand((0.034, -0.068, -0.010)),
+        # The carbine's support hand takes the vertical foregrip like a second pistol grip.
+        'l': dict(knuckles=(-0.032, -0.078, -0.290), fingers=(0.22, -0.05, -1), back=(-1, 0.05, -0.25),
+                  elbow=LEFT_ELBOW, curl=dict(grip=1.0, index=1.0, thumb=0.55)),
+    },
+    'm590_shotgun': {
+        'r': trigger_hand((0.034, -0.048, 0.076), fingers=(-0.22, 0.02, -1)),
+        'l': forend_hand((0.004, -0.056, -0.290)),
+    },
+    'silver_talon_50ae': {
+        'r': trigger_hand((0.034, -0.062, 0.012)),
+        'l': dict(knuckles=(-0.040, -0.082, -0.004), fingers=(0.30, -0.30, -1), back=(-1, -0.15, -0.25),
+                  elbow=LEFT_ELBOW, curl=dict(grip=1.0, index=1.0, thumb=0.45)),
+    },
+    'msg90_sniper': {
+        'r': trigger_hand((0.036, -0.074, -0.008)),
+        'l': forend_hand((0.004, -0.050, -0.300)),
+    },
+    'frag_grenade': {
+        'r': dict(knuckles=(0.040, -0.014, -0.022), fingers=(-0.25, 0.15, -1), back=(1, -0.10, -0.25),
+                  elbow=RIGHT_ELBOW, curl=dict(grip=0.62, index=0.62, thumb=0.50)),
+    },
 }
-SCALE = 0.155
+# Source rig units to metres: makes the glove 19 cm from wrist to middle fingertip.
+SCALE = 0.235
 FINGERS = ('index', 'middle', 'ring', 'pinky', 'thumb')
+# Radians closed at the knuckle, middle and end joint of a finger in a tight fist.
+FIST_JOINT_CURL = (0.95, 1.55, 0.95)
+# Source-rig distance from the wrist over which the glove cuff blends into the forearm.
+CUFF_BLEND_START = 0.10
+CUFF_BLEND_LENGTH = 0.42
 
 
-def blender_point(point):
+def blender_vector(point):
     x, y, z = point
     return Vector((x, -z, y))
 
@@ -43,26 +72,46 @@ def palm_basis(forward, across):
     return Matrix((forward, across, forward.cross(across))).transposed()
 
 
-def curl_fingers(bone, inward, extended_index, loose_support):
+def curl_fingers(bone, inward, curl):
     for finger in FINGERS:
-        for joint, curl in enumerate((0.64, 0.84, 0.48), start=1):
+        amount = curl['thumb'] if finger == 'thumb' else curl['index'] if finger == 'index' else curl['grip']
+        for joint, fist_curl in enumerate(FIST_JOINT_CURL, start=1):
             digit = bone(f'{finger}_{joint:02}')
             tangent = (digit.tail - digit.head).normalized()
             axis = digit.matrix.to_quaternion().inverted() @ tangent.cross(inward)
             if axis.length < 1e-5:
                 continue
-            if finger == 'thumb':
-                curl *= 0.30
-            elif finger == 'index' and extended_index:
-                curl = -0.22
-            elif loose_support:
-                curl *= 0.65
+            # The little finger closes furthest, so the grip tapers the way a real fist does.
+            taper = 1.08 if finger == 'pinky' else 1.0
             digit.rotation_mode = 'QUATERNION'
-            digit.rotation_quaternion = Quaternion(axis.normalized(), curl)
+            digit.rotation_quaternion = Quaternion(axis.normalized(), fist_curl * amount * taper)
     bpy.context.view_layer.update()
 
 
-def bake_arm(source, rig, weapon, side, center, direction, elbow_end):
+def upper_arm_straightener(source, bone, edit, forearm_axis):
+    """Returns a function that unbends the elbow, so the arm leaves the view as one straight limb."""
+    elbow = bone('lowerarm').head.copy()
+    upper_axis = (bone('upperarm').head - elbow).normalized()
+    unbend = upper_axis.rotation_difference(forearm_axis)
+    upper_groups = {
+        group.index for group in source.vertex_groups
+        if group.name.split('_')[0] in ('upperarm', 'clavicle')
+    }
+    deform = edit.verts.layers.deform.active
+
+    def straighten(vertex):
+        weight = sum(value for group, value in vertex[deform].items() if group in upper_groups) if deform else 0
+        if weight <= 0:
+            return vertex.co
+        offset = vertex.co - elbow
+        along = offset.dot(upper_axis)
+        straight = elbow + forearm_axis * along + unbend @ (offset - upper_axis * along)
+        return vertex.co.lerp(straight, min(1, weight))
+
+    return straighten
+
+
+def bake_arm(source, rig, weapon, side, pose):
     def bone(name):
         return rig.pose.bones[f'{name}_{side}']
 
@@ -74,18 +123,21 @@ def bake_arm(source, rig, weapon, side, center, direction, elbow_end):
     knuckles = (bone('index_01').head + bone('pinky_01').head) / 2
     across = bone('index_01').head - bone('pinky_01').head
     basis = palm_basis(knuckles - wrist, across)
-    horizontal = side == 'l' and weapon in ('m590_shotgun', 'msg90_sniper')
-    target_across = (0, 0, -1) if horizontal else (0, 1, direction[1])
-    target_basis = palm_basis(blender_point(direction), blender_point(target_across))
-    rotation = target_basis @ basis.transposed()
-    inward = basis.col[2] * (1 if side == 'l' else -1)
-    curl_fingers(bone, inward, side == 'r' and weapon != 'frag_grenade', horizontal)
+    # The palm faces along +normal on the left hand and -normal on the right.
+    palm_sign = 1 if side == 'l' else -1
+    inward = basis.col[2] * palm_sign
 
-    center = blender_point(center)
+    target_forward = blender_vector(pose['fingers']).normalized()
+    target_palm = -blender_vector(pose['back'])
+    target_across = (target_palm * palm_sign).cross(target_forward)
+    rotation = palm_basis(target_forward, target_across) @ basis.transposed()
+    curl_fingers(bone, inward, pose['curl'])
+
+    center = blender_vector(pose['knuckles'])
     target_wrist = center + rotation @ (wrist - knuckles) * SCALE
     old_arm = bone('lowerarm').head - wrist
     old_axis = old_arm.normalized()
-    new_arm = blender_point(elbow_end) - target_wrist
+    new_axis = blender_vector(pose['elbow']).normalized()
 
     evaluated = source.evaluated_get(bpy.context.evaluated_depsgraph_get())
     mesh = bpy.data.meshes.new_from_object(evaluated)
@@ -95,15 +147,16 @@ def bake_arm(source, rig, weapon, side, center, direction, elbow_end):
     sign = 1 if side == 'l' else -1
     remove = [vertex for vertex in edit.verts if source.data.vertices[vertex.index].co.x * sign < 0]
     bmesh.ops.delete(edit, geom=remove, context='VERTS')
-    follow = (rotation @ old_axis).rotation_difference(new_arm.normalized())
+    follow = (rotation @ old_axis).rotation_difference(new_axis)
+    straighten = upper_arm_straightener(source, bone, edit, old_axis)
     for vertex in edit.verts:
-        offset = vertex.co - wrist
+        offset = straighten(vertex) - wrist
         along = offset.dot(old_axis)
-        # Blend out of the glove cuff into the repositioned forearm.
-        blend = min(1, max(0, (along - 0.12) / 0.50))
+        # Blend out of the glove cuff into the forearm, which keeps its natural length.
+        blend = min(1, max(0, (along - CUFF_BLEND_START) / CUFF_BLEND_LENGTH))
         blend = blend * blend * (3 - 2 * blend)
         cross_section = offset - old_axis * along
-        forearm = target_wrist + new_arm * (along / old_arm.length) + follow @ (rotation @ cross_section) * SCALE
+        forearm = target_wrist + (new_axis * along + follow @ (rotation @ cross_section)) * SCALE
         hand = center + rotation @ (vertex.co - knuckles) * SCALE
         vertex.co = hand.lerp(forearm, blend)
     deform = edit.verts.layers.deform.active
@@ -149,9 +202,9 @@ def main():
     prepare_textures(material, shader)
 
     bpy.ops.object.select_all(action='DESELECT')
-    for weapon, poses in POSES.items():
-        for side, center, direction, elbow in poses:
-            arm = bake_arm(source, rig, weapon, side, center, direction, elbow)
+    for weapon, hands in POSES.items():
+        for side, pose in hands.items():
+            arm = bake_arm(source, rig, weapon, side, pose)
             arm.select_set(True)
     output = sys.argv[sys.argv.index('--') + 1]
     bpy.ops.export_scene.gltf(filepath=output, use_selection=True)
