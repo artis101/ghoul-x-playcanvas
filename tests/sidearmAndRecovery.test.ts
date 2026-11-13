@@ -1,3 +1,4 @@
+import { computeCombatantTriageStatus } from '../src/core/ballistics/triage/triageEvaluator.ts';
 import { describe, expect, it } from 'vitest';
 import type { TargetHealthState } from '../src/contracts/ballistics.ts';
 import { normalize, sub, vec3 } from '../src/core/ballistics/vec3.ts';
@@ -57,13 +58,14 @@ describe('the handgun goes down with its fighter', () => {
     expect(losesSidearmArm(undefined, ['HAND_RIGHT'])).toBe(false);
   });
 
-  it('shooting off the pistol arm kills; the same wound with the pistol holstered does not', () => {
+  it('shooting off the pistol arm leaves the fighter mortally wounded; the same wound with the pistol holstered does not', () => {
     const armed = standingTarget('pistol-arm');
     armed.weaponDropped = true;
     armed.sidearmHand = 'RIGHT';
     blastRightForearm(armed);
     expect(RIGHT_ARM.some((z) => armed.severedZones.has(z))).toBe(true);
-    expect(armed.alive).toBe(false);
+    expect(armed.alive).toBe(true);
+    expect(computeCombatantTriageStatus(armed)).toBe('MORTALLY_WOUNDED');
 
     const holstered = standingTarget('holstered');
     blastRightForearm(holstered);

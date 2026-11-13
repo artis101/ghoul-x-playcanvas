@@ -1,3 +1,4 @@
+import { computeCombatantTriageStatus } from '../src/core/ballistics/triage/triageEvaluator.ts';
 import { describe, expect, it } from 'vitest';
 import type { GhoulZoneId, ShotSimulationReport, TargetHealthState, Vec3Like } from '../src/contracts/ballistics.ts';
 import {
@@ -52,35 +53,37 @@ describe('two lost limbs kill, except one arm and one leg', () => {
     expect(target.alive).toBe(true);
   });
 
-  it('kills on the second leg', () => {
+  it('leaves the fighter mortally wounded on the second leg', () => {
     const target = createTargetHealthState('legs', 'Militia', vec3(0, 0, 0), 0);
     sever(target, 'THIGH_RIGHT');
     expect(target.alive).toBe(true);
     sever(target, 'SHIN_LEFT');
-    expect(target.alive).toBe(false);
-    expect(target.ragdollPhase.kind).toBe('CORPSE_DYNAMIC');
+    expect(target.alive).toBe(true);
+    expect(computeCombatantTriageStatus(target)).toBe('MORTALLY_WOUNDED');
   });
 
-  it('kills on the second arm and on a third limb', () => {
+  it('leaves the fighter mortally wounded on the second arm and on a third limb', () => {
     const arms = createTargetHealthState('arms', 'Militia', vec3(0, 0, 0), 0);
     sever(arms, 'FOREARM_LEFT', 'UPPER_ARM_RIGHT');
-    expect(arms.alive).toBe(false);
+    expect(arms.alive).toBe(true);
+    expect(computeCombatantTriageStatus(arms)).toBe('MORTALLY_WOUNDED');
 
     const three = createTargetHealthState('three', 'Militia', vec3(0, 0, 0), 0);
     sever(three, 'UPPER_ARM_LEFT', 'THIGH_RIGHT');
     expect(three.alive).toBe(true);
     sever(three, 'KNEE_LEFT');
-    expect(three.alive).toBe(false);
+    expect(three.alive).toBe(true);
+    expect(computeCombatantTriageStatus(three)).toBe('MORTALLY_WOUNDED');
   });
 
-  it('kills a body already down in its last stand', () => {
+  it('leaves a body already down in its last stand mortally wounded', () => {
     const target = createTargetHealthState('downed', 'Militia', vec3(0, 0, 0), 0);
     sever(target, 'THIGH_RIGHT');
     transitionTargetLifecycle(target, { kind: 'ACTIVATE_RAGDOLL', isOverkillCorpseHit: false });
-    expect(target.ragdollPhase.kind).toBe('LIVING_AGONY');
     sever(target, 'THIGH_LEFT');
-    expect(target.alive).toBe(false);
-    expect(target.ragdollPhase.kind).toBe('CORPSE_DYNAMIC');
+    expect(target.alive).toBe(true);
+    expect(computeCombatantTriageStatus(target)).toBe('MORTALLY_WOUNDED');
+    expect(target.ragdollPhase.kind).toBe('LIVING_AGONY');
   });
 });
 

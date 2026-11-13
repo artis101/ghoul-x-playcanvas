@@ -200,6 +200,7 @@ describe('the seated last stand is animated, not ragdolled', () => {
     // Bled out.
     const bled = seatedAfterLegLoss('seat-death-bleed', FRONT);
     bled.bloodVolumeMl = 2510;
+    bled.currentHp = 1;
     bled.bloodLossRateMlPerSec = 120;
     run(bled, FRONT, 0.2);
     expect(bled.alive).toBe(false);

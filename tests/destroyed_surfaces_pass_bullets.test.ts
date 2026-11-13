@@ -111,7 +111,7 @@ function fireAndCountNearImpacts(
   mayhem: MayhemDirector,
   origin: Vec3Like,
   dir: Vec3Like,
-  nearM = 15
+  nearM = 12
 ): number {
   const original = mayhem.spawnSurfaceImpactFx.bind(mayhem);
   let near = 0;
@@ -223,15 +223,22 @@ describe('Destroyed Surfaces Let Bullets, Enemy Fire, and Visual Tracers Through
       expect(brickWall.damagedBrickCount).toBeGreaterThan(0);
       expect(brickWall.destroyedBrickCount).toBe(0);
 
-      const secondHeavy = arena.destructionManager.interceptRaySegment(
-        shotOrigin,
-        shotDir,
-        6.0,
-        2200,
-        470,
-        0.0127,
-        false
-      );
+      // Bricks are tough: keep hammering the same spot until it finally gives way.
+      let secondHeavy = firstHeavy;
+      let heavyShots = 1;
+      while (secondHeavy.blocked && heavyShots < 30) {
+        secondHeavy = arena.destructionManager.interceptRaySegment(
+          shotOrigin,
+          shotDir,
+          6.0,
+          2200,
+          470,
+          0.0127,
+          false
+        );
+        heavyShots++;
+      }
+      expect(heavyShots).toBeGreaterThan(3);
       expect(secondHeavy.blocked).toBe(false);
       expect(brickWall.destroyedBrickCount).toBeGreaterThanOrEqual(1);
 

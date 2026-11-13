@@ -15,6 +15,7 @@ import { stepFaceDownSettle, yawForward } from '../triage/faceDownLanding.ts';
 import { isSeatedPhase } from '../triage/seatedLastStand.ts';
 import { listLostLimbs } from '../trauma/limbLossDeathRule.ts';
 import { WOUND_CLIP_SECONDS, isCommittedWoundReaction, isFallingReaction } from '../trauma/woundReactionTimings.ts';
+import { stepDownedRecovery } from '../triage/downedRecovery.ts';
 import { add, copyVec3, scale, vec3 } from '../vec3.ts';
 import { canAnimateDeath, startDeathAnimation } from './deathAnimation.ts';
 
@@ -260,7 +261,8 @@ export function stepLivingTargetVitalsAndFall(
       target.currentHp - target.bloodLossRateMlPerSec * 0.16 * dt
     );
 
-    if (target.bloodVolumeMl <= 2500 || target.currentHp <= 0) {
+    // The health bar is what kills: blood loss only matters through the HP it drains.
+    if (target.currentHp <= 0) {
       const wasRagdoll = target.isRagdollActive;
       // Bled out on its feet: the knees give slowly and it slumps to the floor (DeathBleedOut).
       const bleedOutClip = canAnimateDeath(target);
@@ -344,6 +346,12 @@ export function stepLivingTargetVitalsAndFall(
 
   if (onFloorAnimated && target.alive && !target.isRagdollActive && target.activeReaction.type === 'NONE') {
     settleSeatedOnFloor(target);
+  }
+
+  // A wounded body that has lain downed long enough gets back up; a mortally wounded one never does.
+  if (target.alive && stepDownedRecovery(target, dt)) {
+    syncTargetLifecycleDerivedState(target);
+    return;
   }
 
   // Down on its face and settled there: no gun and no damage from here on (FACE_DOWN).

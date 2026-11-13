@@ -28,9 +28,13 @@ export function buildFragBlastReportForTarget(
   const blastDir = normalize(vec3(horizDir.x, 0.18, horizDir.z));
 
   const energyScale = Math.min(2.2, Math.max(1.0, peakEnergyJ / 4400.0));
-  const totalDamageHp = 245.0 * falloff * (0.75 + 0.25 * energyScale);
-  const totalEnergyJ = peakEnergyJ * falloff;
   const isCloseLethal = distM < 3.5;
+  // A point-blank blast empties the health bar; anything farther only kills by depleting it.
+  const totalDamageHp = Math.max(
+    245.0 * falloff * (0.75 + 0.25 * energyScale),
+    isCloseLethal ? hs.currentHp : 0
+  );
+  const totalEnergyJ = peakEnergyJ * falloff;
   const isLethalKill = isCloseLethal || totalDamageHp >= hs.currentHp;
 
   const exposedZones: GhoulZoneId[] = [

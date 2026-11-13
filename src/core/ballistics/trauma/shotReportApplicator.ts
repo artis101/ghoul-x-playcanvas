@@ -7,6 +7,7 @@ import {
   transitionTargetLifecycle,
 } from '../lifecycle/targetLifecycleFsm.ts';
 import { stabilizeRagdollPoseForTransition } from '../ragdoll/ragdollPoseStabilizer.ts';
+import { legGivesWay } from './legGivesWay.ts';
 import { applyWoundsAndDecals } from './woundDecalApplicator.ts';
 import { mixSeed } from '../../random/seededRng.ts';
 import { applyDismembermentTree } from './dismembermentTreeApplicator.ts';
@@ -46,8 +47,10 @@ export function applyShotReportToTarget(
 
   const { rightLegShotEnergyJ, leftLegShotEnergyJ, shatteredArmSides } = applyWoundsAndDecals(target, report);
 
-  if (rightLegShotEnergyJ >= 85.0) target.rightLegFunctional = false;
-  if (leftLegShotEnergyJ >= 85.0) target.leftLegFunctional = false;
+  // A wounded leg does not always put the fighter on the floor: it may hold, and then it neither
+  // falls nor drops its gun. Only a fall disarms (the lifecycle drops the gun as it goes down).
+  if (rightLegShotEnergyJ >= 85.0 && legGivesWay(target, 'R')) target.rightLegFunctional = false;
+  if (leftLegShotEnergyJ >= 85.0 && legGivesWay(target, 'L')) target.leftLegFunctional = false;
 
   if (target.alive) {
     target.painShock = Math.min(1.0, target.painShock + 0.65);

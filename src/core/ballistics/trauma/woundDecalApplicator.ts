@@ -1,3 +1,4 @@
+import { legGivesWay } from './legGivesWay.ts';
 import {
   ShotSimulationReport,
   TargetHealthState,
@@ -22,7 +23,7 @@ export function applyWoundsAndDecals(
 ): WoundsAndDecalsResult {
   const loadout = getArchetypeLoadout(target.archetype);
   target.currentHp = Math.max(0, target.currentHp - report.totalDamageHp);
-  if (report.isLethalKill || target.currentHp <= 0) {
+  if (target.currentHp <= 0) {
     transitionTargetLifecycle(target, { kind: 'LETHAL_DEATH' });
   }
 
@@ -79,8 +80,12 @@ export function applyWoundsAndDecals(
     }
 
     if (w.boneFractured) {
-      if (w.ghoulZone === 'THIGH_RIGHT' || w.ghoulZone === 'KNEE_RIGHT' || w.ghoulZone === 'SHIN_RIGHT') target.rightLegFunctional = false;
-      if (w.ghoulZone === 'THIGH_LEFT' || w.ghoulZone === 'KNEE_LEFT' || w.ghoulZone === 'SHIN_LEFT') target.leftLegFunctional = false;
+      if (w.ghoulZone === 'THIGH_RIGHT' || w.ghoulZone === 'KNEE_RIGHT' || w.ghoulZone === 'SHIN_RIGHT') {
+        if (legGivesWay(target, 'R')) target.rightLegFunctional = false;
+      }
+      if (w.ghoulZone === 'THIGH_LEFT' || w.ghoulZone === 'KNEE_LEFT' || w.ghoulZone === 'SHIN_LEFT') {
+        if (legGivesWay(target, 'L')) target.leftLegFunctional = false;
+      }
       if (w.ghoulZone === 'PELVIS_GROIN') {
         target.rightLegFunctional = false;
         target.leftLegFunctional = false;

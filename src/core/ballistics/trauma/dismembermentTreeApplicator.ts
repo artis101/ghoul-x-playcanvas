@@ -3,6 +3,7 @@ import {
   TargetHealthState,
 } from '../../../contracts/ballistics.ts';
 import { ALL_AUX_PARTICLES } from '../../ghoul/anatomy.ts';
+import { RED_HEALTH_HP_FRACTION } from '../../../contracts/combatantHealthBands.ts';
 import { transitionTargetLifecycle } from '../lifecycle/targetLifecycleFsm.ts';
 import { isLimbLossFatal, losesSidearmArm } from './limbLossDeathRule.ts';
 import { add, copyVec3, cross, scale, sub } from '../vec3.ts';
@@ -122,7 +123,8 @@ export function applyDismembermentTree(
   // handgun (the shot pass usually got here first).
   const sidearmArmLost = losesSidearmArm(target.sidearmHand, report.dismembermentEvents.map((d) => d.zone));
   if (target.alive && report.dismembermentEvents.length > 0 && (isLimbLossFatal(target.severedZones) || sidearmArmLost)) {
-    transitionTargetLifecycle(target, { kind: 'LETHAL_DEATH' });
+    // Mortally wounded, not dead: the bar drops into the red band so it goes down and stays down.
+    target.currentHp = Math.min(target.currentHp, target.maxHp * RED_HEALTH_HP_FRACTION * 0.9);
   }
 
   return { newlySeveredRightLeg, newlySeveredLeftLeg, newlySeveredRightArm, newlySeveredLeftArm };

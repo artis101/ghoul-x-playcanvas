@@ -1131,8 +1131,8 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
       }
       expect(vetAgent.sidearmActive).toBe(false);
       expect(vetAgent.sidearmDropped).toBe(true);
-      // Losing both arms is fatal (limbLossDeathRule.ts): the veteran goes down rather than standing disarmed.
-      expect(hardenedVet.alive).toBe(false);
+      // Losing both arms is mortal (limbLossDeathRule.ts): the veteran goes down and bleeds out rather than standing disarmed.
+      expect(hardenedVet.currentHp).toBeLessThanOrEqual(hardenedVet.maxHp * 0.32);
       expect(ai.computeEnemyAimProfile(hardenedVet, vetAgent).canReturnFire).toBe(false);
       expect(veteranShots.length).toBe(shotsBeforeBothLost);
 

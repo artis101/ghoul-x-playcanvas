@@ -131,6 +131,7 @@ describe('bodies that do not get a death clip', () => {
     const t = standing('seat');
     t.woundedPhase = 'DOWNED_AGONY';
     t.bloodVolumeMl = 2510;
+    t.currentHp = 1;
     t.bloodLossRateMlPerSec = 100;
     stepLivingTargetVitalsAndFall(t, 0.5, 0);
     expect(t.alive).toBe(false);
@@ -143,6 +144,7 @@ describe('running out of blood on its feet', () => {
   it('bleeds out with the slow DeathBleedOut clip', () => {
     const t = standing('bleed');
     t.bloodVolumeMl = 2510;
+    t.currentHp = 1;
     t.bloodLossRateMlPerSec = 100;
     stepLivingTargetVitalsAndFall(t, 0.5, 0);
     expect(t.alive).toBe(false);

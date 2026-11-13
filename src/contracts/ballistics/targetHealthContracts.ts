@@ -265,6 +265,8 @@ export interface TargetHealthState {
    * fortitude stands and guns, middling kneels and shoots, low sits down before reaching for a gun.
    */
   fortitude?: number;
+  /** Seconds a merely wounded body has lain downed; at the recovery time it stands back up (downedRecovery.ts). */
+  downedTimerS?: number;
   /** Chest-forward direction, flattened, when the body came to rest on the floor. */
   downedFacingWorld?: Vec3Like;
   /**

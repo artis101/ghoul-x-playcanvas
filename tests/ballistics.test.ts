@@ -616,7 +616,7 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
     });
 
     it('leg-shot enemy staggers then goes down ALIVE (propped up by muscle tone, not a sandbag) and transitions across all 4 Triage states', () => {
-      const target = createTargetHealthState('leg_triage', 'Balkan Militia', vec3(0, 0, -7), 0, 'MILITIA_GUNNER');
+      const target = createTargetHealthState('leg_triage_c', 'Balkan Militia', vec3(0, 0, -7), 0, 'MILITIA_GUNNER');
       expect(computeCombatantTriageStatus(target)).toBe('HEALTHY');
 
       // Shoot right thigh with 5.56 JHP — enemy must survive, become WOUNDED, stumble briefly, then go down onto ground ALIVE

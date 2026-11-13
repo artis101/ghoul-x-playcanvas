@@ -120,6 +120,10 @@ export function stepAgentWoundedSequence(
     agent.woundedSense = NO_SENSE;
     return;
   }
+  // A fighter that recovered from being downed is back on its feet: it fights normally again.
+  if (agent.state === 'DOWNED_CRAWLING' && !hs.isRagdollActive && hs.rightLegFunctional && hs.leftLegFunctional && currentWoundedPhase(hs) === 'NONE') {
+    agent.state = 'ALERTED_ENGAGING';
+  }
   hs.resolveProfile ??= agent.resolveProfile;
   rollFortitude(hs);
   const sense = senseWoundedPlayer(hs, playerEye, isSightBlocked);

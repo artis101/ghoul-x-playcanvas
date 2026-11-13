@@ -9,7 +9,6 @@ import {
   WoundChannelEvent,
 } from '../../../contracts/ballistics.ts';
 import { add, length, scale, vec3 } from '../vec3.ts';
-import { isLimbLossFatal, losesSidearmArm } from '../trauma/limbLossDeathRule.ts';
 import type { DelayedLethality } from '../../../contracts/combatantConstitution.ts';
 import { borrowedTimeHp, rollDelayedLethality } from './lethalityRoll.ts';
 import { weakEnoughForKnockdown } from './archetypeToughness.ts';
@@ -86,18 +85,12 @@ export function evaluateLethalityAndRagdollPlan(
     rupturedOrgansSet.has('Brain (Cerebrum & Brainstem)') ||
     shatteredBonesSet.has('Cervical Spine (C1-C7)');
 
-  // A second lost limb kills even from a pure limb shot, unless it leaves one arm and one leg.
-  // So does the arm holding the drawn handgun: the last gun goes down with the fighter.
-  const isFatalLimbLoss =
-    hasHitTarget &&
-    dismembermentEvents.length > 0 &&
-    (isLimbLossFatal(severedZonesSet) ||
-      losesSidearmArm(target.sidearmHand, dismembermentEvents.map((d) => d.zone)));
-
   const isInstantKill =
     hasHitTarget &&
-    (isFatalLimbLoss ||
-      (!isPureLimbShot && (isCranialExploded || isNeckSevered || isGutEviscerated || isCnsDestroyed)));
+    !isPureLimbShot && (isCranialExploded || isNeckSevered || isGutEviscerated || isCnsDestroyed);
+  // Catastrophic trauma empties the health bar; a fatal limb loss does not kill outright, it leaves
+  // the fighter mortally wounded (dismembermentTreeApplicator) and down for good.
+  if (isInstantKill) totalDamageHp = Math.max(totalDamageHp, target.currentHp);
   const isTraumaKill = hasHitTarget && !isPureLimbShot && totalDamageHp >= target.currentHp;
 
   // A kill through accumulated trauma may take a few seconds to land; the combatant fights on meanwhile.
