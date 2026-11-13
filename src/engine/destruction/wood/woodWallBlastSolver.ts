@@ -6,6 +6,11 @@ import {
   stampHoleInWoodPanel,
   type WoodMeshBuildStats,
 } from '../../../core/destruction/woodPolygonClipper.ts';
+import {
+  BLAST_REACH_SCALE,
+  blastLocalEnergyJ,
+  blastReachForEnergyM,
+} from '../../../core/destruction/blastFalloff.ts';
 import type { HardwareInstancedPool } from '../../physics/instancedPool.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 import { resetPelletVolley } from './buckshotVolleyTracker.ts';
@@ -13,6 +18,25 @@ import { damageInteriorStudSections } from './woodStudDamageSolver.ts';
 import { spawnBlastSplinterShower } from './woodSplinterEmitter.ts';
 import type { WoodSlabDynamicPool } from './woodSlabDynamicPool.ts';
 import type { WallInternalState, WoodWallInstance } from './woodWallTypes.ts';
+
+/**
+ * Local blast energy (J) that blows out plank sheathing / a 2x4 stud section.
+ * Both sit well below a brick's ~870 J (100 HP / 0.115 J->HP), so a blast that
+ * clears bricks always clears wood framing at the same distance and further.
+ */
+const WOOD_PANEL_BLAST_BREAK_J = 380;
+const WOOD_STUD_BLAST_BREAK_J = 650;
+/** Fringe energy that still splinters a small hole even where nothing breaks clean. */
+const WOOD_PANEL_BLAST_FRINGE_J = 120;
+const MIN_BLAST_BREACH_RADIUS_M = 0.24;
+const BLAST_STUD_DAMAGE_HP = 1_800;
+
+/** Radius on the wall plane, around the closest point, where blast energy reaches `thresholdJ`. */
+function breachRadiusOnPlaneM(blast: BlastEvent, distToPanelM: number, thresholdJ: number): number {
+  const reachM = blastReachForEnergyM(blast.peakEnergyJ, blast.radiusM, thresholdJ);
+  if (reachM <= distToPanelM) return 0;
+  return Math.sqrt(reachM * reachM - distToPanelM * distToPanelM);
+}
 
 export function uploadWallPanelMesh(
   wall: WoodWallInstance,
@@ -70,20 +94,25 @@ export function applyWoodWallRadialBlast(
     const dz = localZ;
     const distToPanel = Math.hypot(dx, dy, dz);
 
-    if (distToPanel > blast.radiusM) continue;
+    if (distToPanel >= blast.radiusM * BLAST_REACH_SCALE) continue;
+    if (blastLocalEnergyJ(blast.peakEnergyJ, blast.radiusM, distToPanel) < WOOD_PANEL_BLAST_FRINGE_J) continue;
 
-    const proximity = Math.max(0, 1 - distToPanel / blast.radiusM);
-    const energyScale = Math.min(2.0, Math.max(0.55, Math.sqrt(blast.peakEnergyJ / 6000)));
-    const breachRadiusM = Math.max(
-      0.24,
-      Math.min(Math.max(wall.widthM, wall.heightM) * 0.65, (0.28 + 0.52 * proximity) * energyScale),
+    const maxBreachRadiusM = Math.hypot(wall.widthM, wall.heightM);
+    const breachRadiusM = Math.min(
+      maxBreachRadiusM,
+      Math.max(MIN_BLAST_BREACH_RADIUS_M, breachRadiusOnPlaneM(blast, distToPanel, WOOD_PANEL_BLAST_BREAK_J)),
     );
+    const studBreachRadiusM = Math.min(
+      maxBreachRadiusM,
+      breachRadiusOnPlaneM(blast, distToPanel, WOOD_STUD_BLAST_BREAK_J),
+    );
+    const proximity = Math.max(0, 1 - distToPanel / (blast.radiusM * BLAST_REACH_SCALE));
 
     const hitU = clampedX + halfW;
     const hitV = clampedY + halfH;
     const awaySignZ = localZ >= 0 ? -1 : 1;
 
-    if (internal && blast.peakEnergyJ * proximity >= 850) {
+    if (internal && studBreachRadiusM > 0) {
       const awayDir: Vec3Like = {
         x: awaySignZ * wall.sinYaw,
         y: 0.2,
@@ -97,9 +126,9 @@ export function applyWoodWallRadialBlast(
         internal,
         hitU,
         hitV,
-        breachRadiusM * 0.92,
-        breachRadiusM * 0.92,
-        Math.max(1_150, 1_800 * proximity),
+        studBreachRadiusM,
+        studBreachRadiusM,
+        BLAST_STUD_DAMAGE_HP,
         awayDir,
         awaySignZ,
         blast.peakEnergyJ,

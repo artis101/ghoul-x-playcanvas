@@ -4,6 +4,7 @@ import type {
   BrickBlastOutcome,
   SolidBrickWallGrid,
 } from './brickWallGridTypes.ts';
+import { BLAST_REACH_SCALE, blastLocalEnergyJ } from '../blastFalloff.ts';
 
 export function computeBulletBrickDamageHp(
   kineticEnergyJ: number,
@@ -226,7 +227,7 @@ export function applyBlastToBrickGrid(
   let damagedCount = 0;
   let anyChanged = false;
   const blastFromFront = localBlastCenter.z >= 0;
-  const effectiveRadiusM = blastRadiusM * 1.08;
+  const effectiveRadiusM = blastRadiusM * BLAST_REACH_SCALE;
 
   for (let i = 0; i < grid.cells.length; i++) {
     if (grid.hp[i] <= 0) continue;
@@ -237,8 +238,7 @@ export function applyBlastToBrickGrid(
     const dist = Math.hypot(dx, dy, dz);
     if (dist >= effectiveRadiusM) continue;
 
-    const falloff = Math.pow(Math.max(0, 1 - dist / effectiveRadiusM), 1.35);
-    const localEnergyJ = peakEnergyJ * falloff;
+    const localEnergyJ = blastLocalEnergyJ(peakEnergyJ, blastRadiusM, dist);
     // Direct blast wave: > ~900 J local energy punches out full 100-HP bricks,
     // while outer blast fringe (120..900 J) cracks & gouges bricks around the breach rim!
     const blastDamageHp = localEnergyJ * 0.115;
