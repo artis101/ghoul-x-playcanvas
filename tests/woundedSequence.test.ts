@@ -19,6 +19,7 @@ import { FACE_DOWN_SETTLE_S, isFaceDownLanding } from '../src/core/ballistics/tr
 import { applyDismembermentTree } from '../src/core/ballistics/trauma/dismembermentTreeApplicator.ts';
 import { startWoundReaction } from '../src/core/ballistics/trauma/woundReactionSelector.ts';
 import {
+  SEATED_DRAW_S,
   STUMP_KNEEL_S,
   WOUND_CLIP_SECONDS,
   clutchSeconds,
@@ -239,17 +240,18 @@ describe('after an arm comes off, one thing at a time', () => {
     expect(t.plannedDownedPhase).toBe('DOWNED_ENGAGE');
     expect(woundedPhaseAllowsDraw(t)).toBe(false);
     expect(woundedPhaseAllowsFire(t, FRONT)).toBe(false);
-    // When the collapse ends it takes the plan and lies in the ragdoll, even at full health.
+    // When the collapse ends it takes the plan and stays seated and animated, even at full health.
     run(t, FRONT, 0.2);
     expect(t.currentHp).toBe(t.maxHp);
     expect(t.woundedPhase).toBe('DOWNED_ENGAGE');
-    expect(t.isRagdollActive).toBe(true);
-    // Not on the floor yet (no solver runs here), so it holds its fire.
-    expect(woundedPhaseAllowsDraw(t)).toBe(false);
+    expect(t.isRagdollActive).toBe(false);
+    expect(t.posture).toBe('LEG_BUCKLED');
+    // It starts the seated draw at once, but holds its fire until the draw clip has played.
+    expect(woundedPhaseAllowsDraw(t)).toBe(true);
     expect(woundedPhaseAllowsFire(t, FRONT)).toBe(false);
   });
 
-  it('a sit-down that plans agony also ends in the ragdoll and never stands back up', () => {
+  it('a sit-down that plans agony also stays seated and never stands back up', () => {
     const t = armOff(0.2, 'sit-agony');
     const still = { ...ASIDE, hasSidearm: true };
     run(t, FRONT, WOUND_CLIP_SECONDS.ARM_LOSS + clutchSeconds(0.2) + 0.1);
@@ -257,15 +259,17 @@ describe('after an arm comes off, one thing at a time', () => {
     t.consciousness = 0.3;
     run(t, still, WOUND_CLIP_SECONDS.DOWNED_COLLAPSE + 0.2);
     expect(t.woundedPhase).toBe('DOWNED_AGONY');
-    expect(t.isRagdollActive).toBe(true);
-    expect(t.posture).not.toBe('DISARMED');
+    expect(t.isRagdollActive).toBe(false);
+    expect(t.posture).toBe('LEG_BUCKLED');
   });
 
-  it('a downed phase never stands on an animated body: the gate drops it', () => {
+  it('a downed phase on an animated body reads as seated on the floor, never standing', () => {
     const t = fresh('stray-engage', 0.5);
     t.woundedPhase = 'DOWNED_ENGAGE';
     stepLivingTargetVitalsAndFall(t, DT, 0);
-    expect(t.isRagdollActive).toBe(true);
+    expect(t.isRagdollActive).toBe(false);
+    expect(t.posture).toBe('LEG_BUCKLED');
+    expect(t.downedFacingWorld).toBeDefined();
   });
 
   it('sits down with SIT_DOWN on the frame it decides', () => {
@@ -399,7 +403,7 @@ describe('the downed gate', () => {
     expect(woundedPhaseAllowsFire(t, FRONT)).toBe(false);
   });
 
-  it('ragdolls every other plan, facing the way it stood', () => {
+  it('keeps every other plan seated and animated, facing the way it stood', () => {
     for (const [input, phase] of [
       [FRONT, 'DOWNED_ENGAGE'],
       [{ ...ASIDE, freeArmWorks: false }, 'DOWNED_AGONY'],
@@ -407,7 +411,8 @@ describe('the downed gate', () => {
       const t = legOff(0.5, `gate-${phase}`);
       t.yawRad = Math.PI / 2;
       run(t, input, WOUND_CLIP_SECONDS.LEG_LOSS + 0.1);
-      expect(t.isRagdollActive).toBe(true);
+      expect(t.isRagdollActive).toBe(false);
+      expect(t.posture).toBe('LEG_BUCKLED');
       expect(t.woundedPhase).toBe(phase);
       expect(t.downedFacingWorld?.x).toBeCloseTo(1);
       expect(t.downedFacingWorld?.z).toBeCloseTo(0);
@@ -532,15 +537,19 @@ describe('what each phase allows', () => {
     expect(woundedPhaseAllowsFire(engage, { playerBearingRad: null, playerVisible: true })).toBe(false);
   });
 
-  it('a downed engager holds its gun until it lies on the floor', () => {
+  it('a downed engager holds its gun until it lies on the floor, or until its seated draw is done', () => {
     const airborne = withPhase('DOWNED_ENGAGE');
     transitionTargetLifecycle(airborne, { kind: 'UPDATE_RAGDOLL_GROUNDED', groundedBoneCount: 0 });
     expect(woundedPhaseAllowsDraw(airborne)).toBe(false);
     expect(woundedPhaseAllowsFire(airborne, view)).toBe(false);
-    const standing = fresh('engage-standing', 0.5);
-    standing.woundedPhase = 'DOWNED_ENGAGE';
-    expect(woundedPhaseAllowsDraw(standing)).toBe(false);
-    expect(woundedPhaseAllowsFire(standing, view)).toBe(false);
+    // Seated and animated: it draws straight away and fires once the seated draw has played.
+    const seated = fresh('engage-seated', 0.5);
+    seated.woundedPhase = 'DOWNED_ENGAGE';
+    seated.woundedPhaseTimerS = 0;
+    expect(woundedPhaseAllowsDraw(seated)).toBe(true);
+    expect(woundedPhaseAllowsFire(seated, view)).toBe(false);
+    seated.woundedPhaseTimerS = SEATED_DRAW_S;
+    expect(woundedPhaseAllowsFire(seated, view)).toBe(true);
   });
 
   it('never draws or fires while a committed wound clip plays, or once dead', () => {

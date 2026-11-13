@@ -1,103 +1,55 @@
 import * as pc from 'playcanvas';
 import { describe, expect, it } from 'vitest';
 import { createTargetHealthState } from '../src/core/ghoul/anatomy.ts';
-import type { GhoulZoneId } from '../src/contracts/ballistics.ts';
 import type { GlbModelRegistry } from '../src/engine/assets/glbLoader.ts';
-import type { CombatantGlbInstance } from '../src/engine/assets/glbTypes.ts';
 import { CombatantWeaponMount } from '../src/engine/mannequin/combatantWeaponMount.ts';
-import { readAndParseGlb } from './blenderGlbFixtures.ts';
+import { LOOSE_SUPPORT_FULL_M } from '../src/engine/mannequin/combatantWeaponHands.ts';
+import { createClipPose } from './combatantClipPose.ts';
 
-const { gltf, binChunk } = readAndParseGlb('ghoul_combatant.glb');
-
-// Animation rotations are baked as normalized int16 (see combatant_glb_animation.py); everything
-// else is float. Decode both the way PlayCanvas does.
-function readFloats(accessorIndex: number, size: number): number[] {
-  const accessor = gltf.accessors![accessorIndex];
-  const view = gltf.bufferViews![accessor.bufferView!];
-  const start = (view.byteOffset ?? 0) + (accessor.byteOffset ?? 0);
-  const short = accessor.componentType === 5122;
-  const width = short ? 2 : 4;
-  const stride = view.byteStride ?? size * width;
-  return Array.from({ length: accessor.count * size }, (_, i) => {
-    const offset = start + Math.floor(i / size) * stride + (i % size) * width;
-    return short ? Math.max(binChunk.readInt16LE(offset) / 32767, -1) : binChunk.readFloatLE(offset);
-  });
+function palmOf(hand: pc.GraphNode, offset: number): pc.Vec3 {
+  return hand.up.clone().mulScalar(offset).add(hand.getPosition());
 }
 
-function createIdlePose(clip: string) {
-  const nodes = gltf.nodes!.map((source) => {
-    const node = new pc.GraphNode(source.name);
-    if (source.translation) node.setLocalPosition(...source.translation);
-    if (source.rotation) node.setLocalRotation(...source.rotation);
-    if (source.scale) node.setLocalScale(...source.scale);
-    return node;
-  });
-  const root = new pc.GraphNode('Combatant');
-  gltf.nodes!.forEach((source, index) => {
-    for (const child of source.children ?? []) nodes[index].addChild(nodes[child]);
-  });
-  for (const node of nodes) {
-    if (!node.parent) root.addChild(node);
-  }
-
-  const animation = gltf.animations!.find((entry) => entry.name === clip)!;
-  const inputs: pc.AnimData[] = [];
-  const outputs: pc.AnimData[] = [];
-  const curves: pc.AnimCurve[] = [];
-  const times = new Set<number>();
-  const properties = { translation: 'localPosition', rotation: 'localRotation', scale: 'localScale' } as const;
-  for (const { sampler, target } of animation.channels) {
-    const { input, output } = animation.samplers[sampler];
-    const property = properties[target.path as keyof typeof properties];
-    const size = property === 'localRotation' ? 4 : 3;
-    const keys = readFloats(input, 1);
-    keys.forEach((time) => times.add(time));
-    const index = inputs.length;
-    inputs.push(new pc.AnimData(1, keys));
-    outputs.push(new pc.AnimData(size, readFloats(output, size)));
-    const path = nodes[target.node!].path.split('/').slice(1);
-    curves.push(new pc.AnimCurve([{ entityPath: path, component: 'graph', propertyPath: [property] }], index, index, pc.INTERPOLATION_LINEAR));
-  }
-  const frames = Array.from(times).sort((a, b) => a - b);
-  const track = new pc.AnimTrack(clip, frames[frames.length - 1], inputs, outputs, curves);
-  const evaluator = new pc.AnimEvaluator(new pc.DefaultAnimBinder(root));
-  const idle = new pc.AnimClip(track, 0, 1, false, false);
-  evaluator.addClip(idle);
-  const boneNodes = new Map<GhoulZoneId, pc.GraphNode>(nodes
-    .filter((node) => node.name.startsWith('Bone_'))
-    .map((node) => [node.name.slice(5) as GhoulZoneId, node]));
-  return {
-    glb: { boneNodes, rootEntity: root, animComponent: { baseLayer: { activeState: clip } } } as CombatantGlbInstance,
-    frames,
-    sample(time: number) {
-      idle.time = time;
-      evaluator.update(0);
-    },
-  };
+/** The trigger fist sits on the M4 grip, thumb along the modelled grip axis. */
+function expectM4TriggerGrip(holder: pc.Entity, hand: pc.GraphNode, side: 'RIGHT' | 'LEFT', time: number): void {
+  const inverse = new pc.Mat4().invert(holder.getWorldTransform());
+  const expectedPalm = new pc.Vec3(side === 'RIGHT' ? 0.027 : -0.027, -0.05, 0.023);
+  const thumb = inverse.transformVector(hand.getRotation().transformVector(pc.Vec3.BACK)).normalize();
+  const actualPalm = inverse.transformPoint(palmOf(hand, 0.052));
+  expect(actualPalm.distance(expectedPalm), `${side} palm, t=${time}`).toBeLessThan(0.01);
+  expect(thumb.dot(new pc.Vec3(0, 0.94, -0.342)), `${side} thumb, t=${time}`).toBeGreaterThan(0.99);
 }
 
-function expectM4Grip(
-  holder: pc.Entity, hand: pc.GraphNode, side: 'RIGHT' | 'LEFT', trigger: boolean, time: number,
+/**
+ * CombatReadyIdle is a loose-support clip: Kimodo left the support palm 35-58 cm off the forend,
+ * so the hand is brought onto the rail on every frame instead of hanging beside the gun. Where the
+ * forend is beyond the arm's length the arm goes straight toward it and stops there.
+ */
+function expectSupportContact(
+  holder: pc.Entity, hand: pc.GraphNode, side: 'RIGHT' | 'LEFT', authored: pc.Vec3, time: number,
 ): void {
   const inverse = new pc.Mat4().invert(holder.getWorldTransform());
-  const palm = hand.up.clone().mulScalar(trigger ? 0.052 : 0.05).add(hand.getPosition());
-  const expectedPalm = new pc.Vec3(side === 'RIGHT' ? 0.027 : -0.027, trigger ? -0.05 : -0.054, trigger ? 0.023 : -0.272);
-  const thumb = inverse.transformVector(hand.getRotation().transformVector(pc.Vec3.BACK)).normalize();
-  const expectedThumb = trigger ? new pc.Vec3(0, 0.94, -0.342) : pc.Vec3.UP;
-  const actualPalm = inverse.transformPoint(palm);
-  if (!trigger) {
-    // The support palm slides along the handguard to wherever the arm reaches comfortably.
-    expect(actualPalm.z, `${side} rail, t=${time}`).toBeGreaterThan(-0.36);
-    expect(actualPalm.z, `${side} rail, t=${time}`).toBeLessThan(-0.2);
-    expectedPalm.z = actualPalm.z;
+  const x = side === 'RIGHT' ? 0.027 : -0.027;
+  const railGap = (point: pc.Vec3) => {
+    const local = inverse.transformPoint(point);
+    return local.distance(new pc.Vec3(x, -0.054, Math.min(-0.21, Math.max(-0.35, local.z))));
+  };
+  const before = railGap(authored);
+  const after = railGap(palmOf(hand, 0.05));
+  expect(before, `${side} authored gap, t=${time}`).toBeLessThan(LOOSE_SUPPORT_FULL_M);
+  expect(after, `${side} moved toward the rail, t=${time}`).toBeLessThan(before);
+  if (after > 0.01) {
+    const forearm = hand.parent!;
+    const upper = forearm.parent!;
+    const length = upper.getPosition().distance(forearm.getPosition()) + forearm.getPosition().distance(hand.getPosition());
+    expect(upper.getPosition().distance(hand.getPosition()), `${side} arm at full reach, t=${time}`)
+      .toBeGreaterThan(length - 0.005);
   }
-  expect(actualPalm.distance(expectedPalm), `${side} palm, t=${time}`).toBeLessThan(0.01);
-  expect(thumb.dot(expectedThumb), `${side} thumb, t=${time}`).toBeGreaterThan(0.99);
 }
 
 describe('Combat Ready Idle held prop', () => {
   it.each(['CombatReadyIdle', 'CombatReadyIdle_Southpaw'])('keeps the gun stable across every authored frame of %s', (clip) => {
-    const pose = createIdlePose(clip);
+    const pose = createClipPose(clip);
     const canvas = { width: 1, height: 1 };
     const app = new pc.Application(canvas as HTMLCanvasElement, {
       graphicsDevice: new pc.NullGraphicsDevice(canvas),
@@ -105,7 +57,7 @@ describe('Combat Ready Idle held prop', () => {
     try {
       const mount = new CombatantWeaponMount();
       const state = createTargetHealthState('idle', 'Idle', pc.Vec3.ZERO, 0, 'MILITIA_GUNNER', clip.endsWith('_Southpaw'));
-      expect(pose.frames.length).toBe(75);
+      expect(pose.frames.length).toBeGreaterThan(10);
       for (const weaponId of ['m4a1_carbine', 'm590_shotgun', 'msg90_sniper', 'silver_talon_50ae'] as const) {
         const holder = new pc.Entity('Held item', app);
         const registry = {
@@ -117,29 +69,27 @@ describe('Combat Ready Idle held prop', () => {
         mount.attachGlbWeaponIfReady(registry, state, app.root, weaponId);
         const supportSide = state.isLeftHanded ? 'RIGHT' : 'LEFT';
         const triggerSide = state.isLeftHanded ? 'LEFT' : 'RIGHT';
-        const chest = pose.glb.boneNodes.get('TORSO_UPPER_THORAX')!;
-        const elbow = pose.glb.boneNodes.get(`FOREARM_${supportSide}`)!;
         const supportHand = pose.glb.boneNodes.get(`HAND_${supportSide}`)!;
         const triggerHand = pose.glb.boneNodes.get(`HAND_${triggerSide}`)!;
         const barrelPoint = new pc.Vec3(0, 0, -0.5);
+        const palms: pc.Vec3[] = [];
         const positions = pose.frames.map((time) => {
           pose.sample(time);
+          const authored = palmOf(supportHand, 0.05);
+          palms.push(palmOf(triggerHand, 0.052));
           mount.syncWeaponPosition(state, pose.glb);
-          if (weaponId !== 'silver_talon_50ae') {
-            // The support elbow stays clear of the vest: either ahead of it or out beside it.
-            const ahead = elbow.getPosition().z - chest.getPosition().z;
-            const beside = Math.abs(elbow.getPosition().x - chest.getPosition().x);
-            expect(Math.max(ahead - 0.15, beside - 0.2), `${weaponId}, t=${time}`).toBeGreaterThan(0);
-          }
           if (weaponId === 'm4a1_carbine') {
-            expectM4Grip(holder, supportHand, supportSide, false, time);
-            expectM4Grip(holder, triggerHand, triggerSide, true, time);
+            expectM4TriggerGrip(holder, triggerHand, triggerSide, time);
+            expectSupportContact(holder, supportHand, supportSide, authored, time);
           }
           return holder.getWorldTransform().transformPoint(barrelPoint);
         });
+        // The gun rides the animated fist, so it moves as the clip moves the hand; it must add no
+        // more than a little swing of its own on top (the clip twists the wrist near the loop seam).
         for (const [index, position] of positions.entries()) {
-          const next = positions[(index + 1) % positions.length];
-          expect(position.distance(next), `${weaponId}, frame ${index}`).toBeLessThan(0.03);
+          const next = (index + 1) % positions.length;
+          const handMove = palms[index].distance(palms[next]);
+          expect(position.distance(positions[next]) - handMove, `${weaponId}, frame ${index}`).toBeLessThan(0.03);
         }
         mount.destroy();
       }

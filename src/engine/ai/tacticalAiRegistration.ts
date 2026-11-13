@@ -2,7 +2,7 @@ import type { TargetHealthState } from '../../contracts/ballistics.ts';
 import { createPrimaryArmedState } from '../../core/ai/enemyArmamentFsm.ts';
 import { createCooldownBurstState } from '../../core/ai/weaponBurstFsm.ts';
 import { copyVec3, vec3 } from '../../core/ballistics/vec3.ts';
-import { updateStandingCombatPose } from '../../core/ghoul/anatomy.ts';
+import { placeRestSkeleton } from '../../core/ghoul/anatomy/restSkeletonPlacement.ts';
 import { computeCombatantTriageStatus } from '../../core/ballistics/solver.ts';
 import type {
   CombatantResolveProfile,
@@ -36,7 +36,8 @@ export function registerWaveTargetsInternal(
       if (coverSpec) {
         hs.worldPosition = copyVec3(coverSpec.coverAnchorWorld);
         hs.yawRad = (coverSpec.guardYawDeg * Math.PI) / 180;
-        updateStandingCombatPose(hs, elapsedClockS);
+        // Moved to its station: carry the hit skeleton along until the animated body poses it.
+        placeRestSkeleton(hs);
       }
     } else {
       let bestDist = 2.2;

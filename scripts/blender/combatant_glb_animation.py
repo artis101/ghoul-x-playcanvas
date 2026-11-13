@@ -85,7 +85,8 @@ class CombatantGlbAnimation:
         self.replace_times(time_sampler, times)
         node_indices = {node["name"]: index for index, node in enumerate(self.doc["nodes"])}
         for bone, path in frames[0]:
-            sampler = {"input": time_sampler["input"], "interpolation": "LINEAR"}
+            # LINEAR is glTF's default interpolation, so it is left out to keep the JSON small.
+            sampler = {"input": time_sampler["input"]}
             clip["channels"].append({"sampler": len(clip["samplers"]),
                                      "target": {"node": node_indices[bone], "path": path}})
             clip["samplers"].append(sampler)

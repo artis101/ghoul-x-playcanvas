@@ -20,6 +20,8 @@ import type {
   CombatantArmamentState,
   CombatantBodyState,
   CorpseSleepPhase,
+  DeathClipId,
+  DyingAnimationState,
   RagdollBoneAttachmentState,
   RagdollPhaseState,
   StandingCombatPosture,
@@ -30,6 +32,8 @@ export type {
   CombatantArmamentState,
   CombatantBodyState,
   CorpseSleepPhase,
+  DeathClipId,
+  DyingAnimationState,
   RagdollBoneAttachmentState,
   RagdollPhaseState,
   StandingCombatPosture,
@@ -72,6 +76,8 @@ export interface ShotSimulationReport {
   isLethalKill: boolean;
   /** Set when the shot is fatal but the combatant fights on for a few seconds first. */
   delayedLethality?: DelayedLethality | null;
+  /** True for a blast (grenade, barrel): a body it kills is thrown, never given a death clip. */
+  isExplosiveBlast?: boolean;
   /** How the first round to land behaved inside the body; absent when the target has no variance seed. */
   terminalVariance?: TerminalVarianceSummary | null;
   ragdollPlan: RagdollActivationPlan;
@@ -270,6 +276,11 @@ export interface TargetHealthState {
   /** Optional local micro-hitstop freeze timer in seconds (35-50ms on heavy/shattering hits) */
   hitstopRemainingS?: number;
   alive: boolean;
+  /**
+   * Set while a body killed on its feet plays its death clip (`alive` false, `isRagdollActive`
+   * false). Cleared when the corpse ragdoll takes over. Absent or null otherwise.
+   */
+  dying?: DyingAnimationState | null;
   isRagdollActive: boolean;
   /** Explicit ragdoll corpse-sleep & living-agony phase FSM */
   ragdollPhase: RagdollPhaseState;
@@ -280,8 +291,6 @@ export interface TargetHealthState {
   ragdollRootPosition: Vec3Like;
   ragdollRootVelocity: Vec3Like;
   ragdollAngularVelocity: Vec3Like;
-  /** Where a downed shooter points its weapon, so its head can look along it. Null while not aiming. */
-  downedAimDirWorld?: Vec3Like | null;
   ragdollBones: Record<GhoulZoneId, RagdollBoneState>;
   auxParticles: Record<AuxParticleId, AuxRagdollParticle>;
   ragdollConstraints: RagdollDistanceConstraint[];

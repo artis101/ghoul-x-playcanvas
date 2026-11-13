@@ -9,6 +9,7 @@ import { transitionTargetLifecycle } from '../lifecycle/targetLifecycleFsm.ts';
 import { copyVec3 } from '../vec3.ts';
 import { WOUND_CLIP_SECONDS, isCommittedWoundReaction } from './woundReactionTimings.ts';
 import type { WoundSeverity } from './woundSeverity.ts';
+import { isSeatedAnimated } from '../triage/seatedLastStand.ts';
 
 /** What one surviving hit did, as far as choosing the body's reaction goes. */
 export interface WoundReactionInput {
@@ -125,13 +126,14 @@ function bumpJolt(target: TargetHealthState, input: WoundReactionInput, intensit
 }
 
 /**
- * A body already crawling on the floor, or sinking onto its knees, has nowhere further to fall.
- * A new reaction clip would pop it back up to replay a stand-and-fall (and the fall would replan
- * the crawler as a shooter), so a hit on it only jolts.
+ * A body already crawling on the floor, sinking onto its knees, or sitting in its last stand has
+ * nowhere further to fall. A new reaction clip would pop it back up to replay a stand-and-fall
+ * (and the fall would replan the crawler as a shooter), so a hit on it only jolts. That holds for a
+ * newly severed limb on a seated body too: gore and a jolt, and it stays sitting.
  */
 function onlyJoltsWhenHit(target: TargetHealthState): boolean {
   const phase = target.woundedPhase;
-  return phase === 'DOWNED_CRAWL' || phase === 'KNEEL_DOWN';
+  return phase === 'DOWNED_CRAWL' || phase === 'KNEEL_DOWN' || isSeatedAnimated(target);
 }
 
 /**

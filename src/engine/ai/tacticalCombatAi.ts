@@ -32,6 +32,7 @@ import { getSidearmVisualState, syncAgentArmamentAndSidearm } from './agentArmam
 import { computeEnemyAimProfile } from './tacticalAimProfileCalculator.ts';
 import { handleEnemyHit, handleGunshotOrExplosion } from './tacticalPerception.ts';
 import { registerWaveTargetsInternal } from './tacticalAiRegistration.ts';
+import { clearEnemyWeaponSway, forgetEnemyWeaponSway, setEnemySwayClock } from './enemyWeaponSway.ts';
 import { isSightBlockedBySolidCover, resolveExposedPlayerAimPoint } from './tacticalLineOfSight.ts';
 import type { PeekPlanCacheEntry } from './tacticalCoverFinder.ts';
 import { type TacticalFsmContext, stepSingleEnemyAgent } from './tacticalAgentFsm.ts';
@@ -156,6 +157,9 @@ export class TacticalCombatAiSystem {
     this.barkCoordinator.reset();
     this.targetStateById.clear();
     for (const hs of targets) this.targetStateById.set(hs.targetId, hs);
+    // Registration replaces the roster, so bodies that are not coming back drop their sway state.
+    const keptIds = new Set(targets.map((hs) => hs.targetId));
+    for (const id of this.agents.keys()) if (!keptIds.has(id)) forgetEnemyWeaponSway(id);
     registerWaveTargetsInternal(
       targets,
       this.agents,
@@ -254,6 +258,8 @@ export class TacticalCombatAiSystem {
 
     const stepDt = Math.min(0.1, dt);
     this.elapsedClockS += stepDt;
+    // Every held gun reads the sway clock, not only the ones firing this tick.
+    setEnemySwayClock(this.elapsedClockS);
     stepPlayerVitalsRegen(this.playerVitals, stepDt);
 
     for (const hs of targets) {
@@ -354,6 +360,7 @@ export class TacticalCombatAiSystem {
     this.aimExposureCache.clear();
     this.tokenPool.reset();
     this.barkCoordinator.reset();
+    clearEnemyWeaponSway();
     if (this.tracerPool) this.tracerPool.destroy();
   }
 

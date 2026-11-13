@@ -8,11 +8,7 @@ import { buildLivingGroundedPoseTargets } from '../src/core/ballistics/triage/gr
 import { applyDismembermentTree } from '../src/core/ballistics/trauma/dismembermentTreeApplicator.ts';
 import { isLimbLossFatal, listLostLimbs } from '../src/core/ballistics/trauma/limbLossDeathRule.ts';
 import { WOUND_CLIP_SECONDS } from '../src/core/ballistics/trauma/woundReactionTimings.ts';
-import {
-  canDownedBodyAimAt,
-  clampDownedAimDirection,
-  computeDownedAimReach,
-} from '../src/core/ballistics/triage/downedAimReach.ts';
+import { canDownedBodyAimAt, computeDownedAimReach } from '../src/core/ballistics/triage/downedAimReach.ts';
 import { computeChestFrame } from '../src/core/ghoul/anatomy/ragdollBodyFrames.ts';
 import { keepAimClearOfChest } from '../src/core/ballistics/triage/downedChestClearance.ts';
 import { dot, normalize, sub, vec3 } from '../src/core/ballistics/vec3.ts';
@@ -137,20 +133,6 @@ describe('a downed shooter only covers what lies in front of its extended arm', 
     expect(at(target, 0, 0.8, 6)).toBe(true);
     expect(at(target, 0, 0.8, -6)).toBe(false);
   });
-
-  it('turns an aim behind the head to the cone edge instead of over it', () => {
-    const target = lying(false);
-    const shoulder = target.ragdollBones.SHOULDER_RIGHT.position;
-    for (const wanted of [vec3(0, 0.2, 1), vec3(0, 1, 0.3), vec3(0.3, 0.6, 0.8)]) {
-      const aim = clampDownedAimDirection(target, wanted);
-      const reach = computeDownedAimReach(target)!;
-      expect(dot(aim, reach.axis)).toBeGreaterThanOrEqual(Math.cos(reach.halfAngleRad) - 1e-6);
-      // Never pointing back past straight up toward the head.
-      expect(aim.z).toBeLessThan(0.05);
-      const point = { x: shoulder.x + aim.x * 5, y: shoulder.y + aim.y * 5, z: shoulder.z + aim.z * 5 };
-      expect(dot(normalize(sub(point, shoulder)), reach.axis)).toBeGreaterThan(0);
-    }
-  });
 });
 
 describe('a downed gun arm reaching across the body', () => {
@@ -196,17 +178,13 @@ describe('a one-armed combatant stands until its last stand, then sits down to f
   });
 });
 
-describe('a seated shooter looks down its gun', () => {
-  it('turns its face toward where it aims', () => {
-    const faceDir = (aim: Vec3Like | null): Vec3Like => {
-      const target = lying(false);
-      target.downedAimDirWorld = aim;
-      const pose = buildLivingGroundedPoseTargets(target, 0, 0)!;
-      return normalize(sub(pose.HEAD_FACE_JAW!, pose.HEAD_CRANIUM!));
-    };
-    // Past the feet (-z) and out to the right-hander's gun side (+x).
-    const aim = normalize(vec3(0.7, 0.1, -0.7));
-    expect(dot(faceDir(aim), aim)).toBeGreaterThan(dot(faceDir(null), aim) + 0.1);
-    expect(faceDir(aim).x).toBeGreaterThan(0.3);
+// The head used to turn toward a procedurally posed pistol arm. The ragdoll never holds a gun
+// now (the seated last stand is a clip), so the head simply rests looking past the feet.
+describe('a body lying on its back in the ragdoll', () => {
+  it('rests looking out past its feet', () => {
+    const pose = buildLivingGroundedPoseTargets(lying(false), 0, 0)!;
+    const face = normalize(sub(pose.HEAD_FACE_JAW!, pose.HEAD_CRANIUM!));
+    // Lying with its head toward +z, its feet lie toward -z.
+    expect(face.z).toBeLessThan(0);
   });
 });

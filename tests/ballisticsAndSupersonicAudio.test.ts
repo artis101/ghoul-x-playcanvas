@@ -252,7 +252,8 @@ describe('Ballistics, Magnetism, Hitstop & Supersonic Audio Upgrades', () => {
     physio.alive = false;
     physio.conscious = false;
 
-    syncPhysiologyToHealthState(physio, hs, null);
+    // No death clip (null): the ragdoll path. A standing body would otherwise bleed out on its feet.
+    syncPhysiologyToHealthState(physio, hs, null, null);
     expect(hs.alive).toBe(false);
     expect(hs.isRagdollActive).toBe(true);
     expect(hs.weaponDropped).toBe(true);

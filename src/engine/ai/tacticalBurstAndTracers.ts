@@ -1,5 +1,5 @@
 import type { PlayerNearMissGrazePayload } from '../../contracts/ai/aiContracts.ts';
-import type { GhoulZoneId, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
+import type { TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
 import { computeSuppressionTargetWorld } from '../../core/ai/attackTokenPool.ts';
 import { cancelActiveBurst, stepWeaponBurstCadence } from '../../core/ai/weaponBurstFsm.ts';
 import {
@@ -17,10 +17,8 @@ import {
   cross,
   deterministicConeSpread,
   distance,
-  dot,
   normalize,
   scale,
-  sub,
   vec3,
 } from '../../core/ballistics/vec3.ts';
 import { basisColumnsToQuaternion } from '../fx/mayhemDirector.ts';
@@ -37,7 +35,18 @@ import type {
 import { wrapAngleRad, yawToward } from './combatantArmEvaluation.ts';
 import { ARCHETYPE_TUNING, BACKUP_SIDEARM_WEAPON_ID, SIDEARM_M9_TUNING } from './archetypeTuning.ts';
 import { getAgentMagazine } from './enemyWeaponMagazine.ts';
-import { isKneelingPhase, woundedSequenceAllowsShot } from './woundedSequenceDriver.ts';
+import { kickEnemyWeaponSway, refreshEnemyWeaponSway, sampleEnemyWeaponSway } from './enemyWeaponSway.ts';
+import { woundedSequenceAllowsShot } from './woundedSequenceDriver.ts';
+import {
+  bendTowardDeliberateMiss,
+  closestApproach,
+  fallbackMuzzleOrigin,
+  isBarrelOnTarget,
+  readEnemyBarrelPose,
+  resolveEnemyShotRay,
+  type EnemyBarrelPose,
+  type EnemyShotRay,
+} from './enemyFireSolution.ts';
 
 function primaryHandling(hs: TargetHealthState) {
   return resolveEnemyGunHandling(ARCHETYPE_TUNING[hs.archetype].primaryWeaponId);
@@ -50,7 +59,10 @@ export interface BurstContext {
   tracerPool: HardwareInstancedPool | null;
   rapierWorld: RapierPhysicsWorld | null;
   interceptEnemyShotCover?: (origin: Vec3Like, dir: Vec3Like, maxDist: number) => EnemyCoverShotInterceptResult;
+  /** Plays the gun's fire clip. The shot itself starts at the barrel read before the clip. */
   playFireVisual?: (targetId: string, usingSidearm: boolean) => Vec3Like | undefined;
+  /** The held gun's muzzle and barrel; defaults to the reader the game installs for the frame. */
+  readBarrelPose?: (targetId: string, usingSidearm: boolean) => EnemyBarrelPose | null;
   /** Plays the gun's reload clip; returns how long the reload takes, timed like the player's. */
   playReloadVisual?: (targetId: string, usingSidearm: boolean) => number | undefined;
   onEnemyFireTracer?: (event: EnemyTracerFireEvent) => void;
@@ -81,12 +93,14 @@ export function stepWeaponBurstFire(
   // down, falling, crawling or lying face down, and a body on the floor only fires at a player
   // straight in front of it (docs/wound-movement.md).
   if (!woundedSequenceAllowsShot(hs, agent)) {
+    refreshEnemyWeaponSway(hs, agent, aimProfile, false, ctx.elapsedClockS);
     cancelActiveBurst(agent);
     return;
   }
   // A body on the ground cannot twist round to shoot behind itself. It waits for a target it
   // can actually bring the weapon to bear on.
   if (hs.isRagdollActive && !canDownedBodyAimAt(hs, playerEyeWorldPos)) {
+    refreshEnemyWeaponSway(hs, agent, aimProfile, false, ctx.elapsedClockS);
     cancelActiveBurst(agent);
     return;
   }
@@ -103,12 +117,24 @@ export function stepWeaponBurstFire(
   const aimYaw = exposedAimTarget
     ? yawToward(hs.worldPosition, exposedAimTarget, hs.yawRad)
     : hs.yawRad;
+  // The settle-in wobble starts when the shooter stops and brings the gun onto a visible target.
+  refreshEnemyWeaponSway(hs, agent, aimProfile, exposedAimTarget !== null && !holdFire, ctx.elapsedClockS);
+  const usingSidearm = aimProfile.usingBackupSidearm;
+  // The trigger is pulled only while the barrel itself points at the player (within the spread
+  // plus a little). Until then the shooter keeps aiming, and mid-burst it waits for the last
+  // shot's recoil to settle back onto the target, so bursts climb and recover like the player's.
+  const barrel = readBarrel(hs, usingSidearm, ctx);
+  const ray = exposedAimTarget ? shotRayFor(hs, agent, barrel, exposedAimTarget, ctx) : null;
+  const barrelOnTarget =
+    ray !== null &&
+    isBarrelOnTarget(ray, [exposedAimTarget!, chestOf(playerEyeWorldPos)], aimProfile.effectiveSpreadRad);
   const isAimAligned =
-    !holdFire && (hs.isRagdollActive || Math.abs(wrapAngleRad(aimYaw - hs.yawRad)) <= Math.PI / 12);
+    !holdFire &&
+    barrelOnTarget &&
+    (hs.isRagdollActive || Math.abs(wrapAngleRad(aimYaw - hs.yawRad)) <= Math.PI / 12);
 
   // The gun runs by the same rules as the player's: its own cycle, one shot per pull unless
   // it is full-auto, and nothing fires from an empty or reloading magazine.
-  const usingSidearm = aimProfile.usingBackupSidearm;
   const handling = resolveEnemyGunHandling(usingSidearm ? BACKUP_SIDEARM_WEAPON_ID : tuning.primaryWeaponId);
   const magazine = getAgentMagazine(hs, agent, usingSidearm);
   if (!canFireFromMagazine(magazine)) {
@@ -171,7 +197,7 @@ export function stepWeaponBurstFire(
   }
   consumeMagazineRound(magazine);
 
-  emitEnemyTracerShot(hs, agent, aimProfile, playerEyeWorldPos, exposedAimTarget, ctx);
+  emitEnemyTracerShot(hs, agent, aimProfile, playerEyeWorldPos, exposedAimTarget, ctx, barrel);
 
   if (
     burstRes.completedBurst &&
@@ -182,34 +208,40 @@ export function stepWeaponBurstFire(
   }
 }
 
+function readBarrel(hs: TargetHealthState, usingSidearm: boolean, ctx: BurstContext): EnemyBarrelPose | null {
+  return (ctx.readBarrelPose ?? readEnemyBarrelPose)(hs.targetId, usingSidearm);
+}
+
+function shotRayFor(
+  hs: TargetHealthState,
+  agent: EnemyAiAgentRuntime,
+  barrel: EnemyBarrelPose | null,
+  aimTarget: Vec3Like,
+  ctx: BurstContext
+): EnemyShotRay {
+  const sway = sampleEnemyWeaponSway(hs.targetId, ctx.elapsedClockS);
+  return resolveEnemyShotRay(barrel, fallbackMuzzleOrigin(hs, agent), aimTarget, sway);
+}
+
+function chestOf(playerEye: Vec3Like): Vec3Like {
+  return { x: playerEye.x, y: playerEye.y - 0.18, z: playerEye.z };
+}
+
+const PLAYER_HIT_RADIUS_M = 0.36;
+
 export function emitEnemyTracerShot(
   hs: TargetHealthState,
   agent: EnemyAiAgentRuntime,
   aimProfile: EnemyAimProfile,
   playerEyeWorldPos: Vec3Like,
   aimTargetPos: Vec3Like,
-  ctx: BurstContext
+  ctx: BurstContext,
+  /** The barrel the fire gate already read this tick; read afresh when left out. */
+  barrelPose?: EnemyBarrelPose | null
 ): void {
   const tuning = ARCHETYPE_TUNING[hs.archetype];
   const usingSidearm = aimProfile.usingBackupSidearm;
   const firingHand: ActiveFiringHand = aimProfile.activeFiringHand ?? agent.activeFiringHand;
-  const firingHandZone: GhoulZoneId = firingHand === 'RIGHT' ? 'HAND_RIGHT' : 'HAND_LEFT';
-
-  const handBone = hs.ragdollBones[firingHandZone];
-  const handPos = handBone && !handBone.severed ? handBone.position : undefined;
-  const isGroundedOrDowned = agent.state === 'DOWNED_CRAWLING' || hs.isRagdollActive;
-  const basePos = hs.isRagdollActive
-    ? hs.ragdollBones.TORSO_UPPER_THORAX?.position ?? hs.worldPosition
-    : hs.worldPosition;
-  const muzzleHeight = hs.isRagdollActive
-    ? Math.max(0.42, basePos.y)
-    : isGroundedOrDowned
-      ? hs.worldPosition.y + 0.62
-      : isKneelingPhase(hs)
-        ? hs.worldPosition.y + 0.92
-        : hs.worldPosition.y + 1.32;
-
-  const coreOrigin: Vec3Like = { x: basePos.x, y: muzzleHeight, z: basePos.z };
   const seed = agent.tracerSeedCounter++;
 
   const isSuppressionToken = agent.fireMode === 'CINEMATIC_SUPPRESSION';
@@ -219,70 +251,54 @@ export function emitEnemyTracerShot(
   agent.hasFiredWarningShot = true;
   const suppressionMode = isSuppressionToken || firstShotGrace;
 
-  const effectiveAimTargetPos = suppressionMode
-    ? computeSuppressionTargetWorld(seed, playerEyeWorldPos, coreOrigin, firstShotGrace)
-    : aimTargetPos;
+  // The bullet leaves the muzzle along the barrel the player sees, which the pose has already
+  // swung by the sway and recoil. Without a visible gun, the swayed aim line stands in for it.
+  const barrel = barrelPose === undefined ? readBarrel(hs, usingSidearm, ctx) : barrelPose;
+  const ray = shotRayFor(hs, agent, barrel, aimTargetPos, ctx);
+  const origin = ray.origin;
+  const missTarget = suppressionMode
+    ? computeSuppressionTargetWorld(seed, playerEyeWorldPos, origin, firstShotGrace)
+    : null;
+  // A suppression or warning shot is aimed a little off the player, never far from the barrel.
+  const baseDir = missTarget ? bendTowardDeliberateMiss(ray.dir, origin, aimTargetPos, missTarget) : ray.dir;
+  const shotDir = deterministicConeSpread(baseDir, aimProfile.effectiveSpreadRad, (seed % 7) + 1, 8, seed * 31);
 
-  const idealDir = normalize(sub(effectiveAimTargetPos, coreOrigin));
-  const fwdDir = usingSidearm ? idealDir : { x: Math.sin(hs.yawRad), y: 0, z: Math.cos(hs.yawRad) };
+  // The muzzle climbs only after the bullet has gone.
+  kickEnemyWeaponSway(hs.targetId, usingSidearm ? SIDEARM_M9_TUNING.weaponId : tuning.primaryWeaponId, ctx.elapsedClockS);
 
-  const rawMuzzleOrigin: Vec3Like = handPos
-    ? add(handPos, scale(fwdDir, usingSidearm ? 0.19 : 0.28))
-    : { x: coreOrigin.x + fwdDir.x * 0.38, y: muzzleHeight, z: coreOrigin.z + fwdDir.z * 0.38 };
-
-  const playerChestTarget: Vec3Like = {
-    x: playerEyeWorldPos.x,
-    y: playerEyeWorldPos.y - 0.18,
-    z: playerEyeWorldPos.z,
-  };
-  const shotDir = deterministicConeSpread(
-    idealDir,
-    aimProfile.effectiveSpreadRad,
-    (seed % 7) + 1,
-    8,
-    seed * 31
-  );
-
-  const toChest = sub(playerChestTarget, coreOrigin);
-  const alongChest = dot(toChest, shotDir);
-  const closestChestPt = alongChest > 0 ? add(coreOrigin, scale(shotDir, alongChest)) : coreOrigin;
-  const missDistChest = alongChest > 0 ? distance(closestChestPt, playerChestTarget) : Infinity;
-
-  const toAim = sub(aimTargetPos, coreOrigin);
-  const alongAim = dot(toAim, shotDir);
-  const closestAimPt = alongAim > 0 ? add(coreOrigin, scale(shotDir, alongAim)) : coreOrigin;
-  const missDistAim = alongAim > 0 ? distance(closestAimPt, aimTargetPos) : Infinity;
-
-  const wouldHitPlayer = !suppressionMode && (missDistChest <= 0.36 || missDistAim <= 0.36);
-  const playerHitDist =
-    missDistChest <= 0.36
-      ? alongChest
-      : missDistAim <= 0.36
-        ? alongAim
-        : Math.max(0.5, distance(coreOrigin, effectiveAimTargetPos));
-  const playerHitPoint = missDistChest <= 0.36 ? closestChestPt : closestAimPt;
+  const playerChestTarget = chestOf(playerEyeWorldPos);
+  const chest = closestApproach(origin, shotDir, playerChestTarget);
+  const aimed = closestApproach(origin, shotDir, aimTargetPos);
+  const chestHit = chest.missM <= PLAYER_HIT_RADIUS_M;
+  const aimHit = aimed.missM <= PLAYER_HIT_RADIUS_M;
+  const wouldHitPlayer = !suppressionMode && (chestHit || aimHit);
+  const playerHitDist = chestHit
+    ? chest.along
+    : aimHit
+      ? aimed.along
+      : Math.max(0.5, distance(origin, missTarget ?? aimTargetPos));
+  const playerHitPoint = chestHit ? chest.pointWorld : aimed.pointWorld;
   const coverCheckDist = wouldHitPlayer ? Math.max(0.05, playerHitDist) : playerHitDist + 6.0;
 
+  // Every impact lies on the shot line, so the tracer and the sparks follow the bullet.
   let blockedByCover = false;
-  let impactPointWorld = firstShotGrace
-    ? copyVec3(effectiveAimTargetPos)
-    : add(coreOrigin, scale(shotDir, playerHitDist + 4.0));
+  let impactPointWorld = add(origin, scale(shotDir, firstShotGrace ? playerHitDist : playerHitDist + 4.0));
   let impactNormalWorld: Vec3Like | undefined = firstShotGrace ? vec3(0, 1, 0) : undefined;
   let impactSurfaceTag: string | undefined = firstShotGrace ? 'CONCRETE_WALL' : undefined;
 
   if (ctx.interceptEnemyShotCover) {
-    const intercept = ctx.interceptEnemyShotCover(coreOrigin, shotDir, coverCheckDist);
+    const intercept = ctx.interceptEnemyShotCover(origin, shotDir, coverCheckDist);
     if (intercept.blocked) {
       blockedByCover = true;
       impactPointWorld =
         intercept.impactPointWorld ??
         intercept.hitPointWorld ??
-        add(coreOrigin, scale(shotDir, coverCheckDist));
+        add(origin, scale(shotDir, coverCheckDist));
       impactNormalWorld = intercept.impactNormalWorld ?? intercept.hitNormalWorld;
       impactSurfaceTag = intercept.impactSurfaceTag ?? intercept.surfaceTag;
     }
   } else if (ctx.rapierWorld) {
-    const hits = ctx.rapierWorld.castPenetrationRay(coreOrigin, shotDir, coverCheckDist);
+    const hits = ctx.rapierWorld.castPenetrationRay(origin, shotDir, coverCheckDist);
     for (const h of hits) {
       if (h.distanceM > coverCheckDist) continue;
       const isGlass =
@@ -296,16 +312,14 @@ export function emitEnemyTracerShot(
     }
   }
 
-  const visualMuzzle = ctx.playFireVisual?.(hs.targetId, usingSidearm);
-  const muzzleOrigin =
-    blockedByCover && distance(coreOrigin, impactPointWorld) < 0.48
-      ? coreOrigin
-      : visualMuzzle ?? rawMuzzleOrigin;
+  // The fire clip only animates the gun; the shot already starts at the barrel read above.
+  ctx.playFireVisual?.(hs.targetId, usingSidearm);
+  const muzzleOrigin = origin;
   const tracerSpeedMs = usingSidearm ? SIDEARM_M9_TUNING.tracerSpeedMs : tuning.tracerSpeedMs;
   const firedWeaponId = usingSidearm ? SIDEARM_M9_TUNING.weaponId : tuning.primaryWeaponId;
   const rawChip =
     (usingSidearm ? SIDEARM_M9_TUNING.baseChipDamage : tuning.baseChipDamage) *
-    enemyShotDamageScaleAtRange(firedWeaponId, distance(coreOrigin, playerChestTarget));
+    enemyShotDamageScaleAtRange(firedWeaponId, distance(origin, playerChestTarget));
 
   let hitPlayer = false;
   let armorChipApplied = 0;
@@ -329,10 +343,9 @@ export function emitEnemyTracerShot(
   }
 
   if (ctx.tracerPool) {
-    const tracerDir =
-      visualMuzzle && muzzleOrigin === visualMuzzle
-        ? normalize(sub(impactPointWorld, muzzleOrigin))
-        : shotDir;
+    // The tracer flies from the muzzle along the bullet's own line, never toward a point the
+    // gun was not aimed at.
+    const tracerDir = shotDir;
     const quat = computeTracerOrientationQuat(tracerDir);
     const flightDist = distance(muzzleOrigin, impactPointWorld);
     const ttl = Math.max(0.05, Math.min(0.28, flightDist / tracerSpeedMs));

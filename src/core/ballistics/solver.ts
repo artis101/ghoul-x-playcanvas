@@ -20,6 +20,8 @@ export * from './trauma/reactionAgonyApplicator.ts';
 export * from './trauma/ragdollImpulseApplicator.ts';
 export * from './trauma/shotReportApplicator.ts';
 export * from './lifecycle/targetLifecycleFsm.ts';
+export * from './lifecycle/deathAnimation.ts';
+export * from './lifecycle/deathAnimationStep.ts';
 export * from './ragdoll/corpseSleepFsm.ts';
 export * from './ragdoll/ragdollParticles.ts';
 export * from './ragdoll/ragdollConstraintsProjector.ts';

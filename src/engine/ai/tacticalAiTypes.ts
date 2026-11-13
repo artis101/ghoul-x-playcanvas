@@ -207,6 +207,8 @@ export interface EnemyAiAgentRuntime {
   lastAimAccuracyMultiplier: number;
   clutchingWound: boolean;
   lastAimTargetWorld: Vec3Like;
+  /** True on ticks where the engagement step has this agent shooting (peeking, or exposed with no cover). */
+  inFiringPosition?: boolean;
 
   fireMode?: EnemyFireMode;
   isOffScreen?: boolean;

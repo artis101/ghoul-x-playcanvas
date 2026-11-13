@@ -26,17 +26,18 @@ describe('NPC animation and weapon grips', () => {
   it('falls back to the clips the current GLB has when the wound takes are not baked yet', () => {
     const state = createTargetHealthState('npc', 'NPC', vec3());
     const controller = new CombatantAnimController();
-    const oldGlbClips = new Set(['CombatReadyIdle', 'UnsuspectingIdle', 'HitStaggerChest', 'LegCollapseCrawl', 'Crawl']);
+    const oldGlbClips = new Set(['CombatReadyIdle', 'UnsuspectingIdle', 'HitStaggerChest', 'DownedCollapse', 'Crawl']);
 
     state.activeReaction.type = 'GUT_FOLD';
     expect(controller.resolveDesiredClip(state, false, oldGlbClips)).toBe('HitStaggerChest');
     state.activeReaction.type = 'LEG_BUCKLE_LEFT';
-    expect(controller.resolveDesiredClip(state, false, oldGlbClips)).toBe('LegCollapseCrawl');
+    expect(controller.resolveDesiredClip(state, false, oldGlbClips)).toBe('DownedCollapse');
     state.activeReaction.type = 'NONE';
     state.posture = 'LEG_BUCKLED';
-    expect(controller.resolveDesiredClip(state, false, oldGlbClips)).toBe('LegCollapseCrawl');
+    expect(controller.resolveDesiredClip(state, false, oldGlbClips)).toBe('DownedCollapse');
     state.posture = 'GUT_HURT';
     expect(controller.resolveDesiredClip(state, false, oldGlbClips)).toBe('HitStaggerChest');
+    expect(controller.resolveDesiredClip(state, false, new Set([...oldGlbClips, 'HurtIdle']))).toBe('HurtIdle');
   });
 
   it('selects directional locomotion from movement relative to the NPC heading', () => {

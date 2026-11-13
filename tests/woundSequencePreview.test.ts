@@ -8,6 +8,9 @@ import { stepRagdollPhysics } from '../src/core/ballistics/ragdoll/ragdollVerlet
 import { senseWoundedPlayer } from '../src/engine/ai/woundedSequenceDriver.ts';
 import { LabCombatantBrain } from '../src/engine/gm/labCombatantBrain.ts';
 import { fortitudeOverride, standInPosition, type PlayerStandIn } from '../src/engine/gm/woundedLabStandIn.ts';
+import { LabActs } from '../src/engine/gm/labActs.ts';
+import { weaponPickupProgress } from '../src/engine/ai/weaponRecovery.ts';
+import { crawlClipChain } from '../src/engine/mannequin/combatantWoundedPhaseClips.ts';
 
 function freshTarget(southpaw = false) {
   return createTargetHealthState('seq', 'Seq', { x: 0, y: 0, z: 0 }, 0, 'MILITIA_GUNNER', southpaw);
@@ -170,15 +173,20 @@ describe('Character Lab wounded-sequence branches (headless brain)', () => {
     expect(t.brain.wouldFire).toBe(false);
   });
 
-  // Headless, nothing seats the body with the fall clip (poseFromAnimation is off), so the
-  // ragdoll tips from a standing pose onto its face. It plans to engage through the fall, but
-  // once the face-down shape shows it holds fire and, settled, is face down for good.
-  it('leg off with you in front: plans to engage, but a face-down landing never shoots', () => {
+  // The body no longer goes into the ragdoll after the fall: it sits up animated (the seated
+  // clips own it), draws from the hip for the seated draw time and then holds fire only for a
+  // player outside its cone.
+  it('leg off with you in front: sits its last stand animated, draws, then fires', () => {
     const t = simulate('leg-front', 10);
     expect(t.phases).toContain('DOWNED_ENGAGE');
-    expect(t.hs.woundedPhase).toBe('FACE_DOWN');
-    expect(t.firedIn.size).toBe(0);
+    expect(t.hs.woundedPhase).toBe('DOWNED_ENGAGE');
+    expect(t.hs.isRagdollActive).toBe(false);
+    expect(t.hs.posture).toBe('LEG_BUCKLED');
+    expect(t.brain.armamentKind).toBe('SIDEARM_ACTIVE');
+    expect(t.hs.combatantStatusTag).toBe('LAST_STAND');
+    expect(t.brain.wouldFire).toBe(true);
     expect(onlyShootingPhases(t.drawnIn)).toBe(true);
+    expect(onlyShootingPhases(t.firedIn)).toBe(true);
   });
 
   it('leg off with you to the side: crawls away or lies in agony, and never shoots', () => {
@@ -188,11 +196,67 @@ describe('Character Lab wounded-sequence branches (headless brain)', () => {
     expect(t.drawnIn.has('DOWNED_CRAWL') || t.drawnIn.has('DOWNED_AGONY')).toBe(false);
   });
 
+  // Deterministic: the knockdown, the ragdoll and the slump use no Math.random, and the pistol
+  // stays holstered until the body has stopped rolling, so no draw is ever under a face-down body.
   it('a forward knockdown lands face down: no gun, no damage', () => {
-    const t = simulate('face-down', 6);
+    const t = simulate('face-down', 10, undefined, (tr) => tr.hs.woundedPhase === 'FACE_DOWN');
     expect(t.hs.alive).toBe(true);
     expect(t.hs.woundedPhase).toBe('FACE_DOWN');
-    expect(t.brain.wouldFire).toBe(false);
+    for (let i = 0; i < 60; i++) {
+      t.brain.step(1 / 60, false);
+      stepRagdollPhysics(t.hs, 1 / 60, 0);
+      expect(t.brain.wouldFire).toBe(false);
+    }
+    expect(t.hs.woundedPhase).toBe('FACE_DOWN');
     expect(t.drawnIn.has('FACE_DOWN')).toBe(false);
+    expect(t.brain.armamentKind.startsWith('SIDEARM')).toBe(false);
   });
+
+  it('a forward knockdown plays out the same way every run', () => {
+    const a = simulate('face-down', 3);
+    const b = simulate('face-down', 3);
+    expect(b.phases).toEqual(a.phases);
+    expect(b.hs.ragdollBones.PELVIS_GROIN.position).toEqual(a.hs.ragdollBones.PELVIS_GROIN.position);
+  });
+  it('crawl dragging leg: a crippled leg rolls it onto its belly to drag that leg', () => {
+    const t = simulate('crawl-drag', 8, undefined, (trace) => trace.hs.woundedPhase === 'DOWNED_CRAWL');
+    expect(t.hs.woundedPhase).toBe('DOWNED_CRAWL');
+    expect(crawlClipChain(t.hs)[0]).toBe('CrawlDragLegRight');
+  });
+});
+
+describe('Character Lab acts', () => {
+  it('drops the gun, reaches for it, and has it back halfway through the pickup clip', () => {
+    const hs = freshTarget();
+    const acts = new LabActs();
+    acts.start(hs, 'DROP_GUN');
+    expect(hs.weaponDropped).toBe(true);
+    acts.start(hs, 'PICK_UP_GUN');
+    let rearmedAt = -1;
+    for (let i = 0; i < 120 && rearmedAt < 0; i++) {
+      if (acts.step(hs, 1 / 60)) rearmedAt = (i + 1) / 60;
+      else expect(weaponPickupProgress(hs)).toBeGreaterThan(0);
+    }
+    expect(rearmedAt).toBeCloseTo(1.37 * 0.5, 1);
+    expect(hs.weaponDropped).toBe(false);
+    expect(weaponPickupProgress(hs)).toBeNull();
+  });
+
+  it('walks forward and back along its facing, aims its rifle, and stands hurt', () => {
+    const hs = freshTarget();
+    const acts = new LabActs();
+    acts.start(hs, 'WALK');
+    acts.start(hs, 'AIM');
+    acts.start(hs, 'HURT');
+    const zs: number[] = [];
+    for (let i = 0; i < 240; i++) {
+      acts.step(hs, 1 / 60);
+      zs.push(hs.worldPosition.z);
+    }
+    expect(Math.max(...zs)).toBeCloseTo(1.5, 1);
+    expect(zs[zs.length - 1]).toBeLessThan(1.5);
+    expect(acts.aimPose(hs)?.clip).toBe('LongGunAim');
+    expect(hs.posture).toBe('GUT_HURT');
+  });
+
 });

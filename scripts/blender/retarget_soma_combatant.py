@@ -37,6 +37,19 @@ def mirrored_vector(vector):
     return Vector((-vector.x, vector.y, vector.z))
 
 
+def raised(rotation, degrees):
+    """Swings a bone whose length runs along its local Y up toward model-space up by `degrees`.
+
+    Kimodo will not hold a pistol arm level while sitting, so the seated aim clips lift the
+    upper arm at bake time; the forearm and hand keep their local pose and follow it.
+    """
+    direction = rotation @ Vector((0, 1, 0))
+    axis = direction.cross(Vector((0, 1, 0)))
+    if axis.length < 1e-6:
+        return rotation
+    return Quaternion(axis.normalized(), math.radians(degrees)) @ rotation
+
+
 def load_soma(path):
     bpy.ops.import_anim.bvh(
         filepath=str(path.resolve()), axis_forward="-Z", axis_up="Y", global_scale=0.01,
@@ -119,13 +132,16 @@ class CombatantRetarget:
         integer = math.floor(frame)
         bpy.context.scene.frame_set(integer, subframe=frame - integer)
 
-    def sample(self, frame, traveling, xz_scale=0):
+    def sample(self, frame, traveling, xz_scale=0, lift=None):
+        """`lift` = (bone, degrees) raises that bone, and the limb below it, toward straight up."""
         self.seek(frame)
         world = {}
         local = {}
         for name, (driver, bind) in self.drivers.items():
             rotation = self.heading @ self.motion_rotation(driver) @ bind
             parent = self.parents[name]
+            if lift and name == lift[0] and lift[1]:
+                rotation = raised(rotation, lift[1])
             world[name] = rotation
             local[name, "rotation"] = world[parent].inverted() @ rotation if parent else rotation
         displacement = self.heading @ (self.position("Hips") - self.origin) * self.height_scale

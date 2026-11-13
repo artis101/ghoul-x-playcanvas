@@ -1,0 +1,8 @@
+[
+ {"name": "seated_aim2", "seed": 141, "samples": 8, "durations": [3.0],
+  "prompts": ["A person sits upright on the floor with the legs straight out in front, the left palm flat on the floor behind the hip, and the right arm raised straight out in front at shoulder height holding a pistol, holding still"]},
+ {"name": "seated_draw3", "seed": 142, "samples": 8, "durations": [2.2],
+  "prompts": ["A person sits upright on the floor with the legs straight out in front and the left palm flat on the floor behind the hip, moves the right hand down to the right hip, then lifts the right arm straight out in front at shoulder height and holds it there"]},
+ {"name": "seated_agony3", "seed": 143, "samples": 6, "durations": [3.0],
+  "prompts": ["A person sits on the floor with the legs straight out in front and the left palm flat on the floor behind the hip, bends forward and back again and again, gripping the right thigh with the right hand"]}
+]

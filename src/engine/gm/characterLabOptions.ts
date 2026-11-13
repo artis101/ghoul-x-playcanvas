@@ -20,7 +20,7 @@ export const items: Record<WeaponAssetId, string> = {
 
 /** Clips that show a hurt body, so the held gun is posed as a wounded combatant holds it. */
 const WOUNDED_CLIP = new RegExp(
-  '^(HitStagger|HitFlinch|DiaphragmDrop|LegCollapse|Crawl|LegShotFall|LegLoss|OneLegHop|ArmLoss|StumpClutch|' +
+  '^(HitStagger|HitFlinch|Hurt|Crawl|LegShotFall|LegLoss|OneLegHop|ArmLoss|StumpClutch|StumpDraw|KneelStumpDraw|' +
     'StumpKneel|DownedCollapse|SitToCrawl)',
 );
 

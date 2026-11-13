@@ -5,16 +5,21 @@ import {
 import { transitionTargetLifecycle } from '../lifecycle/targetLifecycleFsm.ts';
 import { copyVec3, vec3 } from '../vec3.ts';
 import { getArchetypeLoadout } from '../../ghoul/anatomy/archetypeLoadout.ts';
-import { WEAPON_DROP_CHANCE, rollsWeaponDrop } from '../../combatant/weaponDropRoll.ts';
-import { createSeededRng, mixSeed } from '../../random/seededRng.ts';
 
-/** Salt so the arm-out roll does not reuse the shot's other draws. */
-const ARM_OUT_SALT = 0xa4a0;
+export interface WoundsAndDecalsResult {
+  rightLegShotEnergyJ: number;
+  leftLegShotEnergyJ: number;
+  /**
+   * Arms whose bone this shot shattered. Whether one stops working (and the gun goes with it) is
+   * rolled by the hit-disarm pass, which only allows it once the health bar is red.
+   */
+  shatteredArmSides: ('RIGHT' | 'LEFT')[];
+}
 
 export function applyWoundsAndDecals(
   target: TargetHealthState,
   report: ShotSimulationReport
-): { rightLegShotEnergyJ: number; leftLegShotEnergyJ: number } {
+): WoundsAndDecalsResult {
   const loadout = getArchetypeLoadout(target.archetype);
   target.currentHp = Math.max(0, target.currentHp - report.totalDamageHp);
   if (report.isLethalKill || target.currentHp <= 0) {
@@ -22,11 +27,9 @@ export function applyWoundsAndDecals(
   }
 
   if (report.headgearKnockedOff) target.headgearIntact = false;
-  if (report.weaponDisarmed) {
-    transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
-  } else if (!target.alive) {
-    target.weaponDropped = true;
-  }
+  // A grip-hand hit (report.weaponDisarmed) is weighed by the hit-disarm pass once the shot's
+  // whole effect is known; a severed arm drops the gun in the dismemberment pass.
+  if (!target.alive) target.weaponDropped = true;
 
   for (const b of report.shatteredBones) target.fracturedBones.add(b);
   for (const o of report.rupturedOrgans) target.rupturedOrgans.add(o);
@@ -34,8 +37,7 @@ export function applyWoundsAndDecals(
   let rightLegShotEnergyJ = 0;
   let leftLegShotEnergyJ = 0;
 
-  const dropRng =
-    target.shotVarianceSeed !== undefined ? createSeededRng(mixSeed(target.shotVarianceSeed, ARM_OUT_SALT)) : null;
+  const shatteredArmSides: ('RIGHT' | 'LEFT')[] = [];
   for (const w of report.woundEvents) {
     if (!w.armorStopped) {
       const isRL = w.ghoulZone === 'THIGH_RIGHT' || w.ghoulZone === 'KNEE_RIGHT' || w.ghoulZone === 'SHIN_RIGHT' || w.ghoulZone === 'FOOT_RIGHT';
@@ -83,15 +85,13 @@ export function applyWoundsAndDecals(
         target.rightLegFunctional = false;
         target.leftLegFunctional = false;
       }
-      // Only a shattered arm stops working; a cracked bone is fought through. Losing the gun is
-      // decided by the shot itself (a hit on the grip hand), reported as weaponDisarmed above.
-      // Even then it is usually gripped through; an arm that stops working costs them the gun.
-      const armOut = (): boolean => rollsWeaponDrop(dropRng ? dropRng() : null, WEAPON_DROP_CHANCE.SHATTERED_GRIP_ARM);
-      if (w.boneShattered && (w.ghoulZone === 'UPPER_ARM_RIGHT' || w.ghoulZone === 'FOREARM_RIGHT') && armOut()) {
-        target.rightArmFunctional = false;
+      // Only a shattered arm can stop working; a cracked bone is fought through. Even a shattered
+      // one is usually gripped through, and only in the red (hitDisarmPass.ts).
+      if (w.boneShattered && (w.ghoulZone === 'UPPER_ARM_RIGHT' || w.ghoulZone === 'FOREARM_RIGHT')) {
+        shatteredArmSides.push('RIGHT');
       }
-      if (w.boneShattered && (w.ghoulZone === 'UPPER_ARM_LEFT' || w.ghoulZone === 'FOREARM_LEFT') && armOut()) {
-        target.leftArmFunctional = false;
+      if (w.boneShattered && (w.ghoulZone === 'UPPER_ARM_LEFT' || w.ghoulZone === 'FOREARM_LEFT')) {
+        shatteredArmSides.push('LEFT');
       }
     }
 
@@ -120,5 +120,5 @@ export function applyWoundsAndDecals(
     }
   }
 
-  return { rightLegShotEnergyJ, leftLegShotEnergyJ };
+  return { rightLegShotEnergyJ, leftLegShotEnergyJ, shatteredArmSides };
 }

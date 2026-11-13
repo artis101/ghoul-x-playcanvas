@@ -10,12 +10,16 @@ import type { SidearmRule } from '../../core/ai/enemyArmamentFsm.ts';
 import { isCommittedWoundReaction } from '../../core/ballistics/trauma/woundReactionTimings.ts';
 import type { EnemyAiAgentRuntime, WoundedPlayerSense } from './tacticalAiTypes.ts';
 import { isArmChainIntactAndFunctional } from './combatantArmEvaluation.ts';
+import { isSeatedAnimated } from '../../core/ballistics/triage/seatedLastStand.ts';
 
 /**
  * The AI side of the wounded sequence (docs/wound-movement.md). Each tick it measures where the
  * player stands relative to the way the body faces, lets the pure sequence pick the phase, and
  * answers the two questions the weapons ask: may the pistol come out, and may it fire now.
  */
+
+/** Sitting up on the floor, leaning back on one hand, the eyes are about this high. */
+const SEATED_EYE_HEIGHT_M = 0.9;
 
 const NO_SENSE: WoundedPlayerSense = { playerBearingRad: null, playerVisible: false };
 
@@ -26,6 +30,21 @@ export function currentWoundedPhase(hs: TargetHealthState): WoundedPhase {
 /** Lying on the floor in the living ragdoll, not being thrown through the air. */
 export function isGroundedLivingRagdoll(hs: TargetHealthState): boolean {
   return hs.alive && hs.isRagdollActive && hs.posture !== 'AIRBORNE_RAGDOLL';
+}
+
+/** Pelvis and chest slower than this: a body in the ragdoll has stopped rolling. */
+const RAGDOLL_AT_REST_MS = 0.5;
+
+/**
+ * True once a body in the ragdoll lies still. Until then it may still roll onto its face, so it
+ * does not reach for the pistol (a draw started mid-roll would be under a face-down body).
+ */
+export function isRagdollAtRest(hs: TargetHealthState): boolean {
+  const speed = (zone: 'PELVIS_GROIN' | 'TORSO_UPPER_THORAX') => {
+    const v = hs.ragdollBones[zone].velocity;
+    return Math.hypot(v.x, v.y, v.z);
+  };
+  return speed('PELVIS_GROIN') < RAGDOLL_AT_REST_MS && speed('TORSO_UPPER_THORAX') < RAGDOLL_AT_REST_MS;
 }
 
 /** Down on one knee: the kneel-down clip or the kneeling pistol stance. */
@@ -50,7 +69,11 @@ function woundedEyeWorld(hs: TargetHealthState): Vec3Like {
     return { x: head.x, y: Math.max(head.y + 0.06, hs.worldPosition.y + 0.3), z: head.z };
   }
   const phase = currentWoundedPhase(hs);
-  const height = isKneelingPhase(hs) ? 1.05 : phase === 'DOWNED_CRAWL' || phase === 'SIT_DOWN' ? 0.5 : 1.55;
+  const height = isKneelingPhase(hs)
+    ? 1.05
+    : isSeatedAnimated(hs)
+      ? SEATED_EYE_HEIGHT_M
+      : phase === 'DOWNED_CRAWL' || phase === 'SIT_DOWN' ? 0.5 : 1.55;
   return { x: hs.worldPosition.x, y: hs.worldPosition.y + height, z: hs.worldPosition.z };
 }
 
@@ -116,9 +139,11 @@ function downedConeClear(sense: WoundedPlayerSense): boolean {
 }
 
 /**
- * Whether the pistol may come out now. Face down and crawling let go of it for good. In the
- * firing phases it is drawn once nothing else is playing; everywhere else it stays holstered, so
- * the hands do one thing at a time.
+ * Whether the pistol may come out now. Face down and crawling (DROP) no pistol comes out; in the
+ * firing phases it is drawn once nothing else is playing; everywhere else (HOLSTER) it stays in the
+ * holster, so the hands do one thing at a time. Neither rule takes a pistol that is already drawn
+ * or out of the holster mid-draw: that is kept (the draw paused) until its arm goes or the body
+ * dies (enemyArmamentFsm.ts).
  */
 export function resolveSidearmRule(hs: TargetHealthState, agent: EnemyAiAgentRuntime): SidearmRule {
   const phase = currentWoundedPhase(hs);
@@ -126,6 +151,8 @@ export function resolveSidearmRule(hs: TargetHealthState, agent: EnemyAiAgentRun
   // Still tumbling through the air after a fall clip: the planned downed phase may already
   // allow the pistol, but nothing reaches for it until the body has landed.
   if (hs.isRagdollActive && !isGroundedLivingRagdoll(hs)) return 'HOLSTER';
+  // Landed but still rolling: it may yet come to rest on its face, which never draws.
+  if (hs.isRagdollActive && !isRagdollAtRest(hs) && !agent.sidearmActive) return 'HOLSTER';
   if (phase !== 'NONE') return woundedPhaseAllowsDraw(hs) ? 'ALLOW' : 'HOLSTER';
   if (isCommittedWoundReaction(hs.activeReaction.type)) return 'HOLSTER';
   if (hs.isRagdollActive) {

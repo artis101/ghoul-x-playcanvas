@@ -6,8 +6,11 @@ import {
 import {
   getPreferredPrimaryHand, isArmChainIntactAndFunctional, selectIntactFiringHand,
 } from '../ai/combatantArmEvaluation.ts';
-import { SIDEARM_DRAW_DURATION_S, type EnemySidearmVisualState } from '../ai/tacticalAiTypes.ts';
+import type { EnemySidearmVisualState } from '../ai/tacticalAiTypes.ts';
+import { sidearmDrawProgress, sidearmDrawSecondsFor } from '../ai/agentArmamentController.ts';
+import { isSeatedAnimated } from '../../core/ballistics/triage/seatedLastStand.ts';
 import { isWoundClipHoldingBody } from '../ai/woundClipHold.ts';
+import { drawClipSecondsFor } from '../mannequin/combatantDrawClips.ts';
 import {
   crawlAwayStep, labSidearmRule, stepLabWoundedSequence, wouldFire, woundedStatus, type LabAgentView,
 } from './woundedLabStandIn.ts';
@@ -87,7 +90,9 @@ export class LabCombatantBrain {
       carriesBackupSidearm: this.backupSidearm,
       isGuarding: false,
       isLastStandVital: hs.currentHp <= hs.maxHp * 0.32,
-      sidearmDrawDurationS: SIDEARM_DRAW_DURATION_S,
+      // A standing or kneeling draw lasts its clip, so the pistol comes out when the clip shows it.
+      sidearmDrawDurationS: isSeatedAnimated(hs) ? sidearmDrawSecondsFor(hs) : drawClipSecondsFor(hs),
+      seatedOnFloor: isSeatedAnimated(hs),
       // The game passes both: falls and losses play out before any draw, and the wounded
       // sequence says when the pistol may come out at all.
       woundClipPlaying: isWoundClipHoldingBody(hs),
@@ -102,13 +107,20 @@ export class LabCombatantBrain {
     this.agentView.sidearmDrawing = this.armament.sidearmDrawing;
   }
 
+  /** The primary is back in hand (a scripted pickup): the armament holds it again. */
+  public rearm(): void {
+    applyArmamentStateToRuntime(this.armament, createPrimaryArmedState(getPreferredPrimaryHand(this.health)));
+    this.agentView.sidearmActive = this.armament.sidearmActive;
+    this.agentView.sidearmDrawing = this.armament.sidearmDrawing;
+  }
+
   public sidearmState(): EnemySidearmVisualState {
     const state = reconcileEnemyArmamentState(this.armament);
     const visible = state.kind === 'SIDEARM_ACTIVE' || state.kind === 'SIDEARM_DRAWING';
     return {
       visible,
       drawing: state.kind === 'SIDEARM_DRAWING',
-      drawProgress: state.kind === 'SIDEARM_DRAWING' ? 1 - state.remainingS / SIDEARM_DRAW_DURATION_S : visible ? 1 : 0,
+      drawProgress: sidearmDrawProgress(state),
       hand: visible ? state.hand : null,
       dropped: state.kind === 'DISARMED' && state.sidearmDropped,
       aimTargetWorld: this.player(),

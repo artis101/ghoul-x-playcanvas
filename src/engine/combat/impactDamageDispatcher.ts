@@ -16,6 +16,8 @@ import { SYNTHETIC_SHRAPNEL_AMMO } from './combatTargetConfigs.ts';
 import { syncPhysiologyToHealthState } from './physiologySyncAdapter.ts';
 import { startTerminalCountdown } from '../../core/physiology/physiologyVariance.ts';
 import { pelletAmmoAtImpact } from '../../core/ballistics/shot/buckshotRangeFalloff.ts';
+import { canLoseWeaponToHit } from '../../core/combatant/hitDisarmPolicy.ts';
+import { planShotDeath } from '../../core/ballistics/lifecycle/deathAnimation.ts';
 
 export interface ImpactDispatcherContext {
   app?: pc.AppBase | null;
@@ -59,6 +61,8 @@ export function applyImpactFxAndState(
 ): InternalBallisticsReport | null {
   const hs = target.healthState;
   const wasAlive = hs.alive;
+  // Read before the shot lands: if the organ model kills the body below, it goes down this way.
+  const shotDeathClip = wasAlive ? planShotDeath(hs, report) : undefined;
 
   applyShotReportToTarget(hs, report);
 
@@ -135,6 +139,8 @@ export function applyImpactFxAndState(
     // A round that skated off a rib never reached the organs; only the outer wound counts.
     const skatedOffRib = variance?.ribGlance === true;
     if (internalReport.hitOuterShell && !skatedOffRib) {
+      // A broken or nerve-cut arm only gives out (and loses the gun) in the red, with the long gun in hand.
+      physio.armOutRollsAllowed = canLoseWeaponToHit(hs);
       ctx.physiologySystem.applyBallisticTrauma(hs.targetId, internalReport);
       for (const ot of internalReport.organTrauma) {
         if (ot.directCrushLacerated || ot.stretchCavitationRuptured) hs.rupturedOrgans.add(ot.organId);
@@ -146,7 +152,7 @@ export function applyImpactFxAndState(
     if (report.delayedLethality && hs.alive) {
       startTerminalCountdown(physio, report.delayedLethality.delayS, report.delayedLethality.cause);
     }
-    syncPhysiologyToHealthState(physio, hs, ctx.tacticalAi);
+    syncPhysiologyToHealthState(physio, hs, ctx.tacticalAi, shotDeathClip);
   }
 
   if (report.woundEvents.length > 0) {

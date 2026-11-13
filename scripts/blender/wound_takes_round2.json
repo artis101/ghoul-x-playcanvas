@@ -1,0 +1,17 @@
+[
+ {"name": "hurt_idle", "seed": 131, "samples": 4, "durations": [3.0],
+  "prompts": ["A person stands hunched forward with the knees bent, pressing the left hand flat on the belly and holding a rifle low in the right hand pointing at the floor, breathing hard"]},
+ {"name": "hurt_walk", "seed": 132, "samples": 4, "durations": [3.0],
+  "prompts": ["A person walks forward slowly, hunched over and limping slightly, the left hand pressed on the belly and a rifle held low in the right hand"]},
+ {"name": "unarmed_walk", "seed": 133, "samples": 4, "durations": [3.0],
+  "prompts": ["A person walks forward at a steady pace with empty hands, the arms swinging naturally opposite the legs"]},
+ {"name": "unarmed_run", "seed": 134, "samples": 4, "durations": [3.0],
+  "prompts": ["A person runs forward with empty hands, the arms pumping bent at the elbows opposite the legs"]},
+ {"name": "pickup_weapon", "seed": 135, "samples": 4, "durations": [1.4],
+  "prompts": ["A person standing with empty hands crouches down, grabs a rifle from the floor in front of the right foot with both hands and stands back up holding it low across the body"]},
+ {"name": "crawl_drag_r", "seed": 136, "samples": 4, "durations": [4.0],
+  "prompts": ["A person crawls forward on the stomach pulling with both forearms and pushing with the left leg only, the right leg lying straight and limp, dragged behind, head low"]},
+ {"name": "kneel_stump_draw_r", "seed": 137, "samples": 4, "durations": [1.8],
+  "prompts": ["A person kneeling holds the right wrist to the chest with the left hand, lets go, pulls a pistol from the left hip with the left hand and raises it to eye level aiming ahead with the left arm straight"],
+  "pins": [{"at": [0, 1], "take": "work/takes/stump_kneel_r_03.npz", "frames": [46, 47]}]}
+]

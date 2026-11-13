@@ -145,6 +145,13 @@ export interface PhysiologicalEntityState {
   rightArmFunctional: boolean;
   leftArmFunctional: boolean;
   weaponDropped: boolean;
+  /**
+   * Whether the next trauma may roll an arm out of the fight (a fractured arm bone, a cut brachial
+   * plexus). The shot path sets it from the hit-disarm rules before applying the organ march: only
+   * a fighter whose health bar is red and whose long gun is still in hand can lose an arm this way,
+   * so a hit never takes a drawn sidearm. Absent means allowed (standalone physiology runs).
+   */
+  armOutRollsAllowed?: boolean;
   dominantHand: 'LEFT' | 'RIGHT';
   aimSwayMultiplier: number;
   locomotionMode: LocomotionMode;

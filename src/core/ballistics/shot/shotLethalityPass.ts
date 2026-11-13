@@ -12,6 +12,9 @@ import { add, length, scale, vec3 } from '../vec3.ts';
 import { isLimbLossFatal } from '../trauma/limbLossDeathRule.ts';
 import type { DelayedLethality } from '../../../contracts/combatantConstitution.ts';
 import { borrowedTimeHp, rollDelayedLethality } from './lethalityRoll.ts';
+import { weakEnoughForKnockdown } from './archetypeToughness.ts';
+import { isSeatedAnimated } from '../triage/seatedLastStand.ts';
+import { KNOCKDOWN_IMPULSE_NS } from '../lifecycle/deathAnimation.ts';
 
 export function evaluateLethalityAndRagdollPlan(
   weapon: WeaponSpec,
@@ -95,7 +98,7 @@ export function evaluateLethalityAndRagdollPlan(
 
   // A kill through accumulated trauma may take a few seconds to land; the combatant fights on meanwhile.
   let delayedLethality: DelayedLethality | null = null;
-  if (isTraumaKill && !isInstantKill) {
+  if (isTraumaKill && !isInstantKill && target.alive) {
     delayedLethality = rollDelayedLethality({
       target,
       overkillRatio: 1 + (totalDamageHp - target.currentHp) / Math.max(1, target.maxHp),
@@ -123,9 +126,15 @@ export function evaluateLethalityAndRagdollPlan(
   const bodyMassKg = 82.0;
   const horizontalImpulseMag = length(vec3(netRootImpulseWorld.x, 0, netRootImpulseWorld.z));
 
+  // A shove or a broken pelvis only puts a body on the floor once it is spent: a healthy tough guy
+  // rocks under a close blast and keeps standing, and a high-HP pelvis fracture plays the leg-buckle
+  // fall instead (reactionAgonyApplicator). A body already sitting in its last stand is past being
+  // knocked down; only a kill moves it. Both legs gone is fatal anyway.
+  const weakEnough = !isSeatedAnimated(target) && weakEnoughForKnockdown(target, target.currentHp - totalDamageHp);
   const isImmediateKnockdown =
     hasHitTarget &&
-    (bothLegsSevered || isPelvisShattered || (!isPureLimbShot && horizontalImpulseMag >= 230.0));
+    (bothLegsSevered ||
+      (weakEnough && (isPelvisShattered || (!isPureLimbShot && horizontalImpulseMag >= KNOCKDOWN_IMPULSE_NS))));
 
   const willEnableRagdoll = target.isRagdollActive || isLethalKill || isImmediateKnockdown;
 

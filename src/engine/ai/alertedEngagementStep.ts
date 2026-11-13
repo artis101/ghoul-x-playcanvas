@@ -29,6 +29,9 @@ export function stepAlertedEngagingState(
   turnTowardPlayer: (speed: number) => void,
   ctx: TacticalFsmContext
 ): void {
+  // Cleared each tick and set again only where this step decides the agent shoots from here, so
+  // the mannequin raises the gun (and the aim delta brings the barrel on target) exactly then.
+  agent.inFiringPosition = false;
   const tuning = ARCHETYPE_TUNING[hs.archetype];
   const isWounded = hs.currentHp < hs.maxHp * 0.92 || hs.painShock > 0.15 || hs.rupturedOrgans.size > 0;
   const moraleShockS = agent.moraleShockTimerS ?? 0;
@@ -227,6 +230,7 @@ export function stepAlertedEngagingState(
   // Caught in the open with nothing to shelter behind, a combatant keeps fighting from its spot
   // instead of standing there with the gun down.
   const firing = agent.isPeekingOut || peekPlan.firingPosition;
+  agent.inFiringPosition = firing;
   if (!firing) {
     // Back behind cover: the burst ends here rather than resuming later on the move.
     cancelActiveBurst(agent);

@@ -29,12 +29,13 @@ const COMMITTED_CLIPS: ReadonlySet<CombatantAnimationClipName> = new Set<Combata
 
 /** Clips that end with the body on the floor, which the crawl or the ragdoll takes over from. */
 const FALLING_CLIPS: ReadonlySet<CombatantAnimationClipName> = new Set<CombatantAnimationClipName>([
-  'LegShotFallRight', 'LegShotFallLeft', 'LegLossFallRight', 'LegLossFallLeft', 'DownedCollapse', 'LegCollapseCrawl',
+  'LegShotFallRight', 'LegShotFallLeft', 'LegLossFallRight', 'LegLossFallLeft', 'DownedCollapse',
 ]);
 
 /**
  * The clip a reaction wants, then what to play when the GLB does not have it yet. Flinches fall
- * back to the chest stagger, falls to the old collapse-and-crawl, and an arm loss to the stagger.
+ * back to the chest stagger, falls and leg losses to the sit-down collapse (which also ends
+ * seated), and an arm loss to the stagger.
  */
 export function woundClipChain(type: PainReactionType): readonly CombatantAnimationClipName[] {
   switch (type) {
@@ -47,13 +48,13 @@ export function woundClipChain(type: PainReactionType): readonly CombatantAnimat
     case 'ARM_WRENCH_LEFT': return ['HitFlinchArmLeft', 'HitStaggerChest'];
     case 'LEG_FLINCH_RIGHT': return ['HitFlinchLegRight', 'HitStaggerChest'];
     case 'LEG_FLINCH_LEFT': return ['HitFlinchLegLeft', 'HitStaggerChest'];
-    case 'LEG_BUCKLE_RIGHT': return ['LegShotFallRight', 'LegCollapseCrawl'];
-    case 'LEG_BUCKLE_LEFT': return ['LegShotFallLeft', 'LegCollapseCrawl'];
-    case 'LEG_LOST_RIGHT': return ['LegLossRight', 'LegCollapseCrawl'];
-    case 'LEG_LOST_LEFT': return ['LegLossLeft', 'LegCollapseCrawl'];
+    case 'LEG_BUCKLE_RIGHT': return ['LegShotFallRight', 'DownedCollapse'];
+    case 'LEG_BUCKLE_LEFT': return ['LegShotFallLeft', 'DownedCollapse'];
+    case 'LEG_LOST_RIGHT': return ['LegLossRight', 'DownedCollapse'];
+    case 'LEG_LOST_LEFT': return ['LegLossLeft', 'DownedCollapse'];
     case 'ARM_LOST_RIGHT': return ['ArmLossRight', 'HitStaggerChest'];
     case 'ARM_LOST_LEFT': return ['ArmLossLeft', 'HitStaggerChest'];
-    case 'DOWNED_COLLAPSE': return ['DownedCollapse', 'LegCollapseCrawl'];
+    case 'DOWNED_COLLAPSE': return ['DownedCollapse'];
     default: return ['HitStaggerChest'];
   }
 }
@@ -66,9 +67,9 @@ export function woundClipChainAt(reaction: Pick<ActivePainReaction, 'type' | 'ti
   if (reaction.type !== 'LEG_LOST_RIGHT' && reaction.type !== 'LEG_LOST_LEFT') return woundClipChain(reaction.type);
   const side = reaction.type === 'LEG_LOST_RIGHT' ? 'Right' : 'Left';
   const t = reaction.timerS;
-  if (t < LEG_LOSS_PHASE_SECONDS.LIFT) return [`LegLoss${side}`, 'LegCollapseCrawl'];
-  if (t < LEG_LOSS_PHASE_SECONDS.LIFT + LEG_LOSS_PHASE_SECONDS.HOP) return [`OneLegHop${side}`, 'LegCollapseCrawl'];
-  return [`LegLossFall${side}`, 'LegCollapseCrawl'];
+  if (t < LEG_LOSS_PHASE_SECONDS.LIFT) return [`LegLoss${side}`, 'DownedCollapse'];
+  if (t < LEG_LOSS_PHASE_SECONDS.LIFT + LEG_LOSS_PHASE_SECONDS.HOP) return [`OneLegHop${side}`, 'DownedCollapse'];
+  return [`LegLossFall${side}`, 'DownedCollapse'];
 }
 
 /** First clip of the chain the GLB can play. With no clip list known, the preferred clip is used. */

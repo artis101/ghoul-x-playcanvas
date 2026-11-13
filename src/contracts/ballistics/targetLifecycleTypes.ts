@@ -40,6 +40,29 @@ export type RagdollPhaseState =
   | { readonly kind: 'CORPSE_SLEEPING' };
 
 /**
+ * The authored death clips (`Death*` in ghoul_combatant.glb). Each starts from the combat-ready
+ * stance and ends with the body lying still; none has a mirrored twin.
+ */
+export type DeathClipId =
+  | 'DeathFallBack'
+  | 'DeathFallForward'
+  | 'DeathCrumple'
+  | 'DeathSpin'
+  | 'DeathBleedOut';
+
+/**
+ * A body killed on its feet plays a death clip before the corpse ragdoll takes over. While it
+ * plays the body is dead (`alive` false) but still animated, so its hitboxes follow the clip.
+ */
+export interface DyingAnimationState {
+  clip: DeathClipId;
+  /** Seconds the clip has played. */
+  timerS: number;
+  /** The clip's length; the corpse ragdoll takes over once `timerS` reaches it. */
+  durationS: number;
+}
+
+/**
  * Standing combatant posture subset (excludes airborne/grounded ragdoll states).
  */
 export type StandingCombatPosture =
@@ -64,6 +87,12 @@ export type CombatantBodyState =
       readonly kind: 'RAGDOLL_LIVING';
       grounded: boolean;
       agonyElapsedS: number;
+      hitstopRemainingS: number;
+    }
+  | {
+      /** Dead, but still on its feet playing a death clip; the ragdoll takes over when it ends. */
+      readonly kind: 'DYING';
+      dying: DyingAnimationState;
       hitstopRemainingS: number;
     }
   | {

@@ -6,16 +6,20 @@ import type {
   TargetHealthState,
   TargetLifecycleEvent,
 } from '../../../contracts/ballistics.ts';
+import { RED_HEALTH_HP_FRACTION } from '../../../contracts/combatantHealthBands.ts';
+import { createSeededRng, hashStringSeed } from '../../random/seededRng.ts';
 import { ALL_AUX_PARTICLES, ALL_GHOUL_ZONES } from '../../ghoul/anatomy.ts';
 import { deriveCorpseSleepPhase } from '../ragdoll/corpseSleepFsm.ts';
 import { stabilizeRagdollPoseForTransition } from '../ragdoll/ragdollPoseStabilizer.ts';
 import { stepFaceDownSettle, yawForward } from '../triage/faceDownLanding.ts';
+import { isSeatedPhase } from '../triage/seatedLastStand.ts';
 import { listLostLimbs } from '../trauma/limbLossDeathRule.ts';
 import { WOUND_CLIP_SECONDS, isCommittedWoundReaction, isFallingReaction } from '../trauma/woundReactionTimings.ts';
 import { add, copyVec3, scale, vec3 } from '../vec3.ts';
+import { canAnimateDeath, startDeathAnimation } from './deathAnimation.ts';
 
-/** Matches the armament FSM's last-stand vitals: below this a wounded combatant goes down fighting. */
-const LAST_STAND_HP_FRACTION = 0.32;
+/** Matches the armament FSM's last-stand vitals (the red health band): below this a wounded combatant goes down fighting. */
+const LAST_STAND_HP_FRACTION = RED_HEALTH_HP_FRACTION;
 /** Downward speed a body already seated by its fall clip gets as the ragdoll takes it over. */
 const SETTLE_DOWN_SPEED_MS = 0.15;
 
@@ -31,8 +35,8 @@ const STANDING_POSTURES: ReadonlySet<string> = new Set<StandingCombatPosture>([
 export function resolveStandingPostureAfterReaction(
   target: TargetHealthState
 ): StandingCombatPosture {
-  // A crawler is animated rather than ragdolled, but it is on the floor all the same.
-  if (target.woundedPhase === 'DOWNED_CRAWL') {
+  // A crawler or a seated last-stander is animated rather than ragdolled, but it is on the floor.
+  if (target.woundedPhase === 'DOWNED_CRAWL' || isSeatedPhase(target.woundedPhase)) {
     return 'LEG_BUCKLED';
   }
   if (!target.rightLegFunctional || !target.leftLegFunctional) {
@@ -67,6 +71,9 @@ export function deriveCombatantArmamentState(
 
 export function deriveCombatantBodyState(target: TargetHealthState): CombatantBodyState {
   const hitstopRemainingS = target.hitstopRemainingS ?? 0;
+  if (!target.alive && !target.isRagdollActive && target.dying) {
+    return { kind: 'DYING', dying: target.dying, hitstopRemainingS };
+  }
   if (!target.alive) {
     return {
       kind: 'RAGDOLL_CORPSE',
@@ -177,6 +184,7 @@ export function transitionTargetLifecycle(
         target.posture === 'RAGDOLL_GROUNDED';
 
       target.isRagdollActive = true;
+      target.dying = null;
       target.weaponDropped = true;
       target.activeReaction.type = 'NONE';
       target.activeReaction.timerS = 0;
@@ -254,18 +262,20 @@ export function stepLivingTargetVitalsAndFall(
 
     if (target.bloodVolumeMl <= 2500 || target.currentHp <= 0) {
       const wasRagdoll = target.isRagdollActive;
+      // Bled out on its feet: the knees give slowly and it slumps to the floor (DeathBleedOut).
+      const bleedOutClip = canAnimateDeath(target);
       transitionTargetLifecycle(target, { kind: 'LETHAL_DEATH' });
-      if (!wasRagdoll) {
+      if (bleedOutClip) {
+        startDeathAnimation(target, 'DeathBleedOut');
+      } else if (!wasRagdoll) {
         transitionTargetLifecycle(target, {
           kind: 'ACTIVATE_RAGDOLL',
           isOverkillCorpseHit: false,
         });
         stabilizeRagdollPoseForTransition(target, floorY);
-        const slump = vec3(
-          (Math.random() - 0.5) * 0.5,
-          0,
-          Math.cos(target.yawRad) * 0.75
-        );
+        // A little sideways sway, the same for a given combatant every time.
+        const sway = createSeededRng(hashStringSeed(target.targetId))() - 0.5;
+        const slump = vec3(sway * 0.5, 0, Math.cos(target.yawRad) * 0.75);
         target.ragdollBones.TORSO_UPPER_THORAX.velocity = slump;
         target.ragdollBones.HEAD_CRANIUM.velocity = scale(slump, 1.2);
       }
@@ -298,16 +308,14 @@ export function stepLivingTargetVitalsAndFall(
     listLostLimbs(target.severedZones).some((limb) => limb.startsWith('ARM')) &&
     target.currentHp <= target.maxHp * LAST_STAND_HP_FRACTION;
   // A body that chose to crawl away stays animated (SitToCrawl, then Crawl): the AI drags it
-  // along the floor, so the gate must not hand it to the ragdoll or make it collapse again.
-  const crawling = target.woundedPhase === 'DOWNED_CRAWL';
+  // along the floor, so the gate must not hand it to the ragdoll or make it collapse again. A
+  // seated last-stander (DOWNED_ENGAGE, DOWNED_AGONY) stays animated too, sitting where its fall
+  // clip left it: the seated clips own it until it dies, and death drops the corpse from the seat.
+  const onFloorAnimated = target.woundedPhase === 'DOWNED_CRAWL' || isSeatedPhase(target.woundedPhase);
   const standingIdle =
-    target.alive && !target.isRagdollActive && target.activeReaction.type === 'NONE' && !crawling;
-  // A body that is downed but not crawling belongs on the floor in the ragdoll, whatever its
-  // health: a sit-down collapse at high HP, or a seated engager, must never stand back up.
-  const downedOnFeet =
-    target.woundedPhase === 'DOWNED_ENGAGE' ||
-    target.woundedPhase === 'DOWNED_AGONY' ||
-    reactionBeforeTick === 'DOWNED_COLLAPSE';
+    target.alive && !target.isRagdollActive && target.activeReaction.type === 'NONE' && !onFloorAnimated;
+  // A collapse that ended with no floor plan still must not stand the body back up.
+  const downedOnFeet = reactionBeforeTick === 'DOWNED_COLLAPSE';
   if (standingIdle && armGoneAndSpent && !legGone && reactionBeforeTick !== 'DOWNED_COLLAPSE') {
     target.weaponDropped = true;
     transitionTargetLifecycle(target, {
@@ -334,11 +342,27 @@ export function stepLivingTargetVitalsAndFall(
     dropLivingBodyToRagdoll(target, floorY, reactionBeforeTick !== 'NONE' && isFallingReaction(reactionBeforeTick));
   }
 
+  if (onFloorAnimated && target.alive && !target.isRagdollActive && target.activeReaction.type === 'NONE') {
+    settleSeatedOnFloor(target);
+  }
+
   // Down on its face and settled there: no gun and no damage from here on (FACE_DOWN).
   if (target.alive) stepFaceDownSettle(target, dt, floorY);
 
   target.painShock = Math.max(0, target.painShock - dt * 0.55);
   syncTargetLifecycleDerivedState(target);
+}
+
+/**
+ * An animated body sitting or crawling on the floor: its posture reads as on the floor, and a
+ * seated one keeps facing the way it landed, which is where the downed fire cone points. It never
+ * turns, so the facing is fixed on the first settled frame.
+ */
+function settleSeatedOnFloor(target: TargetHealthState): void {
+  target.posture = 'LEG_BUCKLED';
+  if (isSeatedPhase(target.woundedPhase) && target.downedFacingWorld === undefined) {
+    target.downedFacingWorld = yawForward(target);
+  }
 }
 
 /** True when the reaction that just ended was a long clip that leaves the body on its feet. */

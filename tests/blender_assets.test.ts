@@ -8,6 +8,7 @@ import {
   ALL_GLB_ASSET_KEYS, COMBATANT_ANIMATION_CLIPS, COMBATANT_SIDED_CLIPS, WEAPON_ASSET_IDS,
 } from '../src/engine/assets/glbLoader.ts';
 import { BLEND_SOURCES_DIR, readAndParseGlb, readVec4AccessorRow } from './blenderGlbFixtures.ts';
+import { DEATH_CLIP_SECONDS } from '../src/core/ballistics/lifecycle/deathAnimation.ts';
 
 describe('Blender combatant and weapon assets', () => {
   it('exports valid glTF 2.0 binaries within runtime budgets plus native .blend sources', () => {
@@ -180,6 +181,31 @@ describe('Blender combatant and weapon assets', () => {
       expect(rhClip.channels.length).toBeGreaterThan(10);
       expect(lhClip.channels.length).toBeGreaterThan(10);
     }
+  });
+
+  it('bakes the death clips once, at the lengths the core times them by, and the one-handed pistol hold for both hands', () => {
+    const { gltf } = readAndParseGlb('ghoul_combatant.glb');
+    const animations = gltf.animations ?? [];
+    const lengthOf = (name: string): number => {
+      const anim = animations.find((a) => a.name === name);
+      expect(anim, `Missing clip ${name}`).toBeDefined();
+      let end = 0;
+      for (const sampler of anim!.samplers) {
+        const max = gltf.accessors?.[sampler.input]?.max?.[0] ?? 0;
+        end = Math.max(end, max);
+      }
+      return end;
+    };
+    for (const [clip, seconds] of Object.entries(DEATH_CLIP_SECONDS)) {
+      // The last key sits one 20 fps frame before the clip's nominal end.
+      expect(Math.abs(lengthOf(clip) - seconds), clip).toBeLessThanOrEqual(0.06);
+      expect(animations.some((a) => a.name === `${clip}_Southpaw`), `${clip} has no twin`).toBe(false);
+    }
+    expect(lengthOf('PistolOneHandHold')).toBeCloseTo(0.85, 1);
+    expect(lengthOf('PistolOneHandHold_Southpaw')).toBeCloseTo(0.85, 1);
+    expect(COMBATANT_SIDED_CLIPS).toEqual(expect.arrayContaining(Object.keys(DEATH_CLIP_SECONDS)));
+    expect(COMBATANT_ANIMATION_CLIPS).toContain('PistolOneHandHold');
+    expect(animations.length).toBe(86);
   });
 
   it('weapon GLBs contain expected armature bones, -Z viewmodel muzzle alignment, and Idle/Fire*/Reload* clips', () => {

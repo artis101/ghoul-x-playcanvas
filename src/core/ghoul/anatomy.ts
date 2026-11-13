@@ -18,7 +18,7 @@ export * from './anatomy/ragdollConstraints';
 export * from './anatomy/ragdollBasisMath';
 export * from './anatomy/ragdollBodyFrames';
 export * from './anatomy/ragdollBasis';
-export * from './anatomy/combatPose';
+export * from './anatomy/restSkeletonPlacement';
 export * from './anatomy/deadArmVerlet';
 export * from './anatomy/proceduralTraumaIk';
 export * from './anatomy/targetHealthState';

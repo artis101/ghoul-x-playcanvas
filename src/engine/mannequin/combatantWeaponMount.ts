@@ -1,5 +1,5 @@
 import { oppositeSide } from '../../core/ghoul/anatomy/handedness.ts';
-import type * as pc from 'playcanvas';
+import * as pc from 'playcanvas';
 import type {
   GhoulZoneId,
   TargetHealthState,
@@ -22,7 +22,9 @@ import {
   type WeaponGlbInstance,
 } from '../assets/glbLoader.ts';
 import { getPreferredPrimaryHand, isArmChainIntactAndFunctional } from '../ai/combatantArmEvaluation.ts';
-import { CombatantWeaponHands } from './combatantWeaponHands.ts';
+import { armsClipName, CombatantWeaponHands, isLooseSupportClip } from './combatantWeaponHands.ts';
+import { CombatantPistolHold } from './combatantPistolHold.ts';
+import { gunKindOf, isOneHandPistolClip } from './combatantWeaponPoseMap.ts';
 import { RELOAD_ANIM_SPEED, reloadDurationS } from '../../core/ballistics/weapons/weaponHandling.ts';
 
 /**
@@ -35,12 +37,10 @@ export function playWeaponReloadClip(glb: WeaponGlbInstance | null | undefined):
   return reloadDurationS(glb.getClipDuration(glb.reloadClipName));
 }
 import { CombatantWeaponGrip, M4A1_PALM_OFFSET_X } from './combatantWeaponGrip.ts';
-import { CombatantWeaponHold } from './combatantWeaponHold.ts';
-import { isOneHandedStance } from '../../core/ghoul/anatomy/weaponHold.ts';
-import { resolveWeaponHoldStance } from './combatantWeaponStance.ts';
 import { isWoundClip } from './combatantWoundClips.ts';
-import { CombatantUnarmedArms } from './combatantUnarmedArms.ts';
-import { CombatantAimHead } from './combatantAimHead.ts';
+import { applyAimDelta, barrelForward, combatantAimTarget, isPlayingAimClip } from './combatantAimDelta.ts';
+import { animatedBarrelDirection } from './combatantGunHeading.ts';
+import { isSeatedAnimated } from '../../core/ballistics/triage/seatedLastStand.ts';
 import {
   createPropAttachmentState,
   transitionPropAttachment,
@@ -61,9 +61,11 @@ export class CombatantWeaponMount {
   private droppedProp: pc.Entity | null = null;
   private hands: CombatantWeaponHands | null = null;
   private readonly grip = new CombatantWeaponGrip();
-  private readonly hold = new CombatantWeaponHold();
-  private readonly unarmed = new CombatantUnarmedArms();
-  private readonly aimHead = new CombatantAimHead();
+  private readonly pistol = new CombatantPistolHold();
+  private readonly gunInHand = new pc.Vec3();
+  private readonly gunInHandRotation = new pc.Quat();
+  private readonly handInverse = new pc.Quat();
+  private readonly scratch = new pc.Vec3();
 
   public get wasWeaponHeld(): boolean {
     return this.attachmentState.kind === 'ATTACHED';
@@ -71,8 +73,7 @@ export class CombatantWeaponMount {
 
   public reset(): void {
     this.attachmentState = createPropAttachmentState('ATTACHED');
-    this.unarmed.reset();
-    this.aimHead.reset();
+    this.pistol.reset();
     if (this.heldWeaponNode) {
       this.heldWeaponNode.enabled = true;
     }
@@ -159,13 +160,6 @@ export class CombatantWeaponMount {
       this.heldWeaponNode.enabled = transition.isVisible;
     }
 
-    const armed = transition.isVisible && this.heldWeaponNode !== null;
-    // With the long gun gone, an empty arm hangs free instead of gripping a gun that is not there.
-    // A drawn sidearm keeps its own arm; only the other one is let go.
-    if (glb && !armed) {
-      this.unarmed.sync(glb, healthState, true, dt, sidearmHand ? oppositeSide(sidearmHand) : undefined);
-    }
-
     if (transition.isVisible && this.heldWeaponNode) {
       const charFwd = vec3(
         Math.sin(healthState.yawRad),
@@ -184,43 +178,35 @@ export class CombatantWeaponMount {
       const glbSuppNode = glb?.boneNodes.get(supportHandZone);
 
       const clip = glb?.animComponent?.baseLayer?.activeState;
-      // A flinch plays out after its reaction ends; until it does, the gun rides the animated
-      // trigger hand instead of being pulled into a hold the clip's arms are not in.
+      // A flinch plays out after its reaction ends; until it does, the clip's arms own the pose.
       const woundClipPlaying = clip !== undefined && isWoundClip(clip.replace('_Southpaw', ''));
-      const canUseSupport =
-        healthState.posture === 'COMBAT_READY' && healthState.activeReaction.type === 'NONE' &&
-        !woundClipPlaying && weaponId !== 'frag_grenade' &&
-        isArmChainIntactAndFunctional(healthState, supportHand);
-      const stance = canUseSupport ? resolveWeaponHoldStance(weaponId, clip, guarding) : null;
-      const supportGrip = glb && stance
-        ? this.hold.place(this.heldWeaponNode, glb, weaponId, stance, triggerHand, dt)
-        : null;
-      const oneHanded = stance !== null && isOneHandedStance(stance);
-      if (glb) this.unarmed.sync(glb, healthState, oneHanded, dt, supportHand);
-      if (glb && supportGrip) {
-        this.hands?.syncHold(glb, triggerHand, supportGrip, oneHanded);
-        const aiming = stance === 'SHOULDERED' || stance === 'PISTOL_AIM';
-        this.aimHead.sync(glb, aiming ? this.heldWeaponNode.forward : null, dt);
-        return;
-      }
-      this.hold.release();
-      if (glb) this.aimHead.sync(glb, null, dt);
-      const twoHandReadyIdle = canUseSupport && weaponId !== 'silver_talon_50ae' &&
-        (clip === 'CombatReadyIdle' || clip === 'CombatReadyIdle_Southpaw');
+      // A hurt body (stagger, gut, throat) may still raise its gun from HurtIdle once its reaction
+      // and flinch clip are over; it aims, sways and recoils like a ready one while it does.
+      const aimClip = glb !== null && isPlayingAimClip(glb);
+      const steady =
+        (healthState.posture === 'COMBAT_READY' || aimClip) && healthState.activeReaction.type === 'NONE' &&
+        !woundClipPlaying && !isSeatedAnimated(healthState);
+      const supportArmIntact = isArmChainIntactAndFunctional(healthState, supportHand);
+      // A one-handed pistol clip has the other forearm tucked in: no hand goes to the gun.
+      const oneHandClip = glb !== null && isOneHandPistolClip(armsClipName(glb));
+      const canUseSupport = steady && weaponId !== 'frag_grenade' && supportArmIntact && !oneHandClip;
+      const isPistol = gunKindOf(weaponId) === 'PISTOL';
+      // The gun rides the animated trigger palm in every state. Its barrel comes from the animated
+      // chest and forearm (see combatantGunHeading: the takes' wrist roll cannot aim a gun), and
+      // leans toward the support palm when the clip has that hand out on the forend.
       if (glbTrigNode) {
         const pT = glbTrigNode.getPosition();
         const uT = glbTrigNode.up;
         palmTrig = vec3(pT.x + uT.x * 0.052, pT.y + uT.y * 0.052, pT.z + uT.z * 0.052);
 
-        const handAim = vec3(uT.x, uT.y * 0.35, uT.z);
-        gunFwd = normalize(add(scale(handAim, 0.32), scale(charFwd, 0.68)));
+        const elbow = glb?.boneNodes.get(`FOREARM_${triggerHand}`)?.getPosition();
+        const forearm = elbow ? normalize(vec3(pT.x - elbow.x, pT.y - elbow.y, pT.z - elbow.z)) : uT;
+        gunFwd = animatedBarrelDirection(glb ?? null, forearm, charFwd);
 
-        if (canUseSupport && weaponId !== 'silver_talon_50ae' && glbSuppNode) {
-          if (twoHandReadyIdle) {
-            // Keep the forend within reach across the body when the authored palms are close.
-            const across = supportHand === 'LEFT' ? 0.9 : -0.9;
-            gunFwd = normalize(add(gunFwd, vec3(charFwd.z * across, 0.12, -charFwd.x * across)));
-          }
+        // In the loose-support clips the authored support palm is nowhere near the forend, so it
+        // says nothing about where the barrel points; the hand is brought to the gun instead.
+        const supportGuidesBarrel = glb !== null && !isLooseSupportClip(glb, weaponId);
+        if (canUseSupport && supportGuidesBarrel && !isPistol && glbSuppNode) {
           const pS = glbSuppNode.getPosition();
           const uS = glbSuppNode.up;
           const palmSupp = vec3(pS.x + uS.x * 0.05, pS.y + uS.y * 0.05, pS.z + uS.z * 0.05);
@@ -240,9 +226,51 @@ export class CombatantWeaponMount {
       const triggerOffset = weaponId === 'm4a1_carbine' && canUseSupport
         ? (triggerHand === 'RIGHT' ? M4A1_PALM_OFFSET_X : -M4A1_PALM_OFFSET_X)
         : 0;
-      this.grip.align(this.heldWeaponNode, this.heldWeaponNode, weaponId, palmTrig, gunFwd, triggerOffset);
-      if (glb) this.hands?.sync(glb, triggerHand, canUseSupport, twoHandReadyIdle);
+      if (isPistol && glb && glbTrigNode && CombatantPistolHold.ownsGun(glb)) {
+        // A Desert Eagle in a pistol clip sits rigidly in the fist, like the backup pistol.
+        this.pistol.seat(this.heldWeaponNode, glb, glbTrigNode, triggerHand, supportArmIntact, dt);
+      } else {
+        this.grip.align(this.heldWeaponNode, this.heldWeaponNode, weaponId, palmTrig, gunFwd, triggerOffset);
+      }
+      if (glb && glbTrigNode) {
+        const aiming = steady && sidearmHand === null && aimClip;
+        this.aimTowardTarget(glb, healthState, glbTrigNode, triggerHand, aiming, dt);
+      }
+      if (glb) this.hands?.sync(glb, triggerHand, canUseSupport, dt, supportArmIntact);
     }
+  }
+
+  /**
+   * Turns the chest and gun arm by the small aim delta (toward the published aim point, plus the
+   * sway and recoil the bullets use), then re-glues the gun rigidly to the turned hand, so the
+   * barrel the player sees is the line the bullet leaves along.
+   */
+  private aimTowardTarget(
+    glb: CombatantGlbInstance,
+    healthState: TargetHealthState,
+    hand: pc.GraphNode,
+    triggerHand: 'RIGHT' | 'LEFT',
+    aiming: boolean,
+    dt: number | undefined,
+  ): void {
+    const gun = this.heldWeaponNode;
+    if (!gun) return;
+    // Remember where the gun sits in the fist before the arm turns.
+    this.handInverse.copy(hand.getRotation()).invert();
+    this.handInverse.transformVector(this.scratch.sub2(gun.getPosition(), hand.getPosition()), this.gunInHand);
+    this.gunInHandRotation.mul2(this.handInverse, gun.getRotation());
+
+    const muzzle = gun.getPosition();
+    const target = aiming ? combatantAimTarget(healthState.targetId) : null;
+    const aimDirWorld = target ? normalize(sub(target, vec3(muzzle.x, muzzle.y, muzzle.z))) : null;
+    applyAimDelta(glb, healthState, {
+      aimDirWorld, hand: triggerHand, weight: aiming ? 1 : 0, targetId: healthState.targetId,
+    }, dt ?? Number.POSITIVE_INFINITY, barrelForward(gun));
+
+    const turned = hand.getRotation();
+    turned.transformVector(this.gunInHand, this.scratch).add(hand.getPosition());
+    gun.setPosition(this.scratch);
+    gun.setRotation(this.handInverse.mul2(turned, this.gunInHandRotation));
   }
 
   /** Starts the gun's reload clip; returns how long the reload takes. */

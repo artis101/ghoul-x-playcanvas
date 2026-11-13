@@ -1,0 +1,15 @@
+[
+ {"name": "rifle_aim_hold", "seed": 151, "samples": 4, "durations": [1.2],
+  "prompts": ["A person stands holding a rifle up at the right shoulder, looking down the sights straight ahead, holding still and breathing"],
+  "pins": [{"at": [0, 1], "take": "work/takes/long_aim_00.npz", "frames": [37, 38]}, {"at": "end", "take": "work/takes/long_aim_00.npz", "frames": [37, 38]}]},
+ {"name": "pistol_aim_hold", "seed": 152, "samples": 4, "durations": [1.2],
+  "prompts": ["A person stands holding a pistol in both hands with both arms extended straight ahead at eye level, holding still and breathing"],
+  "pins": [{"at": [0, 1], "take": "work/takes/pistol_aim_02.npz", "frames": [37, 38]}, {"at": "end", "take": "work/takes/pistol_aim_02.npz", "frames": [37, 38]}]},
+ {"name": "pistol1_aim_hold", "seed": 153, "samples": 4, "durations": [1.2],
+  "prompts": ["A person stands with the left forearm tucked against the chest, holding a pistol in the right hand with the arm extended straight ahead at eye level, holding still and breathing"],
+  "pins": [{"at": [0, 1], "take": "work/takes/pistol_one_hand_03.npz", "frames": [37, 38]}, {"at": "end", "take": "work/takes/pistol_one_hand_03.npz", "frames": [37, 38]}]},
+ {"name": "pistol_hold", "seed": 154, "samples": 4, "durations": [3.0],
+  "prompts": ["A person stands holding a pistol low in both hands in front of the belly, the muzzle pointing at the ground, looking ahead and breathing"]},
+ {"name": "pistol1_hold", "seed": 155, "samples": 4, "durations": [3.0],
+  "prompts": ["A person stands with the left forearm tucked against the chest, holding a pistol low in the right hand at the side of the thigh, pointing at the ground, looking ahead and breathing"]}
+]

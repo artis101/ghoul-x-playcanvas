@@ -1,6 +1,7 @@
 import * as pc from 'playcanvas';
 import type { Vec3Like } from '../../contracts/ballistics.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
+import { canLoseWeaponToHit } from '../../core/combatant/hitDisarmPolicy.ts';
 
 export interface HeldWeaponStrike {
   readonly target: GhoulMannequinEntity;
@@ -25,6 +26,7 @@ const box = new pc.BoundingBox();
 /**
  * Finds the nearest enemy-held gun that a shot passes through before `maxDistM`. The test runs in
  * each weapon mesh's own space, so a rifle held across the chest does not shield the whole torso.
+ * Only a fighter whose health bar is red can have its gun shot out of its hands (hitDisarmPolicy.ts).
  */
 export function findHeldWeaponStrike(
   origin: Vec3Like,
@@ -38,7 +40,8 @@ export function findHeldWeaponStrike(
   let best: HeldWeaponStrike | null = null;
   for (const target of targets) {
     const hs = target.healthState;
-    if (!hs.alive || hs.weaponDropped) continue;
+    // Above the red band the gun is held on to, so the round goes on into the body instead.
+    if (!canLoseWeaponToHit(hs)) continue;
     const weapon = target.heldWeaponEntity;
     if (!weapon) continue;
     const renders = weapon.findComponents('render') as pc.RenderComponent[];

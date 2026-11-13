@@ -1,0 +1,14 @@
+[
+ {"name": "death_back", "seed": 161, "samples": 4, "durations": [2.4],
+  "prompts": ["A person standing is thrown backward, staggers two steps back with the arms flung forward, the knees give way and the body falls flat onto the back and lies still"],
+  "pins": [{"at": [0, 1], "take": "work/ready_loop.npz", "frames": [0, 1]}]},
+ {"name": "death_forward", "seed": 162, "samples": 4, "durations": [2.4],
+  "prompts": ["A person standing doubles over at the waist, drops onto both knees, then topples forward onto the face and lies still"],
+  "pins": [{"at": [0, 1], "take": "work/ready_loop.npz", "frames": [0, 1]}]},
+ {"name": "death_crumple", "seed": 163, "samples": 4, "durations": [1.6],
+  "prompts": ["A person standing goes limp all at once, the knees buckle and the body drops straight down in a heap onto the floor and lies still"],
+  "pins": [{"at": [0, 1], "take": "work/ready_loop.npz", "frames": [0, 1]}]},
+ {"name": "death_spin", "seed": 164, "samples": 4, "durations": [2.2],
+  "prompts": ["A person standing twists hard to the right as the right shoulder is jerked back, stumbles sideways and falls onto the right side and lies still"],
+  "pins": [{"at": [0, 1], "take": "work/ready_loop.npz", "frames": [0, 1]}]}
+]

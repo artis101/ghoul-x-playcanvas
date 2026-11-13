@@ -1,6 +1,7 @@
 import type { TargetHealthState } from '../../contracts/ballistics.ts';
 import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
-import { isWoundClipHoldingBody } from './woundClipHold.ts';
+import { isSeatedAnimated } from '../../core/ballistics/triage/seatedLastStand.ts';
+import { isFlinchHoldingBody, isWoundClipHoldingBody } from './woundClipHold.ts';
 
 export function isWaistStepBlocked(
   originX: number,
@@ -42,6 +43,10 @@ export function moveHorizontalClamped(
   if (!hs.alive || hs.currentHp <= 0 || hs.isRagdollActive || maxStepM <= 0) return;
   // A wound clip playing owns the root; stepping it would make the fall skate across the floor.
   if (isWoundClipHoldingBody(hs)) return;
+  // A body being shot stands and takes it, then moves on once its flinch has played out.
+  if (isFlinchHoldingBody(hs)) return;
+  // A seated last stand stays where it sat down; only a crawler drags itself along the floor.
+  if (isSeatedAnimated(hs)) return;
 
   const clampedGoalX = clampArenaGoalX(goalX);
   const clampedGoalZ = clampArenaGoalZ(goalZ);

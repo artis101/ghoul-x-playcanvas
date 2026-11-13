@@ -210,7 +210,7 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       expect(ap762Rep.woundEvents.some((w) => w.layerType === 'ORGAN_HEART')).toBe(true);
     });
 
-    it('femur fracture disables leg support, an upper-arm wound is fought through, a grip-hand hit disarms', () => {
+    it('femur fracture disables leg support, an upper-arm wound is fought through, a grip-hand hit disarms only in the red', () => {
       const target = createTargetHealthState('target_limb', 'Militia', vec3(0, 0, -6), 0);
 
       const rArmPos = target.ragdollBones.UPPER_ARM_LEFT.position;
@@ -240,7 +240,22 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
         DEFAULT_ENVIRONMENT
       );
       expect(gripReport.woundEvents.some((w) => w.ghoulZone === 'HAND_RIGHT')).toBe(true);
+      // Health bar not red yet: the fighter grips through it (hitDisarmPolicy.ts).
       applyShotReportToTarget(target, gripReport);
+      expect(target.alive).toBe(true);
+      expect(target.weaponDropped).toBe(false);
+
+      // In the red, the same hit on the grip hand knocks the gun loose.
+      target.currentHp = target.maxHp * 0.3;
+      const redGripReport = simulateShot(
+        WEAPON_M4A1,
+        AMMO_556_NATO_M855,
+        gripOrigin,
+        normalize(sub(gripPos, gripOrigin)),
+        target,
+        DEFAULT_ENVIRONMENT
+      );
+      applyShotReportToTarget(target, redGripReport);
       expect(target.alive).toBe(true);
       expect(target.weaponDropped).toBe(true);
 
@@ -576,8 +591,10 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       applyShotReportToTarget(jointTarget, jointRep);
       expect(jointTarget.alive).toBe(true);
 
-      // 4) A .50 AE round through the gun hand knocks the weapon away but leaves the hand attached.
+      // 4) A .50 AE round through the gun hand of a fighter in the red knocks the weapon away but
+      // leaves the hand attached.
       const handTarget = createTargetHealthState('joint_hand', 'Punk', vec3(0, 0, -5), 0);
+      handTarget.currentHp = handTarget.maxHp * 0.3;
       const handPt = handTarget.ragdollBones.HAND_RIGHT.position;
       const handOrigin = vec3(handPt.x, handPt.y, 0);
       const handRep = simulateShot(

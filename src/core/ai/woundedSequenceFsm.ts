@@ -1,8 +1,10 @@
 import type { TargetHealthState, WoundedPhase } from '../../contracts/ballistics/targetHealthContracts.ts';
 import { transitionTargetLifecycle } from '../ballistics/lifecycle/targetLifecycleFsm.ts';
 import { isFaceDownPending, resolveDownedFacing, yawForward } from '../ballistics/triage/faceDownLanding.ts';
+import { isSeatedAnimated } from '../ballistics/triage/seatedLastStand.ts';
 import { listLostLimbs } from '../ballistics/trauma/limbLossDeathRule.ts';
 import {
+  SEATED_DRAW_S,
   STUMP_KNEEL_S,
   WOUND_CLIP_SECONDS,
   clutchSeconds,
@@ -12,6 +14,7 @@ import {
 import { effectiveFortitude, rollFortitude } from './fortitude.ts';
 
 export { effectiveFortitude, rollFortitude };
+export { isSeatedAnimated };
 
 /**
  * The wounded sequence (docs/wound-movement.md): one thing at a time. An arm comes off, the body
@@ -141,10 +144,26 @@ export function stepWoundedSequence(hs: TargetHealthState, input: WoundedSequenc
     case 'KNEEL_DOWN':
       if ((hs.woundedPhaseTimerS ?? 0) >= STUMP_KNEEL_S) setPhase(hs, 'KNEEL_FIRE');
       break;
+    case 'DOWNED_AGONY':
+    case 'DOWNED_ENGAGE':
+      stepSeated(hs, input);
+      break;
     default:
       // KNEEL_FIRE holds; SIT_DOWN waits on its collapse; a crawler keeps crawling.
       break;
   }
+}
+
+/**
+ * A body sitting animated in its last stand. Lying in pain, it reaches for the pistol once the
+ * player steps in front of it (the phase clock restarts, so the seated draw plays from the start);
+ * engaging, it gives up only when no arm is left to hold the gun. With the player outside its cone
+ * it keeps aiming ahead and holds fire (woundedPhaseAllowsFire); it never turns.
+ */
+function stepSeated(hs: TargetHealthState, input: WoundedSequenceInput): void {
+  if (!isSeatedAnimated(hs)) return;
+  if (phaseOf(hs) === 'DOWNED_AGONY' && canEngageFromFloor(input)) setPhase(hs, 'DOWNED_ENGAGE');
+  else if (phaseOf(hs) === 'DOWNED_ENGAGE' && !input.freeArmWorks) setPhase(hs, 'DOWNED_AGONY');
 }
 
 function stepClutch(hs: TargetHealthState, input: WoundedSequenceInput): void {
@@ -204,11 +223,17 @@ function downedBodyReady(hs: TargetHealthState): boolean {
   return hs.isRagdollActive && hs.posture === 'RAGDOLL_GROUNDED' && !isFaceDownPending(hs);
 }
 
+/** A seated engager has finished its draw clip and holds the pistol up. */
+function seatedDrawDone(hs: TargetHealthState): boolean {
+  return isSeatedAnimated(hs) && (hs.woundedPhaseTimerS ?? 0) >= SEATED_DRAW_S;
+}
+
 /** May the body reach for its sidearm now? Only in a shooting phase, never mid-clip. */
 export function woundedPhaseAllowsDraw(hs: TargetHealthState): boolean {
   if (!hs.alive || committedReactionPlaying(hs)) return false;
   const phase = phaseOf(hs);
-  if (phase === 'DOWNED_ENGAGE') return downedBodyReady(hs);
+  // Seated and animated, it draws as soon as it is engaging; the draw clip takes SEATED_DRAW_S.
+  if (phase === 'DOWNED_ENGAGE') return downedBodyReady(hs) || isSeatedAnimated(hs);
   return phase === 'BLAZE' || phase === 'KNEEL_FIRE';
 }
 
@@ -226,7 +251,7 @@ export function woundedPhaseAllowsFire(
       return withinCone(input.playerBearingRad, KNEEL_FIRE_CONE_RAD);
     case 'DOWNED_ENGAGE':
       return (
-        downedBodyReady(hs) &&
+        (downedBodyReady(hs) || seatedDrawDone(hs)) &&
         input.playerVisible &&
         withinCone(input.playerBearingRad, DOWNED_FIRE_CONE_RAD)
       );

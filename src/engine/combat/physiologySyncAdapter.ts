@@ -1,14 +1,22 @@
-import type { TargetHealthState } from '../../contracts/ballistics.ts';
+import type { DeathClipId, TargetHealthState } from '../../contracts/ballistics.ts';
 import type { PhysiologicalEntityState } from '../../contracts/physiology.ts';
 import { stabilizeRagdollPoseForTransition } from '../../core/ballistics/solver.ts';
 import { scale, vec3 } from '../../core/ballistics/vec3.ts';
 import { buckleOnLateLegCripple } from '../../core/ballistics/trauma/woundReactionSelector.ts';
+import { canAnimateDeath, startDeathAnimation } from '../../core/ballistics/lifecycle/deathAnimation.ts';
+import { syncTargetLifecycleDerivedState } from '../../core/ballistics/lifecycle/targetLifecycleFsm.ts';
 import type { TacticalCombatAiSystem } from '../ai/tacticalCombatAi.ts';
 
+/**
+ * Copies the physiology model onto the health state. `shotDeathClip` is how the shot being applied
+ * would bring the body down if the physiology model kills it now (null: the ragdoll); leave it
+ * undefined outside a shot, where a death the body can stand through is a bleed-out.
+ */
 export function syncPhysiologyToHealthState(
   physio: PhysiologicalEntityState,
   hs: TargetHealthState,
-  tacticalAi?: TacticalCombatAiSystem | null
+  tacticalAi?: TacticalCombatAiSystem | null,
+  shotDeathClip?: DeathClipId | null
 ): void {
   if (hs.bloodLossRateMlPerSec > physio.baseBleedRateMlPerSec) {
     physio.baseBleedRateMlPerSec = hs.bloodLossRateMlPerSec;
@@ -32,6 +40,8 @@ export function syncPhysiologyToHealthState(
   }
 
   if (!physio.alive && hs.alive) {
+    // Upright and animated: it plays a death clip (bleeding out, or the shot's) before the ragdoll.
+    const deathClip = canAnimateDeath(hs) ? (shotDeathClip === undefined ? 'DeathBleedOut' : shotDeathClip) : null;
     hs.alive = false;
     hs.currentHp = 0;
     hs.consciousness = 0;
@@ -40,7 +50,10 @@ export function syncPhysiologyToHealthState(
     hs.weaponDropped = true;
     hs.activeReaction.type = 'NONE';
     hs.activeReaction.timerS = 0;
-    if (!hs.isRagdollActive) {
+    if (deathClip) {
+      startDeathAnimation(hs, deathClip);
+      syncTargetLifecycleDerivedState(hs);
+    } else if (!hs.isRagdollActive) {
       hs.isRagdollActive = true;
       hs.posture = 'AIRBORNE_RAGDOLL';
       stabilizeRagdollPoseForTransition(hs, 0.0);

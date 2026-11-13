@@ -1,7 +1,7 @@
 import type { TargetHealthState, Vec3Like } from '../../../contracts/ballistics.ts';
 import { sideSignX } from '../../ghoul/anatomy/handedness.ts';
 import { computeChestFrame } from '../../ghoul/anatomy/ragdollBodyFrames.ts';
-import { add, cross, dot, length, normalize, scale, sub, vec3 } from '../vec3.ts';
+import { add, cross, dot, normalize, scale, sub, vec3 } from '../vec3.ts';
 import { isAimClearOfChest } from './downedChestClearance.ts';
 import { resolveDownedGunSide } from './downedGunSide.ts';
 
@@ -73,17 +73,4 @@ export function canDownedBodyAimAt(target: TargetHealthState, point: Vec3Like): 
   if (!reach) return true;
   const toPoint = normalize(sub(point, reach.origin));
   return dot(toPoint, reach.axis) >= Math.cos(reach.halfAngleRad) && isAimClearOfChest(target, toPoint);
-}
-
-/** Turns an aim direction to the nearest one the body can actually reach. */
-export function clampDownedAimDirection(target: TargetHealthState, direction: Vec3Like): Vec3Like {
-  const reach = computeDownedAimReach(target);
-  const wanted = normalize(direction);
-  if (!reach || dot(wanted, reach.axis) >= Math.cos(reach.halfAngleRad)) return wanted;
-  // Swing from the cone's axis toward the wanted direction, stopping at the cone's edge.
-  let side = sub(wanted, scale(reach.axis, dot(wanted, reach.axis)));
-  if (length(side) < 1e-4) side = cross(reach.axis, Math.abs(reach.axis.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0));
-  return normalize(
-    add(scale(reach.axis, Math.cos(reach.halfAngleRad)), scale(normalize(side), Math.sin(reach.halfAngleRad)))
-  );
 }

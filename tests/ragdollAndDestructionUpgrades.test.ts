@@ -9,12 +9,12 @@ import {
 import {
   createProceduralTraumaTracker,
   isArmDeadButAttached,
+  stepHitJolt,
   stepPinnedDeadArmVerlet,
-  stepProceduralTraumaIk,
 } from '../src/core/ghoul/anatomy/proceduralTraumaIk.ts';
 import { stepRagdollPhysics } from '../src/core/ballistics/ragdoll/ragdollVerletStep.ts';
 import { stabilizeRagdollPoseForTransition } from '../src/core/ballistics/ragdoll/ragdollPoseStabilizer.ts';
-import { applyShotReportToTarget, simulateShot } from '../src/core/ballistics/solver.ts';
+import { applyShotReportToTarget, deathClipFor, simulateShot } from '../src/core/ballistics/solver.ts';
 import {
   AMMO_762_NATO_M118LR,
   DEFAULT_ENVIRONMENT,
@@ -130,7 +130,8 @@ describe('Wave 1, Wave 2 & Wave 3 — Ragdoll Stability, Trauma IK, Destruction 
     expect(report.hitTarget).toBe(true);
     applyShotReportToTarget(sniper, report);
     expect(sniper.alive).toBe(false);
-    expect(sniper.isRagdollActive).toBe(true);
+    // A head-shot kill on its feet crumples through its death clip; the ragdoll takes over after.
+    expect(deathClipFor(sniper)).toBe('DeathCrumple');
 
     // Must remain at the 42m overwatch station rather than teleporting to -28m
     expect(Math.abs(sniper.ragdollBones.PELVIS_GROIN.position.z - -42.0)).toBeLessThan(0.5);
@@ -143,6 +144,7 @@ describe('Wave 1, Wave 2 & Wave 3 — Ragdoll Stability, Trauma IK, Destruction 
       maxHeadY = Math.max(maxHeadY, sniper.ragdollBones.HEAD_CRANIUM.position.y);
     }
 
+    expect(sniper.isRagdollActive).toBe(true);
     expect(maxPelvisY).toBeLessThan(1.1);
     expect(maxHeadY).toBeLessThan(1.8);
     expect(Math.abs(sniper.ragdollBones.PELVIS_GROIN.position.z - -42.0)).toBeLessThan(2.5);
@@ -164,35 +166,21 @@ describe('Wave 1, Wave 2 & Wave 3 — Ragdoll Stability, Trauma IK, Destruction 
     expect(edgeCorpse.ragdollBones.PELVIS_GROIN.position.z).toBeGreaterThanOrEqual(-320.0);
   });
 
-  it('solves procedural trauma IK: wound clutching, hit-jolt, downed prop-up, and dead-limb pendulum', () => {
+  it('steps the graze hit-jolt and the dead-limb pendulum', () => {
+    // The wound-clutch IK and the downed prop-up are gone: HitFlinch*, HurtIdle and StumpClutch*
+    // hold the wound, and the fall clips pose the downed body.
     const target = createTargetHealthState('trauma_ik_1', 'Enforcer', vec3(0, 0, -5), 0);
     const tracker = createProceduralTraumaTracker();
-
-    target.zoneGoreMode.TORSO_LOWER_ABDOMEN = 'LACERATED';
-    target.posture = 'GUT_HURT';
-    target.painShock = 0.35;
-    target.zoneCumulativeDamageJ.TORSO_LOWER_ABDOMEN = 540;
-    target.surfaceWounds.push({
-      id: 'w_gut_1',
-      zone: 'TORSO_LOWER_ABDOMEN',
-      localOffset: vec3(0.04, 0.02, 0.11),
-      localNormal: vec3(0, 0, 1),
-      radiusM: 0.035,
-      isExit: false,
-      armorDent: false,
-    });
-
-    const shoulders = { RIGHT: vec3(-0.28, -3.62, -5.0), LEFT: vec3(0.28, -3.62, -5.0) };
-    const elbows = { RIGHT: vec3(-0.31, -3.87, -4.95), LEFT: vec3(0.31, -3.87, -4.95) };
-    const wrists = { RIGHT: vec3(-0.14, -3.85, -4.76), LEFT: vec3(0.14, -3.85, -4.76) };
-
-    let lastOut = stepProceduralTraumaIk(target, tracker, 1 / 60, shoulders, elbows, wrists);
-    for (let i = 0; i < 15; i++) {
-      lastOut = stepProceduralTraumaIk(target, tracker, 1 / 60, shoulders, elbows, wrists);
-    }
-    expect(lastOut.clutchBlend).toBeGreaterThan(0.2);
-    expect(lastOut.clutchSide).toBe('LEFT');
-    expect(lastOut.hasJoltOrPropUp).toBe(true);
+    stepHitJolt(target, tracker, 1 / 60);
+    target.joltEpoch = 1;
+    target.lastJoltDirectionWorld = vec3(0, 0, 1);
+    target.lastJoltIntensity = 1;
+    let lastOut = stepHitJolt(target, tracker, 1 / 60);
+    for (let i = 0; i < 3; i++) lastOut = stepHitJolt(target, tracker, 1 / 60);
+    expect(lastOut.hasJolt).toBe(true);
+    // The spring brings the chest back within a few tenths of a second.
+    for (let i = 0; i < 60; i++) lastOut = stepHitJolt(target, tracker, 1 / 60);
+    expect(Math.abs(lastOut.torsoPitchAddRad)).toBeLessThan(0.02);
 
     // Disable right arm while attached -> dead-limb Verlet pendulum swings under gravity
     target.rightArmFunctional = false;
@@ -203,15 +191,6 @@ describe('Wave 1, Wave 2 & Wave 3 — Ragdoll Stability, Trauma IK, Destruction 
       expect(stepped).toBe(true);
     }
     expect(target.ragdollBones.HAND_RIGHT.position.y).toBeLessThan(1.0);
-
-    // Disable right leg while weapon is still held -> downed torso prop-up activates
-    target.rightLegFunctional = false;
-    target.posture = 'LEG_BUCKLED';
-    for (let i = 0; i < 20; i++) {
-      lastOut = stepProceduralTraumaIk(target, tracker, 1 / 60, shoulders, elbows, wrists);
-    }
-    expect(tracker.propUpBlend).toBeGreaterThan(0.4);
-    expect(lastOut.torsoPitchAddRad).toBeLessThan(-0.15);
   });
 
   it('extrudes large (> 0.6 m^2) unanchored wood cutouts and stud-severed shells into droppedSlabs instead of floating', () => {

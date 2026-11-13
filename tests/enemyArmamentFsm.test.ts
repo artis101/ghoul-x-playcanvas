@@ -53,7 +53,7 @@ describe('enemy armament while downed', () => {
     expect(held.state).toEqual({ kind: 'DISARMED', sidearmDropped: false });
     expect(held.events).not.toContain('SIDEARM_DRAW_START');
     const putBack = stepEnemyArmamentState(
-      { kind: 'SIDEARM_DRAWING', hand: 'RIGHT', remainingS: 0.3 }, { ...downed, sidearmRule: 'HOLSTER' },
+      { kind: 'SIDEARM_DRAWING', hand: 'RIGHT', remainingS: 0.5 }, { ...downed, sidearmRule: 'HOLSTER' },
     );
     expect(putBack.state).toEqual({ kind: 'DISARMED', sidearmDropped: false });
     // Once allowed again it can still come out.
@@ -61,11 +61,39 @@ describe('enemy armament while downed', () => {
     expect(later.state.kind).toBe('SIDEARM_DRAWING');
   });
 
-  it('lets go of a drawn pistol for good when the sequence says DROP (face down, crawling)', () => {
+  it('pauses, never undoes, a draw whose pistol is already out of the holster', () => {
+    const lateDraw: EnemyArmamentState = { kind: 'SIDEARM_DRAWING', hand: 'RIGHT', remainingS: 0.3, totalS: 0.6 };
+    const standingHit = { ...downed, isRagdollActive: false, weaponDropped: true };
+    const cases: Partial<EnemyArmamentTransitionInput>[] = [
+      { sidearmRule: 'HOLSTER' },
+      { sidearmRule: 'DROP' },
+      { sidearmRule: 'HOLSTER', woundClipPlaying: true },
+      { isRagdollActive: true, isAirborneRagdoll: true, sidearmRule: 'HOLSTER' },
+      // Thrown through the air with the long gun not yet counted as lost.
+      { isRagdollActive: true, isAirborneRagdoll: true, weaponDropped: false },
+    ];
+    for (const extra of cases) {
+      const r = stepEnemyArmamentState(lateDraw, { ...standingHit, ...extra });
+      expect(r.state).toEqual(lateDraw);
+    }
+    // Once allowed again the draw finishes from where it stopped.
+    let state: EnemyArmamentState = lateDraw;
+    for (let i = 0; i < 20; i++) state = stepEnemyArmamentState(state, standingHit).state;
+    expect(state).toEqual({ kind: 'SIDEARM_ACTIVE', hand: 'RIGHT' });
+    // Its own arm going still takes it.
+    const armOff = stepEnemyArmamentState(lateDraw, { ...standingHit, rightArmIntact: false, intactHand: 'LEFT', sidearmRule: 'HOLSTER' });
+    expect(armOff.state).toEqual({ kind: 'DISARMED', sidearmDropped: true });
+  });
+
+  it('never lets go of a drawn pistol when the sequence says DROP or HOLSTER (face down, crawling, falling)', () => {
     const drawn = drawFully(downed);
-    const dropped = stepEnemyArmamentState(drawn, { ...downed, sidearmRule: 'DROP' });
-    expect(dropped.state).toEqual({ kind: 'DISARMED', sidearmDropped: true });
-    expect(stepEnemyArmamentState(dropped.state, downed).state).toEqual({ kind: 'DISARMED', sidearmDropped: true });
+    for (const sidearmRule of ['DROP', 'HOLSTER'] as const) {
+      const kept = stepEnemyArmamentState(drawn, { ...downed, sidearmRule });
+      expect(kept.state).toEqual({ kind: 'SIDEARM_ACTIVE', hand: 'RIGHT' });
+    }
+    // With nothing drawn, DROP keeps it in the holster.
+    const holstered = stepEnemyArmamentState({ kind: 'PRIMARY_ARMED', hand: 'RIGHT' }, { ...downed, sidearmRule: 'DROP' });
+    expect(holstered.state).toEqual({ kind: 'DISARMED', sidearmDropped: false });
   });
 
   it('keeps the sidearm when the downed body is knocked into the air again', () => {

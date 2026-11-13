@@ -3,7 +3,7 @@ import type { EnemyArchetypeId, TargetHealthState, Vec3Like } from '../../contra
 import { createTargetHealthState } from '../../core/ghoul/anatomy.ts';
 import type { GlbModelRegistry } from '../assets/glbLoader.ts';
 import { LiveCombatant } from './liveCombatant.ts';
-import { fortitudeOverride, type FortitudeChoice } from './woundedLabStandIn.ts';
+import { fortitudeOverride, standInPosition, type FortitudeChoice, type PlayerStandIn } from './woundedLabStandIn.ts';
 import { applySequenceHit, STAND_READY_S, type WoundSequenceDef } from './woundSequences.ts';
 
 export interface WoundSequenceOptions {
@@ -30,6 +30,8 @@ export class WoundSequencePreview {
   private nextStep = 0;
   /** What has landed so far, newest last, for the status line and the console. */
   public readonly log: string[] = [];
+  /** Where a STAND_IN step moved the player; null keeps the panel's choice. */
+  public standInOverride: PlayerStandIn | null = null;
 
   public constructor(
     app: pc.AppBase,
@@ -41,7 +43,12 @@ export class WoundSequencePreview {
       'gm-sequence', def.label, { x: 0, y: 0, z: 0 }, 0, options.archetype, options.southpaw,
     );
     this.setFortitude(options.fortitude);
-    this.body = new LiveCombatant(app, registry, this.health, options.backupSidearm, options.player);
+    this.body = new LiveCombatant(app, registry, this.health, options.backupSidearm, () => this.player());
+  }
+
+  /** The stand-in's eye: where a STAND_IN step moved it, else where the panel puts it. */
+  public player(): Vec3Like {
+    return this.standInOverride ? standInPosition(this.standInOverride) : this.options.player();
   }
 
   /** Overrides the rolled fortitude; AUTO clears it so the next step rolls it from the resolve profile. */
@@ -74,16 +81,31 @@ export class WoundSequencePreview {
     const hs = this.health;
     const r = hs.activeReaction;
     const reaction = r.type === 'NONE' ? 'no reaction' : `${r.type} ${r.timerS.toFixed(2)}/${r.durationS.toFixed(2)} s`;
-    const body = hs.isRagdollActive ? hs.ragdollPhase.kind : 'ANIMATED';
+    const dying = hs.dying && !hs.isRagdollActive
+      ? `DYING ${hs.dying.clip} ${hs.dying.timerS.toFixed(2)}/${hs.dying.durationS.toFixed(2)} s`
+      : null;
+    const body = dying ?? (hs.isRagdollActive ? hs.ragdollPhase.kind : 'ANIMATED');
     const hp = Math.round((hs.currentHp / hs.maxHp) * 100);
     const t = this.sequenceTimeS;
     const last = this.log.length ? this.log[this.log.length - 1] : 'standing ready';
     return [
       `${this.def.label} · t ${t >= 0 ? '+' : ''}${t.toFixed(2)} s · ${last}`,
-      `${reaction} · clip ${this.activeClip}`,
+      `${reaction} · clip ${this.activeClip}${this.seatedLine}`,
       `${hs.alive ? hs.posture : 'DEAD'} · ${body} · HP ${hp} % · ${this.body.armamentKind} · ${hs.combatantStatusTag ?? 'no tag'}`,
       this.body.woundedStatusLine,
     ].join('\n');
+  }
+
+  /**
+   * The seated last-stand clip asked for, when the body sits on the floor. Until the seated clips
+   * are baked the body holds its fall clip, so this says which one it is waiting for.
+   */
+  private get seatedLine(): string {
+    const seated = this.body.mannequin.seatedClip;
+    if (!seated) return '';
+    const name = `${seated.clip}${seated.southpaw ? '_Southpaw' : ''}`;
+    const baked = this.body.mannequin.combatantGlb?.availableClips.has(seated.clip) ?? false;
+    return ` · seated ${seated.stage.toLowerCase()}: ${name}${baked ? '' : ' (not baked, holding fall)'}`;
   }
 
   public update(dt: number): void {
@@ -96,8 +118,10 @@ export class WoundSequencePreview {
     const steps = this.def.steps;
     while (this.nextStep < steps.length && this.sequenceTimeS >= steps[this.nextStep].atS) {
       const due = steps[this.nextStep++];
+      if (due.hit.kind === 'STAND_IN') this.standInOverride = due.hit.to;
       if (!this.health.alive) continue;
-      this.log.push(`+${due.atS.toFixed(1)} s ${applySequenceHit(this.health, due.hit)}`);
+      const line = due.hit.kind === 'ACT' ? this.body.act(due.hit.act) : applySequenceHit(this.health, due.hit);
+      this.log.push(`+${due.atS.toFixed(1)} s ${line}`);
     }
   }
 

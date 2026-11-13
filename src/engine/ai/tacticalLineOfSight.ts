@@ -2,6 +2,7 @@ import type { TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts'
 import { length, scale, sub } from '../../core/ballistics/vec3.ts';
 import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
 import type { EnemyAiAgentRuntime } from './tacticalAiTypes.ts';
+import { isSeatedAnimated } from '../../core/ballistics/triage/seatedLastStand.ts';
 
 export function isSightBlockedBySolidCover(
   eyeOrigin: Vec3Like,
@@ -36,7 +37,8 @@ export function resolveExposedPlayerAimPoint(
   rapierWorld: RapierPhysicsWorld | null,
   isLineOfSightBlockedCallback?: (from: Vec3Like, to: Vec3Like) => boolean
 ): Vec3Like | null {
-  const isGroundedOrDowned = agent.state === 'DOWNED_CRAWLING' || hs.isRagdollActive;
+  // A seated last stand shoots and looks from the floor, like a crawler, not from standing height.
+  const isGroundedOrDowned = agent.state === 'DOWNED_CRAWLING' || hs.isRagdollActive || isSeatedAnimated(hs);
   const basePos = hs.isRagdollActive
     ? hs.ragdollBones.TORSO_UPPER_THORAX?.position ?? hs.worldPosition
     : hs.worldPosition;

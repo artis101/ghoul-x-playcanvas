@@ -71,7 +71,7 @@ export function evaluateJointDismemberment(
   newlySeveredZones: GhoulZoneId[],
   dismembermentEvents: DismembermentEvent[],
   combatantEffectsSet: Set<string>,
-  rng: () => number = Math.random
+  rng: () => number
 ): { weaponDisarmed: boolean } {
   let weaponDisarmed = false;
 
@@ -250,15 +250,15 @@ export function evaluateJointDismemberment(
       const hierNode = GHOUL_ZONE_HIERARCHY[zone];
       const zoneImpulse = zoneImpulses[zone] || scale(blastDir, 22);
       const limbSpeed = Math.min(11.0, Math.max(3.8, length(zoneImpulse) / (hierNode.defaultMassKg + 1.1)));
-      const upwardLift = zone === 'NECK_CERVICAL' ? 2.75 + Math.random() * 1.1 : 1.6 + Math.random() * 1.4;
+      const upwardLift = zone === 'NECK_CERVICAL' ? 2.75 + rng() * 1.1 : 1.6 + rng() * 1.4;
       const limbVelocity = add(
         scale(blastDir, zone === 'NECK_CERVICAL' ? Math.min(8.5, limbSpeed) : limbSpeed),
-        vec3((Math.random() - 0.5) * 1.4, upwardLift, (Math.random() - 0.5) * 1.4)
+        vec3((rng() - 0.5) * 1.4, upwardLift, (rng() - 0.5) * 1.4)
       );
       const limbSpin =
         zone === 'NECK_CERVICAL'
-          ? vec3(8.5, (Math.random() - 0.5) * 10, -6.5)
-          : vec3((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8);
+          ? vec3(8.5, (rng() - 0.5) * 10, -6.5)
+          : vec3((rng() - 0.5) * 8, (rng() - 0.5) * 8, (rng() - 0.5) * 8);
 
       const parentZone = hierNode.parent;
       const sprayDir = parentZone

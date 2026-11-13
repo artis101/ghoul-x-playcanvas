@@ -11,7 +11,15 @@ import { applyWoundsAndDecals } from './woundDecalApplicator.ts';
 import { mixSeed } from '../../random/seededRng.ts';
 import { applyDismembermentTree } from './dismembermentTreeApplicator.ts';
 import { applySurvivingReaction } from './reactionAgonyApplicator.ts';
+import { applyHitDisarmRules } from './hitDisarmPass.ts';
 import { applyRagdollActivationAndImpulses } from './ragdollImpulseApplicator.ts';
+import {
+  isDyingAnimated,
+  isKnockdownBlow,
+  joltDyingBody,
+  planShotDeath,
+  startDeathAnimation,
+} from '../lifecycle/deathAnimation.ts';
 
 /**
  * Applies the shot simulation report to TargetHealthState:
@@ -29,8 +37,14 @@ export function applyShotReportToTarget(
   }
 
   const wasAlreadyRagdoll = target.isRagdollActive;
+  const wasDying = isDyingAnimated(target);
+  // A body killed on its feet plays a death clip instead of dropping into the ragdoll; decided from
+  // the state before the shot (deathAnimation.ts).
+  const deathClip = target.alive ? planShotDeath(target, report) : null;
+  // The plan's ragdoll, unless the body is dying on its feet (checked again once the shot is applied).
+  const plannedRagdoll = report.ragdollPlan.willEnableRagdoll && !wasDying;
 
-  const { rightLegShotEnergyJ, leftLegShotEnergyJ } = applyWoundsAndDecals(target, report);
+  const { rightLegShotEnergyJ, leftLegShotEnergyJ, shatteredArmSides } = applyWoundsAndDecals(target, report);
 
   if (rightLegShotEnergyJ >= 85.0) target.rightLegFunctional = false;
   if (leftLegShotEnergyJ >= 85.0) target.leftLegFunctional = false;
@@ -40,27 +54,29 @@ export function applyShotReportToTarget(
     target.heartRateBpm = Math.min(168, target.heartRateBpm + 32);
   } else {
     transitionTargetLifecycle(target, { kind: 'LETHAL_DEATH' });
-    if (!target.isRagdollActive && !report.ragdollPlan.willEnableRagdoll) {
-      transitionTargetLifecycle(target, {
-        kind: 'ACTIVATE_RAGDOLL',
-        isOverkillCorpseHit: false,
-      });
-      stabilizeRagdollPoseForTransition(target, 0.0);
-    }
+    settleFreshCorpse(target, deathClip, wasDying, plannedRagdoll);
   }
 
   const newlySevered = applyDismembermentTree(target, report);
-  if (!target.alive && !target.isRagdollActive && !report.ragdollPlan.willEnableRagdoll) {
-    // Killed by the limbs it lost: it falls rather than standing on as a corpse.
-    transitionTargetLifecycle(target, { kind: 'ACTIVATE_RAGDOLL', isOverkillCorpseHit: false });
-    stabilizeRagdollPoseForTransition(target, 0.0);
-  }
+  // Killed by the limbs it lost: it goes down rather than standing on as a corpse.
+  if (!target.alive) settleFreshCorpse(target, deathClip, wasDying, plannedRagdoll);
 
   if (target.alive) {
+    // Before the reaction, so an arm flinch that loses the gun plays as DISARMED.
+    applyHitDisarmRules(target, report, shatteredArmSides);
     applySurvivingReaction(target, report, newlySevered);
   }
 
-  applyRagdollActivationAndImpulses(target, report, wasAlreadyRagdoll, report.ragdollPlan.primaryHitZone);
+  if (wasDying && isDyingAnimated(target)) {
+    // A hit during the death clip only jolts it; a blast or a heavy blow throws the body at once.
+    if (isKnockdownBlow(report)) {
+      applyRagdollActivationAndImpulses(target, report, false, report.ragdollPlan.primaryHitZone, true);
+    } else {
+      joltDyingBody(target, report.aimDirectionWorld, report.totalEnergyDepositedJ);
+    }
+  } else if (plannedRagdoll && !isDyingAnimated(target)) {
+    applyRagdollActivationAndImpulses(target, report, wasAlreadyRagdoll, report.ragdollPlan.primaryHitZone);
+  }
 
   const hasDismemberment = report.dismembermentEvents.length > 0;
   const hasBoneShatter =
@@ -81,4 +97,24 @@ export function applyShotReportToTarget(
   } else {
     syncTargetLifecycleDerivedState(target);
   }
+}
+
+/**
+ * A body that has just died and is not yet in the ragdoll: it starts its death clip, or, when the
+ * plan has no clip for it and no ragdoll impulse is coming, drops into the ragdoll as it is.
+ */
+function settleFreshCorpse(
+  target: TargetHealthState,
+  deathClip: ReturnType<typeof planShotDeath>,
+  wasDying: boolean,
+  plannedRagdoll: boolean
+): void {
+  if (target.isRagdollActive || wasDying || isDyingAnimated(target)) return;
+  if (deathClip) {
+    startDeathAnimation(target, deathClip);
+    return;
+  }
+  if (plannedRagdoll) return;
+  transitionTargetLifecycle(target, { kind: 'ACTIVATE_RAGDOLL', isOverkillCorpseHit: false });
+  stabilizeRagdollPoseForTransition(target, 0.0);
 }

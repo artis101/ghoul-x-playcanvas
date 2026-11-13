@@ -23,6 +23,8 @@ function woundArm(
   dropChance: number
 ): boolean {
   state.aimSwayMultiplier = Math.min(6.0, Math.max(state.aimSwayMultiplier, sway));
+  // Above the red band, or with only the sidearm left in hand, the arm is fought through.
+  if (state.armOutRollsAllowed === false) return false;
   if (!rollsWeaponDrop(nextPhysiologyRoll(state), dropChance)) return false;
   if (side === 'RIGHT') state.rightArmFunctional = false;
   else state.leftArmFunctional = false;

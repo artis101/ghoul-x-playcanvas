@@ -1,0 +1,5 @@
+[
+ {"name": "death_bleedout", "seed": 171, "samples": 6, "durations": [3.2],
+  "prompts": ["A person standing sways weakly and the head droops, the knees slowly give way and the body sinks onto both knees, then slumps over sideways onto the floor and lies still"],
+  "pins": [{"at": [0, 1], "take": "work/ready_loop.npz", "frames": [0, 1]}]}
+]

@@ -12,7 +12,8 @@ from combatant_blender_scene import save_blend
 from combatant_glb_animation import CombatantGlbAnimation
 from retarget_soma_combatant import CombatantRetarget, load_soma
 
-EXPORT_FPS = 24
+# 20 fps keeps 79 clips inside the 2 MiB GLB budget and suits the late-90s look.
+EXPORT_FPS = 20
 
 # clip, take, first frame, last frame, seconds, cross-fade frames, share of root travel kept.
 # Source frame ranges are 1-based. Looping clips come from second-pass takes whose first pose is
@@ -24,14 +25,18 @@ TAKES = (
     ("PistolAim", "pistol_aim", 1, 39, 1.27, 0, 0),
     ("PistolAimOneHand", "pistol_one_hand", 1, 39, 1.27, 0, 0),
     ("KneelPistolAimOneHand", "kneel_pistol_one_hand", 1, 42, 1.37, 0, 0),
-    ("HitStaggerChest", "hit_chest", 1, 45, 1.47, 0, 0.28),
-    ("HitFlinchHead", "hit_head", 1, 45, 1.47, 0, 0.28),
-    ("HitFlinchGut", "hit_gut", 1, 48, 1.57, 0, 0.28),
-    ("HitFlinchThroat", "hit_throat", 1, 51, 1.67, 0, 0.28),
-    ("HitFlinchArmRight", "hit_arm_r", 1, 42, 1.37, 0, 0.28),
-    ("HitFlinchArmLeft", "hit_arm_l", 1, 42, 1.37, 0, 0.28),
-    ("HitFlinchLegRight", "hit_leg_r", 1, 45, 1.47, 0, 0.28),
-    ("HitFlinchLegLeft", "hit_leg_l", 1, 45, 1.47, 0, 0.28),
+    # One-handed carry (other forearm tucked to the chest); the raise clips hold their last frame
+    # as the aim, so no separate aim loops are needed.
+    ("PistolOneHandHold", "pistol1_hold", 55, 81, 0.87, 4, 0),
+    # Hit flinches play at twice the take's speed: a hit should snap, then hand the gun back fast.
+    ("HitStaggerChest", "hit_chest", 1, 45, 0.735, 0, 0),
+    ("HitFlinchHead", "hit_head", 1, 45, 0.735, 0, 0),
+    ("HitFlinchGut", "hit_gut", 1, 48, 0.785, 0, 0),
+    ("HitFlinchThroat", "hit_throat", 1, 51, 0.835, 0, 0),
+    ("HitFlinchArmRight", "hit_arm_r", 1, 42, 0.685, 0, 0),
+    ("HitFlinchArmLeft", "hit_arm_l", 1, 42, 0.685, 0, 0),
+    ("HitFlinchLegRight", "hit_leg_r", 1, 45, 0.735, 0, 0),
+    ("HitFlinchLegLeft", "hit_leg_l", 1, 45, 0.735, 0, 0),
     ("LegShotFallRight", "legshot_fall_r", 1, 72, 2.37, 0, 0.5),
     ("LegShotFallLeft", "legshot_fall_r", 1, 72, 2.37, 0, 0.5),
     # A lost leg: lift into a one-leg stance, hop in place (two hops cut from a free hop take,
@@ -50,9 +55,34 @@ TAKES = (
     ("StumpKneelRight", "stump_kneel_r", 1, 48, 1.57, 0, 0.3),
     ("StumpKneelLeft", "stump_kneel_r", 1, 48, 1.57, 0, 0.3),
     ("SitToCrawl", "sit_to_crawl", 1, 60, 1.97, 0, 0),
+    # Seated last stand: the draw, then an aim loop or an agony loop, each cut from a free take.
+    ("SeatedPistolDraw", "seated_draw", 1, 48, 1.57, 0, 0),
+    # The held aim is the end of the draw itself, so the two join; sway gives it life in game.
+    ("SeatedPistolAim", "seated_draw", 40, 48, 0.8, 4, 0),
+    ("SeatedAgony", "seated_agony", 49, 79, 1.0, 4, 0),
+    # Clips that replace procedural poses (docs/procedural-animation-audit.md).
+    ("HurtIdle", "hurt_idle", 31, 61, 1.0, 4, 0),
+    ("HurtWalk", "hurt_walk", 39, 79, 1.33, 4, 0),
+    ("UnarmedIdle", "unarmed_idle", 6, 46, 1.33, 6, 0),
+    ("UnarmedWalk", "unarmed_walk", 6, 39, 1.1, 4, 0),
+    ("UnarmedRun", "unarmed_run", 5, 27, 0.73, 4, 0),
+    ("PickupWeapon", "pickup_weapon", 1, 42, 1.37, 0, 0.3),
+    ("PistolDraw", "pistol_draw", 1, 48, 1.57, 0, 0),
+    ("StumpDrawRight", "stump_draw_r", 1, 60, 1.97, 0, 0),
+    ("StumpDrawLeft", "stump_draw_r", 1, 60, 1.97, 0, 0),
+    ("KneelStumpDrawRight", "kneel_stump_draw_r", 1, 54, 1.77, 0, 0),
+    ("KneelStumpDrawLeft", "kneel_stump_draw_r", 1, 54, 1.77, 0, 0),
+    ("CrawlDragLegRight", "crawl_drag_r", 13, 53, 1.33, 4, 0),
+    ("CrawlDragLegLeft", "crawl_drag_r", 13, 53, 1.33, 4, 0),
     ("DownedCollapse", "downed_collapse", 1, 72, 2.37, 0, 0.5),
-    ("DiaphragmDropKneel", "kneel", 6, 115, 1.8, 0, 0.32),
-    ("LegCollapseCrawl", "crawl", 12, 113, 2.0, 0, 0.38),
+    # Deaths. A clean kill drops fast, so the shot deaths play about 1.6x the take's speed; the
+    # corpse ragdoll takes over from the last frame. The gun is dropped, so there are no twins.
+    ("DeathFallBack", "death_back", 1, 72, 1.5, 0, 0.5),
+    ("DeathFallForward", "death_forward", 1, 72, 1.5, 0, 0.5),
+    ("DeathCrumple", "death_crumple", 1, 48, 1.0, 0, 0.3),
+    ("DeathSpin", "death_spin", 1, 66, 1.37, 0, 0.5),
+    # Running out of health on the feet is slow: sway, knees, slump. It plays at the take's speed.
+    ("DeathBleedOut", "death_bleedout", 1, 96, 3.17, 0, 0.5),
     ("Crawl", "crawl_loop", 1, 69, 2.27, 0, 0),
     ("Walk", "walk_loop", 1, 31, 1.0, 0, 0),
     ("Run", "run_loop", 1, 26, 0.83, 0, 0),
@@ -84,14 +114,39 @@ SIDED = {
     "StumpKneelRight": ("stump_kneel_r", False, None),
     "StumpKneelLeft": ("stump_kneel_r", True, None),
     "SitToCrawl": ("sit_to_crawl", False, None),
+    # No gun in the hands, so nothing to mirror for a left-handed body.
+    "UnarmedIdle": ("unarmed_idle", False, None),
+    "UnarmedWalk": ("unarmed_walk", False, None),
+    "UnarmedRun": ("unarmed_run", False, None),
+    "StumpDrawRight": ("stump_draw_r", False, None),
+    "StumpDrawLeft": ("stump_draw_r", True, None),
+    "KneelStumpDrawRight": ("kneel_stump_draw_r", False, None),
+    "KneelStumpDrawLeft": ("kneel_stump_draw_r", True, None),
+    "CrawlDragLegRight": ("crawl_drag_r", False, None),
+    "CrawlDragLegLeft": ("crawl_drag_r", True, None),
     "DownedCollapse": ("downed_collapse", False, None),
+    "DeathFallBack": ("death_back", False, None),
+    "DeathFallForward": ("death_forward", False, None),
+    "DeathCrumple": ("death_crumple", False, None),
+    "DeathSpin": ("death_spin", False, None),
+    "DeathBleedOut": ("death_bleedout", False, None),
+}
+
+# Seated aims whose gun arm Kimodo leaves pointing at the floor: (degrees the upper arm is lifted,
+# share of the clip where the lift starts, share where it is complete). The draw ends on its most
+# extended frame and lifts the arm as it comes forward; the aim loop is lifted throughout.
+ARM_LIFT = {
+    "SeatedPistolDraw": (30.0, 0.55, 1.0),
+    "SeatedPistolAim": (30.0, 0.0, 0.0),
 }
 
 # Takes whose body faces the floor; their heading comes from the direction they travel.
-PRONE = {"Crawl"}
+PRONE = {"Crawl", "CrawlDragLegRight", "CrawlDragLegLeft"}
 
 LOOPING = {"CombatReadyIdle", "UnsuspectingIdle", "Crawl", "Walk", "Run", "StrafeLeft", "StrafeRight",
-           "StumpClutchRight", "StumpClutchLeft", "OneLegHopRight", "OneLegHopLeft"}
+           "StumpClutchRight", "StumpClutchLeft", "OneLegHopRight", "OneLegHopLeft", "SeatedPistolAim",
+           "SeatedAgony", "PistolOneHandHold", "HurtIdle", "HurtWalk", "UnarmedIdle", "UnarmedWalk", "UnarmedRun",
+           "CrawlDragLegRight", "CrawlDragLegLeft"}
 # A looping clip must end in its opening pose to within these limits.
 MAX_SEAM_DEGREES = 1.5
 MAX_SEAM_METRES = 0.01
@@ -119,6 +174,17 @@ def blend_loop(frames, length):
             frame[key] = blend(first[key], weight)
 
 
+def arm_lift(clip, t):
+    """Degrees the gun arm is lifted at share `t` of the clip (see ARM_LIFT)."""
+    if clip not in ARM_LIFT:
+        return 0.0
+    degrees, begin, full = ARM_LIFT[clip]
+    if full <= begin:
+        return degrees
+    ramp = min(1.0, max(0.0, (t - begin) / (full - begin)))
+    return degrees * ramp * ramp * (3 - 2 * ramp)
+
+
 def clip_variants(clip, take):
     """(name, take, mirrored) for each baked version of a clip.
 
@@ -142,13 +208,15 @@ def build_clips(glb, motion):
     for clip, take, start, end, duration, loop, xz_scale in TAKES:
         count = round(duration * EXPORT_FPS)
         times = [index / EXPORT_FPS for index in range(count + 1)]
-        traveling = clip in {"Walk", "Run"} or clip.startswith("Strafe")
+        traveling = clip in {"Walk", "Run", "HurtWalk", "UnarmedWalk", "UnarmedRun"} or clip.startswith("Strafe")
         for name, source_take, mirror in clip_variants(clip, take):
             if source_take not in sources:
                 sources[source_take] = load_soma(motion / (source_take + ".bvh"))
             source = sources[source_take]
             retarget = CombatantRetarget(glb, source, start, mirror, end if clip in PRONE else None)
-            frames = [retarget.sample(start + (end - start) * index / count, traveling, xz_scale)
+            arm = "Bone_UPPER_ARM_" + ("LEFT" if mirror else "RIGHT")
+            frames = [retarget.sample(start + (end - start) * index / count, traveling, xz_scale,
+                                      (arm, arm_lift(clip, index / count)))
                       for index in range(count + 1)]
             if loop:
                 blend_loop(frames, round(loop * EXPORT_FPS / 30))

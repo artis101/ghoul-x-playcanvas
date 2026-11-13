@@ -20,9 +20,11 @@ export function applyRagdollActivationAndImpulses(
   target: TargetHealthState,
   report: ShotSimulationReport,
   wasAlreadyRagdoll: boolean,
-  hitZone: GhoulZoneId | null
+  hitZone: GhoulZoneId | null,
+  /** Ragdoll even when the plan did not ask for it: a blast or heavy hit on a body in its death clip. */
+  force = false
 ): void {
-  if (!report.ragdollPlan.willEnableRagdoll) return;
+  if (!report.ragdollPlan.willEnableRagdoll && !force) return;
 
   const isOverkillCorpseHit = wasAlreadyRagdoll && !target.alive;
   transitionTargetLifecycle(target, {

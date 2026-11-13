@@ -31,6 +31,13 @@ export const WOUND_CLIP_SECONDS = {
 export const STUMP_KNEEL_S = 1.57;
 export const SIT_TO_CRAWL_S = 1.97;
 
+/**
+ * A seated last-stander's draw (`SeatedPistolDraw`): it leans back on its off hand, reaches the hip,
+ * draws and raises the pistol. Slower than the 0.6 s standing draw because the whole body has to
+ * shift its weight first. Keep in step with the take's length once it is baked.
+ */
+export const SEATED_DRAW_S = 2.0;
+
 /** Clutching the stump lasts this long with no fortitude at all... */
 export const CLUTCH_MAX_S = 2.5;
 /** ...and this long at full fortitude: the gritty let go of the wound sooner. */

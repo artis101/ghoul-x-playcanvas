@@ -3,6 +3,7 @@ import type { GhoulZoneId } from '../../contracts/ballistics.ts';
 import { ALL_GHOUL_ZONES } from '../../core/ghoul/anatomy.ts';
 import type { BoneBindPose, CombatantAnimationClipName, CombatantGlbInstance } from './glbTypes.ts';
 import { findEntityByName, upgradeEntityHierarchyPbr } from './materialUpgrade.ts';
+import { addUpperBodyLayer } from '../mannequin/combatantUpperBodyLayer.ts';
 
 export { instantiateDetachedHeadgearProp } from './headgearFactory.ts';
 
@@ -11,6 +12,14 @@ const LOOPING_COMBATANT_CLIPS = new Set([
   // A one-legged body hops in place until it falls; the stump clutch holds a lost arm to the
   // chest for as long as the combatant has no gun.
   'OneLegHopRight', 'OneLegHopLeft', 'StumpClutchRight', 'StumpClutchLeft',
+  // A seated last stand holds its pistol out, or rocks in pain, for as long as it stays down.
+  'SeatedPistolAim', 'SeatedAgony',
+  // Hurt and empty-handed bodies stand, walk and run in these for as long as they last.
+  'HurtIdle', 'HurtWalk', 'UnarmedIdle', 'UnarmedWalk', 'UnarmedRun',
+  // A crawler with a useless leg drags it for as long as it crawls.
+  'CrawlDragLegRight', 'CrawlDragLegLeft',
+  // A pistol carried in one hand, the other forearm tucked to the chest.
+  'PistolOneHandHold',
 ]);
 
 /** Skin page materials in the combatant GLB are named `Mat_Skin_<archetype id>`. */
@@ -127,16 +136,21 @@ export function instantiateCombatantGlb(
 
   if (container.animations && container.animations.length > 0 && app.systems?.anim) {
     animComponent = rootEntity.addComponent('anim', { activate: true }) as pc.AnimComponent;
+    const tracks = new Map<string, pc.AnimTrack>();
     for (const animAsset of container.animations) {
-      const track = animAsset.resource;
+      const track = animAsset.resource as pc.AnimTrack | undefined;
       if (!track) continue;
       const clipName = track.name || animAsset.name;
       animComponent.assignAnimation(clipName, track, undefined, 1.0, isLoopingClip(clipName));
       availableClips.add(clipName);
+      tracks.set(clipName, track);
     }
     const baseClip = options?.initialClip ?? 'CombatReadyIdle';
     const resolved = options?.southpaw && availableClips.has(`${baseClip}_Southpaw`) ? `${baseClip}_Southpaw` : baseClip;
     if (availableClips.has(resolved) && animComponent.baseLayer) animComponent.baseLayer.transition(resolved, 0);
+    // The aim and carry clips also go on a second layer masked to the upper body, so a walking
+    // body can hold its gun up (combatantUpperBodyLayer.ts).
+    addUpperBodyLayer(animComponent, rootEntity, tracks, isLoopingClip);
   }
 
   return {

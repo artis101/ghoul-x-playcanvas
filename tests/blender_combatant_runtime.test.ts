@@ -16,12 +16,15 @@ import {
   ALL_GHOUL_ZONES,
   createTargetHealthState,
   LEFT_HANDED_PROBABILITY,
-  updateStandingCombatPose,
 } from '../src/core/ghoul/anatomy.ts';
+import { supportSide, triggerSide } from '../src/core/ghoul/anatomy/handedness.ts';
 import { COMBATANT_ANIMATION_CLIPS, COMBATANT_SIDED_CLIPS, GlbModelRegistry } from '../src/engine/assets/glbLoader.ts';
 import { GoreAndBallisticsFxManager } from '../src/engine/goreFx.ts';
 import { GhoulMannequinEntity } from '../src/engine/mannequin.ts';
 import { getOrCreateMaterials } from '../src/engine/materials.ts';
+import { startDeathAnimation } from '../src/core/ballistics/lifecycle/deathAnimation.ts';
+import { handDeathClipToRagdoll } from '../src/core/ballistics/lifecycle/deathAnimationStep.ts';
+import { transitionTargetLifecycle } from '../src/core/ballistics/lifecycle/targetLifecycleFsm.ts';
 
 describe('Blender combatant runtime', () => {
   it('enforces ~87.5% right-handed / 12.5% southpaw probability, handedness-aware wound clutching, and trigger-hand disarm', () => {
@@ -49,17 +52,13 @@ describe('Blender combatant runtime', () => {
     expect(rhTarget.isLeftHanded).toBe(false);
     expect(lhTarget.isLeftHanded).toBe(true);
 
-    rhTarget.posture = 'THROAT_CLUTCH';
-    lhTarget.posture = 'THROAT_CLUTCH';
-    updateStandingCombatPose(rhTarget, 1.0);
-    updateStandingCombatPose(lhTarget, 1.0);
-
-    // Facing +Z: a right-hander holds the gun in HAND_RIGHT (-X) and clutches the throat with HAND_LEFT (+X);
-    // a southpaw holds the gun in HAND_LEFT (+X) and clutches the throat with HAND_RIGHT (-X).
-    expect(rhTarget.ragdollBones.HAND_LEFT.position.y).toBeGreaterThan(1.48);
-    expect(rhTarget.ragdollBones.HAND_RIGHT.position.y).toBeLessThan(1.38);
-    expect(lhTarget.ragdollBones.HAND_RIGHT.position.y).toBeGreaterThan(1.48);
-    expect(lhTarget.ragdollBones.HAND_LEFT.position.y).toBeLessThan(1.38);
+    // The throat clutch itself is the HitFlinchThroat clip (and its _Southpaw twin for a
+    // left-hander); the old proxy skeleton that raised a hand procedurally is gone. What stays
+    // checkable without the GLB is which hand holds the gun and which is free to clutch.
+    expect(triggerSide(rhTarget.isLeftHanded)).toBe('RIGHT');
+    expect(supportSide(rhTarget.isLeftHanded)).toBe('LEFT');
+    expect(triggerSide(lhTarget.isLeftHanded)).toBe('LEFT');
+    expect(supportSide(lhTarget.isLeftHanded)).toBe('RIGHT');
 
     // Trigger-hand disarm: moderate ~190 J pistol round into HAND_RIGHT disarms right-handed (trigger hand)
     // without severing, leaving southpaw (whose trigger hand is HAND_LEFT) still holding their weapon!
@@ -74,6 +73,9 @@ describe('Blender combatant runtime', () => {
     };
     const rhDisarmTest = createTargetHealthState('rh_disarm', 'RH', vec3(0, 0, -4), 0, 'SKINHEAD_PUNK', false);
     const lhDisarmTest = createTargetHealthState('lh_disarm', 'LH', vec3(0, 0, -4), 0, 'SKINHEAD_PUNK', true);
+    // A grip-hand hit only costs the gun once the health bar is red (hitDisarmPolicy.ts).
+    rhDisarmTest.currentHp = rhDisarmTest.maxHp * 0.3;
+    lhDisarmTest.currentHp = lhDisarmTest.maxHp * 0.3;
 
     const handRightTargetPt = rhDisarmTest.ragdollBones.HAND_RIGHT.position;
     const muzzleRightOrigin = add(handRightTargetPt, vec3(0, 0, 1.2));
@@ -388,6 +390,45 @@ describe('Blender combatant runtime', () => {
       const glbSeveredThighPos = mannequin.combatantGlb!.boneNodes.get('THIGH_RIGHT')!.getPosition();
       expect(glbSeveredThighPos.x).toBeCloseTo(-3.2, 2);
 
+      // Phase 5: killed on its feet. The death clip plays on the animated body (hitboxes follow it),
+      // the rifle drops at once, and the corpse ragdoll takes over when the clip ends.
+      const gunnerState = createTargetHealthState('dying_gunner', 'Gunner', vec3(3, 0, -6), 0, 'MILITIA_GUNNER', false);
+      const gunner = new GhoulMannequinEntity(app, gunnerState, materials, fxManager, glbRegistry);
+      app.root.addChild(gunner.rootEntity);
+      expect(gunner.heldWeaponEntity).not.toBeNull();
+      transitionTargetLifecycle(gunnerState, { kind: 'LETHAL_DEATH' });
+      startDeathAnimation(gunnerState, 'DeathFallBack');
+      gunner.syncFromHealthState(0.016, 2);
+      expect(gunner.driveMode).toBe('ANIM_DYING');
+      expect(gunner.combatantGlb!.animComponent!.playing).toBe(true);
+      expect(gunner.combatantGlb!.animComponent!.baseLayer!.activeState).toBe('DeathFallBack');
+      expect(gunnerState.poseFromAnimation).toBe(true);
+      expect(gunner.heldWeaponEntity).toBeNull();
+      handDeathClipToRagdoll(gunnerState, 0);
+      gunner.syncFromHealthState(0.016, 3.5);
+      expect(gunner.driveMode).toBe('FULL_RAGDOLL');
+      expect(gunner.combatantGlb!.animComponent!.playing).toBe(false);
+      expect(gunnerState.poseFromAnimation).toBe(false);
+
+      // Phase 6: the Desert Eagle. Two arms: the shared carry and the two-handed aim. The support arm
+      // out of action: carried low in one hand, aimed with the arm out, never a hand on a forend.
+      const punkState = createTargetHealthState('deagle_punk', 'Punk', vec3(-3, 0, -6), 0, 'SKINHEAD_PUNK', false);
+      const punk = new GhoulMannequinEntity(app, punkState, materials, fxManager, glbRegistry);
+      app.root.addChild(punk.rootEntity);
+      const punkClip = () => punk.combatantGlb!.animComponent!.baseLayer!.activeState;
+      expect(punkClip()).toBe('CombatReadyIdle');
+      punk.syncFromHealthState(0.016, 0.1, false, { clip: 'PistolAim' });
+      expect(punkClip()).toBe('PistolAim');
+      expect(punk.heldWeaponEntity).not.toBeNull();
+      punkState.leftArmFunctional = false;
+      punk.syncFromHealthState(0.016, 0.2);
+      expect(punkClip()).toBe('PistolOneHandHold');
+      punk.syncFromHealthState(0.016, 0.3, false, { clip: 'PistolAimOneHand' });
+      expect(punkClip()).toBe('PistolAimOneHand');
+      expect(punk.heldWeaponEntity).not.toBeNull();
+
+      gunner.destroy();
+      punk.destroy();
       southpawMannequin.destroy();
       mannequin.destroy();
       fxManager.clearAll();

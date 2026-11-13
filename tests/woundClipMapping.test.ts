@@ -6,12 +6,11 @@ import { vec3 } from '../src/core/ballistics/vec3.ts';
 import { isArmDeadButAttached } from '../src/core/ghoul/anatomy/deadArmVerlet.ts';
 import {
   createProceduralTraumaTracker,
-  stepProceduralTraumaIk,
+  stepHitJolt,
   type WoundClipOwner,
 } from '../src/core/ghoul/anatomy/proceduralTraumaIk.ts';
 import { COMBATANT_ANIMATION_CLIPS, COMBATANT_SIDED_CLIPS, isLoopingClip } from '../src/engine/assets/glbLoader.ts';
 import { CombatantAnimController } from '../src/engine/mannequin/combatantAnimController.ts';
-import { resolveWeaponHoldStance } from '../src/engine/mannequin/combatantWeaponStance.ts';
 import { pistolAimClip, woundClipChain, woundClipChainAt } from '../src/engine/mannequin/combatantWoundClips.ts';
 import { LEG_LOSS_PHASE_SECONDS, SIT_TO_CRAWL_S } from '../src/core/ballistics/trauma/woundReactionTimings.ts';
 import { sidearmAimClip } from '../src/engine/mannequin/combatantWoundedPhaseClips.ts';
@@ -60,13 +59,13 @@ describe('wound reaction to clip mapping', () => {
     }
   });
 
-  it('falls back to the stagger or the old collapse while the wound takes are not baked', () => {
+  it('falls back to the stagger or the sit-down collapse while the wound takes are not baked', () => {
     const controller = new CombatantAnimController();
     const state = makeState();
     const cases: Array<[PainReactionType, string]> = [
       ['HEAD_SNAP', 'HitStaggerChest'], ['LEG_FLINCH_LEFT', 'HitStaggerChest'], ['ARM_LOST_RIGHT', 'HitStaggerChest'],
-      ['LEG_BUCKLE_RIGHT', 'LegCollapseCrawl'], ['LEG_LOST_LEFT', 'LegCollapseCrawl'],
-      ['DOWNED_COLLAPSE', 'LegCollapseCrawl'],
+      ['LEG_BUCKLE_RIGHT', 'DownedCollapse'], ['LEG_LOST_LEFT', 'DownedCollapse'],
+      ['DOWNED_COLLAPSE', 'DownedCollapse'],
     ];
     for (const [type, clip] of cases) {
       startReaction(state, type, 1);
@@ -106,7 +105,7 @@ describe('leg loss phases', () => {
     expect(at(LIFT + 0.01)).toBe('OneLegHopLeft');
     expect(at(LIFT + HOP - 0.01)).toBe('OneLegHopLeft');
     expect(at(LIFT + HOP + 0.01)).toBe('LegLossFallLeft');
-    expect(woundClipChainAt({ type: 'LEG_LOST_RIGHT', timerS: LIFT + 0.5 })).toEqual(['OneLegHopRight', 'LegCollapseCrawl']);
+    expect(woundClipChainAt({ type: 'LEG_LOST_RIGHT', timerS: LIFT + 0.5 })).toEqual(['OneLegHopRight', 'DownedCollapse']);
     expect(woundClipChainAt({ type: 'GUT_FOLD', timerS: 0.3 })).toEqual(woundClipChain('GUT_FOLD'));
   });
 });
@@ -180,7 +179,6 @@ describe('wound clip playback', () => {
     expect(pistolAimClip(state, 'LEFT')).toBe('PistolAimOneHand');
     controller.syncAnimation(glb, state, false, undefined, { clip: 'PistolAimOneHand', hand: 'LEFT' });
     expect(playClip).toHaveBeenLastCalledWith('PistolAimOneHand', 0.12, 1, true);
-    expect(resolveWeaponHoldStance('silver_talon_50ae', 'PistolAimOneHand_Southpaw', false)).toBe('PISTOL_AIM');
 
     // Before the one-handed aim is baked, the two-handed pistol aim stands in for it.
     const old = makeGlb(OLD_GLB_CLIPS);
@@ -201,37 +199,23 @@ describe('procedural overlays step back for wound clips', () => {
     expect(isArmDeadButAttached(state, 'RIGHT', false)).toBe(true);
   });
 
-  it('scales the hit jolt down under a wound clip and drops the prop-up and clutch', () => {
-    const shoulders = { RIGHT: vec3(-0.2, 1.4, 0), LEFT: vec3(0.2, 1.4, 0) };
-    const elbows = { RIGHT: vec3(-0.22, 1.12, 0), LEFT: vec3(0.22, 1.12, 0) };
-    const wrists = { RIGHT: vec3(-0.2, 0.88, 0.1), LEFT: vec3(0.2, 0.88, 0.1) };
-    const kick = (woundClip: WoundClipOwner): number => {
+  it('plays the hit jolt in full with no wound clip and not at all under a wound, fall or seated clip', () => {
+    const kick = (woundClip: WoundClipOwner, bodyClip = false): number => {
       // The counter is absent until the first hit, which must still jolt.
       const state = makeState();
       const tracker = createProceduralTraumaTracker();
-      stepProceduralTraumaIk(state, tracker, 0, shoulders, elbows, wrists, { woundClip });
+      stepHitJolt(state, tracker, 0, { woundClip, bodyClip });
       state.joltEpoch = 1;
       state.activeReaction.hitDirectionWorld = vec3(0, 0, 1);
       state.activeReaction.intensity = 1;
-      stepProceduralTraumaIk(state, tracker, 0, shoulders, elbows, wrists, { woundClip });
+      stepHitJolt(state, tracker, 0, { woundClip, bodyClip });
       return Math.abs(tracker.joltVelPitch);
     };
-    const full = kick(null);
-    expect(full).toBeGreaterThan(0);
-    expect(kick('FLINCH')).toBeCloseTo(full * 0.35);
-    expect(kick('COMMITTED')).toBeCloseTo(full * 0.25);
-
-    const state = makeState();
-    state.posture = 'LEG_BUCKLED';
-    state.rightLegFunctional = false;
-    state.activeReaction.type = 'GUT_FOLD';
-    const tracker = createProceduralTraumaTracker();
-    let out = stepProceduralTraumaIk(state, tracker, 1 / 60, shoulders, elbows, wrists, { woundClip: 'COMMITTED' });
-    for (let i = 0; i < 20; i++) {
-      out = stepProceduralTraumaIk(state, tracker, 1 / 60, shoulders, elbows, wrists, { woundClip: 'COMMITTED' });
-    }
-    expect(tracker.propUpBlend).toBeLessThan(1e-3);
-    expect(out.clutchSide).toBeNull();
+    expect(kick(null)).toBeGreaterThan(0);
+    // The clip already shows the hit; a spring on top would only bend the authored pose.
+    expect(kick('FLINCH')).toBe(0);
+    expect(kick('COMMITTED')).toBe(0);
+    expect(kick(null, true)).toBe(0);
   });
 });
 
@@ -242,7 +226,7 @@ describe('wounded sequence phases to clips', () => {
   }
   const without = (...clips: string[]): ReadonlySet<string> => new Set([...ALL_CLIPS].filter((c) => !clips.includes(c)));
 
-  it('clutches the lost arm, then kneels, holds the kneel through the draw, then aims on one knee', () => {
+  it('clutches the lost arm, then kneels, draws on one knee, then aims on one knee', () => {
     const controller = new CombatantAnimController();
     const state = makeState();
     armOff(state);
@@ -260,18 +244,20 @@ describe('wounded sequence phases to clips', () => {
     expect(playClip).toHaveBeenLastCalledWith('StumpKneelLeft', 0.2, 1, false);
     expect(controller.activeWoundClip).toBe('COMMITTED');
 
-    // Drawing: still the kneel clip, never restarted.
+    // Drawing: the kneeling stump draw, started once and never restarted.
     state.woundedPhase = 'KNEEL_FIRE';
     state.combatantStatusTag = 'SIDEARM_DRAWING';
     const aim = { clip: sidearmAimClip(state, 'RIGHT'), hand: 'RIGHT' as const };
     expect(aim.clip).toBe('KneelPistolAimOneHand');
     controller.syncAnimation(glb, state, false, undefined, aim);
-    expect(playClip).toHaveBeenCalledTimes(2);
+    controller.syncAnimation(glb, state, false, undefined, aim);
+    expect(playClip).toHaveBeenCalledTimes(3);
+    expect(playClip).toHaveBeenLastCalledWith('KneelStumpDrawLeft', 0.2, 1, false);
 
     state.combatantStatusTag = 'SIDEARM_DRAWN';
     controller.syncAnimation(glb, state, false, undefined, aim);
     controller.syncAnimation(glb, state, false, undefined, aim);
-    expect(playClip).toHaveBeenCalledTimes(3);
+    expect(playClip).toHaveBeenCalledTimes(4);
     expect(playClip).toHaveBeenLastCalledWith('KneelPistolAimOneHand', 0.2, 1, false);
     expect(controller.activeWoundClip).toBeNull();
 
@@ -281,14 +267,14 @@ describe('wounded sequence phases to clips', () => {
     expect(lefty.playClip).toHaveBeenLastCalledWith('KneelPistolAimOneHand', 0.2, 1, true);
   });
 
-  it('falls back to the old kneel and the standing aims while the new takes are not baked', () => {
+  it('falls back to the standing aims while the kneeling aim is not baked', () => {
     const state = makeState();
     armOff(state);
     state.woundedPhase = 'KNEEL_DOWN';
-    const old = makeGlb(without('StumpKneelLeft', 'StumpKneelRight', 'KneelPistolAimOneHand'));
+    const old = makeGlb(without('KneelPistolAimOneHand'));
     const controller = new CombatantAnimController();
     controller.syncAnimation(old.glb, state);
-    expect(old.playClip).toHaveBeenLastCalledWith('DiaphragmDropKneel', 0.2, 1, false);
+    expect(old.playClip).toHaveBeenLastCalledWith('StumpKneelLeft', 0.2, 1, false);
     expect(controller.activeWoundClip).toBe('COMMITTED');
     state.woundedPhase = 'KNEEL_FIRE';
     state.combatantStatusTag = 'SIDEARM_DRAWN';

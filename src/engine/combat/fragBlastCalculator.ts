@@ -8,6 +8,9 @@ import type {
 } from '../../contracts/ballistics.ts';
 import { add, copyVec3, distance, length, normalize, scale, sub, vec3 } from '../../core/ballistics/vec3.ts';
 import { GHOUL_ZONE_HIERARCHY, getSubtreeZones } from '../../core/ghoul/anatomy.ts';
+import { weakEnoughForKnockdown } from '../../core/ballistics/shot/archetypeToughness.ts';
+import { isSeatedAnimated } from '../../core/ballistics/triage/seatedLastStand.ts';
+import { createSeededRng, hashStringSeed, mixSeed } from '../../core/random/seededRng.ts';
 
 export function buildFragBlastReportForTarget(
   hs: TargetHealthState,
@@ -92,6 +95,8 @@ export function buildFragBlastReportForTarget(
   const dismembermentEvents: DismembermentEvent[] = [];
   const newlySeveredZones: GhoulZoneId[] = [];
 
+  // How the severed parts fly: varied per body and blast, the same on every replay.
+  const rng = createSeededRng(mixSeed(hashStringSeed(hs.targetId), Math.round(distM * 1000)));
   if (distM < 3.4) {
     const candidateLimbs: GhoulZoneId[] = distM < 2.2 ? ['KNEE_RIGHT', 'SHIN_LEFT', 'FOREARM_RIGHT'] : ['SHIN_RIGHT', 'SHIN_LEFT'];
     const maxSevers = distM < 2.2 ? 2 : 1;
@@ -112,8 +117,8 @@ export function buildFragBlastReportForTarget(
         detachedSubtree: subtree,
         stumpWorldPosition: copyVec3(bone.position),
         arterialSprayDirection: scale(limbOut, -1),
-        severedLimbVelocity: scale(limbOut, 5.8 + Math.random() * 2.4),
-        severedLimbAngularVelocity: vec3((Math.random() - 0.5) * 18, (Math.random() - 0.5) * 18, (Math.random() - 0.5) * 18),
+        severedLimbVelocity: scale(limbOut, 5.8 + rng() * 2.4),
+        severedLimbAngularVelocity: vec3((rng() - 0.5) * 18, (rng() - 0.5) * 18, (rng() - 0.5) * 18),
         gibCount: 7,
       });
     }
@@ -134,7 +139,11 @@ export function buildFragBlastReportForTarget(
     }
   }
 
-  const willEnableRagdoll = hs.isRagdollActive || isLethalKill || distM < 5.8;
+  // A close blast only throws a living body down when it leaves it spent (the same low-HP rule
+  // as a bullet knockdown); a fit man rocks and stays up. A seated last-stand shooter stays
+  // seated and animated unless the blast kills him.
+  const closeEnoughToThrow = distM < 5.8 && !isSeatedAnimated(hs) && weakEnoughForKnockdown(hs, hs.currentHp - totalDamageHp);
+  const willEnableRagdoll = hs.isRagdollActive || isLethalKill || closeEnoughToThrow;
   const netRootImpulseWorld = scale(blastDir, peakImpulseNs * falloff * 0.68);
   const primaryHitZone: GhoulZoneId = shrapnelZones[0] || 'TORSO_LOWER_ABDOMEN';
 
@@ -159,6 +168,7 @@ export function buildFragBlastReportForTarget(
     totalEnergyDepositedJ: totalEnergyJ,
     totalDamageHp,
     isLethalKill,
+    isExplosiveBlast: true,
     ragdollPlan: {
       willEnableRagdoll,
       activationTimeS: 0,

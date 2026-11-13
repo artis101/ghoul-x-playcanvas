@@ -6,9 +6,8 @@ import {
   tickNeurogenicShockRecovery,
 } from '../../core/ai/weaponBurstFsm.ts';
 import { add, dot, normalize, sub, vec3 } from '../../core/ballistics/vec3.ts';
-import { updateStandingCombatPose } from '../../core/ghoul/anatomy.ts';
 import { computeCombatantTriageStatus } from '../../core/ballistics/solver.ts';
-import type { EnemyAiAgentRuntime, EnemyTacticalAiState } from './tacticalAiTypes.ts';
+import type { EnemyAiAgentRuntime } from './tacticalAiTypes.ts';
 import { approachAngleRad, yawToward } from './combatantArmEvaluation.ts';
 import { syncAgentArmamentAndSidearm } from './agentArmamentController.ts';
 import { moveHorizontalClamped } from './tacticalLocomotion.ts';
@@ -18,7 +17,7 @@ import { stepAgentMagazine } from './enemyWeaponMagazine.ts';
 import { stepWeaponBurstFire } from './tacticalBurstAndTracers.ts';
 import { stepAlertedEngagingState } from './alertedEngagementStep.ts';
 import type { TacticalFsmContext } from './tacticalFsmContext.ts';
-import { isWoundClipHoldingBody } from './woundClipHold.ts';
+import { isPostureHeldByClip, isWoundClipHoldingBody } from './woundClipHold.ts';
 
 export type { AlertedEngagementSubstate, TacticalFsmContext };
 
@@ -108,7 +107,6 @@ export function stepSingleEnemyAgent(
   if (clipHolds) {
     // No shots, steps, crawling or turning until the clip has played out.
     cancelActiveBurst(agent);
-    updateStandingCombatPose(hs, ctx.elapsedClockS);
     return;
   }
 
@@ -118,10 +116,7 @@ export function stepSingleEnemyAgent(
     if (agent.staggerTimerS > 0) agent.staggerTimerS = Math.max(0, agent.staggerTimerS - dt);
     endStaggerWhenSettled(hs, agent, legCrippled, true, ctx);
   }
-  if (stepWoundedPhaseBehaviour(dt, hs, agent, aimProfile, playerEyeWorldPos, ctx)) {
-    if (!hs.isRagdollActive) updateStandingCombatPose(hs, ctx.elapsedClockS);
-    return;
-  }
+  if (stepWoundedPhaseBehaviour(dt, hs, agent, aimProfile, playerEyeWorldPos, ctx)) return;
 
   const turnTowardPlayer = (turnSpeed: number) => {
     if (!hs.alive || hs.currentHp <= 0 || hs.isRagdollActive || agent.state === 'DEAD') return;
@@ -187,10 +182,8 @@ export function stepSingleEnemyAgent(
       break;
     }
   }
-
-  if (!hs.isRagdollActive && hs.alive && hs.currentHp > 0 && (agent.state as EnemyTacticalAiState) !== 'DEAD') {
-    updateStandingCombatPose(hs, ctx.elapsedClockS);
-  }
+  // The body's pose comes from its clips (ghoulMannequinEntity reads the animated bones back into
+  // ragdollBones), so the AI only moves and turns the root here.
 }
 
 /** Once the stagger and the nerve shock have passed, the agent goes back to fighting (or crawling). */
@@ -206,6 +199,7 @@ function endStaggerWhenSettled(
     ctx.transitionState(agent, 'DOWNED_CRAWLING');
     return;
   }
-  if (!hs.isRagdollActive && !clutchingWound) hs.posture = 'COMBAT_READY';
+  // A seated last stand keeps sitting: only a standing body is set back on its feet here.
+  if (!hs.isRagdollActive && !clutchingWound && !isPostureHeldByClip(hs)) hs.posture = 'COMBAT_READY';
   ctx.transitionState(agent, 'ALERTED_ENGAGING');
 }

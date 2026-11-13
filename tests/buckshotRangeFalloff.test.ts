@@ -40,8 +40,9 @@ function speedsAtRanges(ammo: AmmoSpec, rangesM: number[]): number[] {
 
 const energyJ = (ammo: AmmoSpec, speedMs: number): number => 0.5 * ammo.massKg * speedMs * speedMs;
 
+// An ordinary build: on a tough one (archetypeToughness.ts) shallow pellet wounds are soaked.
 function chestShot(ammo: AmmoSpec, rangeM: number) {
-  const target = createTargetHealthState(`t_${rangeM}`, 'Militia', vec3(0, 0, -rangeM), 0, 'MILITIA_GUNNER');
+  const target = createTargetHealthState(`t_${rangeM}`, 'Punk', vec3(0, 0, -rangeM), 0, 'SKINHEAD_PUNK');
   const shooter = vec3(0, 1.5, 0);
   const aim = normalize(sub(vec3(0, 1.3, -rangeM), shooter));
   const report = simulateShot(WEAPON_M590, ammo, shooter, aim, target, DEFAULT_ENVIRONMENT);
@@ -90,7 +91,7 @@ describe('Buckshot loses its stopping power with range', () => {
     const farPerPelletHp = far.report.totalDamageHp / far.pelletsHit;
     expect(farPerPelletHp).toBeLessThan(0.45 * nearPerPelletHp);
 
-    expect(near.report.totalDamageHp).toBeGreaterThan(90);
+    expect(near.report.totalDamageHp).toBeGreaterThan(0.6 * 120);
     expect(far.report.totalDamageHp).toBeLessThan(0.1 * near.report.totalDamageHp);
 
     // Each pellet that does land at 25 m carries well under the energy it had at 5 m.

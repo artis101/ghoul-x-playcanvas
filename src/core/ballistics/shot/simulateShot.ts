@@ -34,12 +34,17 @@ import { evaluateTissueCavitation } from './shotTissueCavitation.ts';
 import { evaluateJointDismemberment } from './shotJointDismemberment.ts';
 import { evaluateLethalityAndRagdollPlan } from './shotLethalityPass.ts';
 import { PelletVariance, rollPelletVariance } from './terminalVariance.ts';
+import { WoundChannelTally } from './archetypeToughness.ts';
 import type { TerminalVarianceSummary } from '../../../contracts/combatantConstitution.ts';
+import { createSeededRng, hashStringSeed, mixSeed } from '../../random/seededRng.ts';
 
 export interface SimulateShotOptions {
   readonly allowedPelletIndices?: ReadonlySet<number>;
   readonly pelletSpeedOverridesMs?: ReadonlyMap<number, number>;
-  /** Random source for gore rolls (head burst vs. head taken off); defaults to Math.random. */
+  /**
+   * Random source for gore rolls (head burst vs. head taken off, how a severed part flies). Defaults
+   * to a generator seeded from the target, so every re-simulation of one trigger pull agrees.
+   */
   readonly rng?: () => number;
 }
 
@@ -56,7 +61,11 @@ export function simulateShot(
   env: EnvironmentState,
   options?: SimulateShotOptions
 ): ShotSimulationReport {
-  const shotId = `shot_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  // The target's variance seed (or its id) and how many wounds it already has: a fresh seed for
+  // every hit, the same one for every re-simulation of this hit.
+  const shotSeed = mixSeed(target.shotVarianceSeed ?? hashStringSeed(target.targetId), target.surfaceWounds.length);
+  const shotId = `shot_${target.targetId}_${shotSeed.toString(36)}`;
+  const goreRng = options?.rng ?? createSeededRng(shotSeed);
   const normAimDir = normalize(aimDirectionWorld);
   const pelletCount = Math.max(1, ammo.pelletCount);
   const muzzleEnergyJ = 0.5 * ammo.massKg * ammo.muzzleVelocityMs * ammo.muzzleVelocityMs;
@@ -89,6 +98,8 @@ export function simulateShot(
   let primaryVariance: PelletVariance | null = null;
   let primaryRibGlance = false;
 
+  // HP per wound channel, scaled by the target's archetype toughness (archetypeToughness.ts).
+  const channelHp = new WoundChannelTally(target);
   const bounds = computeTargetLiveBounds(target);
   const dt = 0.0015;
   const maxFlightTimeS = 2.0;
@@ -236,7 +247,7 @@ export function simulateShot(
             if (col.layerType === 'ARMOR_KEVLAR') {
               const armorRes = evaluateArmorInteraction(proj, ammo, hit, currentSpeed, entryEnergy, bulletDir);
               if (armorRes.stopped) {
-                totalDamageHp += armorRes.bluntDamageHp;
+                channelHp.addBlunt(armorRes.bluntDamageHp);
                 totalEnergyDepositedJ += armorRes.energyDeposited;
                 pelletEnergyDeposited += armorRes.energyDeposited;
                 pelletImpulseTransferred += armorRes.impulseMagnitude;
@@ -263,7 +274,7 @@ export function simulateShot(
             tissueDepthM += hit.pathLen;
             if (variance && !primaryVariance) primaryVariance = variance;
             if (variance === primaryVariance && cavRes.ribGlance) primaryRibGlance = true;
-            totalDamageHp += cavRes.layerDamage;
+            channelHp.addLayer(col, cavRes.layerDamage);
             totalEnergyDepositedJ += cavRes.energyDeposited;
             pelletEnergyDeposited += cavRes.energyDeposited;
             pelletImpulseTransferred += cavRes.impulseMagnitude;
@@ -291,6 +302,9 @@ export function simulateShot(
       }
     }
 
+    // Each pellet is one wound channel; a tough body soaks what stayed shallow in its meat.
+    totalDamageHp += channelHp.close();
+
     pelletResults.push({
       pelletIndex: pIdx,
       aimDirectionWorld: pelletAimDir,
@@ -312,7 +326,7 @@ export function simulateShot(
     weapon, ammo, target, targetDistanceM, normAimDir,
     allWoundEvents, zoneEnergyDeposited, zoneImpulses,
     severedZonesSet, newlySeveredZones, dismembermentEvents, combatantEffectsSet,
-    options?.rng
+    goreRng
   );
   if (dismRes.weaponDisarmed) weaponDisarmed = true;
 

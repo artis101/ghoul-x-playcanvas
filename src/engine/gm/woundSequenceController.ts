@@ -69,7 +69,7 @@ export class WoundSequenceController {
   }
 
   private placeMarker(): void {
-    const p = standInPosition(this.standIn);
+    const p = this.current?.player() ?? standInPosition(this.standIn);
     this.marker.setPosition(p.x, 0.85, p.z);
   }
 
@@ -84,7 +84,7 @@ export class WoundSequenceController {
     this.stop();
     this.last = def;
     this.current = new WoundSequencePreview(this.app, this.registry, def, {
-      archetype: this.archetype(),
+      archetype: def.preset?.archetype ?? this.archetype(),
       backupSidearm: this.view.sequenceSidearm.checked,
       southpaw: this.view.sequenceSouthpaw.checked,
       fortitude: this.fortitude,
@@ -112,6 +112,13 @@ export class WoundSequenceController {
   public update(dt: number): void {
     if (!this.current) return;
     this.current.update(dt);
+    // A scripted step moved the stand-in: show it on the panel and move the post with it.
+    const moved = this.current.standInOverride;
+    if (moved && this.view.sequenceStandIn.value !== moved) {
+      this.view.sequenceStandIn.value = moved;
+      this.current.standInOverride = null;
+      this.placeMarker();
+    }
     this.view.sequenceReadout.value = this.current.statusLine;
   }
 

@@ -1043,17 +1043,21 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
       expect(hardenedVet.activeReaction.type).toBe('NONE');
       expect(hardenedVet.woundedPhase).toBe('CLUTCH');
       expect(vetAgent.sidearmDrawing).toBe(false);
-      const clutching = () => hardenedVet.woundedPhase === 'CLUTCH' || hardenedSniper.woundedPhase === 'CLUTCH';
-      for (let i = 0; i < 80 && clutching(); i++) {
+      // Each lets go of its stump after its own clutch time (fortitude scaled by what health it
+      // has left), so the veteran's draw is checked on the tick it stands up to gun.
+      for (let i = 0; i < 80 && hardenedVet.woundedPhase === 'CLUTCH'; i++) {
         ai.update(0.05, all, { x: 0, y: 1.62, z: 0 });
         if (hardenedVet.woundedPhase === 'CLUTCH') expect(vetAgent.sidearmDrawing).toBe(false);
       }
-      // Then they stand and gun: the ~0.6s draw on the remaining intact hand starts now.
+      // Then it stands and guns: the ~0.6s draw on the remaining intact hand starts now.
       expect(hardenedVet.woundedPhase).toBe('BLAZE');
-      expect(hardenedSniper.woundedPhase).toBe('BLAZE');
-      expect(stdGunner.woundedPhase).toBe('CLUTCH');
       expect(vetAgent.sidearmDrawing).toBe(true);
       expect(vetAgent.sidearmDrawTimerS).toBeGreaterThan(SIDEARM_DRAW_DURATION_S - 0.2);
+      for (let i = 0; i < 80 && hardenedSniper.woundedPhase === 'CLUTCH'; i++) {
+        ai.update(0.05, all, { x: 0, y: 1.62, z: 0 });
+      }
+      expect(hardenedSniper.woundedPhase).toBe('BLAZE');
+      expect(stdGunner.woundedPhase).toBe('CLUTCH');
       expect(vetAgent.activeFiringHand).toBe('LEFT');
       expect(sniperAgent.activeFiringHand).toBe('RIGHT');
       expect(ai.computeEnemyAimProfile(hardenedVet, vetAgent).canReturnFire).toBe(false);
@@ -1135,7 +1139,7 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
       ai.destroy();
     });
 
-    it('mounts visible 3D weapon_beretta_m9 on t.rootEntity and poses intact off-hand arm toward player in CombatDirector', () => {
+    it('mounts visible 3D weapon_beretta_m9 on t.rootEntity in the intact off hand in CombatDirector', () => {
       const app = createHeadlessPlayCanvasApp();
       const requestedWeapons: string[] = [];
 
@@ -1179,14 +1183,6 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
         )!;
         const hs = enforcerMannequin.healthState;
 
-        // Attach skeletal Bone_* nodes for intact off-hand arm so we verify 3D bone posing too
-        const boneUpperL = new pc.Entity('Bone_UPPER_ARM_LEFT');
-        const boneForearmL = new pc.Entity('Bone_FOREARM_LEFT');
-        const boneHandL = new pc.Entity('Bone_HAND_LEFT');
-        enforcerMannequin.rootEntity.addChild(boneUpperL);
-        enforcerMannequin.rootEntity.addChild(boneForearmL);
-        enforcerMannequin.rootEntity.addChild(boneHandL);
-
         // Sever primary right arm (`FOREARM_RIGHT`) while keeping left arm/hand intact
         hs.severedZones.add('FOREARM_RIGHT');
         hs.severedZones.add('HAND_RIGHT');
@@ -1206,11 +1202,10 @@ describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
         expect(m9Holder).not.toBeNull();
         expect(m9Holder!.enabled).toBe(true);
 
-        // Intact left hand should be raised to shoulder/aim height and extended forward (+Z toward viewer at z=0 from z=-14.85)
-        expect(hs.ragdollBones.HAND_LEFT.position.z).toBeGreaterThan(
-          hs.ragdollBones.UPPER_ARM_LEFT.position.z + 0.35,
-        );
-        expect(boneHandL.getPosition().z).toBeCloseTo(hs.ragdollBones.HAND_LEFT.position.z, 2);
+        // The arm is no longer posed in code: the draw and aim clips move it and the pistol rides
+        // the hand. With no animated body here, it sits on the hit skeleton's left hand.
+        const handL = hs.ragdollBones.HAND_LEFT.position;
+        expect(m9Holder!.getPosition().distance(new pc.Vec3(handL.x, handL.y, handL.z))).toBeLessThan(0.15);
 
         // Sever remaining left hand -> 3D Beretta M9 immediately hides/drops!
         hs.severedZones.add('HAND_LEFT');

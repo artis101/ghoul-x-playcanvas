@@ -1,5 +1,6 @@
 import type { TargetHealthState, WoundedPhase } from '../../contracts/ballistics.ts';
 import { SIT_TO_CRAWL_S } from '../../core/ballistics/trauma/woundReactionTimings.ts';
+import { evaluateCrawlCondition } from '../../core/ghoul/anatomy/crawlCondition.ts';
 import type { CombatantAnimationClipName } from '../assets/glbTypes.ts';
 import { lostArmSide, pistolAimClip } from './combatantWoundClips.ts';
 
@@ -30,7 +31,7 @@ export interface WoundedPhaseClipPlan {
   readonly owner: 'COMMITTED' | null;
   /** The southpaw twin is used for handed clips (the kneeling pistol aim). */
   readonly southpaw: boolean;
-  /** Plays at the crawl rate, with the crawl overlay (dragged legs, blood trail) on. */
+  /** Plays at the crawl rate, with the crawl overlay (the blood trail) on. */
   readonly crawl: boolean;
 }
 
@@ -42,9 +43,9 @@ function stumpSide(hs: TargetHealthState): ArmSide {
 const sided = (base: 'StumpClutch' | 'StumpKneel', side: ArmSide): CombatantAnimationClipName =>
   `${base}${side === 'RIGHT' ? 'Right' : 'Left'}`;
 
-/** The kneel-down; the old diaphragm-drop kneel stands in until the stump kneel is baked. */
+/** The kneel-down onto the knee on the stump side. */
 export function stumpKneelChain(side: ArmSide): readonly CombatantAnimationClipName[] {
-  return [sided('StumpKneel', side), 'DiaphragmDropKneel'];
+  return [sided('StumpKneel', side)];
 }
 
 /** Kneeling one-handed pistol aim, then the standing ones while it is not baked. */
@@ -90,19 +91,36 @@ export function woundedPhaseClipPlan(
     }
     case 'SIT_DOWN':
       // The collapse reaction plays this; the plan only covers a frame between phase and reaction.
-      return plan(['DownedCollapse', 'LegCollapseCrawl'], 'COMMITTED');
+      return plan(['DownedCollapse'], 'COMMITTED');
     case 'DOWNED_CRAWL':
       return crawlStage === 'CRAWL'
-        ? plan(['Crawl'], null, CRAWL_BLEND_S, false, true)
+        ? plan(crawlClipChain(hs), null, CRAWL_BLEND_S, false, true)
         : plan(['SitToCrawl', 'Crawl'], 'COMMITTED');
     default:
       return null;
   }
 }
 
-/** True for the clips that stand in for the kneel-down: they own the body like a fall does. */
+/** True for the kneel-down clips: they own the body like a fall does. */
 export function isKneelDownClip(clip: string): boolean {
-  return clip === 'StumpKneelRight' || clip === 'StumpKneelLeft' || clip === 'DiaphragmDropKneel';
+  return clip === 'StumpKneelRight' || clip === 'StumpKneelLeft';
+}
+
+/** The crawl loops: on both knees, or pulling one useless leg behind. */
+export function isCrawlLoopClip(clip: string): boolean {
+  return clip === 'Crawl' || clip === 'CrawlDragLegRight' || clip === 'CrawlDragLegLeft';
+}
+
+/**
+ * The crawl loop for the body's legs. One useless leg (not cut off) is dragged by its own take,
+ * which pushes with the good leg only; with both legs useless the plain crawl stands in, the arms
+ * doing the work.
+ */
+export function crawlClipChain(hs: TargetHealthState): readonly CombatantAnimationClipName[] {
+  const condition = evaluateCrawlCondition(hs, 0);
+  if (condition.dragRightLeg && !condition.dragLeftLeg) return ['CrawlDragLegRight', 'Crawl'];
+  if (condition.dragLeftLeg && !condition.dragRightLeg) return ['CrawlDragLegLeft', 'Crawl'];
+  return ['Crawl'];
 }
 
 export type SidearmAimClip = 'PistolAim' | 'PistolAimOneHand' | 'KneelPistolAimOneHand';
@@ -143,7 +161,7 @@ export class DownedCrawlStage {
       return this.stage;
     }
     if (this.stage === 'SIT_TO_CRAWL' && playing.kind === 'PLAYING') {
-      if (playing.clip === 'Crawl') this.stage = 'CRAWL';
+      if (playing.clip && isCrawlLoopClip(playing.clip)) this.stage = 'CRAWL';
       else if (playing.clip === 'SitToCrawl') {
         this.rollS += Math.max(0, dt);
         if (this.rollS >= SIT_TO_CRAWL_S || (progress ?? 0) >= SIT_TO_CRAWL_END_PROGRESS) this.stage = 'CRAWL';

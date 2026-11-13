@@ -1,37 +1,32 @@
 import type { PainReactionType, TargetHealthState } from '../../contracts/ballistics.ts';
-import { isCommittedWoundReaction, isFallingReaction } from '../../core/ballistics/trauma/woundReactionTimings.ts';
+import { isCommittedWoundReaction } from '../../core/ballistics/trauma/woundReactionTimings.ts';
 import type { CombatantAnimationClipName, CombatantGlbInstance } from '../assets/glbLoader.ts';
 import type { CombatantMovementClip } from './combatantLocomotion.ts';
 import {
-  flinchPlaybackSpeed,
-  isCommittedClip,
-  isFallingClip,
-  isFlinchClip,
-  isStumpClutchClip,
-  lostArmSide,
-  pickAvailableClip,
-  reactionWantsClip,
-  stumpClutchClip,
-  woundClipChainAt,
-  type WoundClipOwner,
+  isFlinchClip, isStumpClutchClip, lostArmSide, pickAvailableClip, reactionWantsClip, stumpClutchClip,
+  woundClipChainAt, type WoundClipOwner,
 } from './combatantWoundClips.ts';
 import {
-  DownedCrawlStage, isGroundedWoundedPhase, KNEEL_AIM_CHAIN, woundedPhaseClipPlan,
-  type SidearmAimClip, type WoundedPhaseClipPlan,
+  DownedCrawlStage, isCrawlLoopClip, isGroundedWoundedPhase, woundedPhaseClipPlan, type WoundedPhaseClipPlan,
 } from './combatantWoundedPhaseClips.ts';
+import { seatedClipPlan, type SeatedClipPlan } from './combatantSeatedClips.ts';
+import { playSeatedClip } from './combatantSeatedPlayback.ts';
+import { playDeathClip } from './combatantDeathPlayback.ts';
+import { drawClipPlan, drawPlaybackSpeed, isDrawClip } from './combatantDrawClips.ts';
+import {
+  canAimFrom, canMoveFrom, gaitClipFor, isEmptyHanded, legBuckledClip, PickupClipTracker, upperClipFor, upperRequest,
+} from './combatantStandingClips.ts';
+import { CombatantUpperBodyLayer, type UpperBodyRequest } from './combatantUpperBodyLayer.ts';
+import { heldWeaponPose } from './combatantWeaponPoseMap.ts';
+import {
+  clipPlaybackSpeed, FLINCH_END_PROGRESS, isPistolHandClip, resolveAimClip, resolveClipOwnership, woundKindFor,
+  type CombatantAimPose,
+} from './combatantClipRules.ts';
 
-// The retargeted clip reaches hand contact near source frame 71 of the 12–113 range.
-const LEG_COLLAPSE_TIME_S = 1.17;
+export type { CombatantAimPose };
+
 // The crawl take covers 1.06 m per 2.27 s cycle.
 const CRAWL_NOMINAL_SPEED = 0.47;
-// A flinch hands the body back once it is this far through; the last frames are the idle pose.
-const FLINCH_END_PROGRESS = 0.98;
-const COLLAPSE_END_PROGRESS = 0.97;
-
-export interface CombatantAimPose {
-  readonly clip: 'LongGunAim' | SidearmAimClip;
-  readonly hand?: 'RIGHT' | 'LEFT';
-}
 
 export type AnimClipState =
   | { readonly kind: 'FROZEN' }
@@ -47,7 +42,7 @@ export type AnimClipState =
       readonly woundKind: Exclude<WoundClipOwner, null> | null;
     };
 
-type ClipGlb = Pick<CombatantGlbInstance, 'animComponent' | 'playClip'> &
+export type ClipGlb = Pick<CombatantGlbInstance, 'animComponent' | 'playClip'> &
   Partial<Pick<CombatantGlbInstance, 'availableClips'>>;
 
 export class CombatantAnimController {
@@ -56,14 +51,28 @@ export class CombatantAnimController {
   // Clips playClip refused, for a GLB that does not list its clips; they are not tried again.
   private readonly missingClips = new Set<string>();
   private readonly crawlStage = new DownedCrawlStage();
+  private readonly pickup = new PickupClipTracker();
+  /** The masked upper-body layer: the aim or carry over a gait (combatantUpperBodyLayer.ts). */
+  public readonly upperBody = new CombatantUpperBodyLayer();
+  /** The seated clip asked for this frame, or null when the body is not sitting its last stand. */
+  public seatedClip: SeatedClipPlan | null = null;
+  private pickupStanding = false;
 
   public get isCrawling(): boolean {
-    return this.clipState.kind === 'PLAYING' && this.clipState.clip === 'Crawl';
+    return this.clipState.kind === 'PLAYING' && isCrawlLoopClip(this.clipState.clip);
   }
 
   /** Which kind of wound clip owns the body right now; the procedural overlays step back for it. */
   public get activeWoundClip(): WoundClipOwner {
     return this.ownership;
+  }
+
+  /**
+   * True while a flinch clip holds the body, or the pickup clip is still standing it back up:
+   * the AI must not walk or strafe it meanwhile, or its planted feet would skate.
+   */
+  public get isFlinchHolding(): boolean {
+    return this.ownership === 'FLINCH' || this.pickupStanding;
   }
 
   /** True while an arm stump is held to the chest by the stump-clutch loop. */
@@ -74,13 +83,22 @@ export class CombatantAnimController {
   public reset(): void {
     this.clipState = { kind: 'FROZEN' };
     this.ownership = null;
+    this.seatedClip = null;
+    this.pickupStanding = false;
     this.crawlStage.reset();
+    this.pickup.reset();
+    this.upperBody.reset();
   }
 
+  /**
+   * The body clip for the health state alone, before gait, aim and draws. `pistolHand` is the
+   * hand of a visible sidearm, so a body with a pistol out is not shown empty-handed.
+   */
   public resolveDesiredClip(
     healthState: TargetHealthState,
     guarding = false,
-    availableClips?: ReadonlySet<string>
+    availableClips?: ReadonlySet<string>,
+    pistolHand?: 'RIGHT' | 'LEFT',
   ): CombatantAnimationClipName {
     const has = (clip: CombatantAnimationClipName): boolean =>
       !this.missingClips.has(clip) && (!availableClips || availableClips.has(clip));
@@ -89,16 +107,20 @@ export class CombatantAnimController {
       const clip = pickAvailableClip(woundClipChainAt(activeReaction), has);
       if (clip) return clip;
     }
-    if (posture === 'LEG_BUCKLED') return 'LegCollapseCrawl';
-    // Gut and throat hits flinch like any other torso hit; nobody kneels down mid-firefight.
+    if (posture === 'LEG_BUCKLED') return 'DownedCollapse';
+    // After the flinch, a body hurt in the chest, gut or throat stands hunched over the wound.
     if (posture === 'STAGGERED' || posture === 'GUT_HURT' || posture === 'THROAT_CLUTCH') {
-      return 'HitStaggerChest';
+      return pickAvailableClip(['HurtIdle', 'HitStaggerChest'], has) ?? 'HitStaggerChest';
     }
     // With the gun gone and an arm cut short, the stump is held to the chest. A drawn sidearm
     // replaces this with the one-handed aim (see syncAnimation).
     const stumpSide = healthState.weaponDropped ? lostArmSide(healthState) : null;
     if (stumpSide && has(stumpClutchClip(stumpSide))) return stumpClutchClip(stumpSide);
-    return guarding ? 'UnsuspectingIdle' : 'CombatReadyIdle';
+    if (isEmptyHanded(healthState, pistolHand) && has('UnarmedIdle')) return 'UnarmedIdle';
+    if (guarding) return 'UnsuspectingIdle';
+    // A pistol with no support arm left is carried low in one hand (combatantWeaponPoseMap.ts).
+    const carry = heldWeaponPose(healthState, pistolHand)?.carry ?? 'CombatReadyIdle';
+    return has(carry) ? carry : 'CombatReadyIdle';
   }
 
   public syncAnimation(
@@ -119,6 +141,16 @@ export class CombatantAnimController {
     const reaction = healthState.activeReaction;
     const phase = healthState.woundedPhase;
     const progress = glb.animComponent.baseLayer?.activeStateProgress;
+    this.pickupStanding = false;
+    // Sitting its last stand on the floor: the seated clips own the body. A hit only jolts it;
+    // a flinch clip would stand it back up.
+    this.seatedClip = seatedClipPlan(healthState, aim?.hand);
+    if (this.seatedClip) {
+      this.crawlStage.advance(phase, this.clipState, 0, progress);
+      this.syncSeatedClip(glb, healthState, this.seatedClip, has);
+      this.upperBody.sync(glb, null);
+      return;
+    }
     // A standing flinch would pop a kneeling, seated or crawling body back up, so while it is low
     // a lesser hit only adds the spring jolt. Falls and losses still play.
     const reactionClip = reactionWantsClip(reaction) &&
@@ -126,41 +158,41 @@ export class CombatantAnimController {
     const crawlRate = Math.max(0.1, Math.min(1.6, groundSpeed / CRAWL_NOMINAL_SPEED));
     if (!reactionClip) {
       const stage = this.crawlStage.advance(healthState.woundedPhase, this.clipState, dt, progress);
-      const plan = woundedPhaseClipPlan(healthState, aim?.hand, stage);
+      // A sidearm draw is a whole-body clip too: it plays where the body stands.
+      const plan = drawClipPlan(healthState, aim?.hand) ?? woundedPhaseClipPlan(healthState, aim?.hand, stage);
       if (plan && (isGroundedWoundedPhase(phase) || !this.flinchStillPlaying(progress))) {
         this.syncPhaseClip(glb, healthState, plan, has, crawlRate);
+        this.upperBody.sync(glb, null);
         return;
       }
     } else {
       this.crawlStage.advance(healthState.woundedPhase, this.clipState, 0, progress);
     }
     const reactionEpoch = reaction.epoch ?? 0;
-    const baseClip = this.resolveDesiredClip(healthState, guarding, available);
-    const canAim = baseClip === 'CombatReadyIdle' || isStumpClutchClip(baseClip);
-    const locomotion = canAim || baseClip === 'UnsuspectingIdle' ? movement : undefined;
+    const baseClip = this.resolveDesiredClip(healthState, guarding, available, aim?.hand);
     const prev = this.clipState;
+    const prevClip = prev.kind === 'PLAYING' ? prev.clip : null;
 
-    // Once a fall has played out, a downed combatant drags itself along in a crawl cycle.
-    const collapsed =
-      baseClip === 'LegCollapseCrawl' &&
-      prev.kind === 'PLAYING' &&
-      (prev.clip === 'Crawl' || (isFallingClip(prev.clip) && (progress ?? 0) >= COLLAPSE_END_PROGRESS));
+    // A body down on its seat with no plan plays the fall out, rolls onto its belly and crawls.
+    const buckled = !reactionClip && healthState.posture === 'LEG_BUCKLED' ? legBuckledClip(prev, progress, has) : null;
+    const collapsed = buckled === 'Crawl';
     // A flinch plays to its end even once the reaction is over, so the gun comes back on target
     // before the body aims or walks again. Only standing clips wait for it.
-    const flinchHolding =
-      !reactionClip && prev.kind === 'PLAYING' && isFlinchClip(prev.clip) && baseClip !== 'LegCollapseCrawl' &&
-      ((progress ?? 1) < FLINCH_END_PROGRESS || baseClip === 'HitStaggerChest');
-    const aimClip = aim && canAim ? this.resolveAimClip(aim, has) : undefined;
-    const desiredClip: CombatantAnimationClipName = collapsed
-      ? 'Crawl'
-      : flinchHolding && prev.kind === 'PLAYING'
-        ? prev.clip
-        : locomotion?.clip ?? aimClip ?? baseClip;
-    const aimHand = desiredClip === 'PistolAim' || desiredClip === 'PistolAimOneHand' ||
-      desiredClip === 'KneelPistolAimOneHand' ? aim?.hand : undefined;
-    const isSouthpaw = aimHand ? aimHand === 'LEFT' : healthState.isLeftHanded;
+    const flinchHolding = !reactionClip && !buckled && prevClip !== null && isFlinchClip(prevClip) &&
+      (progress ?? 1) < FLINCH_END_PROGRESS;
+    const picking = !reactionClip && !buckled && has('PickupWeapon') &&
+      this.pickup.wants(healthState, prevClip, progress, dt);
+    this.pickupStanding = picking && !healthState.weaponDropped;
+    const free = !reactionClip && !buckled && !flinchHolding && !picking;
+    const aimClip = free && aim && canAimFrom(baseClip) ? resolveAimClip(aim, has) : undefined;
+    const gait = free && canMoveFrom(baseClip) ? movement : undefined;
+    const gaitClip = gait ? gaitClipFor(baseClip, gait.clip, has) : undefined;
+    const desiredClip: CombatantAnimationClipName = buckled
+      ?? (flinchHolding && prevClip ? prevClip : picking ? 'PickupWeapon' : gaitClip ?? aimClip ?? baseClip);
+    const pistolSouthpaw = aim?.hand ? aim.hand === 'LEFT' : healthState.isLeftHanded;
+    const isSouthpaw = isPistolHandClip(desiredClip) ? pistolSouthpaw : healthState.isLeftHanded;
     const clipKey = `${desiredClip}_${isSouthpaw ? 'L' : 'R'}`;
-    const woundKind = reactionClip && !collapsed ? this.woundKindFor(desiredClip, reaction.type) : null;
+    const woundKind = reactionClip || buckled ? woundKindFor(desiredClip, reaction.type) : null;
 
     // A new hit restarts a flinch; a fall, loss or collapse is never restarted by a lesser hit.
     const restartFlinch =
@@ -173,7 +205,7 @@ export class CombatantAnimController {
     const clipChanged = prev.kind !== 'PLAYING' || prev.clipKey !== clipKey;
 
     if (clipChanged || restartFlinch) {
-      const speed = this.playbackSpeed(desiredClip, woundKind, healthState, collapsed, crawlRate, locomotion);
+      const speed = clipPlaybackSpeed(woundKind, healthState, collapsed ? crawlRate : null, gaitClip ? gait?.playbackSpeed : undefined);
       if (glb.playClip(desiredClip, collapsed ? 0.4 : 0.12, speed, isSouthpaw)) {
         this.clipState = {
           kind: 'PLAYING', clip: desiredClip, isSouthpaw, clipKey,
@@ -184,15 +216,24 @@ export class CombatantAnimController {
       }
     } else if (prev.kind === 'PLAYING') {
       if (collapsed) glb.animComponent.speed = crawlRate;
-      else if (locomotion) glb.animComponent.speed = locomotion.playbackSpeed;
+      else if (gaitClip && gait) glb.animComponent.speed = gait.playbackSpeed;
       this.clipState = { ...prev, reactionType: reaction.type, reactionEpoch, reactionTimerS: reaction.timerS };
     }
-    this.ownership = this.resolveOwnership(reactionClip, reaction.type, progress);
+    this.ownership = resolveClipOwnership(this.clipState, reactionClip, reaction.type, progress);
+    // Moving: the gait stays on the base layer and the aim or carry goes on the upper body.
+    const upper = gaitClip ? upperClipFor(baseClip, gaitClip, aimClip) : null;
+    const upperSouthpaw = upper && isPistolHandClip(upper) ? pistolSouthpaw : healthState.isLeftHanded;
+    this.syncUpperBody(glb, upperRequest(upper, upperSouthpaw));
+  }
+
+  private syncUpperBody(glb: ClipGlb, request: UpperBodyRequest | null): void {
+    const playing = this.clipState.kind === 'PLAYING';
+    this.upperBody.sync(glb, playing ? request : null);
   }
 
   /**
-   * Plays the clip of a wounded-sequence phase. The clip starts once when the phase (or its
-   * stage) begins and is never restarted while it lasts; one-shot clips hold their last frame.
+   * Plays the clip of a wounded-sequence phase or a draw. The clip starts once when the phase (or
+   * its stage) begins and is never restarted while it lasts; one-shot clips hold their last frame.
    */
   private syncPhaseClip(
     glb: ClipGlb,
@@ -220,7 +261,43 @@ export class CombatantAnimController {
       this.clipState = { ...prev, reactionType: reaction.type, reactionTimerS: reaction.timerS, woundKind: plan.owner };
     }
     const state = this.clipState;
+    // A draw lasts exactly as long as the armament's draw, whatever length it was baked at.
+    if (state.kind === 'PLAYING' && isDrawClip(state.clip) && glb.animComponent) {
+      glb.animComponent.speed = drawPlaybackSpeed(healthState, glb.animComponent.baseLayer?.activeStateDuration);
+    }
     this.ownership = state.kind === 'PLAYING' && state.clipKey === clipKey ? plan.owner : null;
+  }
+
+  /** Plays the seated last-stand clip (combatantSeatedPlayback.ts); it owns the whole body. */
+  private syncSeatedClip(
+    glb: ClipGlb,
+    healthState: TargetHealthState,
+    plan: SeatedClipPlan,
+    has: (clip: CombatantAnimationClipName) => boolean,
+  ): void {
+    const played = playSeatedClip(glb, healthState, plan, has, this.clipState);
+    this.clipState = played.state;
+    if (played.missing) this.missingClips.add(played.missing);
+    this.ownership = 'COMMITTED';
+  }
+
+  /**
+   * Plays the death clip of a body killed on its feet (combatantDeathPlayback.ts). It owns the
+   * whole body; the upper layer, the pickup and the flinch hold are off.
+   */
+  public syncDying(glb: ClipGlb, healthState: TargetHealthState): void {
+    if (!glb.animComponent) return;
+    if (!glb.animComponent.playing) glb.animComponent.playing = true;
+    const available = glb.availableClips;
+    const has = (clip: CombatantAnimationClipName): boolean =>
+      !this.missingClips.has(clip) && (!available || available.has(clip));
+    const played = playDeathClip(glb, healthState, has, this.clipState);
+    this.clipState = played.state;
+    if (played.missing) this.missingClips.add(played.missing);
+    this.seatedClip = null;
+    this.pickupStanding = false;
+    this.ownership = 'COMMITTED';
+    this.upperBody.sync(glb, null);
   }
 
   /** A flinch that is still playing out after its reaction, so a standing phase waits for it. */
@@ -233,51 +310,7 @@ export class CombatantAnimController {
     if (glb.animComponent) glb.animComponent.playing = false;
     this.clipState = { kind: 'FROZEN' };
     this.ownership = null;
-  }
-
-  private resolveAimClip(
-    aim: CombatantAimPose,
-    has: (clip: CombatantAnimationClipName) => boolean
-  ): CombatantAnimationClipName {
-    if (aim.clip === 'KneelPistolAimOneHand') return pickAvailableClip(KNEEL_AIM_CHAIN, has) ?? 'PistolAim';
-    // The one-handed pistol aim is new; until it is baked the two-handed aim stands in for it.
-    if (aim.clip === 'PistolAimOneHand' && !has('PistolAimOneHand')) return 'PistolAim';
-    return aim.clip;
-  }
-
-  private woundKindFor(clip: CombatantAnimationClipName, type: PainReactionType): 'FLINCH' | 'COMMITTED' | null {
-    if (isCommittedClip(clip) || clip === 'LegCollapseCrawl' || isCommittedWoundReaction(type)) return 'COMMITTED';
-    return isFlinchClip(clip) ? 'FLINCH' : null;
-  }
-
-  private playbackSpeed(
-    clip: CombatantAnimationClipName,
-    woundKind: 'FLINCH' | 'COMMITTED' | null,
-    healthState: TargetHealthState,
-    collapsed: boolean,
-    crawlRate: number,
-    locomotion?: CombatantMovementClip
-  ): number {
-    const reaction = healthState.activeReaction;
-    if (collapsed) return crawlRate;
-    // The old collapse take is shorter than a fall reaction; it never plays slower than authored.
-    if (clip === 'LegCollapseCrawl' && isFallingReaction(reaction.type) && reaction.durationS > 0) {
-      return Math.max(1, LEG_COLLAPSE_TIME_S / reaction.durationS);
-    }
-    // Authored falls and losses last exactly as long as their reaction, so they play at speed 1.
-    if (woundKind === 'COMMITTED') return 1;
-    if (woundKind === 'FLINCH') return flinchPlaybackSpeed(reaction);
-    return locomotion?.playbackSpeed ?? 1;
-  }
-
-  private resolveOwnership(reactionClip: boolean, type: PainReactionType, progress: number | undefined): WoundClipOwner {
-    const state = this.clipState;
-    if (state.kind !== 'PLAYING' || !state.woundKind) return null;
-    if (state.woundKind === 'COMMITTED') {
-      // Authored falls own the body until the ragdoll takes it; the old collapse only while the
-      // reaction lasts, after which the prop-up and crawl overlays work on it as before.
-      return isCommittedClip(state.clip) || (reactionClip && isCommittedWoundReaction(type)) ? 'COMMITTED' : null;
-    }
-    return reactionClip || (progress ?? 1) < FLINCH_END_PROGRESS ? 'FLINCH' : null;
+    this.pickupStanding = false;
+    this.upperBody.sync(glb, null);
   }
 }

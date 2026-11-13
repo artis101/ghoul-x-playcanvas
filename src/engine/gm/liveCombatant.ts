@@ -9,6 +9,10 @@ import { GhoulMannequinEntity } from '../mannequin.ts';
 import { sidearmAimClip } from '../mannequin/combatantWoundedPhaseClips.ts';
 import { getOrCreateMaterials } from '../materials.ts';
 import { LabCombatantBrain } from './labCombatantBrain.ts';
+import { setEnemySwayClock } from '../ai/enemyWeaponSway.ts';
+import { LabActs, type LabAct } from './labActs.ts';
+import { UPPER_BODY_LAYER } from '../mannequin/combatantUpperBodyLayer.ts';
+import { setCombatantAimTarget } from '../mannequin/combatantAimDelta.ts';
 
 /** Longer frames are cut down so a stalled tab does not throw the ragdoll across the room. */
 const MAX_STEP_S = 1 / 30;
@@ -23,6 +27,8 @@ export class LiveCombatant {
   private readonly rig: OffhandSidearmRig;
   private readonly sidearmSync = new OffhandSidearmSync();
   private readonly brain: LabCombatantBrain;
+  /** What the AI would do with a standing body: walk it, aim, drop or pick up its gun. */
+  private readonly acts = new LabActs();
   public clockS = 0;
 
   public constructor(
@@ -51,7 +57,11 @@ export class LiveCombatant {
 
   /** The combatant clip the animation layer is really playing, which may differ from the one asked for. */
   public get activeClip(): string {
-    return this.mannequin.combatantGlb?.animComponent?.baseLayer?.activeState ?? '—';
+    const anim = this.mannequin.combatantGlb?.animComponent;
+    const base = anim?.baseLayer?.activeState ?? '—';
+    // While moving, the aim or carry plays on the masked upper-body layer over the gait.
+    const upper = anim?.findLayer(UPPER_BODY_LAYER);
+    return upper && upper.weight > 0.01 ? `${base} + upper ${upper.activeState}` : base;
   }
 
   /** Cuts a long frame down and advances the clock by what is left. */
@@ -71,28 +81,41 @@ export class LiveCombatant {
     return this.brain.statusLine;
   }
 
+  /** Starts a scripted act (walk, aim, drop or pick up the gun). Returns a log line. */
+  public act(act: LabAct): string {
+    return this.acts.start(this.health, act);
+  }
+
   /** Runs the per-target passes in the game's order: the AI tick, the ragdoll, then the body. */
   public step(dt: number): void {
+    // The gun back in hand puts the armament back on the primary, as weaponRecovery.ts does.
+    if (this.acts.step(this.health, dt)) this.brain.rearm();
     this.brain.step(dt, this.mannequin.isCrawling);
     stepRagdollPhysics(this.health, dt, 0);
     this.sync(dt);
   }
 
   private sync(dt: number): void {
+    // The lab has no AI to run the sway clock, so the pistol would hold still; run it here.
+    setEnemySwayClock(this.clockS);
     const sidearm = this.brain.sidearmState();
     // Same aim clip choice as the game: one-handed once the support arm is gone, on one knee
     // while kneeling to fire.
     const aim = sidearm.visible && sidearm.hand
       ? { clip: sidearmAimClip(this.health, sidearm.hand), hand: sidearm.hand }
-      : undefined;
+      : this.acts.aimPose(this.health);
+    // The game's AI publishes its aim point each tick; the lab has no AI, so publish the stand-in
+    // while aiming. Without it the aim delta has nowhere to turn the gun and only adds sway.
+    setCombatantAimTarget(this.health.targetId, aim ? this.aimTarget() : null);
     this.mannequin.syncFromHealthState(dt, this.clockS, false, aim);
     const provider = { getSidearmVisualState: () => sidearm };
-    if (this.sidearmSync.sync(this.mannequin, this.aimTarget(), this.rig, provider)) {
+    if (this.sidearmSync.sync(this.mannequin, this.aimTarget(), this.rig, provider, undefined, dt)) {
       this.mannequin.syncPoseAttachments();
     }
   }
 
   public destroy(): void {
+    setCombatantAimTarget(this.health.targetId, null);
     destroyOffhandSidearmRig(this.rig);
     this.mannequin.destroy();
   }

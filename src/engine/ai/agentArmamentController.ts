@@ -1,4 +1,5 @@
 import type { TargetHealthState } from '../../contracts/ballistics.ts';
+import { RED_HEALTH_HP_FRACTION } from '../../contracts/combatantHealthBands.ts';
 import {
   applyArmamentStateToRuntime,
   type ArmamentTransitionEvent,
@@ -17,7 +18,27 @@ import {
   selectIntactFiringHand,
 } from './combatantArmEvaluation.ts';
 import { isWoundClipHoldingBody } from './woundClipHold.ts';
+import { isSeatedAnimated, SEATED_DRAW_S } from '../../core/ballistics/triage/seatedLastStand.ts';
 import { resolveSidearmRule } from './woundedSequenceDriver.ts';
+import { drawClipSecondsFor } from '../mannequin/combatantDrawClips.ts';
+
+/**
+ * How long a draw takes for this body now: the length of the draw clip it plays, so the pistol
+ * comes out on the frame the clip shows it. Sitting on the floor that is the seated draw
+ * (`SEATED_DRAW_S`); standing, kneeling or from the stump clutch it is PistolDraw / StumpDraw /
+ * KneelStumpDraw.
+ */
+export function sidearmDrawSecondsFor(hs: TargetHealthState): number {
+  return isSeatedAnimated(hs) ? SEATED_DRAW_S : drawClipSecondsFor(hs);
+}
+
+/** 0 when a draw starts, 1 once the pistol is out, measured against that draw's own length. */
+export function sidearmDrawProgress(state: EnemyArmamentState): number {
+  if (state.kind === 'SIDEARM_ACTIVE') return 1;
+  if (state.kind !== 'SIDEARM_DRAWING') return 0;
+  const total = state.totalS ?? SIDEARM_DRAW_DURATION_S;
+  return total > 0 ? Math.max(0, Math.min(1, 1 - state.remainingS / total)) : 1;
+}
 
 export function getSidearmVisualState(agent?: EnemyAiAgentRuntime): EnemySidearmVisualState {
   if (!agent) {
@@ -34,12 +55,7 @@ export function getSidearmVisualState(agent?: EnemyAiAgentRuntime): EnemySidearm
 
   const state = reconcileEnemyArmamentState(agent);
   const visible = state.kind === 'SIDEARM_ACTIVE' || state.kind === 'SIDEARM_DRAWING';
-  const drawProgress =
-    state.kind === 'SIDEARM_ACTIVE'
-      ? 1.0
-      : state.kind === 'SIDEARM_DRAWING'
-        ? Math.max(0, Math.min(1, 1 - state.remainingS / SIDEARM_DRAW_DURATION_S))
-        : 0.0;
+  const drawProgress = sidearmDrawProgress(state);
 
   return {
     visible,
@@ -77,7 +93,8 @@ export function evaluateTargetArmamentState(
     carriesBackupSidearm: sidearmEngaged,
     isGuarding: agent?.state === 'PATROL_GUARD',
     isLastStandVital: false,
-    sidearmDrawDurationS: SIDEARM_DRAW_DURATION_S,
+    sidearmDrawDurationS: sidearmDrawSecondsFor(hs),
+    seatedOnFloor: isSeatedAnimated(hs),
   }).state;
 }
 
@@ -95,7 +112,7 @@ export function syncAgentArmamentAndSidearm(
   const leftIntact = isArmChainIntactAndFunctional(hs, 'LEFT');
   const intactHand = selectIntactFiringHand(hs, preferredHand);
   const isLastStandVital =
-    agent.triageStatus === 'MORTALLY_WOUNDED' || hs.currentHp <= hs.maxHp * 0.32;
+    agent.triageStatus === 'MORTALLY_WOUNDED' || hs.currentHp <= hs.maxHp * RED_HEALTH_HP_FRACTION;
 
   const current = reconcileEnemyArmamentState(agent);
   const result = stepEnemyArmamentState(current, {
@@ -112,7 +129,8 @@ export function syncAgentArmamentAndSidearm(
     carriesBackupSidearm: agent.carriesBackupSidearm,
     isGuarding: agent.state === 'PATROL_GUARD',
     isLastStandVital,
-    sidearmDrawDurationS: SIDEARM_DRAW_DURATION_S,
+    sidearmDrawDurationS: sidearmDrawSecondsFor(hs),
+    seatedOnFloor: isSeatedAnimated(hs),
     woundClipPlaying: isWoundClipHoldingBody(hs),
     // The wounded sequence decides when the pistol may come out (docs/wound-movement.md).
     sidearmRule: resolveSidearmRule(hs, agent),

@@ -29,8 +29,6 @@ const NECK_M = 0.6;
 const HEAD_M = 0.11;
 const SHOULDER_HALF_WIDTH_M = 0.2;
 const HIP_HALF_WIDTH_M = 0.115;
-// How far the head turns from where the body faces toward where the gun points.
-const HEAD_FOLLOWS_AIM = 0.75;
 const armUsable = isDownedArmUsable;
 
 function legUsable(target: TargetHealthState, side: BodySide): boolean {
@@ -47,8 +45,9 @@ function legUsable(target: TargetHealthState, side: BodySide): boolean {
  * - With only the gun arm left, it sits leaning further back with nothing to brace on.
  * - On its front, it pushes its chest up on the free elbow, legs trailing, head craned up.
  *
- * The head looks where the gun points. The gun arm itself is left alone: whatever holds the
- * weapon aims it.
+ * The head rests looking past the feet (or, face down, craned up ahead). Nothing here aims: a
+ * body in the ragdoll holds no gun (offhandSidearmSync keeps it holstered), and the gun arm is
+ * left to the physics.
  */
 export function buildLivingGroundedPoseTargets(
   target: TargetHealthState,
@@ -93,14 +92,9 @@ export function buildLivingGroundedPoseTargets(
   const along = (distanceM: number): Vec3Like => add(anchorP, scale(spineDir, distanceM));
 
   const neckPos = along(NECK_M);
-  // Sitting, it looks out past its feet. On its front the head cranes up to look ahead. Either
-  // way it turns to look down the gun, as far as a neck turns.
-  const restingLook = faceDown ? normalize(add(headW, scale(up, 0.35))) : normalize(add(feetW, scale(up, 0.15)));
-  const aim = target.downedAimDirWorld;
-  const faceW =
-    aim && dot(aim, restingLook) > -0.2
-      ? normalize(add(scale(restingLook, 1 - HEAD_FOLLOWS_AIM), scale(normalize(aim), HEAD_FOLLOWS_AIM)))
-      : restingLook;
+  // Sitting, it looks out past its feet. On its front the head cranes up to look ahead. The head
+  // no longer turns to follow a gun: the ragdoll never holds one.
+  const faceW = faceDown ? normalize(add(headW, scale(up, 0.35))) : normalize(add(feetW, scale(up, 0.15)));
   const lookW = faceDown
     ? add(scale(spineDir, 0.3), scale(up, 0.8))
     : add(scale(spineDir, 0.6), scale(faceW, 0.4));

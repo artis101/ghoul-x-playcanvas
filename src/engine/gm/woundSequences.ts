@@ -1,13 +1,18 @@
-import type { GhoulZoneId, ShotSimulationReport, TargetHealthState } from '../../contracts/ballistics.ts';
+import type { EnemyArchetypeId, GhoulZoneId, ShotSimulationReport, TargetHealthState } from '../../contracts/ballistics.ts';
 import { transitionTargetLifecycle } from '../../core/ballistics/lifecycle/targetLifecycleFsm.ts';
 import { stabilizeRagdollPoseForTransition } from '../../core/ballistics/ragdoll/ragdollPoseStabilizer.ts';
 import { applyDismembermentTree } from '../../core/ballistics/trauma/dismembermentTreeApplicator.ts';
 import { startWoundReaction } from '../../core/ballistics/trauma/woundReactionSelector.ts';
 import type { WoundSeverity } from '../../core/ballistics/trauma/woundSeverity.ts';
 import { vec3 } from '../../core/ballistics/vec3.ts';
+import { WOUND_CLIP_SECONDS } from '../../core/ballistics/trauma/woundReactionTimings.ts';
 import { getSubtreeZones } from '../../core/ghoul/anatomy/ghoulHierarchy.ts';
 import { supportSide, triggerSide } from '../../core/ghoul/anatomy/handedness.ts';
 import type { FortitudeChoice, PlayerStandIn } from './woundedLabStandIn.ts';
+import type { LabAct } from './labActs.ts';
+import {
+  applyDeathSequenceHit, DEAGLE_SEQUENCES, DEATH_SEQUENCES, isDeathSequenceHit, type DeathSequenceHit,
+} from './deathSequences.ts';
 
 /**
  * Character Lab wound sequences: scripted hits that go through the same core calls a real shot
@@ -32,7 +37,13 @@ export type SequenceHit =
   /** Bled down to this share of max HP, which lets the lifecycle start its last-stand collapse. */
   | { readonly kind: 'DRAIN'; readonly hpFraction: number }
   /** Knocked off its feet into the living ragdoll, pitched forward so it lands on its face. */
-  | { readonly kind: 'KNOCKDOWN_FORWARD' };
+  | { readonly kind: 'KNOCKDOWN_FORWARD' }
+  /** Not a hit: the player stand-in walks to this spot (to step in front of a downed body). */
+  | { readonly kind: 'STAND_IN'; readonly to: PlayerStandIn }
+  /** Not a hit: something the AI would do with the body (walk, aim, drop or pick up its gun). */
+  | { readonly kind: 'ACT'; readonly act: LabAct }
+  /** A kill on its feet, a bleed-out, or a support arm put out of action (deathSequences.ts). */
+  | DeathSequenceHit;
 
 export interface SequenceStep {
   /** Seconds after the combatant has stood ready. */
@@ -45,6 +56,8 @@ export interface SequencePreset {
   readonly fortitude?: FortitudeChoice;
   readonly standIn?: PlayerStandIn;
   readonly sidearm?: boolean;
+  /** The character to run it on, when the sequence needs its gun (the Desert Eagle is the punk's). */
+  readonly archetype?: EnemyArchetypeId;
 }
 
 export interface WoundSequenceDef {
@@ -60,6 +73,10 @@ export const STAND_READY_S = 0.8;
 const hit = (zone: SequenceZone, severity: WoundSeverity, energyJ: number, atS = 0): SequenceStep =>
   ({ atS, hit: { kind: 'HIT', zone, severity, energyJ } });
 const sever = (zone: GhoulZoneId, atS = 0): SequenceStep => ({ atS, hit: { kind: 'SEVER', zone, energyJ: 1400 } });
+const standInTo = (to: PlayerStandIn, atS: number): SequenceStep => ({ atS, hit: { kind: 'STAND_IN', to } });
+/** In "step in front later", how long the body lies in agony before you walk round in front of it. */
+export const STEP_IN_AFTER_LANDING_S = 3;
+const act = (what: LabAct, atS = 0): SequenceStep => ({ atS, hit: { kind: 'ACT', act: what } });
 const cripple = (side: 'RIGHT' | 'LEFT'): SequenceStep =>
   ({ atS: 0, hit: { kind: 'HIT', zone: `THIGH_${side}`, severity: 'CRITICAL', energyJ: 320, crippleLeg: side } });
 
@@ -80,12 +97,33 @@ const BRANCH_SEQUENCES: readonly WoundSequenceDef[] = [
     preset: { sidearm: true, standIn: 'FRONT' } },
   { id: 'leg-side', label: 'Leg off, you to the side', steps: [sever('SHIN_RIGHT')],
     preset: { fortitude: 'MIDDLING', sidearm: true, standIn: 'LEFT' } },
+  // Too gritty to crawl and with you off to the side, it sits in agony; 3 s after it lands you
+  // step in front, and it leans back, draws from the hip and aims at you from the floor.
+  { id: 'leg-later', label: 'Leg off, you step in front later',
+    steps: [sever('SHIN_RIGHT'), standInTo('FRONT', WOUND_CLIP_SECONDS.LEG_LOSS + STEP_IN_AFTER_LANDING_S)],
+    preset: { fortitude: 'HIGH', sidearm: true, standIn: 'LEFT' } },
   { id: 'face-down', label: 'Face-down knockdown', steps: [{ atS: 0, hit: { kind: 'KNOCKDOWN_FORWARD' } }],
     preset: { sidearm: true, standIn: 'FRONT' } },
+  // A crippled leg that is still attached: it rolls onto its belly and drags that leg behind.
+  { id: 'crawl-drag', label: 'Crawl dragging leg', steps: [cripple('RIGHT')],
+    preset: { fortitude: 'LOW', sidearm: false, standIn: 'LEFT' } },
+];
+
+/** Standing behaviour the AI asks for: clips for empty hands, the pickup, a hurt walk, aiming on the move. */
+const MOVEMENT_SEQUENCES: readonly WoundSequenceDef[] = [
+  { id: 'disarmed', label: 'Disarmed (unarmed idle/walk)',
+    steps: [act('DROP_GUN'), act('WALK', 2), act('STOP', 8)], preset: { sidearm: false } },
+  { id: 'pickup', label: 'Pick up weapon', steps: [act('DROP_GUN'), act('PICK_UP_GUN', 1.5)], preset: { sidearm: false } },
+  { id: 'hurt-walk', label: 'Hurt walk',
+    steps: [hit('TORSO_LOWER_ABDOMEN', 'PENETRATING', 450), act('HURT'), act('WALK', 2)] },
+  { id: 'aim-walk', label: 'Aim while walking', steps: [act('AIM'), act('WALK', 0.5)] },
 ];
 
 export const WOUND_SEQUENCES: readonly WoundSequenceDef[] = [
   ...BRANCH_SEQUENCES,
+  ...MOVEMENT_SEQUENCES,
+  ...DEATH_SEQUENCES,
+  ...DEAGLE_SEQUENCES,
   { id: 'chest', label: 'Chest hit', steps: [hit('TORSO_UPPER_THORAX', 'PENETRATING', 450)] },
   { id: 'head', label: 'Head hit', steps: [hit('HEAD_CRANIUM', 'PENETRATING', 300)] },
   { id: 'gut', label: 'Gut hit (critical)', steps: [hit('TORSO_LOWER_ABDOMEN', 'CRITICAL', 620)] },
@@ -136,6 +174,10 @@ const HIT_DIRECTION = vec3(0, 0, -1);
 
 /** Lands one scripted hit on the target through the core wound path. Returns a short log line. */
 export function applySequenceHit(hs: TargetHealthState, step: SequenceHit): string {
+  // The preview moves the stand-in and runs the acts itself; the body is not touched here.
+  if (step.kind === 'STAND_IN') return `you step ${step.to.toLowerCase()}`;
+  if (step.kind === 'ACT') return step.act.toLowerCase().replace(/_/g, ' ');
+  if (isDeathSequenceHit(step)) return applyDeathSequenceHit(hs, step);
   if (step.kind === 'KNOCKDOWN_FORWARD') {
     knockDownForward(hs);
     return 'knocked down forward';

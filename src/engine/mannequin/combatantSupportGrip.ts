@@ -3,6 +3,10 @@ import { solveTwoBoneIk } from '../../core/ghoul/anatomy/twoBoneIk.ts';
 import type { ActiveFiringHand } from '../ai/tacticalAiTypes.ts';
 import type { CombatantGlbInstance } from '../assets/glbLoader.ts';
 
+/**
+ * Contact IK for a palm on a grip. It is only ever asked to move a hand a few centimetres (the
+ * callers gate it by distance), so the elbow keeps the plane the clip gave it.
+ */
 export class CombatantSupportGrip {
   private readonly wristGoal = new pc.Vec3();
   private readonly elbowGoal = new pc.Vec3();
@@ -13,22 +17,21 @@ export class CombatantSupportGrip {
 
   public syncPalm(
     glb: CombatantGlbInstance, side: ActiveFiringHand, palm: pc.Vec3, handRotation: pc.Quat, palmOffset: number,
-    bendDirection?: pc.Vec3,
   ): void {
     handRotation.transformVector(pc.Vec3.UP, this.wristGoal);
     this.wristGoal.mulScalar(-palmOffset).add(palm);
-    if (this.reach(glb, side, this.wristGoal, bendDirection)) {
+    if (this.reach(glb, side, this.wristGoal)) {
       glb.boneNodes.get(`HAND_${side}`)?.setRotation(handRotation);
     }
   }
 
   /** Bends the arm so the wrist lands on the goal. Leaves the hand's own rotation alone. */
-  public reach(glb: CombatantGlbInstance, side: ActiveFiringHand, wrist: pc.Vec3, bendDirection?: pc.Vec3): boolean {
+  public reach(glb: CombatantGlbInstance, side: ActiveFiringHand, wrist: pc.Vec3): boolean {
     const upper = glb.boneNodes.get(`UPPER_ARM_${side}`);
     const forearm = glb.boneNodes.get(`FOREARM_${side}`);
     const hand = glb.boneNodes.get(`HAND_${side}`);
     if (!upper || !forearm || !hand) return false;
-    const pose = solveTwoBoneIk(upper.getPosition(), forearm.getPosition(), hand.getPosition(), wrist, bendDirection);
+    const pose = solveTwoBoneIk(upper.getPosition(), forearm.getPosition(), hand.getPosition(), wrist);
     if (!pose) return false;
 
     this.elbowGoal.set(pose.elbow.x, pose.elbow.y, pose.elbow.z);

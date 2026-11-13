@@ -1,5 +1,6 @@
 import type { TargetHealthState } from '../../contracts/ballistics.ts';
 import { isArmDeadButAttached } from '../../core/ghoul/anatomy/proceduralTraumaIk.ts';
+import { isDyingAnimated } from '../../core/ballistics/lifecycle/deathAnimation.ts';
 
 export type PropAttachmentKind = 'ATTACHED' | 'HIDDEN_TEMP' | 'DETACHED_DROPPED';
 
@@ -89,6 +90,8 @@ export function transitionPropAttachment<THand extends string = 'RIGHT' | 'LEFT'
 
 export type MannequinDriveMode =
   | 'FULL_RAGDOLL'
+  /** Dead on its feet: the death clip plays, then the corpse ragdoll takes over. */
+  | 'ANIM_DYING'
   | 'ANIM_STANDING'
   | 'ANIM_WOUNDED_POSTURE';
 
@@ -106,6 +109,9 @@ export function resolveMannequinDriveState(
   healthState: TargetHealthState,
   distalStumpAnimated = true
 ): MannequinDriveState {
+  if (!healthState.isRagdollActive && isDyingAnimated(healthState)) {
+    return { mode: 'ANIM_DYING', rightArmDeadAttached: false, leftArmDeadAttached: false };
+  }
   if (healthState.isRagdollActive || !healthState.alive || healthState.currentHp <= 0) {
     return {
       mode: 'FULL_RAGDOLL',
@@ -114,8 +120,12 @@ export function resolveMannequinDriveState(
     };
   }
 
+  // A body hurt in the chest, gut or throat is still on its feet and may walk (HurtWalk), so it
+  // samples a gait like any standing body once its reaction is over.
+  const posture = healthState.posture;
   const isStandingPosture =
-    (healthState.posture === 'COMBAT_READY' || healthState.posture === 'DISARMED') &&
+    (posture === 'COMBAT_READY' || posture === 'DISARMED' ||
+      posture === 'STAGGERED' || posture === 'GUT_HURT' || posture === 'THROAT_CLUTCH') &&
     healthState.activeReaction.type === 'NONE';
 
   return {

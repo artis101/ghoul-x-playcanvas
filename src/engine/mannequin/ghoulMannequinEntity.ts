@@ -10,6 +10,7 @@ import { TOPOLOGICAL_GHOUL_ZONES } from './combatantPoseConstants.ts';
 import { setupCombatantGlbInstance } from './combatantGlbSetup.ts';
 import { CombatantAnimController, type CombatantAimPose } from './combatantAnimController.ts';
 import { CombatantLocomotion } from './combatantLocomotion.ts';
+import { CombatantAimFacing } from './combatantAimFacing.ts';
 import { CombatantBoneSync } from './combatantBoneSync.ts';
 import { CombatantDismemberment } from './combatantDismemberment.ts';
 import { CombatantSeveredSkin } from './combatantSeveredSkin.ts';
@@ -21,6 +22,8 @@ import { CombatantDeadLimbOverlay } from './combatantDeadLimbOverlay.ts';
 import { CombatantCrawlOverlay } from './combatantCrawlOverlay.ts';
 import { buildStumpCaps } from './combatantStumpCaps.ts';
 import type { WoundClipOwner } from './combatantWoundClips.ts';
+import type { SeatedClipPlan } from './combatantSeatedClips.ts';
+import { markFlinchClipHeld } from '../ai/woundClipHold.ts';
 import {
   resolveMannequinDriveState,
   type MannequinDriveMode,
@@ -42,6 +45,8 @@ export class GhoulMannequinEntity {
 
   private readonly animController = new CombatantAnimController();
   private readonly locomotion = new CombatantLocomotion();
+  // Turns the body so a side-on one-handed aim clip still points its gun at the target.
+  private readonly aimFacing = new CombatantAimFacing();
   private readonly boneSync = new CombatantBoneSync();
   private readonly dismemberment = new CombatantDismemberment();
   private readonly severedSkin = new CombatantSeveredSkin();
@@ -87,6 +92,7 @@ export class GhoulMannequinEntity {
     this.crawlOverlay.reset();
     this.weaponMount.reset();
     this.animController.reset();
+    this.aimFacing.reset();
     this.driveState = this.resolveDriveState();
   }
 
@@ -140,8 +146,9 @@ export class GhoulMannequinEntity {
 
   public syncFromHealthState(dt: number, elapsedTime: number, guarding = false, aim?: CombatantAimPose): void {
     this.driveState = this.resolveDriveState();
+    // The gait is picked against the way the body visibly faces, bladed aim turn included.
     const movement = this.locomotion.sample(
-      this.healthState.worldPosition, this.healthState.yawRad, dt, this.driveState.mode === 'ANIM_STANDING'
+      this.healthState.worldPosition, this.healthState.yawRad + this.aimFacing.yawRad, dt, this.driveState.mode === 'ANIM_STANDING'
     );
     const headgearAttached = this.dismemberment.syncHeadgear(this.healthState, this.fxManager);
     const glb = this.combatantGlb;
@@ -155,12 +162,23 @@ export class GhoulMannequinEntity {
       switch (this.driveState.mode) {
         case 'FULL_RAGDOLL': {
           this.animController.freezeAnimation(glb);
+          this.animController.seatedClip = null;
           glb.rootEntity.setPosition(0, 0, 0);
           glb.rootEntity.setEulerAngles(0, 0, 0);
+          this.aimFacing.reset();
           for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
             this.boneSync.applyRagdollBoneToGlbJoint(glb, zone, this.healthState);
           }
           glb.rootEntity.syncHierarchy();
+          break;
+        }
+        case 'ANIM_DYING': {
+          // Killed on its feet: the death clip brings it down; a later hit only jolts it.
+          this.animController.syncDying(glb, this.healthState);
+          this.placeAnimatedRoot(glb, dt);
+          this.deadLimbOverlay.syncDyingJolt(glb, this.healthState, dt);
+          markFlinchClipHeld(this.healthState, false);
+          this.applySeveredBones(glb);
           break;
         }
         case 'ANIM_STANDING':
@@ -168,29 +186,22 @@ export class GhoulMannequinEntity {
           this.animController.syncAnimation(
             glb, this.healthState, guarding, movement, aim, this.locomotion.groundSpeed, dt
           );
-          glb.rootEntity.setPosition(
-            this.healthState.worldPosition.x,
-            this.healthState.worldPosition.y,
-            this.healthState.worldPosition.z
-          );
-          glb.rootEntity.setEulerAngles(0, (this.healthState.yawRad * 180) / Math.PI, 0);
-          // While a wound clip plays it owns the body: the jolt shrinks, the prop-up and the
-          // wound-clutch hand step back, and the stump clutch holds the arm by itself.
+          this.placeAnimatedRoot(glb, dt);
+          // A wound, fall, seated, stump-clutch or crawl clip already shows the hit, so the graze
+          // jolt is off under it; with no such clip it plays in full.
           this.deadLimbOverlay.sync(glb, this.healthState, this.boneSync, dt, {
             woundClip: this.animController.activeWoundClip,
-            suppressClutch: this.animController.isStumpClutching,
+            bodyClip:
+              this.animController.seatedClip !== null ||
+              this.animController.isStumpClutching ||
+              this.animController.isCrawling,
           }, this.stumpClipsBaked);
+          // Tell the AI a flinch clip still holds the body, so it is not walked or strafed meanwhile.
+          markFlinchClipHeld(this.healthState, this.animController.isFlinchHolding);
           this.crawlOverlay.sync(
             glb, this.healthState, this.animController.isCrawling, dt, elapsedTime, this.fxManager
           );
-          if (this.healthState.severedZones.size > 0) {
-            for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
-              if (this.healthState.ragdollBones[zone].componentId !== 'BODY') {
-                this.boneSync.applyRagdollBoneToGlbJoint(glb, zone, this.healthState);
-              }
-            }
-            glb.rootEntity.syncHierarchy();
-          }
+          this.applySeveredBones(glb);
           break;
         }
       }
@@ -206,6 +217,25 @@ export class GhoulMannequinEntity {
     this.visualGoreSync.refreshIfDirty(
       this.healthState, glb, this.woundDecals.syncedCount, this.glbZoneMaterialPairs, this.zoneBundles
     );
+  }
+
+  /** Stands the animated body where the health state is, turned by its facing and bladed aim. */
+  private placeAnimatedRoot(glb: CombatantGlbInstance, dt: number): void {
+    const p = this.healthState.worldPosition;
+    glb.rootEntity.setPosition(p.x, p.y, p.z);
+    const facingYaw = this.healthState.yawRad + this.aimFacing.update(glb, this.healthState.alive, dt);
+    glb.rootEntity.setEulerAngles(0, (facingYaw * 180) / Math.PI, 0);
+  }
+
+  /** Severed parts follow their own physics pieces, not the clip. */
+  private applySeveredBones(glb: CombatantGlbInstance): void {
+    if (this.healthState.severedZones.size === 0) return;
+    for (const zone of TOPOLOGICAL_GHOUL_ZONES) {
+      if (this.healthState.ragdollBones[zone].componentId !== 'BODY') {
+        this.boneSync.applyRagdollBoneToGlbJoint(glb, zone, this.healthState);
+      }
+    }
+    glb.rootEntity.syncHierarchy();
   }
 
   public syncPoseAttachments(): void {
@@ -242,17 +272,15 @@ export class GhoulMannequinEntity {
     return this.weaponMount.playFire();
   }
 
+  /** True while the two-handed pistol aim plays, on the whole body or over a gait on the upper layer. */
   public get isPlayingPistolAim(): boolean {
-    return this.animController.clipState.kind === 'PLAYING' && this.animController.clipState.clip === 'PistolAim';
+    const state = this.animController.clipState;
+    return (state.kind === 'PLAYING' && state.clip === 'PistolAim') || this.animController.upperBody.clip === 'PistolAim';
   }
 
-  /**
-   * A one-handed pistol aim, standing or on one knee, held with the good hand while the other
-   * arm is a stump. The gun then sits in the animated fist.
-   */
-  public get isPlayingPistolAimOneHand(): boolean {
-    const clip = this.animController.clipState;
-    return clip.kind === 'PLAYING' && (clip.clip === 'PistolAimOneHand' || clip.clip === 'KneelPistolAimOneHand');
+  /** The seated last-stand clip asked for this frame (draw, aim or agony), or null. */
+  public get seatedClip(): SeatedClipPlan | null {
+    return this.animController.seatedClip;
   }
 
   /** True while the downed body drags itself along in the crawl loop. */

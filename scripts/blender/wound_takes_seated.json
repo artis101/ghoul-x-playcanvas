@@ -1,0 +1,15 @@
+[
+ {"name": "seated_draw2", "seed": 121, "samples": 6, "durations": [2.2],
+  "prompts": ["A person sits on the floor with the legs stretched out leaning back on the left hand, then takes a pistol from the right hip with the right hand and points it forward at eye level with the arm straight"]},
+ {"name": "seated_aim", "seed": 122, "samples": 4, "durations": [3.0],
+  "prompts": ["A person sits on the floor with the legs stretched out leaning back on the left hand, pointing a pistol forward with the right arm straight, holding still and breathing hard"]},
+ {"name": "seated_agony2", "seed": 123, "samples": 4, "durations": [3.0],
+  "prompts": ["A person sits on the floor with the legs stretched out leaning back on the left hand, rocking back and forth in pain and holding the right thigh with the right hand"]},
+ {"name": "unarmed_idle", "seed": 124, "samples": 4, "durations": [3.0],
+  "prompts": ["A person stands still with empty hands hanging at the sides, breathing heavily and shifting the weight slightly from foot to foot"]},
+ {"name": "pistol_draw", "seed": 125, "samples": 4, "durations": [1.6],
+  "prompts": ["A person standing reaches to the right hip with the right hand, pulls out a pistol, brings both hands together and aims straight ahead with both arms extended"]},
+ {"name": "stump_draw_r", "seed": 126, "samples": 4, "durations": [2.0],
+  "prompts": ["A person holding the right wrist against the chest with the left hand lets go, reaches to the left hip with the left hand, pulls out a pistol and raises it to eye level aiming straight ahead with the left arm extended, keeping the right forearm tucked against the chest"],
+  "pins": [{"at": [0, 1], "take": "work/takes/handloss_r_03.npz", "frames": [70, 71]}]}
+]

@@ -23,7 +23,15 @@ export type CombatantHandedClipName =
   | 'LongGunAim'
   | 'PistolAim'
   | 'PistolAimOneHand'
+  | 'PistolOneHandHold'
   | 'KneelPistolAimOneHand'
+  | 'SeatedPistolDraw'
+  | 'SeatedPistolAim'
+  | 'SeatedAgony'
+  | 'HurtIdle'
+  | 'HurtWalk'
+  | 'PickupWeapon'
+  | 'PistolDraw'
   | 'Walk'
   | 'Run'
   | 'WalkBackward'
@@ -37,13 +45,12 @@ export type CombatantHandedClipName =
   | 'HitFlinchArmLeft'
   | 'HitFlinchLegRight'
   | 'HitFlinchLegLeft'
-  | 'DiaphragmDropKneel'
-  | 'LegCollapseCrawl'
   | 'Crawl';
 
 /**
- * Wound clips named for the side of the body they hurt. The gun is dropped, so handedness does
- * not matter and there is no `_Southpaw` twin; the Left clip is the Right take mirrored.
+ * Clips baked once, with no `_Southpaw` twin. Wound clips are named for the side of the body they
+ * hurt (the gun is dropped, so handedness does not matter; the Left clip is the Right take
+ * mirrored), and the empty-handed clips are symmetric.
  */
 export type CombatantSidedClipName =
   | 'LegShotFallRight'
@@ -61,17 +68,44 @@ export type CombatantSidedClipName =
   | 'StumpKneelRight'
   | 'StumpKneelLeft'
   | 'DownedCollapse'
-  | 'SitToCrawl';
+  | 'SitToCrawl'
+  | 'UnarmedIdle'
+  | 'UnarmedWalk'
+  | 'UnarmedRun'
+  | 'StumpDrawRight'
+  | 'StumpDrawLeft'
+  | 'KneelStumpDrawRight'
+  | 'KneelStumpDrawLeft'
+  | 'CrawlDragLegRight'
+  | 'CrawlDragLegLeft'
+  | CombatantDeathClipName;
+
+/** Death falls: start from the combat-ready stance, end lying still, gun dropped. No twin. */
+export type CombatantDeathClipName =
+  | 'DeathFallBack'
+  | 'DeathFallForward'
+  | 'DeathCrumple'
+  | 'DeathSpin'
+  | 'DeathBleedOut';
 
 export type CombatantAnimationClipName = CombatantHandedClipName | CombatantSidedClipName;
 
+/** Every handed clip in the shipped GLB; each one also has its `_Southpaw` twin. */
 export const COMBATANT_ANIMATION_CLIPS: readonly CombatantHandedClipName[] = [
   'CombatReadyIdle',
   'UnsuspectingIdle',
   'LongGunAim',
   'PistolAim',
   'PistolAimOneHand',
+  'PistolOneHandHold',
   'KneelPistolAimOneHand',
+  'SeatedPistolDraw',
+  'SeatedPistolAim',
+  'SeatedAgony',
+  'HurtIdle',
+  'HurtWalk',
+  'PickupWeapon',
+  'PistolDraw',
   'Walk',
   'Run',
   'WalkBackward',
@@ -85,8 +119,6 @@ export const COMBATANT_ANIMATION_CLIPS: readonly CombatantHandedClipName[] = [
   'HitFlinchArmLeft',
   'HitFlinchLegRight',
   'HitFlinchLegLeft',
-  'DiaphragmDropKneel',
-  'LegCollapseCrawl',
   'Crawl',
 ] as const;
 
@@ -107,6 +139,20 @@ export const COMBATANT_SIDED_CLIPS: readonly CombatantSidedClipName[] = [
   'StumpKneelLeft',
   'DownedCollapse',
   'SitToCrawl',
+  'UnarmedIdle',
+  'UnarmedWalk',
+  'UnarmedRun',
+  'StumpDrawRight',
+  'StumpDrawLeft',
+  'KneelStumpDrawRight',
+  'KneelStumpDrawLeft',
+  'CrawlDragLegRight',
+  'CrawlDragLegLeft',
+  'DeathFallBack',
+  'DeathFallForward',
+  'DeathCrumple',
+  'DeathSpin',
+  'DeathBleedOut',
 ] as const;
 
 export const WEAPON_ASSET_IDS: readonly WeaponAssetId[] = [

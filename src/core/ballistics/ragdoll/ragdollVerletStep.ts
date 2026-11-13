@@ -9,6 +9,7 @@ import {
   syncTargetLifecycleDerivedState,
   transitionTargetLifecycle,
 } from '../lifecycle/targetLifecycleFsm.ts';
+import { stepDeathAnimation } from '../lifecycle/deathAnimationStep.ts';
 import { buildLivingGroundedPoseTargets } from '../triage/groundedPoseTargets.ts';
 import {
   add,
@@ -100,7 +101,9 @@ export function stepRagdollPhysics(
 ): void {
   if (dt <= 0) return;
 
-  // 1. Tick Physiological Hemorrhage, Leg-Disable Fall & Pain Reactions on living combatants
+  // 1. Play out a death clip (the ragdoll takes over when it ends), then tick hemorrhage,
+  // leg-disable falls and pain reactions on living combatants.
+  stepDeathAnimation(target, dt, floorY);
   stepLivingTargetVitalsAndFall(target, dt, floorY);
 
   const hasSeveredLimbs = target.severedZones.size > 0;

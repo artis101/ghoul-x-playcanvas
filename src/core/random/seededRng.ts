@@ -25,3 +25,13 @@ export function mixSeed(a: number, b: number): number {
 export function rollRange(rng: () => number, min: number, max: number): number {
   return min + (max - min) * rng();
 }
+
+/** FNV-1a hash of a string to a 32-bit seed, e.g. a combatant id. */
+export function hashStringSeed(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}

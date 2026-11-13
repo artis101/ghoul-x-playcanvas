@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NEUTRAL_CONSTITUTION, type CombatantConstitution } from '../src/contracts/combatantConstitution.ts';
+import type { EnemyArchetypeId } from '../src/contracts/ballistics.ts';
 import type { BoneTraumaRecord, OrganTraumaRecord } from '../src/contracts/physiology.ts';
 import { normalize, sub, vec3 } from '../src/core/ballistics/vec3.ts';
 import {
@@ -22,8 +23,8 @@ import { PhysiologyEcsSystem } from '../src/core/physiology/physiologySystem.ts'
 import { applyOrganTrauma } from '../src/core/physiology/traumaOrgans.ts';
 import { startTerminalCountdown } from '../src/core/physiology/physiologyVariance.ts';
 
-function torsoTarget(id: string, seed?: number) {
-  const t = createTargetHealthState(id, 'Rifleman', vec3(0, 0, -12), 0, 'MILITIA_GUNNER');
+function torsoTarget(id: string, seed?: number, archetype: EnemyArchetypeId = 'MILITIA_GUNNER') {
+  const t = createTargetHealthState(id, 'Rifleman', vec3(0, 0, -12), 0, archetype);
   if (seed !== undefined) t.shotVarianceSeed = seed;
   return t;
 }
@@ -110,8 +111,9 @@ describe('Combat variance', () => {
     let instant = 0;
     let delayed = 0;
     for (let seed = 1; seed <= 120; seed++) {
-      const t = torsoTarget(`lethal${seed}`, seed);
-      // A .50 AE through the belly is fatal through trauma at nominal behaviour.
+      // A .50 AE through the belly is fatal through trauma at nominal behaviour, on an ordinary
+      // build: a tough one (archetypeToughness.ts) usually survives it.
+      const t = torsoTarget(`lethal${seed}`, seed, 'SKINHEAD_PUNK');
       const rep = shootChest(t, WEAPON_SILVER_TALON, AMMO_50AE_JHP, 1.05);
       if (!rep.hitTarget) continue;
       if (rep.delayedLethality) {

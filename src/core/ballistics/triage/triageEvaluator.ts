@@ -1,4 +1,5 @@
 import { TargetHealthState } from '../../../contracts/ballistics.ts';
+import { RED_HEALTH_HP_FRACTION } from '../../../contracts/combatantHealthBands.ts';
 
 /**
  * Organs whose rupture alone means dying without surgery. A punctured lung or gut is serious but
@@ -38,7 +39,7 @@ export function computeCombatantTriageStatus(target: TargetHealthState): Combata
     target.severedZones.has('UPPER_ARM_LEFT');
 
   if (
-    hpRatio <= 0.32 ||
+    hpRatio <= RED_HEALTH_HP_FRACTION ||
     target.bloodVolumeMl <= 3550 ||
     target.bloodLossRateMlPerSec >= 24 ||
     [...target.rupturedOrgans].some(isVitalOrgan) ||
