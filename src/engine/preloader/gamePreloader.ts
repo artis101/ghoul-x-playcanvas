@@ -259,7 +259,7 @@ export async function runGamePreloader(
     const warmup = await compileAllGameShaders({
       app,
       glbRegistry,
-      extraMaterials,
+      extraMaterials: [...extraMaterials, ...ghoulApp.combatDirector.warmupMaterials],
       yieldFrames,
       onProgress: (label, done, total) => {
         emitProgress('SHADER_COMPILATION', done / Math.max(1, total), label);

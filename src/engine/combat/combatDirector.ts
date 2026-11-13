@@ -115,6 +115,9 @@ export class CombatDirector {
     this.targets = spawnCombatTargets(this.app, this.materials, this.fxManager, this.glbRegistry, this.physiologySystem, this.tacticalAi);
   }
 
+  /** Materials this director only puts on screen mid-fight, for the preloader's shader warm-up. */
+  public get warmupMaterials(): pc.Material[] { return [this.blastFireballMat]; }
+
   public areAllTargetsDown(): boolean {
     return this.targets.length > 0 && this.targets.every((t) => !t.healthState.alive);
   }

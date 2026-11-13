@@ -1,7 +1,16 @@
 import * as pc from 'playcanvas';
 import type { GlbModelRegistry } from '../assets/glbModelRegistry.ts';
 import { WEAPON_ASSET_IDS } from '../assets/glbTypes.ts';
+import { getBloodSoakedTwin } from '../mannequin/combatantGlbMaterials.ts';
 import { collectSceneMaterials } from './materialCollector.ts';
+import { stageViewmodelsForWarmup } from './warmupViewmodels.ts';
+import {
+  collectSceneMeshInstances,
+  createShapeMatchedDraw,
+  PrimitiveShapeWarmup,
+  stageWarmupDraws,
+  type WarmupDraw,
+} from './warmupVariants.ts';
 
 export interface ShaderWarmupOptions {
   readonly app: pc.Application;
@@ -14,25 +23,6 @@ export interface ShaderWarmupOptions {
 export interface ShaderWarmupResult {
   readonly compiledMaterials: number;
   readonly warmedVariants: number;
-}
-
-function createStagingQuadMesh(device: pc.GraphicsDevice, includeTangents: boolean): pc.Mesh {
-  const mesh = new pc.Mesh(device);
-  mesh.setPositions(new Float32Array([-0.4, -0.4, 0, 0.4, -0.4, 0, 0.4, 0.4, 0, -0.4, 0.4, 0]));
-  mesh.setNormals(new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]));
-  mesh.setUvs(0, new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]));
-  mesh.setColors(new Float32Array([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]));
-  if (includeTangents) {
-    mesh.setVertexStream(
-      pc.SEMANTIC_TANGENT,
-      new Float32Array([1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1]),
-      4
-    );
-  }
-  mesh.setIndices(new Uint16Array([0, 1, 2, 0, 2, 3]));
-  mesh.update(pc.PRIMITIVE_TRIANGLES);
-  mesh.incRefCount();
-  return mesh;
 }
 
 function nextAnimationFrame(shouldYield: boolean): Promise<void> {
@@ -75,19 +65,11 @@ export async function compileAllGameShaders(
   }
   const allMaterials = Array.from(materialSet);
 
-  const batchSize = 10;
-  const batches: pc.Material[][] = [];
-  for (let i = 0; i < allMaterials.length; i += batchSize) {
-    batches.push(allMaterials.slice(i, i + batchSize));
-  }
-
-  const totalSteps = Math.max(1, batches.length + 2);
   let compiledMaterials = 0;
   let warmedVariants = 0;
 
   let stagingRoot: pc.Entity | null = null;
-  let meshNoTangents: pc.Mesh | null = null;
-  let meshWithTangents: pc.Mesh | null = null;
+  let primitiveShapes: PrimitiveShapeWarmup | null = null;
   let instancingVb: pc.VertexBuffer | null = null;
 
   try {
@@ -109,35 +91,8 @@ export async function compileAllGameShaders(
     warmupCam.setPosition(0, -250, 0);
     stagingRoot.addChild(warmupCam);
 
-    const warmupDirLight = new pc.Entity('WarmupShadowDirLight');
-    warmupDirLight.addComponent('light', {
-      type: 'directional',
-      color: new pc.Color(1.0, 0.95, 0.86),
-      intensity: 1.5,
-      castShadows: true,
-      shadowType: pc.SHADOW_PCF3_16F,
-      shadowResolution: 512,
-      shadowDistance: 15,
-      numCascades: 2,
-      cascadeBlend: 0.15,
-    });
-    warmupDirLight.setPosition(0, -248, 0);
-    warmupDirLight.setEulerAngles(48, 32, 0);
-    stagingRoot.addChild(warmupDirLight);
-
-    const warmupPointLight = new pc.Entity('WarmupOmniLight');
-    warmupPointLight.addComponent('light', {
-      type: 'point',
-      color: new pc.Color(1.0, 0.8, 0.45),
-      intensity: 2.2,
-      range: 12,
-      castShadows: false,
-    });
-    warmupPointLight.setPosition(0, -249.2, -2.2);
-    stagingRoot.addChild(warmupPointLight);
-
-    meshNoTangents = createStagingQuadMesh(device, false);
-    meshWithTangents = createStagingQuadMesh(device, true);
+    // No warm-up lights: directional lights are compiled into every lit shader, so an extra one
+    // here would warm programs the game never asks for. The arena's own sun is already in the scene.
 
     const instancingFormat = pc.VertexFormat.getDefaultInstancingFormat(device);
     const instanceMatrices = new Float32Array([
@@ -151,11 +106,32 @@ export async function compileAllGameShaders(
       data: instanceMatrices,
     });
 
-    for (let b = 0; b < batches.length; b++) {
-      const batch = batches[b];
-      const firstMatName = batch[0]?.name || 'PBR Material';
+    // 1. Every material on the exact mesh shapes the scene already holds (pools included), plus
+    //    the blood-soaked twin each skinned body part swaps to when it is first wounded.
+    const fallbackVb = instancingVb;
+    const draws: WarmupDraw[] = [];
+    for (const live of collectSceneMeshInstances(app)) {
+      const liveMat = live.material;
+      if (!liveMat) continue;
+      draws.push(createShapeMatchedDraw(live, liveMat, fallbackVb));
+      const bloodyTwin = getBloodSoakedTwin(liveMat);
+      if (bloodyTwin) draws.push(createShapeMatchedDraw(live, bloodyTwin, fallbackVb));
+    }
+    // 2. Every material on the primitive shapes used by effects that are spawned on demand.
+    primitiveShapes = new PrimitiveShapeWarmup(device);
+    for (const mat of allMaterials) {
+      draws.push(...primitiveShapes.createDraws(mat));
+      compiledMaterials += 1;
+    }
+
+    const batchSize = 64;
+    const batchCount = Math.ceil(draws.length / batchSize);
+    const totalSteps = Math.max(1, batchCount + 2);
+    for (let b = 0; b < batchCount; b++) {
+      const batch = draws.slice(b * batchSize, (b + 1) * batchSize);
+      const firstMatName = batch[0]?.meshInstance.material?.name || 'PBR Material';
       onProgress?.(
-        `Compiling shader batch ${b + 1}/${batches.length} (${firstMatName})...`,
+        `Compiling shader batch ${b + 1}/${batchCount} (${firstMatName})...`,
         b + 1,
         totalSteps
       );
@@ -163,56 +139,13 @@ export async function compileAllGameShaders(
       const batchEntity = new pc.Entity(`WarmupBatch_${b}`);
       batchEntity.setPosition(0, -250, -3);
       stagingRoot.addChild(batchEntity);
-
-      const meshInstances: pc.MeshInstance[] = [];
-      const instancedMeshInstances: pc.MeshInstance[] = [];
-
-      for (const mat of batch) {
-        const stdMat = mat instanceof pc.StandardMaterial ? mat : null;
-        const requiresTangents = Boolean(stdMat?.heightMap);
-        const primaryMesh = requiresTangents ? meshWithTangents : meshNoTangents;
-
-        const standardMi = new pc.MeshInstance(primaryMesh, mat);
-        standardMi.cull = false;
-        standardMi.castShadows = true;
-        standardMi.receiveShadows = true;
-        meshInstances.push(standardMi);
-        warmedVariants += 1;
-
-        const instancedMi = new pc.MeshInstance(primaryMesh, mat);
-        instancedMi.setInstancing(instancingVb);
-        instancedMi.instancingCount = 1;
-        instancedMi.cull = false;
-        instancedMi.castShadows = !requiresTangents;
-        instancedMi.receiveShadows = true;
-        meshInstances.push(instancedMi);
-        instancedMeshInstances.push(instancedMi);
-        warmedVariants += 1;
-
-        if (!requiresTangents && stdMat?.normalMap) {
-          const tangentMi = new pc.MeshInstance(meshWithTangents, mat);
-          tangentMi.cull = false;
-          tangentMi.castShadows = true;
-          tangentMi.receiveShadows = true;
-          meshInstances.push(tangentMi);
-          warmedVariants += 1;
-        }
-
-        compiledMaterials += 1;
-      }
-
-      batchEntity.addComponent('render', {
-        meshInstances,
-        castShadows: true,
-        receiveShadows: true,
-      });
+      stageWarmupDraws(batchEntity, batch);
 
       stagingRoot.syncHierarchy();
       app.render();
+      warmedVariants += batch.length;
 
-      for (const instMi of instancedMeshInstances) {
-        instMi.setInstancing(null);
-      }
+      for (const draw of batch) draw.release();
       batchEntity.destroy();
 
       await nextAnimationFrame(yieldFrames);
@@ -220,7 +153,7 @@ export async function compileAllGameShaders(
 
     onProgress?.(
       'Compiling skinned GHOUL anatomy shader permutations...',
-      batches.length + 1,
+      batchCount + 1,
       totalSteps
     );
     if (glbRegistry.isLoaded('ghoul_combatant')) {
@@ -273,24 +206,23 @@ export async function compileAllGameShaders(
         w.rootEntity.setPosition((i - 2) * 0.25, -250, -2.5);
         warmedVariants += 2;
       }
-      if (tempWeapons.length > 0) {
-        stagingRoot.syncHierarchy();
-        app.render();
-      }
-    } catch {
-      // Ignore in headless/partial test containers
+      tempWeapons.push({ destroy: stageViewmodelsForWarmup(stagingRoot, warmupCam, glbRegistry) });
+      stagingRoot.syncHierarchy();
+      app.render();
+    } catch (err: unknown) {
+      console.warn('GHOUL-X weapon shader warm-up stopped early:', err);
     } finally {
       for (const w of tempWeapons) {
         w.destroy();
       }
     }
-  } catch {
-    // Gracefully absorb any unexpected graphics pipeline error in mocked/headless environments
+  } catch (err: unknown) {
+    // A failed warm-up must not block boot, but say so: every shader it skipped compiles mid-game.
+    console.warn('GHOUL-X shader warm-up stopped early:', err);
   } finally {
     stagingRoot?.destroy();
     instancingVb?.destroy();
-    meshNoTangents?.destroy();
-    meshWithTangents?.destroy();
+    primitiveShapes?.destroy();
   }
 
   return { compiledMaterials, warmedVariants };

@@ -6,6 +6,11 @@ import { getBloodSoakDetailTexture } from './bloodSoakDetailTexture.ts';
 
 const bloodyBySkin = new WeakMap<pc.Material, pc.Material>();
 
+/** The blood-soaked twin a skin material swaps to once its zone is wounded, if one was built. */
+export function getBloodSoakedTwin(intactMat: pc.Material): pc.Material | undefined {
+  return bloodyBySkin.get(intactMat);
+}
+
 /**
  * Picks the material a body zone wears for an archetype, and its blood-soaked twin.
  * Zones ship with the default character's painted skin page; every other archetype swaps in its own page.
