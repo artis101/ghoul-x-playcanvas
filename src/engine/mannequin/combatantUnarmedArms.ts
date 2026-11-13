@@ -6,8 +6,11 @@ import type { CombatantGlbInstance } from '../assets/glbLoader.ts';
 import { CombatantSupportGrip } from './combatantSupportGrip.ts';
 
 // Body clips are authored around a held long gun. These are the ones an empty-handed combatant plays.
+// The chest stagger is among them: its support hand reaches for a forend, which with no gun leaves
+// the arm cocked up in front of the chest holding nothing.
 const RELAXED_CLIPS = new Set([
   'CombatReadyIdle', 'UnsuspectingIdle', 'Walk', 'Run', 'WalkBackward', 'StrafeLeft', 'StrafeRight', 'LongGunAim',
+  'HitStaggerChest',
 ]);
 const SIDES = ['RIGHT', 'LEFT'] as const;
 const EASE_RATE = 7;

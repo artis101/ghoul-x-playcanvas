@@ -14,7 +14,10 @@ export function spawnDismembermentGibs(
   event: DismembermentEvent,
   ctx: GibSpawnContext,
 ): void {
-  const count = Math.min(5, Math.max(2, Math.round(event.gibCount * 0.5)));
+  // The severed limb is the big piece of debris. Besides it only a few splinters of bone with
+  // muscle still on them are knocked loose: bare round lumps of flesh read as blobs of blood
+  // hanging in the air, not as gore.
+  const count = Math.min(3, Math.max(1, Math.round(event.gibCount * 0.25)));
   const origin = event.stumpWorldPosition;
   const launchVel = event.severedLimbVelocity;
 
@@ -26,73 +29,49 @@ export function spawnDismembermentGibs(
   );
 
   for (let i = 0; i < count; i++) {
-    const isBonePredominant = i % 3 === 0;
     const gibRoot = new pc.Entity('GibChunk');
 
-    if (isBonePredominant) {
-      const boneShaft = new pc.Entity('CorticalBoneFragment');
-      boneShaft.addComponent('render', {
-        type: 'cylinder',
-        material: goreSuite.wetCorticalBoneMat,
-        castShadows: true,
-        receiveShadows: true,
-      });
-      const r = 0.015 + Math.random() * 0.01;
-      const len = 0.058 + Math.random() * 0.038;
-      boneShaft.setLocalScale(r, len, r * 0.88);
-      gibRoot.addChild(boneShaft);
+    const boneShaft = new pc.Entity('CorticalBoneFragment');
+    boneShaft.addComponent('render', {
+      type: 'cylinder',
+      material: goreSuite.wetCorticalBoneMat,
+      castShadows: true,
+      receiveShadows: true,
+    });
+    const r = 0.012 + Math.random() * 0.008;
+    const len = 0.05 + Math.random() * 0.035;
+    boneShaft.setLocalScale(r, len, r * 0.88);
+    gibRoot.addChild(boneShaft);
 
-      const marrowCore = new pc.Entity('TrabecularMarrowCore');
-      marrowCore.addComponent('render', {
-        type: 'cylinder',
-        material: goreSuite.wetMarrowCapMat,
-        castShadows: false,
-      });
-      marrowCore.setLocalPosition(0, len * 0.48, 0);
-      marrowCore.setLocalScale(r * 0.68, 0.012, r * 0.68);
-      gibRoot.addChild(marrowCore);
+    const marrowCore = new pc.Entity('TrabecularMarrowCore');
+    marrowCore.addComponent('render', {
+      type: 'cylinder',
+      material: goreSuite.wetMarrowCapMat,
+      castShadows: false,
+    });
+    marrowCore.setLocalPosition(0, len * 0.48, 0);
+    marrowCore.setLocalScale(r * 0.68, 0.012, r * 0.68);
+    gibRoot.addChild(marrowCore);
 
-      const tissueCuff = new pc.Entity('AdherentMuscleCuff');
-      tissueCuff.addComponent('render', {
-        type: 'sphere',
-        material: goreSuite.wetFleshGibMat,
-        castShadows: true,
-      });
-      tissueCuff.setLocalPosition(r * 0.35, -len * 0.18, 0);
-      tissueCuff.setLocalScale(r * 1.65, len * 0.55, r * 1.45);
-      gibRoot.addChild(tissueCuff);
-    } else {
-      const meatMass = new pc.Entity('WetMuscleMass');
-      meatMass.addComponent('render', {
-        type: i % 2 === 0 ? 'capsule' : 'sphere',
-        material: goreSuite.wetFleshGibMat,
-        castShadows: true,
-        receiveShadows: true,
-      });
-      const s = 0.036 + Math.random() * 0.036;
-      meatMass.setLocalScale(s * 0.92, s * 1.38, s * 0.84);
-      gibRoot.addChild(meatMass);
-
-      if (i % 2 === 1) {
-        const boneSplinter = new pc.Entity('BoneSplinterSpur');
-        boneSplinter.addComponent('render', {
-          type: 'cone',
-          material: goreSuite.wetCorticalBoneMat,
-          castShadows: false,
-        });
-        boneSplinter.setLocalPosition(0, s * 0.58, 0);
-        boneSplinter.setLocalScale(s * 0.32, s * 0.72, s * 0.32);
-        gibRoot.addChild(boneSplinter);
-      }
-    }
+    // Torn muscle clinging to one end of the splinter, smaller than the bone is long.
+    const tissueCuff = new pc.Entity('AdherentMuscleCuff');
+    tissueCuff.addComponent('render', {
+      type: 'sphere',
+      material: goreSuite.wetFleshGibMat,
+      castShadows: true,
+    });
+    tissueCuff.setLocalPosition(r * 0.35, -len * 0.25, 0);
+    tissueCuff.setLocalScale(r * 1.5, len * 0.42, r * 1.3);
+    gibRoot.addChild(tissueCuff);
 
     gibRoot.setPosition(origin.x, origin.y, origin.z);
     gibRoot.setLocalEulerAngles(Math.random() * 360, Math.random() * 360, Math.random() * 360);
     fxRoot.addChild(gibRoot);
 
-    const vx = launchVel.x * 0.68 + (Math.random() - 0.5) * 4.5;
-    const vy = Math.max(1.9, launchVel.y * 0.58 + Math.random() * 3.4);
-    const vz = launchVel.z * 0.68 + (Math.random() - 0.5) * 4.5;
+    // Knocked out and down, not lobbed overhead.
+    const vx = launchVel.x * 0.5 + (Math.random() - 0.5) * 2.2;
+    const vy = launchVel.y * 0.3 + Math.random() * 1.2;
+    const vz = launchVel.z * 0.5 + (Math.random() - 0.5) * 2.2;
 
     gibChunks.push({
       entity: gibRoot,
@@ -107,7 +86,7 @@ export function spawnDismembermentGibs(
       life: 0,
       maxLife: 12.0,
       leavesBlood: true,
-      restHeight: 0.026,
+      restHeight: 0.014,
     });
   }
 }

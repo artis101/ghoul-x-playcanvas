@@ -99,7 +99,8 @@ export class CombatantWeaponMount {
     fxManager?: GoreAndBallisticsFxManager,
     guarding = false,
     dt?: number,
-    sidearmDrawn = false
+    /** The hand holding a drawn backup sidearm, if any; that arm is posed by the sidearm sync. */
+    sidearmHand: 'RIGHT' | 'LEFT' | null = null
   ): void {
     const triggerHand = getPreferredPrimaryHand(healthState);
     const supportHand = oppositeSide(triggerHand);
@@ -147,7 +148,11 @@ export class CombatantWeaponMount {
     }
 
     const armed = transition.isVisible && this.heldWeaponNode !== null;
-    if (glb && !armed) this.unarmed.sync(glb, healthState, !sidearmDrawn, dt);
+    // With the long gun gone, an empty arm hangs free instead of gripping a gun that is not there.
+    // A drawn sidearm keeps its own arm; only the other one is let go.
+    if (glb && !armed) {
+      this.unarmed.sync(glb, healthState, true, dt, sidearmHand ? oppositeSide(sidearmHand) : undefined);
+    }
 
     if (transition.isVisible && this.heldWeaponNode) {
       const charFwd = vec3(

@@ -179,7 +179,7 @@ export class GhoulMannequinEntity {
     }
 
     this.weaponMount.syncWeaponPosition(
-      this.healthState, glb, this.fxManager, guarding, dt, aim?.clip === 'PistolAim'
+      this.healthState, glb, this.fxManager, guarding, dt, aim?.clip === 'PistolAim' ? aim.hand ?? null : null
     );
     this.syncPoseAttachments();
     this.dismemberment.syncStumps(this.stumpCaps, this.healthState);
