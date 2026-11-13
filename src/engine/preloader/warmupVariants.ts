@@ -19,6 +19,10 @@ interface ShapedMeshInstance {
   _shaderDefs?: number;
 }
 
+interface BorrowedMorph {
+  _morphInstance: pc.MorphInstance | null;
+}
+
 function shapeKey(mi: pc.MeshInstance): string {
   const defs = (mi as unknown as ShapedMeshInstance)._shaderDefs ?? 0;
   return `${mi.material?.id ?? -1}:${defs}:${mi.castShadow ? 1 : 0}`;
@@ -77,6 +81,9 @@ export function createShapeMatchedDraw(
   mi.cull = false;
   mi.screenSpace = live.screenSpace;
   if (live.skinInstance) mi.skinInstance = live.skinInstance;
+  // Morph targets (body builds) select their own program, so a wounded morphing body part needs
+  // its blood-soaked material warmed with the morph attached, not just the skin.
+  if (live.morphInstance) mi.morphInstance = live.morphInstance;
   const instanced = Boolean(live.instancingData);
   if (instanced) {
     mi.setInstancing(live.instancingData?.vertexBuffer ?? fallbackInstancingVb);
@@ -87,8 +94,10 @@ export function createShapeMatchedDraw(
     castShadows: live.castShadow,
     receiveShadows: live.receiveShadow,
     release: () => {
-      // The skin and instancing buffer belong to the live instance; detach so destroy() spares them.
+      // The skin, morph and instancing buffer belong to the live instance; detach so destroy() spares them.
       if (mi.skinInstance) mi.skinInstance = null;
+      // The morphInstance setter destroys the instance it replaces, so clear the field itself.
+      (mi as unknown as BorrowedMorph)._morphInstance = null;
       if (instanced) mi.setInstancing(null);
     },
   };

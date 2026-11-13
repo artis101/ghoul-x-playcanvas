@@ -65,7 +65,8 @@ export function buildHallShell(
   const diffuserMat = createDetailMaterial('hallFixtureDiffuserMat', detailMaterials);
   diffuserMat.diffuse = new pc.Color(0.9, 0.86, 0.7);
   diffuserMat.emissive = new pc.Color(1.0, 0.95, 0.78);
-  diffuserMat.emissiveIntensity = 1.6;
+  // Bright enough to clear the bloom knee, so each tube carries a soft halo.
+  diffuserMat.emissiveIntensity = 7;
   diffuserMat.update();
 
   const shell = new pc.Entity('TiledHallShell');
@@ -133,8 +134,9 @@ export function buildHallShell(
       lamp.addComponent('light', {
         type: 'omni',
         color: new pc.Color(1.0, 0.95, 0.8),
-        intensity: 2.4,
-        range: 14,
+        // Local pools under each fixture; the key light does the broad lighting and the shadows.
+        intensity: 1.3,
+        range: 10,
         castShadows: false,
       });
       lamp.setPosition(x, heightM - 0.7, z);

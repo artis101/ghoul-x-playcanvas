@@ -8,7 +8,9 @@ export function createPlayCanvasApp(canvas: HTMLCanvasElement): pc.Application {
     touch: new pc.TouchDevice(canvas),
     keyboard: new pc.Keyboard(window),
     graphicsDeviceOptions: {
-      antialias: true,
+      // The player camera's HDR frame multisamples the scene itself; the back buffer only
+      // receives the composed image.
+      antialias: false,
       powerPreference: 'high-performance',
       alpha: false,
     },

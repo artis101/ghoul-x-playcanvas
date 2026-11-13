@@ -29,10 +29,8 @@ import { type SprawlProgress, applyCorpseSprawl } from './corpseSprawlDrive.ts';
 import { projectConstraintsAndAnatomyOnce } from './ragdollConstraintsProjector.ts';
 import { applyAnatomicalJointLimits } from './ragdollJointLimits.ts';
 import { type MuscleDrive, SEAT_ZONES, computeMuscleDrive } from './ragdollMuscleDrive.ts';
-import {
-  getRagdollParticleRef,
-  isRagdollBoneParticleActive,
-} from './ragdollParticles.ts';
+import { isRagdollBoneParticleActive } from './ragdollParticles.ts';
+import { isResolvedParticleActive, resolveRagdollSolverScratch } from './ragdollSolverScratch.ts';
 
 const MAX_PARTICLE_SPEED_MS = 11.0;
 const MAX_PARTICLE_SPEED_SQ = MAX_PARTICLE_SPEED_MS * MAX_PARTICLE_SPEED_MS;
@@ -132,6 +130,9 @@ export function stepRagdollPhysics(
   // shows as sag and tremor, not as a body that cannot lift its own head.
   const poseHold = target.alive ? POSE_HOLD_FLOOR + (1 - POSE_HOLD_FLOOR) * muscleTone : 0.0;
 
+  // Nothing below re-creates a bone or a constraint, so one lookup serves every sub-step.
+  const scratch = resolveRagdollSolverScratch(target);
+
   let finalGroundedCount = 0;
   let sprawl: SprawlProgress = 'SETTLED';
   for (let step = 0; step < subSteps; step++) {
@@ -192,7 +193,7 @@ export function stepRagdollPhysics(
 
     // B. Iterative PBD Constraints
     for (let iter = 0; iter < constraintIterations; iter++) {
-      projectConstraintsAndAnatomyOnce(target, floorY);
+      projectConstraintsAndAnatomyOnce(target, floorY, scratch);
     }
 
     // C. PBD Velocity Update + Ground Friction & Bounce Restitution
@@ -269,24 +270,29 @@ export function stepRagdollPhysics(
     }
 
     // E. Momentum-Conserving Passive Joint Viscosity
-    for (const c of target.ragdollConstraints) {
+    for (let i = 0; i < scratch.constraintCount; i++) {
+      const r = scratch.constraints[i];
+      const c = r.constraint;
       if (c.maxLength - c.minLength > 0.005) continue;
-      const pA = getRagdollParticleRef(target, c.nodeA);
-      const pB = getRagdollParticleRef(target, c.nodeB);
-      if (!pA.active || !pB.active || pA.componentId !== pB.componentId) continue;
+      const pA = r.a;
+      const pB = r.b;
+      if (!isResolvedParticleActive(target, pA, r.gateA) || !isResolvedParticleActive(target, pB, r.gateB)) continue;
+      if (pA.componentId !== pB.componentId) continue;
 
       const totalM = pA.massKg + pB.massKg;
       if (totalM < 1e-6) continue;
-      const vCm = scale(
-        add(scale(pA.velocity, pA.massKg), scale(pB.velocity, pB.massKg)),
-        1 / totalM
-      );
-      pA.velocity.x += (vCm.x - pA.velocity.x) * jointViscosityAlpha;
-      pA.velocity.y += (vCm.y - pA.velocity.y) * jointViscosityAlpha;
-      pA.velocity.z += (vCm.z - pA.velocity.z) * jointViscosityAlpha;
-      pB.velocity.x += (vCm.x - pB.velocity.x) * jointViscosityAlpha;
-      pB.velocity.y += (vCm.y - pB.velocity.y) * jointViscosityAlpha;
-      pB.velocity.z += (vCm.z - pB.velocity.z) * jointViscosityAlpha;
+      const invM = 1 / totalM;
+      const vA = pA.velocity;
+      const vB = pB.velocity;
+      const vCmX = (vA.x * pA.massKg + vB.x * pB.massKg) * invM;
+      const vCmY = (vA.y * pA.massKg + vB.y * pB.massKg) * invM;
+      const vCmZ = (vA.z * pA.massKg + vB.z * pB.massKg) * invM;
+      vA.x += (vCmX - vA.x) * jointViscosityAlpha;
+      vA.y += (vCmY - vA.y) * jointViscosityAlpha;
+      vA.z += (vCmZ - vA.z) * jointViscosityAlpha;
+      vB.x += (vCmX - vB.x) * jointViscosityAlpha;
+      vB.y += (vCmY - vB.y) * jointViscosityAlpha;
+      vB.z += (vCmZ - vB.z) * jointViscosityAlpha;
     }
 
     finalGroundedCount = groundedCount;

@@ -21,7 +21,9 @@ export function routeExternalExplosionTrauma(
   onCameraShake: CameraShakeCallback | undefined,
   getViewerPosVec3: () => Vec3Like,
   spawnBlastFx: (center: Vec3Like, radius: number) => void,
-  impactCtx: ImpactDispatcherContext
+  impactCtx: ImpactDispatcherContext,
+  /** Runs each body's share of the blast. The default does it on the spot; a queue may spread it. */
+  defer: (job: () => void) => void = (job) => job()
 ): number {
   const center = blast.centerWorld;
   const blastRadiusM = blast.radiusM;
@@ -47,12 +49,12 @@ export function routeExternalExplosionTrauma(
 
   let newlyKilledCount = 0;
   let lastKilledHs: GhoulMannequinEntity['healthState'] | null = null;
-  for (const target of targets) {
+  for (const target of targets) defer(() => {
     const hs = target.healthState;
     const wasAlive = hs.alive;
     const pelvisPos = hs.ragdollBones.PELVIS_GROIN.position;
     const distM = distance(center, pelvisPos);
-    if (distM > blastRadiusM) continue;
+    if (distM > blastRadiusM) return;
 
     const blastReport = buildFragBlastReportForTarget(hs, center, distM, blastRadiusM, peakImpulseNs, peakEnergyJ);
     applyImpactFxAndState(target, blastReport, sourceLabel, impactCtx, SYNTHETIC_SHRAPNEL_AMMO);
@@ -85,11 +87,14 @@ export function routeExternalExplosionTrauma(
         }
       }
     }
-  }
+  });
 
-  if (newlyKilledCount >= 2 && lastKilledHs) {
-    tacticalAi?.notifyWitnessedBrutality(lastKilledHs, 'MULTI_KILL_BLAST');
-  }
+  defer(() => {
+    if (newlyKilledCount >= 2 && lastKilledHs) {
+      tacticalAi?.notifyWitnessedBrutality(lastKilledHs, 'MULTI_KILL_BLAST');
+    }
+  });
 
+  // Kills so far: all of them when nothing was deferred, none yet when the work was queued.
   return newlyKilledCount;
 }

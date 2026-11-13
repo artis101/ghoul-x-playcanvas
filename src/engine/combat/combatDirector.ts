@@ -24,6 +24,7 @@ import { ActiveFragGrenade, type GrenadeSweepInterceptor } from './fragGrenadeTy
 import { spawnLiveFragGrenade } from './fragGrenadeSpawner.ts';
 import { createBlastFireballMaterial, spawnBlastVisualFx } from './blastVisualFx.ts';
 import { routeExternalExplosionTrauma } from './externalExplosionRouter.ts';
+import { FrameSlicedWorkQueue } from './frameSlicedWorkQueue.ts';
 import { routeWeaponFire } from './weaponBallisticsRouter.ts';
 import { SniperRangefinder } from './sniperRangefinder.ts';
 import { HudTargetTracker } from './hudTargetTracker.ts';
@@ -61,6 +62,8 @@ export class CombatDirector {
   public isLineOfSightBlocked?: (fromWorld: Vec3Like, toWorld: Vec3Like) => boolean;
   public onExplosionBlast?: ExplosionBlastHandler;
   public onCameraShake?: CameraShakeCallback;
+  /** Blast aftermath (destruction, per-body trauma) spread over frames once it is given a budget. */
+  public readonly blastWork = new FrameSlicedWorkQueue();
 
   private mayhemDirector: MayhemDirector | null = null;
   private tacticalAi: TacticalCombatAiSystem | null = null;
@@ -108,6 +111,7 @@ export class CombatDirector {
   }
 
   public spawnAllTargets(): void {
+    this.blastWork.clear();
     for (const t of this.targets) t.destroy();
     this.targets = [];
     this.physiologySystem.reset();
@@ -152,8 +156,15 @@ export class CombatDirector {
 
   public applyExternalExplosionTrauma(blast: BlastEvent, sourceLabel = 'HAZARD BARREL'): number {
     this.losCacheEpoch++;
+    // Queued work reaches the nearest body first, so the ones the player is watching react soonest.
+    const c = blast.centerWorld;
+    const distSq = (t: GhoulMannequinEntity): number => {
+      const p = t.healthState.ragdollBones.PELVIS_GROIN.position;
+      return (p.x - c.x) ** 2 + (p.y - c.y) ** 2 + (p.z - c.z) ** 2;
+    };
+    const order = this.blastWork.isDeferring ? [...this.targets].sort((a, b) => distSq(a) - distSq(b)) : this.targets;
     return routeExternalExplosionTrauma(
-      blast, sourceLabel, this.targets, this.fxManager, this.combatAudio, this.tacticalAi,
+      blast, sourceLabel, order, this.fxManager, this.combatAudio, this.tacticalAi,
       this.onCameraShake, () => this.getViewerPosVec3(),
       (c, r) => spawnBlastVisualFx(c, r, this.app, this.materials, this.blastFireballMat, this.activeBlastFlashes),
       {
@@ -166,7 +177,8 @@ export class CombatDirector {
         tacticalAi: this.tacticalAi,
         combatAudio: this.combatAudio,
         getViewerPosVec3: () => this.getViewerPosVec3(),
-      }
+      },
+      (job) => this.blastWork.defer(() => { this.losCacheEpoch++; job(); })
     );
   }
 
@@ -176,6 +188,7 @@ export class CombatDirector {
 
   public update(dt: number, totalElapsedTimeS: number, camera: pc.CameraComponent | null | undefined, hud: HudController): void {
     this.lastUpdateClockS = totalElapsedTimeS;
+    this.blastWork.drain();
     if (this.grenadeCooldownS > 0) this.grenadeCooldownS -= dt;
     stepCombatDirectorLoop({
       activeGrenades: this.activeGrenades, activeBlastFlashes: this.activeBlastFlashes,
@@ -194,6 +207,7 @@ export class CombatDirector {
   }
 
   public destroy(): void {
+    this.blastWork.clear();
     this.activeGrenades.forEach((g) => { g.glbInstance?.destroy(); g.entity.destroy(); });
     this.activeGrenades.length = 0;
     this.activeBlastFlashes.forEach((bf) => bf.root.destroy());

@@ -2,6 +2,7 @@ import * as pc from 'playcanvas';
 import type { GlbModelRegistry } from '../assets/glbModelRegistry.ts';
 import { WEAPON_ASSET_IDS } from '../assets/glbTypes.ts';
 import { getBloodSoakedTwin } from '../mannequin/combatantGlbMaterials.ts';
+import type { SceneShaderOutput } from '../app/cinematicFrame.ts';
 import { collectSceneMaterials } from './materialCollector.ts';
 import { stageViewmodelsForWarmup } from './warmupViewmodels.ts';
 import {
@@ -18,6 +19,8 @@ export interface ShaderWarmupOptions {
   readonly extraMaterials?: readonly pc.Material[];
   readonly onProgress?: (label: string, done: number, total: number) => void;
   readonly yieldFrames?: boolean;
+  /** Output settings of the pass the game draws with; programs warmed for any other are wasted. */
+  readonly sceneShaderOutput?: SceneShaderOutput;
 }
 
 export interface ShaderWarmupResult {
@@ -50,6 +53,10 @@ export async function compileAllGameShaders(
   options: ShaderWarmupOptions
 ): Promise<ShaderWarmupResult> {
   const { app, glbRegistry, extraMaterials, onProgress, yieldFrames = true } = options;
+  const shaderOutput = options.sceneShaderOutput ?? {
+    toneMapping: pc.TONEMAP_LINEAR,
+    gammaCorrection: pc.GAMMA_SRGB,
+  };
 
   if (!canRenderShadersOnDevice(app)) {
     onProgress?.('Skipping GPU shader warm-up (headless graphics device)...', 1, 1);
@@ -85,8 +92,8 @@ export async function compileAllGameShaders(
       fov: 60,
       priority: -100,
       rect: new pc.Vec4(0, 0, 0.04, 0.04),
-      toneMapping: pc.TONEMAP_LINEAR,
-      gammaCorrection: pc.GAMMA_SRGB,
+      toneMapping: shaderOutput.toneMapping,
+      gammaCorrection: shaderOutput.gammaCorrection,
     });
     warmupCam.setPosition(0, -250, 0);
     stagingRoot.addChild(warmupCam);

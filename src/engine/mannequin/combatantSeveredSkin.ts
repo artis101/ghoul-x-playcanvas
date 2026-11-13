@@ -19,6 +19,27 @@ function copyStorage(data: ArrayBuffer | ArrayBufferView): ArrayBuffer {
   return new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice().buffer;
 }
 
+// A rigid copy depends only on the shared zone mesh and the bone, so every combatant losing the
+// same limb reuses one: building it means copying vertex data on the frame of the blast.
+const rigidCopies = new WeakMap<pc.Mesh, Map<number, pc.Mesh>>();
+
+function getRigidCopy(mesh: pc.Mesh, boneIndex: number): pc.Mesh | null {
+  let byBone = rigidCopies.get(mesh);
+  if (!byBone) {
+    byBone = new Map();
+    rigidCopies.set(mesh, byBone);
+  }
+  const cached = byBone.get(boneIndex);
+  if (cached) return cached;
+  const rigid = createRigidCopy(mesh, boneIndex);
+  if (rigid) {
+    rigid.incRefCount();
+    pinnedMeshes.add(rigid);
+    byBone.set(boneIndex, rigid);
+  }
+  return rigid;
+}
+
 /** Copies a skinned mesh with every vertex bound to a single bone. */
 function createRigidCopy(mesh: pc.Mesh, boneIndex: number): pc.Mesh | null {
   const source = mesh.vertexBuffer;
@@ -94,7 +115,7 @@ export class CombatantSeveredSkin {
       const mesh = meshInstance.mesh;
       const boneIndex = meshInstance.skinInstance?.skin.boneNames.indexOf(`Bone_${zone}`) ?? -1;
       if (!mesh || boneIndex < 0) continue;
-      const rigid = createRigidCopy(mesh, boneIndex);
+      const rigid = getRigidCopy(mesh, boneIndex);
       if (rigid) this.swap(meshInstance, rigid);
     }
   }

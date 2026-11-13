@@ -52,7 +52,8 @@ export function wireCombatDirectorInterceptors(
 
   combatDirector.onExplosionBlast = (center, radiusM, peakImpulseNs, peakEnergyJ) => {
     const blast: BlastEvent = { centerWorld: center, radiusM, peakImpulseNs, peakEnergyJ };
-    destructionManager.applyBlast(blast);
+    // The fireball and the noise are immediate; the walls come apart a frame behind them.
+    combatDirector.blastWork.deferFirst(() => destructionManager.applyBlast(blast));
     mayhemDirector.notifyExternalExplosion(blast);
     tacticalAi.notifyGunshotOrExplosion(center, 45.0, 0.72);
   };

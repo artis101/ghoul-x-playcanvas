@@ -3,7 +3,6 @@ import {
   RagdollBoneState,
   TargetHealthState,
 } from '../../../contracts/ballistics.ts';
-import { ALL_AUX_PARTICLES, ALL_GHOUL_ZONES } from '../../ghoul/anatomy.ts';
 import {
   add,
   cross,
@@ -15,7 +14,11 @@ import {
   sub,
   Vec3Like,
 } from '../vec3.ts';
-import { getRagdollParticleRef } from './ragdollParticles.ts';
+import {
+  type RagdollSolverScratch,
+  isResolvedParticleActive,
+  resolveRagdollSolverScratch,
+} from './ragdollSolverScratch.ts';
 
 const RAGDOLL_WORLD_BOUND_XZ_M = 320.0;
 
@@ -58,15 +61,30 @@ function applyDampedGuardShift(bone: RagdollBoneState, delta: Vec3Like, prevFoll
   bone.prevPosition.z += delta.z * follow;
 }
 
-export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floorY: number): void {
-  for (const c of target.ragdollConstraints) {
-    const pA = getRagdollParticleRef(target, c.nodeA);
-    const pB = getRagdollParticleRef(target, c.nodeB);
-    if (!pA.active && !pB.active) continue;
+export function projectConstraintsAndAnatomyOnce(
+  target: TargetHealthState,
+  floorY: number,
+  scratch: RagdollSolverScratch = resolveRagdollSolverScratch(target)
+): void {
+  // This loop runs for every constraint, 14 times a sub-step, for every falling body. It works on
+  // the particles in place: a vector or a lookup by name here is paid thousands of times a frame.
+  const resolved = scratch.constraints;
+  for (let i = 0; i < scratch.constraintCount; i++) {
+    const r = resolved[i];
+    const pA = r.a;
+    const pB = r.b;
+    const activeA = isResolvedParticleActive(target, pA, r.gateA);
+    const activeB = isResolvedParticleActive(target, pB, r.gateB);
+    if (!activeA && !activeB) continue;
     if (pA.componentId !== pB.componentId) continue;
 
-    const delta = sub(pB.position, pA.position);
-    const dist = length(delta);
+    const c = r.constraint;
+    const posA = pA.position;
+    const posB = pB.position;
+    const dx = posB.x - posA.x;
+    const dy = posB.y - posA.y;
+    const dz = posB.z - posA.z;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (dist < 1e-6) continue;
 
     let targetDist = dist;
@@ -74,23 +92,26 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
     else if (dist > c.maxLength) targetDist = c.maxLength;
     else continue;
 
-    const wA = pA.active ? 1 / pA.massKg : 0;
-    const wB = pB.active ? 1 / pB.massKg : 0;
+    const wA = activeA ? 1 / pA.massKg : 0;
+    const wB = activeB ? 1 / pB.massKg : 0;
     const wSum = wA + wB;
     if (wSum < 1e-8) continue;
 
     const diff = (dist - targetDist) / dist;
-    const corr = scale(delta, (diff * c.stiffness) / wSum);
+    const corrScale = (diff * c.stiffness) / wSum;
+    const corrX = dx * corrScale;
+    const corrY = dy * corrScale;
+    const corrZ = dz * corrScale;
 
-    if (pA.active) {
-      pA.position.x += corr.x * wA;
-      pA.position.y += corr.y * wA;
-      pA.position.z += corr.z * wA;
+    if (activeA) {
+      posA.x += corrX * wA;
+      posA.y += corrY * wA;
+      posA.z += corrZ * wA;
     }
-    if (pB.active) {
-      pB.position.x -= corr.x * wB;
-      pB.position.y -= corr.y * wB;
-      pB.position.z -= corr.z * wB;
+    if (activeB) {
+      posB.x -= corrX * wB;
+      posB.y -= corrY * wB;
+      posB.z -= corrZ * wB;
     }
   }
 
@@ -178,8 +199,7 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
   }
 
   // 3. Floor & World XZ Safety Boundary Projection
-  for (const z of ALL_GHOUL_ZONES) {
-    const b = target.ragdollBones[z];
+  for (const b of scratch.bones) {
     const active = (target.isRagdollActive || b.componentId !== 'BODY') && b.goreMode !== 'CRANIAL_POP';
     if (!active) continue;
 
@@ -187,8 +207,7 @@ export function projectConstraintsAndAnatomyOnce(target: TargetHealthState, floo
     clampParticleWorldBoundsXZ(b.position, b.prevPosition, b.radiusM);
   }
 
-  for (const aId of ALL_AUX_PARTICLES) {
-    const a = target.auxParticles[aId];
+  for (const a of scratch.aux) {
     if (!target.isRagdollActive && a.componentId === 'BODY') continue;
     clampParticleToFloor(a.position, a.prevPosition, floorY + a.radiusM);
     clampParticleWorldBoundsXZ(a.position, a.prevPosition, a.radiusM);

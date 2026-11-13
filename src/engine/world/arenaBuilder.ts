@@ -7,6 +7,14 @@ import { getOrCreateProceduralIblEnvironment } from './arenaIblLighting.ts';
 export * from './arenaLayout.ts';
 export * from './arenaIblLighting.ts';
 
+// Light balance for the hall, tuned against the filmic tone curve of the player camera's HDR frame.
+// The key leans 36 degrees off vertical and across the hall, so shadows fall sideways in view.
+const KEY_LIGHT_INTENSITY = 1.6;
+const KEY_LIGHT_PITCH_DEG = 36;
+const KEY_LIGHT_YAW_DEG = -118;
+const AMBIENT_FILL_INTENSITY = 0.55;
+const SCENE_EXPOSURE = 1.2;
+
 export type ArenaBuildState =
   | { readonly kind: 'UNBUILT' }
   | {
@@ -22,13 +30,6 @@ export class ArenaBuilder {
   public readonly rapierWorld: RapierPhysicsWorld | null;
   public readonly arenaRootEntity: pc.Entity;
   public buildState: ArenaBuildState = { kind: 'UNBUILT' };
-
-  private preRenderHookBound = false;
-
-  private readonly onPreRenderCamera = (camera: pc.CameraComponent): void => {
-    camera.toneMapping = pc.TONEMAP_LINEAR;
-    camera.gammaCorrection = pc.GAMMA_SRGB;
-  };
 
   public constructor(
     app: pc.AppBase,
@@ -57,29 +58,31 @@ export class ArenaBuilder {
 
     upgradePaletteWithProceduralPbrMaps(this.app.graphicsDevice, this.materials);
 
-    // Soft overhead key standing in for the ceiling fixtures: it gives bodies and props
-    // grounded shadows, while the fixtures' own lamps pool warm light along the hall.
+    // Raking key standing in for the ceiling fixtures. It has to out-shine the lamps and the
+    // ambient fill, or the shadows it casts wash out and bodies and props float over the floor.
     const overheadLight = new pc.Entity('OverheadKeyLight');
     overheadLight.addComponent('light', {
       type: 'directional',
       color: new pc.Color(1.0, 0.93, 0.74),
-      intensity: 0.5,
+      intensity: KEY_LIGHT_INTENSITY,
       castShadows: true,
       shadowType: pc.SHADOW_PCF3_16F,
       shadowResolution: 1536,
-      shadowDistance: 45,
-      shadowBias: 0.1,
-      normalOffsetBias: 0.05,
-      shadowIntensity: 0.6,
-      numCascades: 2,
-      cascadeBlend: 0.15,
+      // One cascade over the fighting distance. A second one redrew every caster (some 300 once
+      // gibs and dropped weapons litter the floor) for shadows too far away to read.
+      shadowDistance: 32,
+      // A larger depth bias swallows the short contact shadows under feet and barrels.
+      shadowBias: 0.02,
+      normalOffsetBias: 0.03,
+      shadowIntensity: 0.92,
+      numCascades: 1,
     });
-    overheadLight.setEulerAngles(14, 28, 0);
+    overheadLight.setEulerAngles(KEY_LIGHT_PITCH_DEG, KEY_LIGHT_YAW_DEG, 0);
     this.arenaRootEntity.addChild(overheadLight);
     overheadLight.syncHierarchy();
 
     const scene = this.app.scene;
-    scene.exposure = 1.0;
+    scene.exposure = SCENE_EXPOSURE;
     scene.ambientLight = new pc.Color(0.2, 0.18, 0.12);
     scene.fog.type = pc.FOG_EXP2;
     scene.fog.color = new pc.Color(0.1, 0.09, 0.06);
@@ -90,17 +93,7 @@ export class ArenaBuilder {
     const ibl = getOrCreateProceduralIblEnvironment(this.app.graphicsDevice, overheadLight.up);
     if (ibl) {
       scene.envAtlas = ibl.envAtlas;
-      scene.skyboxIntensity = 1.0;
-    }
-
-    const existingCameras = this.app.root.findComponents('camera') as pc.CameraComponent[];
-    for (const cam of existingCameras) {
-      cam.toneMapping = pc.TONEMAP_LINEAR;
-      cam.gammaCorrection = pc.GAMMA_SRGB;
-    }
-    if (!this.preRenderHookBound) {
-      scene.on('prerender', this.onPreRenderCamera);
-      this.preRenderHookBound = true;
+      scene.skyboxIntensity = AMBIENT_FILL_INTENSITY;
     }
 
     buildArenaGeometry(
@@ -121,10 +114,6 @@ export class ArenaBuilder {
 
   public destroy(): void {
     if (this.buildState.kind === 'DESTROYED') return;
-    if (this.preRenderHookBound) {
-      this.app.scene.off('prerender', this.onPreRenderCamera);
-      this.preRenderHookBound = false;
-    }
     this.teardownBuiltResources();
     this.arenaRootEntity.destroy();
     this.buildState = { kind: 'DESTROYED' };

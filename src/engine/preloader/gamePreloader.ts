@@ -260,6 +260,7 @@ export async function runGamePreloader(
       app,
       glbRegistry,
       extraMaterials: [...extraMaterials, ...ghoulApp.combatDirector.warmupMaterials],
+      sceneShaderOutput: ghoulApp.cinematicFrame.sceneShaderOutput,
       yieldFrames,
       onProgress: (label, done, total) => {
         emitProgress('SHADER_COMPILATION', done / Math.max(1, total), label);

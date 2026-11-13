@@ -17,6 +17,7 @@ import { DestructionManager } from '../destruction/destructionManager.ts';
 import { TacticalCombatAiSystem } from '../ai/tacticalCombatAi.ts';
 import type { IGhoulXApp } from './appContext.ts';
 import { createPlayCanvasApp, unbindPlayCanvasAppResize } from './appSetup.ts';
+import { CinematicFrame } from './cinematicFrame.ts';
 import { onEngineUpdate } from './engineUpdateLoop.ts';
 import { wireCombatDirectorInterceptors } from './combatEventWiring.ts';
 import {
@@ -24,6 +25,8 @@ import {
   handleThrowGrenade,
   spawnFreshWave,
 } from './playerActionHandlers.ts';
+
+const BLAST_WORK_BUDGET_MS = 3;
 
 export interface GhoulXAppOptions {
   readonly materials?: EngineMaterialPalette;
@@ -50,6 +53,7 @@ export class GhoulXApplication implements IGhoulXApp {
   public readonly fxManager: GoreAndBallisticsFxManager;
   public readonly arenaBuilder: ArenaBuilder;
   public readonly fpsController: FpsController;
+  public readonly cinematicFrame: CinematicFrame;
   public readonly arsenalManager: ArsenalManager;
   public readonly combatDirector: CombatDirector;
 
@@ -102,8 +106,10 @@ export class GhoulXApplication implements IGhoulXApp {
         );
       },
       onExplosionBlast: (blast) => {
-        this.destructionManager.applyBlast(blast);
-        this.mayhemDirector.syncSurfaceBreaches();
+        this.combatDirector.blastWork.deferFirst(() => {
+          this.destructionManager.applyBlast(blast);
+          this.mayhemDirector.syncSurfaceBreaches();
+        });
         this.combatDirector.applyExternalExplosionTrauma(blast, 'HAZARD BARREL');
         this.tacticalAi.notifyGunshotOrExplosion(blast.centerWorld, 45.0, 0.78);
       },
@@ -211,6 +217,7 @@ export class GhoulXApplication implements IGhoulXApp {
       },
       (prev, next) => this.destructionManager.resolvePlayerHorizontalCollision(prev, next, 0.36)
     );
+    this.cinematicFrame = new CinematicFrame(this.app, this.fpsController.cameraEntity.camera);
 
     this.arsenalManager = new ArsenalManager(
       this.fpsController.cameraEntity,
@@ -236,6 +243,9 @@ export class GhoulXApplication implements IGhoulXApp {
         getPlayerEyePosition: () => this.fpsController.getEyePosition(),
       }
     );
+
+    // A blast's aftermath is worked off a few milliseconds a frame instead of all in the frame of the flash.
+    this.combatDirector.blastWork.budgetMs = BLAST_WORK_BUDGET_MS;
 
     wireCombatDirectorInterceptors(
       this.combatDirector,
@@ -271,6 +281,7 @@ export class GhoulXApplication implements IGhoulXApp {
     }
     this.lifecycleState = { kind: 'DESTROYED' };
     unbindPlayCanvasAppResize(this.app);
+    this.cinematicFrame.destroy();
     this.fpsController.destroy();
     this.arsenalManager.destroy();
     this.arenaBuilder.destroy();
