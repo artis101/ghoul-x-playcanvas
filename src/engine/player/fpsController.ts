@@ -92,15 +92,15 @@ export class FpsController {
       this.playerPos.z
     );
     this.cameraEntity.setEulerAngles(
-      this.rig.cameraPitch + this.rig.recoilPitch + this.rig.lastShakePitchOffset,
-      this.rig.cameraYaw + this.rig.lastShakeYawOffset,
-      this.rig.lastShakeRollOffset
+      this.rig.cameraPitch + this.rig.recoilPitch + this.rig.lastShakePitchOffset + this.rig.punch.pitch.value,
+      this.rig.cameraYaw + this.rig.lastShakeYawOffset + this.rig.punch.yaw.value,
+      this.rig.lastShakeRollOffset + this.rig.punch.roll.value + this.rig.strafeLeanRoll
     );
   }
 
   public getAimDirection(): pc.Vec3 {
-    const effectivePitch = Math.max(-89.5, Math.min(89.5, this.rig.cameraPitch + this.rig.recoilPitch + this.rig.lastShakePitchOffset));
-    const effectiveYaw = this.rig.cameraYaw + this.rig.lastShakeYawOffset;
+    const effectivePitch = Math.max(-89.5, Math.min(89.5, this.rig.cameraPitch + this.rig.recoilPitch + this.rig.lastShakePitchOffset + this.rig.punch.pitch.value));
+    const effectiveYaw = this.rig.cameraYaw + this.rig.lastShakeYawOffset + this.rig.punch.yaw.value;
     const pitchRad = (effectivePitch * Math.PI) / 180;
     const yawRad = (effectiveYaw * Math.PI) / 180;
     const x = -Math.sin(yawRad) * Math.cos(pitchRad);
@@ -127,6 +127,15 @@ export class FpsController {
 
   public applyRecoilKick(recoilKickDeg: number, applyViewmodelKick = true, weaponId?: string): void {
     this.rig.applyRecoilKick(recoilKickDeg, applyViewmodelKick, weaponId);
+  }
+
+  /** Being hit: view snap and roll away from the shooter, and the aim is knocked off. */
+  public applyHitFlinch(rightness: number, damageNorm: number): void {
+    this.rig.applyHitFlinch(rightness, damageNorm);
+  }
+
+  public applyBump(strength: number): void {
+    this.rig.applyBump(strength);
   }
 
   public applyCameraShake(intensityDeg: number, durationS = 0.36): void {

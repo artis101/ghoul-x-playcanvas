@@ -59,11 +59,18 @@ describe('aim down sights', () => {
 
   it('fires exactly along the sights when aimed and inside the hip cone otherwise', () => {
     const profile = getWeaponAdsProfile('m4a1_carbine');
-    expect(aimSpreadRad(profile, 1, 1, 6)).toBe(0);
+    const settledAimed = aimSpreadRad(profile, 1, 0, 0);
+    expect(settledAimed).toBeGreaterThan(0);
+    expect(settledAimed).toBeLessThan(0.001);
+    // Walking and being hit open the cone even when aimed, but less than at the hip.
+    expect(aimSpreadRad(profile, 1, 1, 0)).toBeGreaterThan(settledAimed * 3);
+    expect(aimSpreadRad(profile, 1, 1, 0)).toBeLessThan(aimSpreadRad(profile, 0, 1, 0));
+    expect(aimSpreadRad(profile, 1, 0, 0, 3)).toBeGreaterThan(settledAimed);
 
     const standing = aimSpreadRad(profile, 0, 0, 0);
     expect(standing).toBeCloseTo(profile.hipSpreadRad, 9);
     expect(aimSpreadRad(profile, 0, 1, 0)).toBeGreaterThan(standing);
+    expect(aimSpreadRad(profile, 0, 1, 0)).toBeGreaterThan(standing * 3);
     expect(aimSpreadRad(profile, 0, 0, 4)).toBeGreaterThan(standing);
 
     const aim = normalize({ x: 0.3, y: 0.1, z: -1 });

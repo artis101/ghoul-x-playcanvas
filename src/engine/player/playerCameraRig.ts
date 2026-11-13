@@ -9,6 +9,12 @@ import {
   kickRecoilClimb,
   stepRecoilClimb,
 } from '../../core/ballistics/weapons/recoilClimb.ts';
+import {
+  addPunchImpulse,
+  createViewPunch,
+  hitFlinch,
+  stepViewPunch,
+} from '../../core/ballistics/weapons/viewPunch.ts';
 import type { WeaponGlbInstance } from '../assets/glbLoader.ts';
 import { PlayerSightController, type PlayerSightState } from './playerSightController.ts';
 import { ViewmodelAimStabilizer } from './viewmodelAimStabilizer.ts';
@@ -59,6 +65,9 @@ export class PlayerCameraRig {
   private recoilShotSign = 1;
   private breathClockS = 0;
   private readonly climb = createRecoilClimbState();
+  public readonly punch = createViewPunch();
+  /** Smoothed camera lean into a strafe, degrees. */
+  public strafeLeanRoll = 0;
   private readonly scratchBaseRot = new pc.Quat();
   private readonly scratchOffsetRot = new pc.Quat();
   private readonly scratchAdsRot = new pc.Quat();
@@ -87,7 +96,13 @@ export class PlayerCameraRig {
 
   /** Half-angle of the cone the next shot may deviate within. */
   public get currentAimSpreadRad(): number {
-    return aimSpreadRad(this.sight.profile, this.sight.blend, this.moveBobBlend, this.recoilPitch);
+    return aimSpreadRad(
+      this.sight.profile,
+      this.sight.blend,
+      this.moveBobBlend,
+      this.recoilPitch,
+      Math.abs(this.punch.pitch.value) + Math.abs(this.punch.yaw.value)
+    );
   }
 
   public onLook(deltaYaw: number, deltaPitch: number): void {
@@ -108,6 +123,9 @@ export class PlayerCameraRig {
     this.recoilYaw = Math.max(-2.2, Math.min(2.2, this.recoilYaw + this.recoilShotSign * recoilKickDeg * 0.11 * adsBrace));
     this.recoilCameraRoll = Math.max(-2.4, Math.min(2.4, this.recoilCameraRoll + this.recoilShotSign * recoilKickDeg * 0.16 * adsBrace));
 
+    // A little forward jolt and FOV pulse on every shot, scaled by the kick and braced when aimed.
+    addPunchImpulse(this.punch, recoilKickDeg * 6 * adsBrace, 0, this.recoilShotSign * recoilKickDeg * 5 * adsBrace, recoilKickDeg * 3.5 * adsBrace);
+
     if (!applyViewmodelKick) return;
     const kickNorm = Math.min(1.6, Math.max(0.45, recoilKickDeg / 3.2));
     this.recoilOffsetZ = Math.min(0.105, Math.max(this.recoilOffsetZ, 0.058 * kickNorm * adsBrace));
@@ -124,6 +142,25 @@ export class PlayerCameraRig {
     creditClimb(this.climb, this.cameraPitch - prevPitch);
     // Positive yaw turns left, so a throw to the right lowers it.
     this.cameraYaw -= kick.yawDeg;
+  }
+
+  /**
+   * The player was hit: the view snaps and rolls away from where the round came from, and the
+   * aim itself is knocked off target (the lost accuracy). `rightness` is -1 (from the left) to
+   * 1 (from the right); damageNorm is 0..1.
+   */
+  public applyHitFlinch(rightness: number, damageNorm: number): void {
+    const f = hitFlinch(rightness, damageNorm, Math.random(), Math.random());
+    addPunchImpulse(this.punch, f.pitchImpulse, f.yawImpulse, f.rollImpulse, f.fovImpulse);
+    this.cameraPitch = Math.max(-85, Math.min(85, this.cameraPitch + f.aimPitchDeg));
+    this.cameraYaw += f.aimYawDeg;
+    // The shooter is not holding this rise, so it is not paid back by the climb recovery.
+  }
+
+  /** A blast or heavy impact nearby: a hard, brief, direction-less bump. */
+  public applyBump(strength: number): void {
+    const s = Math.max(0, Math.min(2, strength));
+    addPunchImpulse(this.punch, s * 70, (Math.random() - 0.5) * s * 60, (Math.random() - 0.5) * s * 100, s * 30);
   }
 
   public applyCameraShake(intensityDeg: number, durationS = 0.36): void {
@@ -157,6 +194,10 @@ export class PlayerCameraRig {
     const nextBlend = this.sight.blend;
 
     this.cameraPitch -= stepRecoilClimb(this.climb, dt);
+    stepViewPunch(this.punch, dt);
+    const leanTarget = -strafeSign * 1.1 * (1 - nextBlend * 0.7);
+    this.strafeLeanRoll += (leanTarget - this.strafeLeanRoll) * (1 - Math.exp(-9.0 * dt));
+    if (camera) camera.fov += this.punch.fov.value;
 
     const camDecay = Math.exp(-15.0 * dt);
     this.recoilPitch *= camDecay;
@@ -254,7 +295,8 @@ export class PlayerCameraRig {
     );
     vmEntity.enabled = !this.sight.scopeVisible;
 
-    const bloom = 1.0 + this.recoilPitch * 0.08 + this.moveBobBlend * 0.16 * (1 - nextBlend * 0.5);
+    // The reticle is the spread cone: what it shows is what the next round can do.
+    const bloom = 1.0 + Math.min(4, this.currentAimSpreadRad * 55);
     // Sights replace the crosshair: it is gone by the time the weapon is two-thirds raised.
     const crosshairOpacity = Math.max(0, 1 - nextBlend / 0.65);
     hud.setCrosshairBloom(bloom, this.sight.scopeVisible, crosshairOpacity);

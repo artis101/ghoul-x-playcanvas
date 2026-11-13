@@ -33,20 +33,32 @@ export function adsSensitivityScale(hipFovDeg: number, currentFovDeg: number): n
   return Math.tan(currentFovDeg * 0.5 * DEG_TO_RAD) / Math.tan(hipFovDeg * 0.5 * DEG_TO_RAD);
 }
 
+/** Walking multiplies the profile's moving spread by this much (the profiles describe a slow step). */
+const MOVE_SPREAD_GAIN = 2.8;
+/** Share of the moving spread that survives while fully aimed. */
+const ADS_MOVE_SHARE = 0.4;
+/** Spread left when standing fully aimed: breath and pulse, never a laser. */
+const ADS_SETTLED_RAD = 0.0007;
+
 /**
- * Aim-error cone half-angle. Fully aimed shots go exactly where the sights point; the cone
- * opens as the weapon comes off the eye, while walking, and while recoil has not settled.
+ * Aim-error cone half-angle. It opens as the weapon comes off the eye, grows with walking
+ * (hard at the hip, less aimed), with recoil that has not settled, and with a hit flinch
+ * (flinchDeg is how far the view is currently knocked, in degrees).
  */
 export function aimSpreadRad(
   profile: WeaponAdsProfile,
   blend: number,
   moveBlend: number,
-  recoilPitchDeg: number
+  recoilPitchDeg: number,
+  flinchDeg = 0
 ): number {
-  const hip = 1 - Math.max(0, Math.min(1, blend));
+  const b = Math.max(0, Math.min(1, blend));
+  const hip = 1 - b;
   const move = Math.max(0, Math.min(1, moveBlend));
-  const heat = Math.min(1.5, Math.max(0, recoilPitchDeg) * 0.14);
-  return hip * (profile.hipSpreadRad * (1 + heat) + profile.hipMoveSpreadRad * move);
+  const heat = Math.min(3, Math.max(0, recoilPitchDeg) * 0.3);
+  const moveRad = profile.hipMoveSpreadRad * MOVE_SPREAD_GAIN * move * (hip + b * ADS_MOVE_SHARE);
+  const flinchRad = Math.min(0.06, Math.abs(flinchDeg) * 0.5 * DEG_TO_RAD);
+  return hip * profile.hipSpreadRad * (1 + heat) + b * ADS_SETTLED_RAD * (1 + heat) + moveRad + flinchRad;
 }
 
 /** Deflects `dir` inside a cone of half-angle `spreadRad`; u1 and u2 are uniform in [0, 1). */

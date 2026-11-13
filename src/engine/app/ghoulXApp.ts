@@ -112,6 +112,16 @@ export class GhoulXApplication implements IGhoulXApp {
         });
         this.combatDirector.applyExternalExplosionTrauma(blast, 'HAZARD BARREL');
         this.tacticalAi.notifyGunshotOrExplosion(blast.centerWorld, 45.0, 0.78);
+        // Blast thump and shake fall off with distance, reaching about three blast radii.
+        const eye = this.fpsController?.getEyePosition();
+        if (eye) {
+          const dist = Math.hypot(eye.x - blast.centerWorld.x, eye.y - blast.centerWorld.y, eye.z - blast.centerWorld.z);
+          const near = 1 - dist / Math.max(1, blast.radiusM * 3);
+          if (near > 0) {
+            this.fpsController.applyBump(near * 1.6);
+            this.fpsController.applyCameraShake(near * 3.2, 0.5);
+          }
+        }
       },
     });
 
@@ -191,9 +201,15 @@ export class GhoulXApplication implements IGhoulXApp {
           0.26
         );
       },
-      onPlayerDamaged: () => {
+      onPlayerDamaged: (_vitals, ev) => {
         this.hudController.triggerPlayerDamageFlash();
-        this.fpsController.applyCameraShake(1.15, 0.16);
+        this.fpsController.applyCameraShake(0.6, 0.16);
+        // Which side the round came from: the shooter is behind the shot's travel direction.
+        const yawRad = (this.fpsController.cameraYaw * Math.PI) / 180;
+        const d = ev.shotDirectionWorld;
+        const rightness = -(d.x * Math.cos(yawRad) - d.z * Math.sin(yawRad));
+        const damageNorm = (ev.healthDamageApplied + ev.armorChipApplied * 0.5) / 30;
+        this.fpsController.applyHitFlinch(rightness, damageNorm);
       },
     });
 
