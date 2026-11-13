@@ -11,8 +11,7 @@ export function setupCombatantGlbInstance(
   glbRegistry: GlbModelRegistry,
   healthState: TargetHealthState,
   materials: EngineMaterialPalette,
-  glbZoneMaterialPairs: Map<GhoulZoneId, GlbZoneMaterialPair[]>,
-  glbGearOriginalMaterials: Map<pc.MeshInstance, pc.Material>
+  glbZoneMaterialPairs: Map<GhoulZoneId, GlbZoneMaterialPair[]>
 ): CombatantGlbInstance | null {
   if (!glbRegistry.isLoaded('ghoul_combatant')) return null;
 
@@ -70,9 +69,7 @@ export function setupCombatantGlbInstance(
             sharedSwatGearMatCache.set(gearMat, swatGear);
           }
           mi.material = swatGear;
-          gearMat = swatGear;
         }
-        glbGearOriginalMaterials.set(mi, gearMat);
       }
     }
 

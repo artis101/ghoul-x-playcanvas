@@ -99,7 +99,7 @@ export function resolveDefaultCombatantProfile(
     case 'target_1':
       return { resolveProfile: 'FANATIC_BERSERKER', carriesBackupSidearm: true };
     case 'target_2':
-      return { resolveProfile: 'PANICKED_SCRAPPER', carriesBackupSidearm: false };
+      return { resolveProfile: 'GRITTY_REGULAR', carriesBackupSidearm: false };
     case 'target_3':
       return { resolveProfile: 'GRITTY_REGULAR', carriesBackupSidearm: false };
     case 'target_4':
@@ -113,7 +113,7 @@ export function resolveDefaultCombatantProfile(
   const h = hashCombatantTargetId(targetId);
   if (archetype === 'SKINHEAD_PUNK') {
     return {
-      resolveProfile: h % 2 === 0 ? 'FANATIC_BERSERKER' : 'PANICKED_SCRAPPER',
+      resolveProfile: h % 2 === 0 ? 'FANATIC_BERSERKER' : 'GRITTY_REGULAR',
       carriesBackupSidearm: false,
     };
   }

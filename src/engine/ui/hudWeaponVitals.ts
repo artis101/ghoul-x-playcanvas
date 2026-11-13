@@ -1,7 +1,6 @@
 import type { PlayerCombatVitals, PlayerNearMissGrazeKind } from '../../contracts/ai/aiContracts.ts';
 import type { AmmoSpec, WeaponSpec } from '../../contracts/ballistics.ts';
 import { WEAPONS } from '../../core/ballistics/weapons.ts';
-import type { BulletTimeVignetteState } from '../fx/mayhemDirector.ts';
 import { queryEl } from './hudTypes.ts';
 
 export type TraumaFlashState =
@@ -22,29 +21,23 @@ export class HudWeaponVitals {
   private healthFillEl = queryEl('hud-health-fill');
   private armorValEl = queryEl('hud-armor-val');
   private armorFillEl = queryEl('hud-armor-fill');
-  private reflexValEl = queryEl('hud-reflex-val');
-  private reflexFillEl = queryEl('hud-reflex-fill');
 
   private magCountEl = queryEl('hud-mag-count');
   private reserveCountEl = queryEl('hud-reserve-count');
   private weaponNameEl = queryEl('hud-weapon-name');
   private ammoCaliberEl = queryEl('hud-ammo-caliber');
   private shotgunRingEl = queryEl('shotgun-spread-ring');
-  private vignetteEl = queryEl('bullet-time-vignette');
+  private vignetteEl = queryEl('damage-vignette');
   private slotPips: HTMLElement[] = [];
 
   public traumaFlashState: TraumaFlashState = { kind: 'IDLE' };
   public bleedPulseState: BleedPulseState = { kind: 'NONE' };
 
-  private lastBulletTimeCss = 'none';
   private lastAppliedVignetteCss = '';
   private lastHpRounded = -1;
   private lastArmorRounded = -1;
   private lastHpWidthStr = '';
   private lastArmorWidthStr = '';
-  private lastReflexText = '';
-  private lastReflexActive: boolean | null = null;
-  private lastReflexWidthStr = '';
 
   constructor() {
     if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
@@ -153,31 +146,6 @@ export class HudWeaponVitals {
     this.refreshVignetteOverlay();
   }
 
-  public updateBulletTimeHud(state: BulletTimeVignetteState): void {
-    const pct = Math.max(0, Math.min(100, state.reflexEnergyPct));
-    const isActive = state.active || state.killPunchActive;
-    const reflexText = isActive ? `${state.timeScale.toFixed(2)}x` : `${Math.round(pct)}%`;
-    if (this.reflexValEl) {
-      if (reflexText !== this.lastReflexText) {
-        this.lastReflexText = reflexText;
-        this.reflexValEl.textContent = reflexText;
-      }
-      if (isActive !== this.lastReflexActive) {
-        this.lastReflexActive = isActive;
-        this.reflexValEl.classList.toggle('active', isActive);
-      }
-    }
-    const reflexWidthStr = `${pct.toFixed(1)}%`;
-    if (this.reflexFillEl && reflexWidthStr !== this.lastReflexWidthStr) {
-      this.lastReflexWidthStr = reflexWidthStr;
-      this.reflexFillEl.style.width = reflexWidthStr;
-    }
-    if (state.cssBoxShadow !== this.lastBulletTimeCss) {
-      this.lastBulletTimeCss = state.cssBoxShadow;
-      this.refreshVignetteOverlay();
-    }
-  }
-
   private refreshVignetteOverlay(): void {
     if (!this.vignetteEl) return;
     const flashAlpha =
@@ -196,9 +164,9 @@ export class HudWeaponVitals {
         flashAlpha >= bleedAlpha;
       const rgb = isAmberHelmetDeflect ? '255, 184, 52' : '255, 32, 48';
       const dmgShadow = `inset 0 0 96px rgba(${rgb}, ${activeAlpha.toFixed(3)})`;
-      targetCss = this.lastBulletTimeCss !== 'none' ? `${dmgShadow}, ${this.lastBulletTimeCss}` : dmgShadow;
+      targetCss = dmgShadow;
     } else {
-      targetCss = this.lastBulletTimeCss;
+      targetCss = 'none';
     }
     if (targetCss !== this.lastAppliedVignetteCss) {
       this.lastAppliedVignetteCss = targetCss;

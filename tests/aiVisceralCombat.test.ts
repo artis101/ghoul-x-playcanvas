@@ -12,12 +12,10 @@ import { distance } from '../src/core/ballistics/vec3.ts';
 import { createTargetHealthState } from '../src/core/ghoul/anatomy.ts';
 import {
   createDefaultPlayerVitals,
-  grantBrutalKillReward,
   resolveIncomingPlayerShotDamage,
   stepPlayerVitalsRegen,
 } from '../src/engine/ai/playerVitalsController.ts';
 import { TacticalCombatAiSystem } from '../src/engine/ai/tacticalCombatAi.ts';
-import { AmmoInventory } from '../src/engine/player/ammoInventory.ts';
 
 function makeCandidate(
   overrides: Partial<AttackTokenCandidate> & { targetId: string }
@@ -224,7 +222,7 @@ describe('SquadBarkCoordinator (F.E.A.R. Radio Lock, Call-and-Response & Dead Ca
   });
 });
 
-describe('PlayerVitalsController (Helmet Pop, Arterial Graze 1-HP Floor & Brutal Kill Staunch)', () => {
+describe('PlayerVitalsController (Helmet Pop & Arterial Graze 1-HP Floor)', () => {
   it('deflects heavy head-level shots via HELMET_DEFLECT then triggers NECK_ARTERIAL_GRAZE 1-HP bleed', () => {
     const vitals = createDefaultPlayerVitals({ initialPlayerHealth: 100, initialPlayerArmor: 0 });
     const playerEye = { x: 0, y: 1.65, z: 0 };
@@ -262,14 +260,6 @@ describe('PlayerVitalsController (Helmet Pop, Arterial Graze 1-HP Floor & Brutal
     stepPlayerVitalsRegen(vitals, 2.0);
     expect(vitals.health).toBe(1);
     expect(vitals.urgentBleedRemainingS).toBeGreaterThan(0);
-
-    // 4. Scoring a brutal kill immediately staunches bleeding and re-arms healthGateReady
-    grantBrutalKillReward(vitals, 'MULTI_KILL_BLAST');
-    expect(vitals.urgentBleedHpPerSec).toBe(0);
-    expect(vitals.urgentBleedRemainingS).toBe(0);
-    expect(vitals.health).toBe(19);
-    grantBrutalKillReward(vitals, 'CRANIAL_POP');
-    expect(vitals.healthGateReady).toBe(true);
   });
 });
 
@@ -345,31 +335,7 @@ describe('TacticalCombatAiSystem — Off-Screen Frustum Nerf & Dead Zero-Motion 
     ai.destroy();
   });
 
-  it('keeps STANDARD_KILL ordinary while rewarding DECAPITATION / SURGICAL_SEVER with staunch, mag rounds & witness morale shock', () => {
-    const vitals = createDefaultPlayerVitals({ initialPlayerHealth: 18, initialPlayerArmor: 10 });
-    vitals.healthGateReady = false;
-    vitals.urgentBleedHpPerSec = 3.5;
-    vitals.urgentBleedRemainingS = 3.0;
-
-    // Ordinary kill: tiny sustain, does NOT staunch arterial bleed or re-arm low-HP gate
-    grantBrutalKillReward(vitals, 'STANDARD_KILL');
-    expect(vitals.urgentBleedHpPerSec).toBe(3.5);
-    expect(vitals.healthGateReady).toBe(false);
-
-    // Surgical sever / decapitation: staunches bleed, surges armor/HP, re-arms gate & chambers bonus round
-    const delta = grantBrutalKillReward(vitals, 'DECAPITATION');
-    expect(delta.armorRestored).toBe(18);
-    expect(delta.healthRestored).toBe(14);
-    expect(vitals.urgentBleedHpPerSec).toBe(0);
-    expect(vitals.healthGateReady).toBe(true);
-
-    const inv = new AmmoInventory();
-    inv.consumeShot('msg90_sniper');
-    inv.consumeShot('msg90_sniper');
-    const magBefore = inv.get('msg90_sniper')!.mag;
-    inv.grantBonusRounds('msg90_sniper', 2);
-    expect(inv.get('msg90_sniper')!.mag).toBe(magBefore + 2);
-
+  it('shocks witnesses of DECAPITATION but not of a STANDARD_KILL', () => {
     // Witness morale shock: STANDARD_KILL shocks nobody; DECAPITATION horrifies Panicked Scrapper, frenzies Berserker & shifts Veteran angle
     const barks: string[] = [];
     const ai = new TacticalCombatAiSystem({

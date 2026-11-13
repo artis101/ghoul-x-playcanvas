@@ -31,7 +31,6 @@ export class HudTargetTracker {
     viewerPos: Vec3Like,
     totalElapsedTimeS: number,
     losCacheEpoch: number,
-    enableXRayInspector: boolean,
     lastHitClockByTarget: Map<string, number>,
     isLineOfSightBlocked?: (from: Vec3Like, to: Vec3Like) => boolean
   ): void {
@@ -70,7 +69,7 @@ export class HudTargetTracker {
         this.scratchScreenPt.y <= vh + 60;
 
       let occludedByCover = false;
-      if (!enableXRayInspector && isLineOfSightBlocked && onScreen) {
+      if (isLineOfSightBlocked && onScreen) {
         let cached = this.hudLosCache.get(hs.targetId);
         const vDx = cached ? viewerPos.x - cached.viewerX : Infinity;
         const vDy = cached ? viewerPos.y - cached.viewerY : Infinity;

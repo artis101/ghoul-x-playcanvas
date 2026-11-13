@@ -70,9 +70,6 @@ export interface ShotSimulationReport {
   isLethalKill: boolean;
   ragdollPlan: RagdollActivationPlan;
   /** Retained for telemetry inspector compatibility */
-  triggerXRayKillCam: boolean;
-  xRayFocusZone: GhoulZoneId | null;
-  xRayHighlightPointWorld: Vec3Like | null;
   severedZones: GhoulZoneId[];
   dismembermentEvents: DismembermentEvent[];
   shatteredBones: string[];

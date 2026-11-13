@@ -271,12 +271,6 @@ export class ArsenalManager {
     );
   }
 
-  public grantActiveWeaponBonusRounds(count = 1): number {
-    const granted = this.inventory.grantBonusRounds(this.currentWeapon.id, count);
-    if (granted > 0) this.syncWeaponHud();
-    return granted;
-  }
-
   public update(dt: number): void {
     if (this.muzzleFlashPhase.kind === 'FLASHING') {
       const nextRem = Math.max(0, this.muzzleFlashPhase.remainingS - dt);

@@ -301,17 +301,6 @@ export function simulateShot(
   );
   totalDamageHp = lethality.totalDamageHp;
 
-  const triggerXRayKillCam =
-    weapon.role === 'SNIPER' && lethality.isLethalKill && (rupturedOrgansSet.size > 0 || shatteredBonesSet.size > 0);
-
-  let xRayHighlightPoint: Vec3Like | null = null;
-  let xRayFocusZone: GhoulZoneId | null = null;
-  if (allWoundEvents.length > 0) {
-    const vitalWound = allWoundEvents.find((w) => w.organRuptured || w.boneShattered) || allWoundEvents[0];
-    xRayHighlightPoint = vitalWound.entryPointWorld;
-    xRayFocusZone = vitalWound.ghoulZone;
-  }
-
   const primarySamples = pelletResults[0]?.trajectorySamples || [];
   if (!hasHitTarget && primarySamples.length > 1) {
     let closestSample = primarySamples[primarySamples.length - 1];
@@ -350,9 +339,6 @@ export function simulateShot(
     totalDamageHp,
     isLethalKill: lethality.isLethalKill,
     ragdollPlan: lethality.ragdollPlan,
-    triggerXRayKillCam,
-    xRayFocusZone,
-    xRayHighlightPointWorld: xRayHighlightPoint,
     severedZones: newlySeveredZones,
     dismembermentEvents,
     shatteredBones: Array.from(shatteredBonesSet),

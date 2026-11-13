@@ -125,7 +125,7 @@ export interface CombatantGlbInstance {
     speed?: number,
     southpaw?: boolean
   ): boolean;
-  setXRayVisible(visible: boolean): void;
+  setInternalAnatomyVisible(visible: boolean): void;
   setArmorVisible(chestPlateVisible: boolean, helmetVisible: boolean): void;
   setZoneVisible(zone: GhoulZoneId, visible: boolean): void;
   destroy(): void;

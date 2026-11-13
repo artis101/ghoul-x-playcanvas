@@ -1,13 +1,10 @@
-import type { AudioNodeLike, AudioParamLike } from '../contracts.ts';
+import type { AudioNodeLike } from '../contracts.ts';
 import type { InternalAudioGraph } from '../audioGraph.ts';
-import { clampNumber, computeSlowMoAudioFactors } from '../audioMath.ts';
+import { clampNumber } from '../audioMath.ts';
 
 export interface SynthContext {
   readonly graph: InternalAudioGraph;
-  readonly timeScale: number;
   readonly rng: () => number;
-  registerScaledSource(source: { readonly playbackRate: AudioParamLike }, baseRate: number, endTime: number): void;
-  registerScaledOscillator(osc: { readonly detune: AudioParamLike }, spawnPitchScale: number, endTime: number): void;
   registerTransientNodes(nodes: readonly AudioNodeLike[], endTime: number): void;
 }
 
@@ -27,15 +24,14 @@ export function spawnNoiseBurst(
 ): void {
   const g = ctx.graph;
   const maxFreqHz = Math.max(2000, Math.min(20000, (g.ctx.sampleRate || 44100) * 0.48));
-  const factors = computeSlowMoAudioFactors(ctx.timeScale);
-  const effectiveRate = Math.max(0.05, basePlaybackRate * factors.playbackRate);
+  const effectiveRate = Math.max(0.05, basePlaybackRate);
   const slice = g.createNoiseSlice(kind, effectiveRate, true);
   const offset = slice.bufferDuration > 0 ? ctx.rng() * slice.bufferDuration : 0;
 
   const filter = g.createBiquadFilter();
   filter.type = filterType;
-  const f0 = clampNumber(freqStartHz * factors.lowpassScale, 24, maxFreqHz);
-  const f1 = clampNumber(freqEndHz * factors.lowpassScale, 24, maxFreqHz);
+  const f0 = clampNumber(freqStartHz, 24, maxFreqHz);
+  const f1 = clampNumber(freqEndHz, 24, maxFreqHz);
   filter.frequency.setValueAtTime(f0, startTime);
   if (Math.abs(f0 - f1) > 1) {
     filter.frequency.exponentialRampToValueAtTime(f1, startTime + durationS);
@@ -57,7 +53,6 @@ export function spawnNoiseBurst(
   const stopAt = startTime + durationS + 0.015;
   slice.source.start(startTime, offset);
   slice.source.stop(stopAt);
-  ctx.registerScaledSource(slice.source, basePlaybackRate, stopAt);
   ctx.registerTransientNodes([slice.source, filter, env], stopAt + 0.05);
 }
 
@@ -112,6 +107,4 @@ export function spawnPitchDropOsc(
 
   osc.start(startTime);
   osc.stop(stopAt);
-  const currentPitchScale = computeSlowMoAudioFactors(ctx.timeScale).oscillatorPitchScale;
-  ctx.registerScaledOscillator(osc, currentPitchScale, stopAt);
 }

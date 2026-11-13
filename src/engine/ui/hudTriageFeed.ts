@@ -196,7 +196,7 @@ export class HudTriageFeed {
     let nextText = '';
     let nextOpacity = '0';
     if (!isPointerLocked) {
-      nextText = 'CLICK TO ENGAGE • [TAB] ARMOR/VITALS • [G] GRENADE • [F] REFLEX • [1-4] ARSENAL';
+      nextText = 'CLICK TO ENGAGE • [TAB] ARMOR/VITALS • [G] GRENADE • [1-4] ARSENAL';
       nextOpacity = '1';
     } else if (allDead) {
       nextText = 'ALL HOSTILES ELIMINATED • PRESS [R] TO RESPAWN SQUAD';

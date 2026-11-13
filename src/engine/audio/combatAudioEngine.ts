@@ -11,7 +11,7 @@ import type {
   VocalTraumaCueKind,
 } from '../../core/audio/types.ts';
 import { TINNITUS_PROXIMITY_RADIUS_M } from '../../core/audio/types.ts';
-import { clampNumber, clampTimeScale } from '../../core/audio/audioMath.ts';
+import { clampNumber } from '../../core/audio/audioMath.ts';
 import type { InternalAudioGraph } from '../../core/audio/audioGraph.ts';
 import type { SynthContext } from '../../core/audio/synth/synthPrimitives.ts';
 import { playWeaponFire, type GunshotSynthState } from '../../core/audio/synth/gunshotSynth.ts';
@@ -20,13 +20,6 @@ import { playMaterialImpact } from '../../core/audio/synth/materialImpactSynth.t
 import { playGoreImpact } from '../../core/audio/synth/fleshGoreAudioSynth.ts';
 import { playVocalTraumaCue } from '../../core/audio/synth/vocalTraumaSynth.ts';
 import { playExplosion } from '../../core/audio/synth/explosionAudioSynth.ts';
-import {
-  createSlowMoSynthState,
-  playSlowMoTransition,
-  resetSlowMoSynthState,
-  stepSlowMoHeartbeat,
-  type SlowMoSynthState,
-} from '../../core/audio/synth/slowMoAudioSynth.ts';
 import {
   playEnemyBallisticShot,
   playNearMissGrazeTinnitus,
@@ -64,13 +57,10 @@ export class CombatAudioEngine {
   private pannerModel: PanningModelType;
   private masterVolume: number;
   private readonly reverbWetMix: number;
-  private timeScale = 1.0;
-  private desiredSlowMoActive = false;
   private listenerPos: Vec3Like = { x: 0, y: 1.62, z: 0 };
   private listenerYawDeg = 0;
   private listenerPitchDeg = 0;
   private readonly gunshotState: GunshotSynthState = { m4ShotCounter: 0, lastWeaponPitchJitter: 1.0 };
-  private readonly slowMoState: SlowMoSynthState = createSlowMoSynthState();
   private lastVocalCueTime = -10;
   private lastPruneTime = -10;
   private impactWindowStart = -10;
@@ -114,11 +104,6 @@ export class CombatAudioEngine {
       this.listenerPos,
       this.listenerYawDeg,
       this.listenerPitchDeg,
-      (created) => {
-        if (this.desiredSlowMoActive && this.slowMoState.phase?.kind !== 'ACTIVE') {
-          playSlowMoTransition(this.getSynthContext(created), this.slowMoState, true);
-        }
-      },
     );
   }
 
@@ -134,9 +119,7 @@ export class CombatAudioEngine {
 
   private getSynthContext(graph: InternalAudioGraph): SynthContext {
     return {
-      graph, timeScale: this.timeScale, rng: this.rng,
-      registerScaledSource: (src, rate, end) => this.tracker.registerSource(src, rate, end),
-      registerScaledOscillator: (osc, scale, end) => this.tracker.registerOscillator(osc, scale, end),
+      graph, rng: this.rng,
       registerTransientNodes: (nodes, end) => this.tracker.registerTransientNodes(nodes, end),
     };
   }
@@ -161,8 +144,7 @@ export class CombatAudioEngine {
 
   public getDiagnostics(): CombatAudioDiagnostics {
     return this.counters.buildDiagnostics(
-      this.isAvailable(), this.isUnlocked(), this.timeScale,
-      this.slowMoState.slowMoActive, this.pannerModel, this.masterVolume,
+      this.isAvailable(), this.isUnlocked(), this.pannerModel, this.masterVolume,
       this.gunshotState.lastWeaponPitchJitter,
     );
   }
@@ -188,18 +170,6 @@ export class CombatAudioEngine {
     if (graph) graph.updateListener(this.listenerPos, yawDeg, pitchDeg);
   }
 
-  public setTimeScale(scale: number): void {
-    const clamped = clampTimeScale(scale);
-    if (Math.abs(clamped - this.timeScale) < 1e-4) return;
-    this.timeScale = clamped;
-    const graph = getAudioRuntimeGraph(this.runtimeState);
-    if (!graph) return;
-    const now = graph.ctx.currentTime;
-    this.tracker.pruneFinished(now);
-    this.tracker.applyTimeScale(this.timeScale, now);
-  }
-  public getTimeScale(): number { return this.timeScale; }
-
   public update(_rawDt: number): void {
     const graph = getAudioRuntimeGraph(this.runtimeState);
     if (!graph) return;
@@ -208,7 +178,6 @@ export class CombatAudioEngine {
       this.tracker.pruneFinished(now);
       this.lastPruneTime = now;
     }
-    stepSlowMoHeartbeat(this.getSynthContext(graph), this.slowMoState, now);
   }
 
   public playWeaponFire(id: string, ammo: string, ads: boolean): void {
@@ -292,21 +261,6 @@ export class CombatAudioEngine {
     if (g) playExplosion(this.getSynthContext(g), worldPos, listenerPos, intensity, this.listenerYawDeg, this.pannerModel, this.reverbWetMix);
   }
 
-  public playSlowMoTransition(entering: boolean): void {
-    this.counters.slowMoTransitionCount += 1;
-    this.desiredSlowMoActive = entering;
-    const g = this.ensureGraph();
-    if (g) playSlowMoTransition(this.getSynthContext(g), this.slowMoState, entering);
-    else this.slowMoState.slowMoActive = entering;
-  }
-
-  public resetSlowMo(): void {
-    this.desiredSlowMoActive = false;
-    const g = getAudioRuntimeGraph(this.runtimeState);
-    resetSlowMoSynthState(g ? this.getSynthContext(g) : null, this.slowMoState);
-    this.setTimeScale(1.0);
-  }
-
   public playEnemyBallisticShot(params: EnemyBallisticShotAudioParams): SupersonicShotAudioResult | null {
     this.counters.weaponFireCount += 1;
     const g = this.ensureGraph();
@@ -340,8 +294,6 @@ export class CombatAudioEngine {
 
   public destroy(): void {
     if (this.runtimeState.kind === 'DESTROYED') return;
-    this.desiredSlowMoActive = false;
-    resetSlowMoSynthState(null, this.slowMoState);
     this.runtimeState = transitionAudioRuntimeState(this.runtimeState, { kind: 'DESTROYED' });
     this.tracker.clear();
   }

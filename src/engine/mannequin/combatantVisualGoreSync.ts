@@ -1,12 +1,9 @@
-import * as pc from 'playcanvas';
 import { ALL_GHOUL_ZONES } from '../../core/ghoul/anatomy.ts';
 import type { GhoulZoneId, TargetHealthState } from '../../contracts/ballistics.ts';
 import type { CombatantGlbInstance } from '../assets/glbLoader.ts';
-import type { EngineMaterialPalette } from '../materials.ts';
 import type { GlbZoneMaterialPair, ZoneMeshBundle } from './types.ts';
 
 export class CombatantVisualGoreSync {
-  private lastMatSyncXRay: boolean | null = null;
   private lastMatSyncHasGlb: boolean | null = null;
   private lastMatSyncFractureCount = -1;
   private lastMatSyncWoundCount = -1;
@@ -15,17 +12,13 @@ export class CombatantVisualGoreSync {
   public refreshIfDirty(
     healthState: TargetHealthState,
     combatantGlb: CombatantGlbInstance | null,
-    isXRayActive: boolean,
     syncedWoundCount: number,
     glbZoneMaterialPairs: Map<GhoulZoneId, GlbZoneMaterialPair[]>,
-    glbGearOriginalMaterials: Map<pc.MeshInstance, pc.Material>,
-    zoneBundles: Map<GhoulZoneId, ZoneMeshBundle>,
-    materials: EngineMaterialPalette
+    zoneBundles: Map<GhoulZoneId, ZoneMeshBundle>
   ): void {
     const hasGlb = combatantGlb !== null;
     const fracCount = healthState.fracturedBones.size;
     let dirty =
-      this.lastMatSyncXRay !== isXRayActive ||
       this.lastMatSyncHasGlb !== hasGlb ||
       this.lastMatSyncFractureCount !== fracCount ||
       this.lastMatSyncWoundCount !== syncedWoundCount;
@@ -41,93 +34,43 @@ export class CombatantVisualGoreSync {
 
     if (!dirty) return;
 
-    this.lastMatSyncXRay = isXRayActive;
     this.lastMatSyncHasGlb = hasGlb;
     this.lastMatSyncFractureCount = fracCount;
     this.lastMatSyncWoundCount = syncedWoundCount;
 
-    this.applyMaterials(
-      healthState,
-      combatantGlb,
-      isXRayActive,
-      glbZoneMaterialPairs,
-      glbGearOriginalMaterials,
-      zoneBundles,
-      materials
-    );
+    this.applyMaterials(healthState, combatantGlb, glbZoneMaterialPairs, zoneBundles);
   }
 
   private applyMaterials(
     healthState: TargetHealthState,
     combatantGlb: CombatantGlbInstance | null,
-    isXRayActive: boolean,
     glbZoneMaterialPairs: Map<GhoulZoneId, GlbZoneMaterialPair[]>,
-    glbGearOriginalMaterials: Map<pc.MeshInstance, pc.Material>,
-    zoneBundles: Map<GhoulZoneId, ZoneMeshBundle>,
-    materials: EngineMaterialPalette
+    zoneBundles: Map<GhoulZoneId, ZoneMeshBundle>
   ): void {
-    const xrayMat = materials.xraySkinMat;
     const isHeadPopped = healthState.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP';
 
     if (combatantGlb) {
-      combatantGlb.setXRayVisible(isXRayActive);
-      if (combatantGlb.internalAnatomyEntities.organBrain) {
-        combatantGlb.internalAnatomyEntities.organBrain.enabled = isXRayActive && !isHeadPopped;
-      }
+      // Internal anatomy stays hidden; only the skull shows once the cranium is popped.
+      combatantGlb.setInternalAnatomyVisible(false);
       if (combatantGlb.internalAnatomyEntities.skeletSkull) {
-        combatantGlb.internalAnatomyEntities.skeletSkull.enabled = isHeadPopped || isXRayActive;
+        combatantGlb.internalAnatomyEntities.skeletSkull.enabled = isHeadPopped;
       }
 
       for (const [zone, pairs] of glbZoneMaterialPairs) {
         const goreMode = healthState.zoneGoreMode[zone];
         const isBloody = goreMode === 'LACERATED' || goreMode === 'EVISCERATED';
         for (const pair of pairs) {
-          pair.meshInstance.material = isXRayActive
-            ? xrayMat
-            : isBloody
-              ? pair.laceratedMat
-              : pair.intactMat;
+          pair.meshInstance.material = isBloody ? pair.laceratedMat : pair.intactMat;
         }
-      }
-
-      for (const [mi, origMat] of glbGearOriginalMaterials) {
-        mi.material = isXRayActive ? xrayMat : origMat;
       }
     }
 
     for (const [zone, bundle] of zoneBundles) {
       const isPoppedZone = isHeadPopped && (zone === 'HEAD_CRANIUM' || zone === 'HEAD_FACE_JAW');
       for (const decal of bundle.woundDecalNodes) {
-        decal.enabled = !isPoppedZone && !isXRayActive;
+        decal.enabled = !isPoppedZone;
       }
     }
   }
 
-  public pulseXRayOrgans(
-    glb: CombatantGlbInstance | null,
-    healthState: TargetHealthState,
-    isXRayActive: boolean,
-    elapsedTime: number
-  ): void {
-    if (!glb) return;
-    if (!healthState.alive) {
-      if (glb.internalAnatomyEntities.organHeart) {
-        glb.internalAnatomyEntities.organHeart.setLocalScale(1, 1, 1);
-      }
-      if (glb.internalAnatomyEntities.organBrain) {
-        glb.internalAnatomyEntities.organBrain.setLocalScale(1, 1, 1);
-      }
-      return;
-    }
-    if (!isXRayActive) return;
-    const bpmHz = (healthState.heartRateBpm / 60) * Math.PI * 2;
-    const pulse = 1.0 + Math.sin(elapsedTime * bpmHz) * 0.1;
-    const bPulse = 1.0 + Math.sin(elapsedTime * 2.5) * 0.04;
-    if (glb.internalAnatomyEntities.organHeart) {
-      glb.internalAnatomyEntities.organHeart.setLocalScale(pulse, pulse, pulse);
-    }
-    if (glb.internalAnatomyEntities.organBrain) {
-      glb.internalAnatomyEntities.organBrain.setLocalScale(bPulse, bPulse, bPulse);
-    }
-  }
 }

@@ -66,96 +66,55 @@ export function createBloodSplatterMaterial(device: pc.GraphicsDevice): pc.Stand
   });
   tex.anisotropy = maxAniso;
 
-  const normalTex = new pc.Texture(device, {
-    name: 'goreWallSplatterNormalTex',
-    width: size,
-    height: size,
-    format: pc.PIXELFORMAT_RGBA8,
-    mipmaps: true,
-    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
-    magFilter: pc.FILTER_LINEAR,
-    addressU: pc.ADDRESS_CLAMP_TO_EDGE,
-    addressV: pc.ADDRESS_CLAMP_TO_EDGE,
-  });
-  normalTex.anisotropy = maxAniso;
 
   const pixels = tex.lock() as Uint8Array;
-  const nPixels = normalTex.lock() as Uint8Array;
-  const heightField = new Float32Array(size * size);
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const u = (x + 0.5) / size;
       const v = (y + 0.5) / size;
+      // Gritty back-spatter: a ragged, grainy core that breaks up into a spray of specks and a few
+      // runs dripping down, instead of a smooth star with glossy fingers.
       const dx = u - 0.5;
-      const dy = v - 0.54;
-      const angle = Math.atan2(dy, dx);
+      const dy = v - 0.5;
+      const warp = (valueNoise2d(u, v, 6, 911) - 0.5) * 0.16 + (valueNoise2d(u, v, 14, 913) - 0.5) * 0.07;
+      const dist = Math.hypot(dx, dy) + warp;
+      const grain = valueNoise2d(u, v, 40, 953);
+      const speck = valueNoise2d(u, v, 30, 967);
+      const run = u > 0.36 && u < 0.64 && v > 0.5
+        ? Math.max(0, valueNoise2d(u, 0.5, 26, 977) - 0.72) * (1 - (v - 0.5) / 0.5) * 3.4
+        : 0;
 
-      const radialFinger =
-        Math.pow(Math.max(0, Math.sin(angle * 7.0 + 0.4)), 2.0) * 0.085 +
-        Math.pow(Math.max(0, Math.cos(angle * 13.0 - 1.1)), 3.0) * 0.065;
-      const organicWarp = (valueNoise2d(u, v, 8, 911) - 0.5) * 0.11;
-      const drip =
-        u > 0.32 && u < 0.68 && v < 0.46
-          ? Math.pow(valueNoise2d(u * 2.2, v * 0.45, 7, 977), 2.2) * 0.19
-          : 0;
-      const speckle = valueNoise2d(u, v, 24, 953);
-
-      const dist = Math.hypot(dx, dy * 0.92) - radialFinger - organicWarp - drip;
       let alpha = 0;
-      if (dist < 0.22) {
-        alpha = 0.97;
-      } else if (dist < 0.31) {
-        const t = (0.31 - dist) / 0.09;
-        alpha = t * t * (3 - 2 * t) * 0.94;
-      } else if (dist < 0.45 && speckle > 0.79) {
-        alpha = ((speckle - 0.79) / 0.21) * 0.9;
+      if (dist < 0.16) {
+        alpha = 0.92 * (0.75 + grain * 0.25);
+      } else if (dist < 0.26) {
+        const t = (0.26 - dist) / 0.1;
+        alpha = Math.max(0, t * 1.2 - (1 - grain) * 0.5) * 0.9;
+      } else if (dist < 0.48 && speck > 0.8 - (0.48 - dist) * 0.25) {
+        alpha = 0.85;
       }
+      alpha = Math.max(alpha, Math.min(0.85, run));
 
-      heightField[y * size + x] = alpha > 0.05 ? Math.min(1.0, alpha * 0.8 + (dist < 0.24 ? 0.2 : 0)) : 0;
-
-      const coreDark = dist < 0.13 ? 0.56 : dist < 0.22 ? 0.78 : 1.0;
+      const coreDark = (0.55 + grain * 0.3) * (dist < 0.1 ? 0.75 : 1.0);
       const idx = (y * size + x) * 4;
-      pixels[idx] = clampByte(112 * coreDark);
-      pixels[idx + 1] = clampByte(6 * coreDark);
-      pixels[idx + 2] = clampByte(10 * coreDark);
+      pixels[idx] = clampByte(92 * coreDark);
+      pixels[idx + 1] = clampByte(12 * coreDark);
+      pixels[idx + 2] = clampByte(9 * coreDark);
       pixels[idx + 3] = clampByte(alpha * 255);
     }
   }
 
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const xm = Math.max(0, x - 1);
-      const xp = Math.min(size - 1, x + 1);
-      const ym = Math.max(0, y - 1);
-      const yp = Math.min(size - 1, y + 1);
-      const nx = (heightField[y * size + xm] - heightField[y * size + xp]) * 2.6;
-      const ny = (heightField[ym * size + x] - heightField[yp * size + x]) * 2.6;
-      const nz = 1.0;
-      const inv = 1 / Math.hypot(nx, ny, nz);
-      const idx = (y * size + x) * 4;
-      nPixels[idx] = clampByte((nx * inv * 0.5 + 0.5) * 255);
-      nPixels[idx + 1] = clampByte((ny * inv * 0.5 + 0.5) * 255);
-      nPixels[idx + 2] = clampByte((nz * inv * 0.5 + 0.5) * 255);
-      nPixels[idx + 3] = 255;
-    }
-  }
-
   tex.unlock();
-  normalTex.unlock();
 
   const mat = new pc.StandardMaterial();
   mat.name = 'wetWallBloodSplatterMat';
   mat.diffuseMap = tex;
   mat.opacityMap = tex;
   mat.opacityMapChannel = 'a';
-  mat.normalMap = normalTex;
-  mat.bumpiness = 0.78;
   mat.useMetalness = true;
-  mat.metalness = 0.1;
-  mat.gloss = 0.9;
-  mat.clearCoat = 0.88;
-  mat.clearCoatGloss = 0.95;
+  mat.metalness = 0;
+  mat.gloss = 0.45;
   mat.fresnelModel = pc.FRESNEL_SCHLICK;
   mat.blendType = pc.BLEND_NORMAL;
   mat.depthWrite = false;

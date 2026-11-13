@@ -71,18 +71,17 @@ export class CombatantDismemberment {
 
   public syncGlbSeverances(
     glb: CombatantGlbInstance,
-    healthState: TargetHealthState,
-    isXRayActive: boolean
+    healthState: TargetHealthState
   ): void {
     const isCranialPopped = healthState.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP';
     const isEviscerated = healthState.zoneGoreMode.TORSO_LOWER_ABDOMEN === 'EVISCERATED';
 
     glb.setZoneVisible('HEAD_CRANIUM', !isCranialPopped);
     glb.setZoneVisible('HEAD_FACE_JAW', !isCranialPopped);
-    glb.setZoneVisible('TORSO_LOWER_ABDOMEN', !isEviscerated || isXRayActive);
+    glb.setZoneVisible('TORSO_LOWER_ABDOMEN', !isEviscerated);
 
     if (glb.evisceratedGut) {
-      glb.evisceratedGut.enabled = isEviscerated && !isXRayActive;
+      glb.evisceratedGut.enabled = isEviscerated;
     }
 
     if (glb.internalAnatomyEntities.skeletSkull) {
@@ -93,17 +92,16 @@ export class CombatantDismemberment {
   public syncGearVisibility(
     glb: CombatantGlbInstance,
     healthState: TargetHealthState,
-    isXRayActive: boolean,
     headgearAttached: boolean
   ): void {
     const arch = healthState.archetype;
     const isCranialPopped = healthState.zoneGoreMode.HEAD_CRANIUM === 'CRANIAL_POP';
     // Only the enforcer wears armour over his painted clothes.
-    const showPlate = !isXRayActive && arch === 'HEAVY_ENFORCER';
-    const showHelmet = !isXRayActive && headgearAttached && arch === 'HEAVY_ENFORCER';
-    const showVisor = !isXRayActive && headgearAttached && arch === 'HEAVY_ENFORCER';
-    const showBoonie = !isXRayActive && headgearAttached && arch === 'SNIPER_OPERATIVE';
-    const showMohawk = !isXRayActive && !isCranialPopped && arch === 'SKINHEAD_PUNK';
+    const showPlate = arch === 'HEAVY_ENFORCER';
+    const showHelmet = headgearAttached && arch === 'HEAVY_ENFORCER';
+    const showVisor = headgearAttached && arch === 'HEAVY_ENFORCER';
+    const showBoonie = headgearAttached && arch === 'SNIPER_OPERATIVE';
+    const showMohawk = !isCranialPopped && arch === 'SKINHEAD_PUNK';
 
     glb.setArmorVisible(showPlate, showHelmet);
     if (glb.tacticalVisor) glb.tacticalVisor.enabled = showVisor;

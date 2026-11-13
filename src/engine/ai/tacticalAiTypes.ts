@@ -5,7 +5,6 @@ import type {
   AiBarkPayload,
   ArterialBleedState,
   BrutalKillRewardKind,
-  BrutalRewardEventPayload,
   EnemyFireMode,
   HealthGateState,
   PlayerCombatVitals,
@@ -33,7 +32,6 @@ export type {
   AlertedEngagementSubstate,
   ArterialBleedState,
   BrutalKillRewardKind,
-  BrutalRewardEventPayload,
   CombatantTriageStatus,
   EnemyArmamentState,
   EnemyFireMode,
@@ -208,6 +206,9 @@ export interface EnemyAiAgentRuntime {
   timeWithoutLosS?: number;
   moraleShockTimerS?: number;
   berserkerFrenzyTimerS?: number;
+  /** Health tiers already fallen back from; see `woundFallback.ts`. */
+  woundFallbackTier?: number;
+  woundFallbackTimerS?: number;
   lastRelocationClockS?: number;
   lastObservedBurstCount?: number;
 

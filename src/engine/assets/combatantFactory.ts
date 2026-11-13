@@ -161,7 +161,7 @@ export function instantiateCombatantGlb(
       animComponent.baseLayer.playing = true;
       return true;
     },
-    setXRayVisible(visible: boolean): void {
+    setInternalAnatomyVisible(visible: boolean): void {
       for (const ent of Object.values(internalAnatomyEntities)) if (ent) ent.enabled = visible;
     },
     setArmorVisible(chestPlateVisible: boolean, helmetVisible: boolean): void {

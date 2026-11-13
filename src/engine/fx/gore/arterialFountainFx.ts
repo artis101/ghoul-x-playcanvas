@@ -47,10 +47,10 @@ export function updateArterialFountains(
     const pressureDecay = Math.max(0.28, 1.0 - (f.elapsedS / f.durationS) * 0.65);
     const systolicPulse = 1.0 + Math.max(0, Math.sin(f.elapsedS * 11.2)) * 0.95;
     const pulseRate = systolicPulse * pressureDecay;
-    if (f.dropTimerS >= 0.048 / Math.max(0.3, pulseRate)) {
+    if (f.dropTimerS >= 0.11 / Math.max(0.3, pulseRate)) {
       f.dropTimerS = 0;
       const sprayDirNorm = normalize(f.sprayDir);
-      onSpawnBloodBurst(f.stumpPos, sprayDirNorm, 48 * pulseRate, 4);
+      onSpawnBloodBurst(f.stumpPos, sprayDirNorm, 48 * pulseRate, 3);
     }
 
     if (f.elapsedS >= f.durationS) {

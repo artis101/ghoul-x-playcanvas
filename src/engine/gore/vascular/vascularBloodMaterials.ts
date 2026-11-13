@@ -14,13 +14,11 @@ export function createVascularBloodMaterials(
 
   const arterialJetMat = new pc.StandardMaterial();
   arterialJetMat.name = 'vascularArterialJetMat';
-  arterialJetMat.diffuse = new pc.Color(ar, ag, ab);
+  arterialJetMat.diffuse = new pc.Color(ar * 0.6, ag * 0.8, ab * 0.6);
   arterialJetMat.emissive = new pc.Color(0.055, 0.002, 0.004);
   arterialJetMat.useMetalness = true;
-  arterialJetMat.metalness = 0.09;
-  arterialJetMat.gloss = palette ? Math.max(0.88, (palette.bloodDropMat.shininess || 88) / 100) : 0.9;
-  arterialJetMat.clearCoat = 0.86;
-  arterialJetMat.clearCoatGloss = 0.95;
+  arterialJetMat.metalness = 0;
+  arterialJetMat.gloss = 0.55;
   arterialJetMat.fresnelModel = pc.FRESNEL_SCHLICK;
   if (maps) {
     arterialJetMat.normalMap = maps.dropletNormalMap;
@@ -28,25 +26,22 @@ export function createVascularBloodMaterials(
   }
   arterialJetMat.update();
 
+  // Gritty floor blood to match the painted room: dark, mottled, a dull sheen, no clear-coat.
+  // The texture is a white mottle mask; this colour carries the hue.
   const arterialPoolMat = new pc.StandardMaterial();
   arterialPoolMat.name = 'vascularArterialPoolMat';
-  arterialPoolMat.diffuse = maps ? new pc.Color(0.88, 0.82, 0.82) : new pc.Color(ar * 0.48, ag * 0.35, ab * 0.38);
-  arterialPoolMat.emissive = new pc.Color(0.025, 0.001, 0.002);
+  arterialPoolMat.diffuse = new pc.Color(0.27, 0.035, 0.028);
   arterialPoolMat.useMetalness = true;
-  arterialPoolMat.metalness = 0.12;
-  arterialPoolMat.gloss = palette ? Math.max(0.91, (palette.bloodPoolMat.shininess || 90) / 100) : 0.92;
-  arterialPoolMat.clearCoat = 0.92;
-  arterialPoolMat.clearCoatGloss = 0.96;
+  arterialPoolMat.metalness = 0;
+  arterialPoolMat.gloss = 0.48;
   arterialPoolMat.fresnelModel = pc.FRESNEL_SCHLICK;
-  arterialPoolMat.opacity = 0.94;
+  arterialPoolMat.opacity = 0.95;
   arterialPoolMat.blendType = pc.BLEND_NORMAL;
   arterialPoolMat.depthWrite = false;
   if (maps) {
     arterialPoolMat.diffuseMap = maps.poolAlbedoAlphaArterial;
     arterialPoolMat.opacityMap = maps.poolAlbedoAlphaArterial;
     arterialPoolMat.opacityMapChannel = 'a';
-    arterialPoolMat.normalMap = maps.poolMeniscusNormalMap;
-    arterialPoolMat.bumpiness = 1.15;
   }
   arterialPoolMat.update();
 
@@ -55,10 +50,8 @@ export function createVascularBloodMaterials(
   venousOozeMat.diffuse = new pc.Color(vr, vg, vb);
   venousOozeMat.emissive = new pc.Color(0.018, 0.0, 0.003);
   venousOozeMat.useMetalness = true;
-  venousOozeMat.metalness = 0.1;
-  venousOozeMat.gloss = 0.88;
-  venousOozeMat.clearCoat = 0.84;
-  venousOozeMat.clearCoatGloss = 0.94;
+  venousOozeMat.metalness = 0;
+  venousOozeMat.gloss = 0.55;
   venousOozeMat.fresnelModel = pc.FRESNEL_SCHLICK;
   if (maps) {
     venousOozeMat.normalMap = maps.dropletNormalMap;
@@ -66,15 +59,14 @@ export function createVascularBloodMaterials(
   }
   venousOozeMat.update();
 
+  // Gritty floor blood to match the painted room: dark, mottled, a dull sheen, no clear-coat.
+  // The texture is a white mottle mask; this colour carries the hue.
   const venousPoolMat = new pc.StandardMaterial();
   venousPoolMat.name = 'vascularVenousPoolMat';
-  venousPoolMat.diffuse = maps ? new pc.Color(0.84, 0.8, 0.82) : new pc.Color(vr * 0.68, vg * 0.6, vb * 0.68);
-  venousPoolMat.emissive = new pc.Color(0.012, 0.0, 0.002);
+  venousPoolMat.diffuse = new pc.Color(0.2, 0.028, 0.024);
   venousPoolMat.useMetalness = true;
-  venousPoolMat.metalness = 0.13;
-  venousPoolMat.gloss = palette ? Math.max(0.92, (palette.bloodPoolMat.shininess || 90) / 100) : 0.94;
-  venousPoolMat.clearCoat = 0.94;
-  venousPoolMat.clearCoatGloss = 0.97;
+  venousPoolMat.metalness = 0;
+  venousPoolMat.gloss = 0.48;
   venousPoolMat.fresnelModel = pc.FRESNEL_SCHLICK;
   venousPoolMat.opacity = 0.95;
   venousPoolMat.blendType = pc.BLEND_NORMAL;
@@ -83,8 +75,6 @@ export function createVascularBloodMaterials(
     venousPoolMat.diffuseMap = maps.poolAlbedoAlphaVenous;
     venousPoolMat.opacityMap = maps.poolAlbedoAlphaVenous;
     venousPoolMat.opacityMapChannel = 'a';
-    venousPoolMat.normalMap = maps.poolMeniscusNormalMap;
-    venousPoolMat.bumpiness = 1.2;
   }
   venousPoolMat.update();
 

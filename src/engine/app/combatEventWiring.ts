@@ -53,7 +53,7 @@ export function wireCombatDirectorInterceptors(
   combatDirector.onExplosionBlast = (center, radiusM, peakImpulseNs, peakEnergyJ) => {
     const blast: BlastEvent = { centerWorld: center, radiusM, peakImpulseNs, peakEnergyJ };
     destructionManager.applyBlast(blast);
-    mayhemDirector.notifyExternalExplosion(blast, 0);
+    mayhemDirector.notifyExternalExplosion(blast);
     tacticalAi.notifyGunshotOrExplosion(center, 45.0, 0.72);
   };
 }

@@ -3,7 +3,6 @@ import { dot, length, normalize, scale } from '../../../core/ballistics/vec3.ts'
 import type { HardwareInstancedPool } from '../../physics/instancedPool.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 import { computeSurfaceAlignedQuadQuaternion } from '../math/surfaceAlignment.ts';
-import type { BulletTimeController } from '../bulletTime/bulletTimeController.ts';
 import type { SurfaceOpenPredicate } from '../impacts/surfaceImpactFx.ts';
 
 export interface BloodSplatterProjectionParams {
@@ -29,7 +28,6 @@ export interface BloodSplatterSlotAnchor {
 export interface BloodSplatterContext {
   rapierWorld: RapierPhysicsWorld;
   bloodSplatterPool: HardwareInstancedPool;
-  bulletTime: BulletTimeController;
   isSurfaceOpenAtHit?: SurfaceOpenPredicate;
   slotAnchors?: BloodSplatterSlotAnchor[];
 }
@@ -211,14 +209,7 @@ export function processShotSimulationReport(
     }
   }
 
-  let sawHeadLoss = false;
-  let sawDismemberment = false;
   for (const dism of report.dismembermentEvents) {
-    if (dism.goreMode === 'CRANIAL_POP' || dism.zone === 'NECK_CERVICAL') {
-      sawHeadLoss = true;
-    } else if (dism.goreMode === 'CLEAN_SEVER' || dism.goreMode === 'EVISCERATED') {
-      sawDismemberment = true;
-    }
     if (dism.goreMode === 'CRANIAL_POP' || dism.goreMode === 'CLEAN_SEVER') {
       totalDecals += projectBloodSplatter(
         ctx,
@@ -234,10 +225,5 @@ export function processShotSimulationReport(
     }
   }
 
-  if (sawHeadLoss) {
-    ctx.bulletTime.triggerKillPunch(0.35, 0.16, 'CRANIAL_POP');
-  } else if (sawDismemberment) {
-    ctx.bulletTime.triggerKillPunch('DISMEMBERMENT', 0.22);
-  }
   return totalDecals;
 }

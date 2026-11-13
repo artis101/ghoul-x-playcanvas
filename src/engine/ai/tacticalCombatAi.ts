@@ -24,9 +24,7 @@ import {
 import { hashCombatantTargetId, resolveDefaultCombatantProfile } from './archetypeTuning.ts';
 import { isArmChainIntactAndFunctional } from './combatantArmEvaluation.ts';
 import {
-  type BrutalKillVitalsDelta,
   createDefaultPlayerVitals,
-  grantBrutalKillReward,
   notifyWaveCleared,
   stepPlayerVitalsRegen,
 } from './playerVitalsController.ts';
@@ -225,10 +223,6 @@ export class TacticalCombatAiSystem {
     externalAccuracyMultiplier?: number
   ): EnemyAimProfile {
     return computeEnemyAimProfile(target, agent, externalAccuracyMultiplier);
-  }
-
-  public grantBrutalKillReward(kind: BrutalKillRewardKind): BrutalKillVitalsDelta {
-    return grantBrutalKillReward(this.playerVitals, kind);
   }
 
   public notifyWitnessedBrutality(victim: TargetHealthState, kind: BrutalKillRewardKind): number {

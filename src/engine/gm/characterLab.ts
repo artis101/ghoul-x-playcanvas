@@ -107,14 +107,14 @@ export async function openCharacterLab(): Promise<void> {
     }
 
     function createCharacter() {
-      const model = setupCombatantGlbInstance(registry, health, materials, new Map(), new Map());
+      const model = setupCombatantGlbInstance(registry, health, materials, new Map());
       if (!model) throw new Error('Unable to instantiate the combatant');
       app.root.addChild(model.rootEntity);
       return model;
     }
 
     function syncGear(): void {
-      dismemberment.syncGearVisibility(character, health, false, view.headgear.checked);
+      dismemberment.syncGearVisibility(character, health, view.headgear.checked);
       if (character.esapiPlateCarrier && !view.armor.checked) character.esapiPlateCarrier.enabled = false;
     }
 

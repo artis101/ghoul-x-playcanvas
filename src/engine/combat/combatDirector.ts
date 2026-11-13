@@ -50,7 +50,6 @@ export class CombatDirector {
   public targets: GhoulMannequinEntity[] = [];
   public lastEngagedTarget: GhoulMannequinEntity | null = null;
   public environment: EnvironmentState = { ...DEFAULT_ENVIRONMENT };
-  public enableXRayInspector = false;
 
   public readonly anatomicalBvh: AnatomicalBvh = getDefaultAnatomicalBvh();
   public readonly physiologySystem: PhysiologyEcsSystem = new PhysiologyEcsSystem();
@@ -116,11 +115,6 @@ export class CombatDirector {
     this.targets = spawnCombatTargets(this.app, this.materials, this.fxManager, this.glbRegistry, this.physiologySystem, this.tacticalAi);
   }
 
-  public setXRayMode(enabled: boolean): void {
-    this.enableXRayInspector = enabled;
-    for (const t of this.targets) t.setXRayMode(enabled);
-  }
-
   public areAllTargetsDown(): boolean {
     return this.targets.length > 0 && this.targets.every((t) => !t.healthState.alive);
   }
@@ -156,7 +150,7 @@ export class CombatDirector {
   public applyExternalExplosionTrauma(blast: BlastEvent, sourceLabel = 'HAZARD BARREL'): number {
     this.losCacheEpoch++;
     return routeExternalExplosionTrauma(
-      blast, sourceLabel, this.targets, this.fxManager, this.combatAudio, this.mayhemDirector, this.tacticalAi,
+      blast, sourceLabel, this.targets, this.fxManager, this.combatAudio, this.tacticalAi,
       this.onCameraShake, () => this.getViewerPosVec3(),
       (c, r) => spawnBlastVisualFx(c, r, this.app, this.materials, this.blastFireballMat, this.activeBlastFlashes),
       {
@@ -187,7 +181,7 @@ export class CombatDirector {
       offhandSync: this.offhandSync, hudTargetTracker: this.hudTargetTracker,
       glbRegistry: this.glbRegistry, fxManager: this.fxManager,
       lastEngagedTarget: this.lastEngagedTarget, losCacheEpoch: this.losCacheEpoch,
-      enableXRayInspector: this.enableXRayInspector, lastHitClockByTarget: this.lastHitClockByTarget,
+      lastHitClockByTarget: this.lastHitClockByTarget,
       isLineOfSightBlocked: this.isLineOfSightBlocked,
       grenadeSweepInterceptor: this.grenadeSweepInterceptor,
       onExplosionBlast: this.onExplosionBlast,

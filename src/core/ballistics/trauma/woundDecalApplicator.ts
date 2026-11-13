@@ -4,11 +4,13 @@ import {
 } from '../../../contracts/ballistics.ts';
 import { transitionTargetLifecycle } from '../lifecycle/targetLifecycleFsm.ts';
 import { copyVec3, vec3 } from '../vec3.ts';
+import { getArchetypeLoadout } from '../../ghoul/anatomy/archetypeLoadout.ts';
 
 export function applyWoundsAndDecals(
   target: TargetHealthState,
   report: ShotSimulationReport
 ): { rightLegShotEnergyJ: number; leftLegShotEnergyJ: number } {
+  const loadout = getArchetypeLoadout(target.archetype);
   target.currentHp = Math.max(0, target.currentHp - report.totalDamageHp);
   if (report.isLethalKill || target.currentHp <= 0) {
     transitionTargetLifecycle(target, { kind: 'LETHAL_DEATH' });
@@ -37,10 +39,10 @@ export function applyWoundsAndDecals(
 
     if (w.armorStopped) {
       if (w.ghoulZone === 'HEAD_CRANIUM') {
-        target.helmetArmorIntegrity = Math.max(0, target.helmetArmorIntegrity - 36);
+        target.helmetArmorIntegrity = Math.max(0, target.helmetArmorIntegrity - loadout.helmetWearPerStop);
         if (target.helmetArmorIntegrity <= 5) target.headgearIntact = false;
       } else {
-        target.chestArmorIntegrity = Math.max(0, target.chestArmorIntegrity - 26);
+        target.chestArmorIntegrity = Math.max(0, target.chestArmorIntegrity - loadout.plateWearPerStop);
       }
     } else {
       if (w.layerType === 'SOFT_FLESH' || w.layerType === 'CORTICAL_BONE') {
@@ -74,13 +76,13 @@ export function applyWoundsAndDecals(
         target.rightLegFunctional = false;
         target.leftLegFunctional = false;
       }
-      if (w.ghoulZone === 'UPPER_ARM_RIGHT' || w.ghoulZone === 'FOREARM_RIGHT') {
+      // Only a shattered arm stops working; a cracked bone is fought through. Losing the gun is
+      // decided by the shot itself (a hit on the grip hand), reported as weaponDisarmed above.
+      if (w.boneShattered && (w.ghoulZone === 'UPPER_ARM_RIGHT' || w.ghoulZone === 'FOREARM_RIGHT')) {
         target.rightArmFunctional = false;
-        transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
       }
-      if (w.ghoulZone === 'UPPER_ARM_LEFT' || w.ghoulZone === 'FOREARM_LEFT') {
+      if (w.boneShattered && (w.ghoulZone === 'UPPER_ARM_LEFT' || w.ghoulZone === 'FOREARM_LEFT')) {
         target.leftArmFunctional = false;
-        transitionTargetLifecycle(target, { kind: 'PRIMARY_ARM_DISARM' });
       }
     }
 

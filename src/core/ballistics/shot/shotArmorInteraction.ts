@@ -18,6 +18,15 @@ export interface ArmorInteractionResult {
   woundEvent?: WoundChannelEvent;
 }
 
+/**
+ * A ceramic rifle plate (ESAPI class) stops ball, match, buckshot, slugs and pistol rounds; only
+ * dedicated AP (tungsten-core) rounds defeat it. Ratings come from armorPenetrationFactor scaled by
+ * impact speed: M855 ≈ 2.4, M118LR ≈ 2.2, M993 AP ≈ 3.5.
+ */
+const RIFLE_PLATE_DEFEAT_RATING = 2.8;
+/** A PASGT-style Kevlar helmet stops buckshot, fragments and most pistol rounds, not rifle bullets. */
+const HELMET_DEFEAT_RATING = 1.15;
+
 export function evaluateArmorInteraction(
   proj: ProjectileState,
   ammo: AmmoSpec,
@@ -28,7 +37,8 @@ export function evaluateArmorInteraction(
 ): ArmorInteractionResult {
   const col = hit.collider;
   const armorRatingFactor = ammo.armorPenetrationFactor * Math.pow(currentSpeed / 520, 0.85);
-  const defeatedArmor = armorRatingFactor >= 1.15;
+  const isRiflePlate = col.id === 'vol_thorax_kevlar_vest';
+  const defeatedArmor = armorRatingFactor >= (isRiflePlate ? RIFLE_PLATE_DEFEAT_RATING : HELMET_DEFEAT_RATING);
 
   if (!defeatedArmor) {
     const bluntTraumaJ = entryEnergy * 0.18;
@@ -38,7 +48,9 @@ export function evaluateArmorInteraction(
     const impulseVec = scale(bulletDir, impulseMag);
 
     let headgearKnockedOff = false;
-    let effectMessage = 'NIJ IIIA Kevlar Stopped Projectile — Blunt Rib Trauma';
+    let effectMessage = isRiflePlate
+      ? 'Rifle Plate Stopped Round — Blunt Rib Trauma'
+      : 'PASGT Helmet Stopped Fragment — Blunt Head Trauma';
     if (col.ghoulZone === 'HEAD_CRANIUM' && entryEnergy > 180) {
       headgearKnockedOff = true;
       effectMessage = 'PASGT Helmet Deflected Round — Helmet Knocked Off!';
@@ -73,7 +85,7 @@ export function evaluateArmorInteraction(
       limbSevered: false,
       arterialSevered: false,
       deflectionAngleDeg: 0,
-      physiologicalEffect: 'Stopped by Kevlar Armor (Backface Blunt Trauma)',
+      physiologicalEffect: 'Stopped by Armor (Backface Blunt Trauma)',
     };
 
     proj.alive = false;

@@ -219,7 +219,7 @@ export async function compileAllGameShaders(
     }
 
     onProgress?.(
-      'Compiling skinned GHOUL anatomy & X-Ray organ shader permutations...',
+      'Compiling skinned GHOUL anatomy shader permutations...',
       batches.length + 1,
       totalSteps
     );
@@ -237,12 +237,12 @@ export async function compileAllGameShaders(
         if (tempCombatant.punkMohawk) tempCombatant.punkMohawk.enabled = true;
         if (tempCombatant.evisceratedGut) tempCombatant.evisceratedGut.enabled = true;
 
-        tempCombatant.setXRayVisible(false);
+        tempCombatant.setInternalAnatomyVisible(false);
         stagingRoot.syncHierarchy();
         app.render();
         warmedVariants += 16;
 
-        tempCombatant.setXRayVisible(true);
+        tempCombatant.setInternalAnatomyVisible(true);
         stagingRoot.syncHierarchy();
         app.render();
         warmedVariants += 7;

@@ -23,11 +23,13 @@ export function createBloodMistTexture(device: pc.GraphicsDevice): pc.Texture {
       const wisp =
         valueNoise2d(u, v, 5, 1301) * 0.6 + valueNoise2d(u, v, 11, 1453) * 0.4;
       const falloff = Math.max(0, 1 - d * d);
-      const alpha = falloff * falloff * (0.45 + wisp * 0.55);
+      // Broken, grainy spray rather than a soft round cloud.
+      const grain = valueNoise2d(u, v, 22, 1597);
+      const alpha = falloff * falloff * Math.max(0, wisp * 1.3 - 0.25) * (0.55 + grain * 0.45);
       const idx = (y * mSize + x) * 4;
-      mPx[idx] = clampByte(128 + wisp * 36);
-      mPx[idx + 1] = clampByte(8 + wisp * 6);
-      mPx[idx + 2] = clampByte(12 + wisp * 8);
+      mPx[idx] = clampByte(70 + wisp * 24);
+      mPx[idx + 1] = clampByte(9 + wisp * 5);
+      mPx[idx + 2] = clampByte(7 + wisp * 4);
       mPx[idx + 3] = clampByte(alpha * 255);
     }
   }

@@ -10,6 +10,7 @@ import { computeAlertedPeekTarget } from './tacticalCoverFinder.ts';
 import { moveHorizontalClamped } from './tacticalLocomotion.ts';
 import { stepWeaponBurstFire } from './tacticalBurstAndTracers.ts';
 import { DOWNED_TURN_RATE_RAD_S, type TacticalFsmContext } from './tacticalFsmContext.ts';
+import { stepWoundFallback } from './woundFallback.ts';
 
 // Usable half-width of the arena floor for lateral jukes, a little inside the movement clamp.
 const JUKE_ARENA_HALF_WIDTH_M = 7.7;
@@ -108,7 +109,11 @@ export function stepAlertedEngagingState(
     hasCoverToDuckBehind: ctx.hasCoverQueries && prelimPeek.anchorBlockedByCover,
     midBurst: agent.burstShotsRemaining > 0,
   });
-  const substate = ducking ? duckedSubstate(doctrineSubstate) : doctrineSubstate;
+  const fallingBack =
+    doctrineSubstate !== 'CLUTCHING_RETREAT' && stepWoundFallback(dt, hs, agent, ctx);
+  const substate = fallingBack
+    ? 'COVER_SHELTER'
+    : ducking ? duckedSubstate(doctrineSubstate) : doctrineSubstate;
   agent.engagementSubstate = substate;
 
   if (hs.combatantStatusTag === null) {

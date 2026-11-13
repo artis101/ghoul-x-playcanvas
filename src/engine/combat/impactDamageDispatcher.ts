@@ -1,5 +1,4 @@
 import type * as pc from 'playcanvas';
-import type { BrutalRewardEventPayload } from '../../contracts/ai/aiContracts.ts';
 import type { AmmoSpec, ShotSimulationReport, Vec3Like } from '../../contracts/ballistics.ts';
 import type { InternalBallisticsReport } from '../../contracts/physiology.ts';
 import { copyVec3, normalize, scale, sub, vec3 } from '../../core/ballistics/vec3.ts';
@@ -153,24 +152,7 @@ export function applyImpactFxAndState(
     });
 
     const brutalFeat = wasAlive ? classifyBrutalFeatFromReport(report) : null;
-    if (brutalFeat) {
-      const vitalsDelta = ctx.tacticalAi.grantBrutalKillReward(brutalFeat);
-      ctx.tacticalAi.notifyWitnessedBrutality(hs, brutalFeat);
-      const bonusRoundsGranted = brutalFeat === 'DECAPITATION' ? 2 : 1;
-      const payload: BrutalRewardEventPayload = {
-        kind: brutalFeat,
-        targetId: hs.targetId,
-        targetName: hs.name,
-        weaponLabel,
-        isLethal: !hs.alive,
-        armorRestored: vitalsDelta.armorRestored,
-        healthRestored: vitalsDelta.healthRestored,
-        bonusRoundsGranted,
-      };
-      ctx.app?.fire('combat:brutal_reward', payload);
-    } else if (wasAlive && !hs.alive) {
-      ctx.tacticalAi.grantBrutalKillReward('STANDARD_KILL');
-    }
+    if (brutalFeat) ctx.tacticalAi.notifyWitnessedBrutality(hs, brutalFeat);
   }
 
   if (ctx.combatAudio) {
@@ -192,13 +174,18 @@ export function applyImpactFxAndState(
     }
   }
 
+  // One bullet crosses several tissue layers; bleed once per body zone it passes, not once per layer.
+  const bledZones = new Set<string>();
   for (const w of report.woundEvents) {
     if (w.armorStopped) {
       ctx.fxManager.spawnArmorImpactSparks(w.entryPointWorld, w.entryNormalWorld);
     } else {
-      ctx.fxManager.spawnBloodBurst(w.entryPointWorld, w.impactDirectionWorld, w.energyDepositedJ, 14);
-      if (w.exitEnergyJ > 140) {
-        ctx.fxManager.spawnBloodBurst(w.exitPointWorld, w.impactDirectionWorld, w.energyDepositedJ * 0.85, 10);
+      if (!bledZones.has(w.ghoulZone)) {
+        bledZones.add(w.ghoulZone);
+        ctx.fxManager.spawnBloodBurst(w.entryPointWorld, w.impactDirectionWorld, w.energyDepositedJ, 6);
+        if (w.exitEnergyJ > 140) {
+          ctx.fxManager.spawnBloodBurst(w.exitPointWorld, w.impactDirectionWorld, w.energyDepositedJ * 0.85, 5);
+        }
       }
       if (w.boneShattered) {
         ctx.fxManager.spawnBoneShatterSparks(w.entryPointWorld, w.impactDirectionWorld);

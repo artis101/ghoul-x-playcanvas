@@ -36,7 +36,6 @@ export class GhoulMannequinEntity {
   public combatantGlb: CombatantGlbInstance | null = null;
   public zoneBundles: Map<GhoulZoneId, ZoneMeshBundle> = new Map();
   private stumpCaps: Map<GhoulZoneId, StumpCap> = new Map();
-  public isXRayActive = false;
   public driveState: MannequinDriveState;
 
   private readonly animController = new CombatantAnimController();
@@ -51,7 +50,6 @@ export class GhoulMannequinEntity {
   private readonly crawlOverlay = new CombatantCrawlOverlay();
 
   private readonly glbZoneMaterialPairs = new Map<GhoulZoneId, GlbZoneMaterialPair[]>();
-  private readonly glbGearOriginalMaterials = new Map<pc.MeshInstance, pc.Material>();
 
   public constructor(
     app: pc.AppBase,
@@ -112,8 +110,7 @@ export class GhoulMannequinEntity {
       glbRegistry,
       this.healthState,
       this.materials,
-      this.glbZoneMaterialPairs,
-      this.glbGearOriginalMaterials
+      this.glbZoneMaterialPairs
     );
     if (!inst) return false;
 
@@ -122,14 +119,6 @@ export class GhoulMannequinEntity {
     this.rootEntity.addChild(inst.rootEntity);
     this.syncFromHealthState(0, 0);
     return true;
-  }
-
-  public setXRayMode(enabled: boolean): void {
-    this.isXRayActive = enabled;
-    this.visualGoreSync.refreshIfDirty(
-      this.healthState, this.combatantGlb, this.isXRayActive, this.woundDecals.syncedCount,
-      this.glbZoneMaterialPairs, this.glbGearOriginalMaterials, this.zoneBundles, this.materials
-    );
   }
 
   public syncFromHealthState(dt: number, elapsedTime: number, guarding = false, aim?: CombatantAimPose): void {
@@ -142,9 +131,9 @@ export class GhoulMannequinEntity {
 
     if (glb) {
       glb.rootEntity.enabled = true;
-      this.dismemberment.syncGlbSeverances(glb, this.healthState, this.isXRayActive);
+      this.dismemberment.syncGlbSeverances(glb, this.healthState);
       this.severedSkin.sync(glb, this.healthState);
-      this.dismemberment.syncGearVisibility(glb, this.healthState, this.isXRayActive, headgearAttached);
+      this.dismemberment.syncGearVisibility(glb, this.healthState, headgearAttached);
 
       switch (this.driveState.mode) {
         case 'FULL_RAGDOLL': {
@@ -192,17 +181,8 @@ export class GhoulMannequinEntity {
     this.dismemberment.syncStumps(this.stumpCaps, this.healthState);
     this.woundDecals.syncSurfaceWounds(this.healthState, this.zoneBundles, this.materials);
     this.visualGoreSync.refreshIfDirty(
-      this.healthState,
-      glb,
-      this.isXRayActive,
-      this.woundDecals.syncedCount,
-      this.glbZoneMaterialPairs,
-      this.glbGearOriginalMaterials,
-      this.zoneBundles,
-      this.materials
+      this.healthState, glb, this.woundDecals.syncedCount, this.glbZoneMaterialPairs, this.zoneBundles
     );
-
-    this.visualGoreSync.pulseXRayOrgans(glb, this.healthState, this.isXRayActive, elapsedTime);
   }
 
   public syncPoseAttachments(): void {
@@ -222,6 +202,12 @@ export class GhoulMannequinEntity {
       this.boneSync.setEntityBasisRotation(bundle.zoneNode, bone.basisRight, bone.basisUp, bone.basisForward);
     }
     if (animated) this.boneSync.readAnimatedAuxParticles(glb, state);
+  }
+
+  /** The gun in this combatant's hands, while it is still held. */
+  public get heldWeaponEntity(): pc.Entity | null {
+    const node = this.weaponMount.heldWeaponNode;
+    return node && node.enabled && this.weaponMount.wasWeaponHeld ? node : null;
   }
 
   public playWeaponFire(): Vec3Like | undefined {

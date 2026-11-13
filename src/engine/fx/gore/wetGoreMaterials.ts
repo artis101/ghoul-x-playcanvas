@@ -17,32 +17,29 @@ export function createWetGoreMaterialSuite(device: pc.GraphicsDevice | null): We
 
   const wetBloodDropMat = new pc.StandardMaterial();
   wetBloodDropMat.name = 'goreWetArterialDropPbrMat';
-  wetBloodDropMat.diffuse = new pc.Color(0.42, 0.014, 0.022);
-  wetBloodDropMat.emissive = new pc.Color(0.048, 0.003, 0.005);
+  wetBloodDropMat.diffuse = new pc.Color(0.3, 0.03, 0.026);
+  wetBloodDropMat.emissive = new pc.Color(0.02, 0.002, 0.002);
   wetBloodDropMat.useMetalness = true;
-  wetBloodDropMat.metalness = 0.09;
-  wetBloodDropMat.gloss = 0.91;
-  wetBloodDropMat.clearCoat = 0.88;
-  wetBloodDropMat.clearCoatGloss = 0.95;
+  wetBloodDropMat.metalness = 0;
+  wetBloodDropMat.gloss = 0.55;
   wetBloodDropMat.fresnelModel = pc.FRESNEL_SCHLICK;
 
+  // Floor blood: dark and flat with a soft sheen. No clear-coat or meniscus normals, which made
+  // every overlapping blob catch its own rim highlight and read as a pile of red jelly.
   const wetBloodPoolMat = new pc.StandardMaterial();
   wetBloodPoolMat.name = 'goreWetArterialPoolPbrMat';
-  wetBloodPoolMat.diffuse = new pc.Color(0.32, 0.012, 0.018);
-  wetBloodPoolMat.emissive = new pc.Color(0.018, 0.001, 0.002);
+  wetBloodPoolMat.diffuse = new pc.Color(0.26, 0.035, 0.028);
   wetBloodPoolMat.useMetalness = true;
-  wetBloodPoolMat.metalness = 0.11;
-  wetBloodPoolMat.gloss = 0.93;
-  wetBloodPoolMat.clearCoat = 0.92;
-  wetBloodPoolMat.clearCoatGloss = 0.96;
+  wetBloodPoolMat.metalness = 0;
+  wetBloodPoolMat.gloss = 0.5;
   wetBloodPoolMat.fresnelModel = pc.FRESNEL_SCHLICK;
   wetBloodPoolMat.blendType = pc.BLEND_NORMAL;
   wetBloodPoolMat.depthWrite = false;
 
   const wetBloodMistBaseMat = new pc.StandardMaterial();
   wetBloodMistBaseMat.name = 'goreBacklitMistMat';
-  wetBloodMistBaseMat.diffuse = new pc.Color(0.46, 0.024, 0.034);
-  wetBloodMistBaseMat.emissive = new pc.Color(0.15, 0.009, 0.014);
+  wetBloodMistBaseMat.diffuse = new pc.Color(0.3, 0.04, 0.03);
+  wetBloodMistBaseMat.emissive = new pc.Color(0.03, 0.004, 0.003);
   wetBloodMistBaseMat.opacity = 0.54;
   wetBloodMistBaseMat.blendType = pc.BLEND_NORMAL;
   wetBloodMistBaseMat.depthWrite = false;
@@ -50,33 +47,26 @@ export function createWetGoreMaterialSuite(device: pc.GraphicsDevice | null): We
 
   const wetFleshGibMat = new pc.StandardMaterial();
   wetFleshGibMat.name = 'goreWetMuscleGibPbrMat';
-  wetFleshGibMat.diffuse = new pc.Color(0.38, 0.032, 0.042);
-  wetFleshGibMat.emissive = new pc.Color(0.025, 0.002, 0.004);
+  wetFleshGibMat.diffuse = new pc.Color(0.34, 0.05, 0.045);
   wetFleshGibMat.useMetalness = true;
-  wetFleshGibMat.metalness = 0.07;
-  wetFleshGibMat.gloss = 0.86;
-  wetFleshGibMat.clearCoat = 0.84;
-  wetFleshGibMat.clearCoatGloss = 0.92;
+  wetFleshGibMat.metalness = 0;
+  wetFleshGibMat.gloss = 0.45;
   wetFleshGibMat.fresnelModel = pc.FRESNEL_SCHLICK;
 
   const wetCorticalBoneMat = new pc.StandardMaterial();
   wetCorticalBoneMat.name = 'goreWetCorticalBonePbrMat';
-  wetCorticalBoneMat.diffuse = new pc.Color(0.84, 0.78, 0.68);
+  wetCorticalBoneMat.diffuse = new pc.Color(0.64, 0.55, 0.44);
   wetCorticalBoneMat.useMetalness = true;
-  wetCorticalBoneMat.metalness = 0.05;
-  wetCorticalBoneMat.gloss = 0.82;
-  wetCorticalBoneMat.clearCoat = 0.64;
-  wetCorticalBoneMat.clearCoatGloss = 0.88;
+  wetCorticalBoneMat.metalness = 0;
+  wetCorticalBoneMat.gloss = 0.4;
   wetCorticalBoneMat.fresnelModel = pc.FRESNEL_SCHLICK;
 
   const wetMarrowCapMat = new pc.StandardMaterial();
   wetMarrowCapMat.name = 'goreTrabecularMarrowMat';
-  wetMarrowCapMat.diffuse = new pc.Color(0.28, 0.016, 0.022);
+  wetMarrowCapMat.diffuse = new pc.Color(0.24, 0.04, 0.03);
   wetMarrowCapMat.useMetalness = true;
-  wetMarrowCapMat.metalness = 0.08;
-  wetMarrowCapMat.gloss = 0.88;
-  wetMarrowCapMat.clearCoat = 0.85;
-  wetMarrowCapMat.clearCoatGloss = 0.92;
+  wetMarrowCapMat.metalness = 0;
+  wetMarrowCapMat.gloss = 0.45;
   wetMarrowCapMat.fresnelModel = pc.FRESNEL_SCHLICK;
 
   const incandescentSparkMat = new pc.StandardMaterial();
@@ -103,13 +93,11 @@ export function createWetGoreMaterialSuite(device: pc.GraphicsDevice | null): We
     wetBloodDropMat.normalMap = createDropletNormalTexture(device, maxAniso);
     wetBloodDropMat.bumpiness = 0.38;
 
-    const { poolTex, poolNormalTex } = createBloodPoolTextures(device, maxAniso);
+    const { poolTex } = createBloodPoolTextures(device, maxAniso);
     wetBloodPoolMat.diffuse = new pc.Color(1, 1, 1);
     wetBloodPoolMat.diffuseMap = poolTex;
     wetBloodPoolMat.opacityMap = poolTex;
     wetBloodPoolMat.opacityMapChannel = 'a';
-    wetBloodPoolMat.normalMap = poolNormalTex;
-    wetBloodPoolMat.bumpiness = 0.82;
 
     const mistTex = createBloodMistTexture(device);
     wetBloodMistBaseMat.diffuse = new pc.Color(1, 1, 1);

@@ -6,6 +6,4 @@ export interface FpsInputCallbacks {
   onReload: () => void;
   onSpawnWave: () => void;
   onThrowGrenade: () => void;
-  onToggleXRay: () => void;
-  onToggleBulletTime?: () => void;
 }

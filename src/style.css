@@ -196,8 +196,6 @@ body,
 
 .vital-num.urgent-bleed { color: var(--retro-blood); animation: retroBlink 0.5s steps(2, jump-none) infinite; }
 .armor-num { color: var(--retro-steel); }
-.reflex-num { font-size: 22px; color: var(--retro-bone); }
-.reflex-num.active { color: var(--retro-brass); }
 
 .vital-bar,
 .wtp-hp-track,
@@ -214,8 +212,7 @@ body,
 .health-fill { background: var(--retro-olive); }
 .health-fill.urgent-bleed { background: var(--retro-blood); }
 .armor-fill { background: var(--retro-steel); }
-.reflex-fill { background: var(--retro-brass); }
-.bullet-time-vignette { position: absolute; inset: 0; pointer-events: none; }
+.damage-vignette { position: absolute; inset: 0; pointer-events: none; }
 
 .hud-bottom-right { right: 14px; flex-direction: column; align-items: flex-end; gap: 2px; }
 .ammo-counter-row { display: flex; align-items: baseline; gap: 6px; line-height: 0.95; }

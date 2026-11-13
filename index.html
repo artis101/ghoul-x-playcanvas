@@ -123,7 +123,7 @@
       <!-- IN-GAME FPS HUD LAYER (100% NON-BLOCKING) -->
       <div id="fps-hud" class="fps-hud">
         <!-- BULLET-TIME / KILL-PUNCH / DAMAGE SCREEN-EDGE VIGNETTE -->
-        <div id="bullet-time-vignette" class="bullet-time-vignette"></div>
+        <div id="damage-vignette" class="damage-vignette"></div>
 
         <!-- FLOATING 3D-PROJECTED ENEMY HEALTH & TRIAGE PLATES -->
         <div id="hud-world-triage-layer" class="hud-world-triage-layer"></div>
@@ -183,10 +183,10 @@
 
         <!-- CENTER CONTEXT PROMPT (ONLY WHEN UNLOCKED OR WAVE CLEAR) -->
         <div id="hud-prompt" class="hud-prompt">
-          CLICK TO ENGAGE &nbsp;•&nbsp; WASD MOVE &nbsp;•&nbsp; HOLD RMB AIM &nbsp;•&nbsp; 1-4 WEAPON &nbsp;•&nbsp; B AMMO &nbsp;•&nbsp; G FRAG &nbsp;•&nbsp; Z REFLEX &nbsp;•&nbsp; X X-RAY &nbsp;•&nbsp; R RELOAD &nbsp;•&nbsp; T WAVE
+          CLICK TO ENGAGE &nbsp;•&nbsp; WASD MOVE &nbsp;•&nbsp; HOLD RMB AIM &nbsp;•&nbsp; 1-4 WEAPON &nbsp;•&nbsp; B AMMO &nbsp;•&nbsp; G FRAG &nbsp;•&nbsp; R RELOAD &nbsp;•&nbsp; T WAVE
         </div>
 
-        <!-- BOTTOM-LEFT: CLASSIC FPS HEALTH, ARMOR & [Z] REFLEX -->
+        <!-- BOTTOM-LEFT: CLASSIC FPS HEALTH & ARMOR -->
         <div class="hud-corner hud-bottom-left">
           <div class="vital-block">
             <span class="vital-label">HEALTH</span>
@@ -200,13 +200,6 @@
             <div class="vital-data">
               <span id="hud-armor-val" class="vital-num armor-num">50</span>
               <span class="vital-bar"><span id="hud-armor-fill" class="vital-bar-fill armor-fill"></span></span>
-            </div>
-          </div>
-          <div class="vital-block reflex-block">
-            <span class="vital-label">REFLEX</span>
-            <div class="vital-data">
-              <span id="hud-reflex-val" class="vital-num reflex-num">100%</span>
-              <span class="vital-bar"><span id="hud-reflex-fill" class="vital-bar-fill reflex-fill"></span></span>
             </div>
           </div>
         </div>

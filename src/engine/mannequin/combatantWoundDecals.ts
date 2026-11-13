@@ -24,13 +24,13 @@ export class CombatantWoundDecals {
         material: sw.armorDent
           ? materials.sandbagMat
           : sw.isExit
-            ? materials.goreStumpMat
+            ? materials.stumpFleshMat
             : materials.woundGoreMat,
         castShadows: false,
       });
 
       const r = sw.radiusM * 2.0;
-      decal.setLocalScale(r, r, r * 0.55);
+      decal.setLocalScale(r, r, r * 0.35);
       decal.setLocalPosition(sw.localOffset.x, sw.localOffset.y, sw.localOffset.z);
       bundle.zoneNode.addChild(decal);
       bundle.woundDecalNodes.push(decal);

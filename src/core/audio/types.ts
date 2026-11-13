@@ -1,8 +1,6 @@
 import type { Vec3Like } from '../../contracts/ballistics.ts';
-import type { AudioBufferLike, AudioContextLike, AudioParamLike } from './contracts.ts';
+import type { AudioBufferLike, AudioContextLike } from './contracts.ts';
 
-export const MIN_AUDIO_TIME_SCALE = 0.08;
-export const MAX_AUDIO_TIME_SCALE = 2.0;
 export const TINNITUS_PROXIMITY_RADIUS_M = 4.5;
 
 export type ShellCasingCaliber = 'BRASS' | 'SHOTGUN_HULL';
@@ -38,18 +36,6 @@ export interface RadioBarkCueAudioParams {
   readonly listenerPos?: Vec3Like;
 }
 
-export interface SlowMoAudioFactors {
-  readonly clampedTimeScale: number;
-  /** Buffer source playback rate multiplier (0.08 .. 2.0) */
-  readonly playbackRate: number;
-  /** Oscillator fundamental pitch multiplier preserving audible sub-bass weight */
-  readonly oscillatorPitchScale: number;
-  /** Envelope & delayed-foley time-stretch multiplier */
-  readonly envelopeStretch: number;
-  /** Subtle high-frequency air darkening multiplier during Reflex slow-mo */
-  readonly lowpassScale: number;
-}
-
 export interface SpatialCalcOptions {
   listenerYawDeg?: number;
   refDistanceM?: number;
@@ -71,8 +57,6 @@ export interface SpatialAudioParams {
 export interface CombatAudioDiagnostics {
   readonly available: boolean;
   readonly unlocked: boolean;
-  readonly timeScale: number;
-  readonly slowMoActive: boolean;
   readonly pannerModel: PanningModelType;
   readonly masterVolume: number;
   readonly weaponFireCount: number;
@@ -82,7 +66,6 @@ export interface CombatAudioDiagnostics {
   readonly vocalCueCount: number;
   readonly explosionCount: number;
   readonly tinnitusTriggerCount: number;
-  readonly slowMoTransitionCount: number;
   readonly lastWeaponPitchJitter: number;
 }
 
@@ -97,16 +80,4 @@ export interface CombatAudioEngineOptions<TBuffer extends AudioBufferLike = Audi
   random?: () => number;
   /** Automatically attach mousedown/keydown unlock listeners when DOM is available (default true) */
   autoUnlockOnGesture?: boolean;
-}
-
-export interface TrackedBufferSource {
-  readonly source: { readonly playbackRate: AudioParamLike };
-  readonly baseRate: number;
-  readonly endTime: number;
-}
-
-export interface TrackedOscillator {
-  readonly osc: { readonly detune: AudioParamLike };
-  readonly spawnPitchScale: number;
-  readonly endTime: number;
 }

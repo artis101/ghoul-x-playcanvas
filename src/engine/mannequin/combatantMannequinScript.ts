@@ -23,10 +23,8 @@ export class CombatantMannequinScript extends pc.Script {
   private bindEvents(): void {
     this.unbindEvents();
     this.entity.on('combatant:damage', this.onDamage, this);
-    this.entity.on('combatant:xray', this.onXRay, this);
     this._eventCleanups.push(
-      () => this.entity.off('combatant:damage', this.onDamage, this),
-      () => this.entity.off('combatant:xray', this.onXRay, this)
+      () => this.entity.off('combatant:damage', this.onDamage, this)
     );
   }
 
@@ -67,11 +65,6 @@ export class CombatantMannequinScript extends pc.Script {
     }
   }
 
-  private onXRay(enabled: boolean): void {
-    if (this.mannequin) {
-      this.mannequin.setXRayMode(enabled);
-    }
-  }
 }
 
 try {

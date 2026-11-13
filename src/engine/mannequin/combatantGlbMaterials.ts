@@ -2,6 +2,7 @@ import * as pc from 'playcanvas';
 import type { EnemyArchetypeId } from '../../contracts/ballistics.ts';
 import type { EngineMaterialPalette } from '../materials.ts';
 import { SKIN_MATERIAL_PREFIX } from '../assets/combatantFactory.ts';
+import { getBloodSoakDetailTexture } from './bloodSoakDetailTexture.ts';
 
 const bloodyBySkin = new WeakMap<pc.Material, pc.Material>();
 
@@ -23,12 +24,23 @@ export function createArchetypeAndBloodyGlbMaterials(
   let laceratedMat = bloodyBySkin.get(intactMat);
   if (!laceratedMat) {
     const bloody = intactMat.clone();
-    bloody.diffuse.set(0.42, 0.04, 0.05);
-    bloody.emissive.set(0.04, 0.004, 0.005);
-    bloody.gloss = bloody.glossInvert ? 0.16 : 0.86;
-    if (bloody.useMetalness) bloody.metalness = 0.08;
-    else bloody.specular.set(0.24, 0.08, 0.08);
-    bloody.fresnelModel = pc.FRESNEL_SCHLICK;
+    bloody.name = `${intactMat.name}_bloodSoaked`;
+    // Keep the painted texture and multiply a blood-soak stain over it, so the part reads as
+    // injured cloth and skin instead of being glazed in one glossy red coat.
+    const device = intactMat.diffuseMap?.device;
+    if (device) {
+      bloody.diffuseDetailMap = getBloodSoakDetailTexture(device);
+      bloody.diffuseDetailMode = pc.DETAILMODE_MUL;
+      bloody.diffuseDetailMapTiling = new pc.Vec2(2, 2);
+    } else {
+      bloody.diffuse.set(0.36, 0.05, 0.05);
+    }
+    // Soaked fabric goes slightly darker and only faintly wet; no emissive glow.
+    bloody.diffuse.set(bloody.diffuse.r * 0.9, bloody.diffuse.g * 0.86, bloody.diffuse.b * 0.86);
+    bloody.emissive.set(0, 0, 0);
+    bloody.gloss = bloody.glossInvert ? 0.62 : 0.38;
+    if (bloody.useMetalness) bloody.metalness = 0;
+    else bloody.specular.set(0.07, 0.04, 0.04);
     bloody.update();
     laceratedMat = bloody;
     bloodyBySkin.set(intactMat, bloody);

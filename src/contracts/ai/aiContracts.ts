@@ -26,17 +26,6 @@ export type BrutalKillRewardKind =
   | 'MULTI_KILL_BLAST'
   | 'STANDARD_KILL';
 
-export interface BrutalRewardEventPayload {
-  readonly kind: Exclude<BrutalKillRewardKind, 'STANDARD_KILL'>;
-  readonly targetId: string;
-  readonly targetName: string;
-  readonly weaponLabel: string;
-  readonly isLethal: boolean;
-  readonly armorRestored: number;
-  readonly healthRestored: number;
-  readonly bonusRoundsGranted: number;
-}
-
 export interface AiBarkPayload {
   readonly speakerId: string;
   readonly callsign: string;

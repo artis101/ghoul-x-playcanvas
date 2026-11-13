@@ -5,7 +5,6 @@ import {
   BARREL_BLAST_PEAK_IMPULSE_NS,
   BARREL_BLAST_RADIUS_M,
   BARREL_FUSE_DURATION_S,
-  BulletTimeController,
   CasingBounceEvent,
   ExplosiveBarrelManager,
   MayhemDirector,
@@ -54,94 +53,9 @@ function createHeadlessPlayCanvasApp(): pc.Application {
   });
 }
 
-describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
+describe('AAA FPS Mayhem Director & Tactical Combat AI', () => {
   beforeAll(async () => {
     await initRapierPhysics();
-  });
-
-  // ==========================================================================
-  // 1. BulletTimeController
-  // ==========================================================================
-  describe('1. BulletTimeController (F.E.A.R. Reflex Slow-Mo & Kill-Punch)', () => {
-    it('drains and recharges the 100% Reflex meter, lerps to 0.22x, and computes exact effectiveDt', () => {
-      const vignettes: string[] = [];
-      const bt = new BulletTimeController({
-        reflexTargetScale: 0.22,
-        drainPctPerRealSec: 25,
-        rechargePctPerRealSec: 20,
-        rechargeCooldownS: 0.3,
-        minActivationPct: 12,
-        onVignetteUpdate: (v) => {
-          if (v.tint !== 'NONE') vignettes.push(v.tint);
-        },
-      });
-
-      expect(bt.timeScale).toBe(1.0);
-      expect(bt.reflexEnergyPct).toBe(100);
-      expect(bt.effectiveDt(0.016)).toBeCloseTo(0.016, 6);
-
-      // Toggle [Z] Reflex Slow-Motion ON
-      expect(bt.toggleReflex()).toBe(true);
-      expect(bt.isReflexActive).toBe(true);
-
-      // Advance 0.8s in 16ms steps -> timeScale converges to 0.22x and meter drains 20%
-      for (let i = 0; i < 50; i++) {
-        const scaled = bt.update(0.016);
-        expect(scaled).toBeCloseTo(bt.effectiveDt(0.016), 8);
-        expect(bt.timeScale).toBeGreaterThanOrEqual(0.08);
-        expect(bt.timeScale).toBeLessThanOrEqual(1.0);
-      }
-
-      expect(bt.timeScale).toBeCloseTo(0.22, 2);
-      expect(bt.effectiveDt(0.05)).toBeCloseTo(0.011, 3);
-      expect(bt.reflexEnergyPct).toBeCloseTo(80, 1);
-      expect(vignettes).toContain('CYAN_REFLEX');
-
-      // Drain remaining 80% completely (3.2s real time at 25%/s) -> auto-disengages at 0%
-      for (let i = 0; i < 32; i++) {
-        bt.update(0.1);
-      }
-      expect(bt.reflexEnergyPct).toBeCloseTo(0, 5);
-      expect(bt.isReflexActive).toBe(false);
-
-      // Cannot re-activate while below 12% minActivationPct
-      expect(bt.toggleReflex()).toBe(false);
-
-      // Wait out 0.3s cooldown + 5.0s recharge -> returns to 100% and 1.0x timeScale
-      for (let i = 0; i < 55; i++) {
-        bt.update(0.1);
-      }
-      expect(bt.reflexEnergyPct).toBeCloseTo(100, 1);
-      expect(bt.timeScale).toBeCloseTo(1.0, 3);
-      bt.destroy();
-    });
-
-    it('triggers automatic 0.35s micro-dilation Kill-Punch on CRANIAL_POP / multi-kill without draining meter', () => {
-      const bt = new BulletTimeController({ drainPctPerRealSec: 25 });
-      bt.setReflexActive(true);
-      bt.update(0.2); // Drain to 95%
-      bt.setReflexActive(false);
-      const energyBeforePunch = bt.reflexEnergyPct;
-
-      bt.triggerKillPunch('CRANIAL_POP', 0.35);
-      expect(bt.isKillPunchActive).toBe(true);
-      expect(bt.reflexEnergyPct).toBeGreaterThan(energyBeforePunch);
-
-      for (let i = 0; i < 10; i++) {
-        bt.update(0.02); // 0.20s elapsed -> inside 0.35s punch
-      }
-      expect(bt.isKillPunchActive).toBe(true);
-      expect(bt.timeScale).toBeLessThan(0.25);
-      expect(bt.getVignetteState().tint).toBe('AMBER_KILL_PUNCH');
-
-      // Advance past 0.35s punch -> recovers smoothly to 1.0x
-      for (let i = 0; i < 30; i++) {
-        bt.update(0.03);
-      }
-      expect(bt.isKillPunchActive).toBe(false);
-      expect(bt.timeScale).toBeCloseTo(1.0, 2);
-      bt.destroy();
-    });
   });
 
   // ==========================================================================
@@ -559,10 +473,7 @@ describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
         'DEAD',
       ]);
 
-      // Verify player brutal-kill & wave-clear armor/HP boost
-      const armorBefore = ai.playerVitals.armor;
-      ai.grantBrutalKillReward('CRANIAL_POP');
-      expect(ai.playerVitals.armor).toBeGreaterThan(armorBefore);
+      // Verify wave-clear HP restore
       ai.notifyWaveCleared();
       expect(ai.playerVitals.health).toBe(100);
 
@@ -925,7 +836,7 @@ describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
     });
 
     it('exhibits deterministic combatant resolve variety across arena squad and distinct wounded behaviors', () => {
-      // 1. All 4 resolve personalities are represented deterministically across the 7 arena hostiles
+      // 1. The arena squad is all hardened fighters: veterans, regulars and berserkers, nobody who panics
       const profiles = new Set<CombatantResolveProfile>();
       for (const cfg of TARGET_CONFIGS) {
         const res = resolveDefaultCombatantProfile(cfg.id, cfg.archetype);
@@ -934,7 +845,7 @@ describe('AAA FPS Mayhem Director, Bullet-Time & Tactical Combat AI', () => {
       expect(profiles.has('HARDENED_VETERAN')).toBe(true);
       expect(profiles.has('FANATIC_BERSERKER')).toBe(true);
       expect(profiles.has('GRITTY_REGULAR')).toBe(true);
-      expect(profiles.has('PANICKED_SCRAPPER')).toBe(true);
+      expect(profiles.has('PANICKED_SCRAPPER')).toBe(false);
 
       // 2. Compare wounded FANATIC_BERSERKER (charges forward at 1.0 adrenaline), PANICKED_SCRAPPER (high-cadence wide panic bursts), and HARDENED_VETERAN (composed tighter spread)
       const shotsByTarget: Record<string, EnemyTracerFireEvent[]> = {

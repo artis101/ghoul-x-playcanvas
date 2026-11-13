@@ -14,7 +14,7 @@ export function spawnDismembermentGibs(
   event: DismembermentEvent,
   ctx: GibSpawnContext,
 ): void {
-  const count = Math.max(4, event.gibCount);
+  const count = Math.min(5, Math.max(2, Math.round(event.gibCount * 0.5)));
   const origin = event.stumpWorldPosition;
   const launchVel = event.severedLimbVelocity;
 
@@ -22,7 +22,7 @@ export function spawnDismembermentGibs(
     new pc.Vec3(origin.x, origin.y, origin.z),
     new pc.Vec3(event.arterialSprayDirection.x, event.arterialSprayDirection.y, event.arterialSprayDirection.z),
     360,
-    18,
+    10,
   );
 
   for (let i = 0; i < count; i++) {

@@ -131,20 +131,6 @@ export class CombatAudioScript extends pc.Script {
       this.engine.playShellCasingBounce(p.caliber, p.worldPos, lPos);
     });
 
-    bind('audio:slowMoTransition', (data: unknown) => {
-      const p = data as { entering: boolean };
-      this.engine.playSlowMoTransition(p.entering);
-    });
-
-    bind('audio:slowMoReset', () => {
-      this.engine.resetSlowMo();
-    });
-
-    bind('audio:timeScale', (data: unknown) => {
-      const p = data as { scale: number };
-      this.engine.setTimeScale(p.scale);
-    });
-
     bind('audio:listenerTransform', (data: unknown) => {
       const p = data as { position: Vec3Like; yawDeg?: number; pitchDeg?: number };
       this.engine.updateListener(p.position, p.yawDeg ?? 0, p.pitchDeg ?? 0);

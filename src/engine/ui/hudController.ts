@@ -5,7 +5,6 @@ import type {
 } from '../../contracts/ai/aiContracts.ts';
 import type { AmmoSpec, ShotSimulationReport, TargetHealthState, WeaponSpec } from '../../contracts/ballistics.ts';
 import type { PhysiologicalEntityState } from '../../contracts/physiology.ts';
-import type { BulletTimeVignetteState } from '../fx/mayhemDirector.ts';
 import { HudReticleScope } from './hudReticleScope.ts';
 import { HudTriageFeed } from './hudTriageFeed.ts';
 import type { ProjectedTargetTriageEntry } from './hudTypes.ts';
@@ -38,10 +37,6 @@ export class HudController {
 
   public triggerNearMissGrazeFlash(kind: PlayerNearMissGrazeKind): void {
     this.vitals.triggerNearMissGrazeFlash(kind);
-  }
-
-  public updateBulletTimeHud(state: BulletTimeVignetteState): void {
-    this.vitals.updateBulletTimeHud(state);
   }
 
   public setCrosshairBloom(scaleFactor: number, hidden = false, lineOpacity = 1): void {

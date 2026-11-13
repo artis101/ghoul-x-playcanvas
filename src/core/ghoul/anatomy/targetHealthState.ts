@@ -15,6 +15,7 @@ import { ALL_AUX_PARTICLES, AUX_PARTICLE_REST_LOCAL } from './ghoulAuxParticles'
 import { GHOUL_ZONE_HIERARCHY } from './ghoulHierarchy';
 import { buildRagdollConstraints } from './ragdollConstraints';
 import { recomputeRagdollBasisVectors } from './ragdollBasis';
+import { getArchetypeLoadout } from './archetypeLoadout';
 
 /** Realistic ~12.5% human left-handedness (southpaw) incidence within 10–15% range */
 export const LEFT_HANDED_PROBABILITY = 0.125;
@@ -96,15 +97,9 @@ export function createTargetHealthState(
     };
   }
 
-  const hasChestArmor = archetype === 'HEAVY_ENFORCER';
-  const hasHelmetArmor = archetype === 'HEAVY_ENFORCER';
-  const archetypeBaseHp: Record<EnemyArchetypeId, number> = {
-    SKINHEAD_PUNK: 120.0,
-    SNIPER_OPERATIVE: 135.0,
-    MILITIA_GUNNER: 145.0,
-    HEAVY_ENFORCER: 190.0,
-  };
-  const startingHp = archetypeBaseHp[archetype];
+  const loadout = getArchetypeLoadout(archetype);
+  const { hasChestArmor, hasHelmetArmor } = loadout;
+  const startingHp = loadout.baseHp;
 
   const state: TargetHealthState = {
     targetId,

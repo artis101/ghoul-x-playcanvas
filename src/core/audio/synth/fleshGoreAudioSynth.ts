@@ -2,7 +2,6 @@ import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import type { GoreImpactAudioKind, VocalTraumaCueKind } from '../types.ts';
 import type { SynthContext } from './synthPrimitives.ts';
 import { spawnNoiseBurst, spawnPitchDropOsc } from './synthPrimitives.ts';
-import { computeSlowMoAudioFactors } from '../audioMath.ts';
 import { synthesizeCranialPop } from './cranialPopAudioSynth.ts';
 import { synthesizeBoneShatter, synthesizeLimbSever } from './boneLimbGoreSynth.ts';
 
@@ -27,9 +26,6 @@ export function playGoreImpact(
 ): void {
   const g = ctx.graph;
   const t0 = g.ctx.currentTime;
-  const factors = computeSlowMoAudioFactors(ctx.timeScale);
-  const pScale = factors.oscillatorPitchScale;
-  const stretch = factors.envelopeStretch;
 
   const chain = g.createSpatialChain(
     worldPos,
@@ -47,9 +43,9 @@ export function playGoreImpact(
         chain.input,
         'sine',
         t0,
-        0.11 * stretch,
-        148 * pScale,
-        50 * pScale,
+        0.11,
+        148,
+        50,
         0.62,
         g.warmDriveCurve,
       );
@@ -58,7 +54,7 @@ export function playGoreImpact(
         chain.input,
         'PINK',
         t0,
-        0.12 * stretch,
+        0.12,
         0.56,
         'bandpass',
         1180,
@@ -77,9 +73,9 @@ export function playGoreImpact(
         chain.input,
         'triangle',
         t0,
-        0.085 * stretch,
-        172 * pScale,
-        68 * pScale,
+        0.085,
+        172,
+        68,
         0.54,
       );
       spawnNoiseBurst(
@@ -87,7 +83,7 @@ export function playGoreImpact(
         chain.input,
         'WHITE',
         t0,
-        0.065 * stretch,
+        0.065,
         0.48,
         'bandpass',
         3400,
@@ -101,9 +97,9 @@ export function playGoreImpact(
         chain.input,
         'sine',
         t0,
-        0.075 * stretch,
-        3250 * pScale,
-        1380 * pScale,
+        0.075,
+        3250,
+        1380,
         0.22,
       );
       break;
@@ -128,13 +124,13 @@ export function playGoreImpact(
 
     case 'ARTERIAL_SPURT': {
       for (let p = 0; p < 3; p++) {
-        const tp = t0 + p * 0.105 * stretch;
+        const tp = t0 + p * 0.105;
         spawnNoiseBurst(
           ctx,
           chain.input,
           'PINK',
           tp,
-          0.085 * stretch,
+          0.085,
           0.34 - p * 0.07,
           'bandpass',
           1850 - p * 180,

@@ -9,6 +9,16 @@ export function spawnBloodPool(
   pos: pc.Vec3,
   maxRadius = 0.34,
 ): void {
+  // Blood landing on an existing puddle feeds it rather than stacking another decal on top.
+  for (const existing of bloodPools) {
+    const p = existing.entity.getPosition();
+    const reach = existing.targetScale * 0.32;
+    if ((p.x - pos.x) ** 2 + (p.z - pos.z) ** 2 < reach * reach) {
+      existing.targetScale = Math.min(1.0, existing.targetScale + maxRadius * 0.25);
+      return;
+    }
+  }
+
   const pool = new pc.Entity('BloodPoolDecal');
   if (goreSuite.floorQuadMesh) {
     const mi = new pc.MeshInstance(goreSuite.floorQuadMesh, goreSuite.wetBloodPoolMat);

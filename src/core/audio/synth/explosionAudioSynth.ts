@@ -2,7 +2,7 @@ import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import { TINNITUS_PROXIMITY_RADIUS_M } from '../types.ts';
 import type { SynthContext } from './synthPrimitives.ts';
 import { spawnNoiseBurst, spawnPitchDropOsc } from './synthPrimitives.ts';
-import { clampNumber, computeSlowMoAudioFactors } from '../audioMath.ts';
+import { clampNumber } from '../audioMath.ts';
 
 export interface ExplosionAudioResult {
   readonly triggersTinnitus: boolean;
@@ -30,9 +30,6 @@ export function playExplosion(
 
   const g = ctx.graph;
   const t0 = g.ctx.currentTime;
-  const factors = computeSlowMoAudioFactors(ctx.timeScale);
-  const pScale = factors.oscillatorPitchScale;
-  const stretch = factors.envelopeStretch;
   const clampedIntensity = clampNumber(intensity, 0.15, 2.5);
 
   const chain = g.createSpatialChain(
@@ -51,14 +48,14 @@ export function playExplosion(
   );
 
   // Layer 1: Massive 28Hz–90Hz saturating sub-bass shockwave boom
-  const subStartHz = clampNumber(90 * pScale, 24, 140);
-  const subEndHz = clampNumber(28 * pScale, 18, 80);
+  const subStartHz = clampNumber(90, 24, 140);
+  const subEndHz = clampNumber(28, 18, 80);
   spawnPitchDropOsc(
     ctx,
     chain.input,
     'sine',
     t0,
-    0.88 * stretch,
+    0.88,
     subStartHz,
     subEndHz,
     0.95 * clampedIntensity,
@@ -70,9 +67,9 @@ export function playExplosion(
     chain.input,
     'triangle',
     t0,
-    0.46 * stretch,
-    78 * pScale,
-    32 * pScale,
+    0.46,
+    78,
+    32,
     0.62 * clampedIntensity,
     g.warmDriveCurve,
     0.002,
@@ -84,7 +81,7 @@ export function playExplosion(
     chain.input,
     'WHITE',
     t0,
-    0.14 * stretch,
+    0.14,
     0.88 * clampedIntensity,
     'lowpass',
     7500,
@@ -98,7 +95,7 @@ export function playExplosion(
     chain.input,
     'PINK',
     t0 + 0.01,
-    1.05 * stretch,
+    1.05,
     0.82 * clampedIntensity,
     'lowpass',
     2400,
@@ -113,8 +110,8 @@ export function playExplosion(
     ctx,
     chain.input,
     'CRACKLE',
-    t0 + 0.08 * stretch,
-    0.92 * stretch,
+    t0 + 0.08,
+    0.92,
     0.48 * clampedIntensity,
     'bandpass',
     1850,

@@ -21,8 +21,8 @@ export function updateBloodDrops(
     const spd = drop.velocity.length();
     if (spd > 0.25) {
       const r = drop.baseRadius ?? 0.016;
-      const stretch = Math.min(3.4, 1.0 + spd * 0.24);
-      drop.entity.setLocalScale(r * 0.82, r * 0.82, r * stretch);
+      const stretch = Math.min(7, 1.5 + spd * 0.6);
+      drop.entity.setLocalScale(r * 0.7, r * 0.7, r * stretch);
       drop.entity.lookAt(
         drop.position.x + drop.velocity.x,
         drop.position.y + drop.velocity.y,
@@ -31,7 +31,8 @@ export function updateBloodDrops(
     }
 
     if (drop.position.y <= 0.015) {
-      onSpawnBloodPool(drop.position, 0.25);
+      // A landing drop leaves a spatter, not a puddle; puddles build up as spatters merge.
+      onSpawnBloodPool(drop.position, 0.06 + Math.random() * 0.05);
       drop.entity.destroy();
       bloodDrops.splice(i, 1);
       continue;

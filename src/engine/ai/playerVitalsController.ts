@@ -4,7 +4,7 @@ import type {
 } from '../../contracts/ai/aiContracts.ts';
 import type { EnemyArchetypeId, Vec3Like } from '../../contracts/ballistics.ts';
 import { copyVec3 } from '../../core/ballistics/vec3.ts';
-import type { BrutalKillRewardKind, TacticalCombatAiOptions } from './tacticalAiTypes.ts';
+import type { TacticalCombatAiOptions } from './tacticalAiTypes.ts';
 
 export type { ArterialBleedState, HealthGateState, PlayerSurvivalPhase };
 
@@ -127,67 +127,6 @@ export function stepPlayerVitalsRegen(vitals: PlayerCombatVitals, dt: number): v
   }
 }
 
-export interface BrutalKillVitalsDelta {
-  readonly armorRestored: number;
-  readonly healthRestored: number;
-}
-
-export function grantBrutalKillReward(
-  vitals: PlayerCombatVitals,
-  kind: BrutalKillRewardKind
-): BrutalKillVitalsDelta {
-  if (vitals.health <= 0 || vitals.survivalPhase?.kind === 'DEAD') {
-    syncPlayerVitalsFsm(vitals);
-    return { armorRestored: 0, healthRestored: 0 };
-  }
-
-  const prevArmor = vitals.armor;
-  const prevHealth = vitals.health;
-
-  if (kind === 'STANDARD_KILL') {
-    vitals.armor = Math.min(vitals.maxArmor, vitals.armor + 4);
-    vitals.health = Math.min(vitals.maxHealth, vitals.health + 2);
-    if (vitals.health >= 35) vitals.healthGateReady = true;
-    syncPlayerVitalsFsm(vitals);
-    return {
-      armorRestored: vitals.armor - prevArmor,
-      healthRestored: vitals.health - prevHealth,
-    };
-  }
-
-  const armorGain =
-    kind === 'MULTI_KILL_BLAST'
-      ? 22
-      : kind === 'DECAPITATION'
-        ? 18
-        : kind === 'CRANIAL_POP'
-          ? 16
-          : kind === 'CLEAN_SEVER' || kind === 'EVISCERATED'
-            ? 14
-            : 12;
-  const hpGain =
-    kind === 'MULTI_KILL_BLAST'
-      ? 18
-      : kind === 'DECAPITATION'
-        ? 14
-        : kind === 'CRANIAL_POP'
-          ? 12
-          : kind === 'CLEAN_SEVER' || kind === 'EVISCERATED'
-            ? 10
-            : 9;
-
-  vitals.armor = Math.min(vitals.maxArmor, vitals.armor + armorGain);
-  vitals.health = Math.min(vitals.maxHealth, vitals.health + hpGain);
-  vitals.urgentBleedHpPerSec = 0;
-  vitals.urgentBleedRemainingS = 0;
-  if (vitals.health >= 20) vitals.healthGateReady = true;
-  syncPlayerVitalsFsm(vitals);
-  return {
-    armorRestored: vitals.armor - prevArmor,
-    healthRestored: vitals.health - prevHealth,
-  };
-}
-
 export function notifyWaveCleared(vitals: PlayerCombatVitals): void {
   vitals.health = vitals.maxHealth;
   vitals.armor = Math.min(vitals.maxArmor, vitals.armor + 35);
@@ -298,10 +237,6 @@ export class PlayerVitalsController {
 
   public stepRegen(dt: number): void {
     stepPlayerVitalsRegen(this.playerVitals, dt);
-  }
-
-  public grantBrutalKillReward(kind: BrutalKillRewardKind): void {
-    grantBrutalKillReward(this.playerVitals, kind);
   }
 
   public notifyWaveCleared(): void {

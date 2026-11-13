@@ -1,4 +1,5 @@
 import * as pc from 'playcanvas';
+import { fillBloodPoolPixels } from '../../fx/gore/textures/bloodPoolTexture.ts';
 
 function hash2d(ix: number, iy: number, seed: number): number {
   let h = (Math.imul(ix, 374761393) + Math.imul(iy, 668265263) + Math.imul(seed, 1442695041)) >>> 0;
@@ -26,7 +27,6 @@ export interface WetBloodProceduralMaps {
   readonly dropletNormalMap: pc.Texture;
   readonly poolAlbedoAlphaArterial: pc.Texture;
   readonly poolAlbedoAlphaVenous: pc.Texture;
-  readonly poolMeniscusNormalMap: pc.Texture;
   readonly mistAlphaMap: pc.Texture;
 }
 
@@ -74,65 +74,10 @@ export function getOrCreateWetBloodMaps(device: pc.GraphicsDevice): WetBloodProc
   dropletNormalMap.unlock();
 
   const poolSize = 128;
-  const poolHeight = new Float32Array(poolSize * poolSize);
   const artPixels = new Uint8Array(poolSize * poolSize * 4);
   const venPixels = new Uint8Array(poolSize * poolSize * 4);
-  const poolNormPixels = new Uint8Array(poolSize * poolSize * 4);
-
-  for (let y = 0; y < poolSize; y++) {
-    const v = (y + 0.5) / poolSize;
-    for (let x = 0; x < poolSize; x++) {
-      const u = (x + 0.5) / poolSize;
-      const dx = (u - 0.5) * 2, dy = (v - 0.5) * 2;
-      const r = Math.hypot(dx, dy), theta = Math.atan2(dy, dx);
-      const lobes = 0.12 * Math.sin(theta * 3 + 0.4) + 0.075 * Math.cos(theta * 5 - 1.1) + 0.045 * Math.sin(theta * 8 + 2.1) + (valueNoise2d(u * 9.5, v * 9.5, 307) - 0.5) * 0.12;
-      const edgeR = 0.82 + lobes;
-
-      let thickness = 0;
-      if (r < edgeR) {
-        const edgeDist = (edgeR - r) / Math.max(0.15, edgeR);
-        const meniscus = Math.min(1, Math.pow(edgeDist * 4.2, 0.58));
-        const rimBead = edgeDist > 0.02 && edgeDist < 0.24 ? Math.sin(((edgeDist - 0.02) / 0.22) * Math.PI) * 0.22 : 0;
-        const ripple = (valueNoise2d(u * 18, v * 18, 409) - 0.5) * 0.04;
-        thickness = Math.max(0, Math.min(1, meniscus + rimBead + ripple));
-      }
-      poolHeight[y * poolSize + x] = thickness;
-
-      const alpha = thickness > 0.01 ? Math.min(1, thickness * 2.8) : 0;
-      const centerCoag = Math.max(0, 1 - r / Math.max(0.2, edgeR));
-      const p4 = (y * poolSize + x) * 4;
-
-      const artRimBoost = 1.0 - centerCoag * 0.44;
-      artPixels[p4] = Math.round(152 * artRimBoost + 22);
-      artPixels[p4 + 1] = Math.round(10 * artRimBoost + 2);
-      artPixels[p4 + 2] = Math.round(16 * artRimBoost + 4);
-      artPixels[p4 + 3] = Math.round(alpha * 250);
-
-      const venRimBoost = 1.0 - centerCoag * 0.38;
-      venPixels[p4] = Math.round(88 * venRimBoost + 12);
-      venPixels[p4 + 1] = Math.round(5 * venRimBoost + 1);
-      venPixels[p4 + 2] = Math.round(12 * venRimBoost + 3);
-      venPixels[p4 + 3] = Math.round(alpha * 252);
-    }
-  }
-
-  for (let y = 0; y < poolSize; y++) {
-    const ym = Math.max(0, y - 1), yp = Math.min(poolSize - 1, y + 1);
-    for (let x = 0; x < poolSize; x++) {
-      const xm = Math.max(0, x - 1), xp = Math.min(poolSize - 1, x + 1);
-      const dhdx = (poolHeight[y * poolSize + xp] - poolHeight[y * poolSize + xm]) * 3.6;
-      const dhdy = (poolHeight[yp * poolSize + x] - poolHeight[ym * poolSize + x]) * 3.6;
-      let nx = -dhdx, ny = -dhdy, nz = 1.0;
-      const nLen = Math.hypot(nx, ny, nz);
-      nx /= nLen; ny /= nLen; nz /= nLen;
-
-      const p4 = (y * poolSize + x) * 4;
-      poolNormPixels[p4] = Math.round((nx * 0.5 + 0.5) * 255);
-      poolNormPixels[p4 + 1] = Math.round((ny * 0.5 + 0.5) * 255);
-      poolNormPixels[p4 + 2] = Math.round((nz * 0.5 + 0.5) * 255);
-      poolNormPixels[p4 + 3] = 255;
-    }
-  }
+  fillBloodPoolPixels(artPixels, poolSize, [255, 255, 255]);
+  fillBloodPoolPixels(venPixels, poolSize, [255, 255, 255]);
 
   const makePoolTex = (name: string, data: Uint8Array): pc.Texture => {
     const tex = new pc.Texture(device, {
@@ -170,7 +115,6 @@ export function getOrCreateWetBloodMaps(device: pc.GraphicsDevice): WetBloodProc
     dropletNormalMap,
     poolAlbedoAlphaArterial: makePoolTex('vascularArterialPoolAlbedo', artPixels),
     poolAlbedoAlphaVenous: makePoolTex('vascularVenousPoolAlbedo', venPixels),
-    poolMeniscusNormalMap: makePoolTex('vascularPoolMeniscusNormal', poolNormPixels),
     mistAlphaMap,
   };
   deviceMapCache.set(device, bundle);

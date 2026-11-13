@@ -2,7 +2,7 @@ import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import type { ShellCasingCaliber } from '../types.ts';
 import type { SynthContext } from './synthPrimitives.ts';
 import { spawnNoiseBurst, spawnPitchDropOsc } from './synthPrimitives.ts';
-import { clampNumber, computeSlowMoAudioFactors } from '../audioMath.ts';
+import { clampNumber } from '../audioMath.ts';
 
 export function playShellCasingBounce(
   ctx: SynthContext,
@@ -15,9 +15,6 @@ export function playShellCasingBounce(
 ): void {
   const g = ctx.graph;
   const t0 = g.ctx.currentTime;
-  const factors = computeSlowMoAudioFactors(ctx.timeScale);
-  const pScale = factors.oscillatorPitchScale;
-  const stretch = factors.envelopeStretch;
 
   const chain = g.createSpatialChain(
     worldPos,
@@ -31,7 +28,7 @@ export function playShellCasingBounce(
   const microVar = 0.975 + ctx.rng() * 0.05;
 
   if (caliber === 'BRASS') {
-    const bounceOffsets = [0, 0.062 * stretch, 0.118 * stretch];
+    const bounceOffsets = [0, 0.062, 0.118];
     const bounceGains = [0.22, 0.13, 0.075];
     const spinSettlePitch = [1.0, 1.035, 1.075];
     const partialsHz = [3800, 6200, 9100];
@@ -40,8 +37,8 @@ export function playShellCasingBounce(
     for (let b = 0; b < bounceOffsets.length; b++) {
       const tb = t0 + bounceOffsets[b];
       const bGain = bounceGains[b];
-      const bPitch = spinSettlePitch[b] * microVar * pScale;
-      const dur = (0.058 - b * 0.011) * stretch;
+      const bPitch = spinSettlePitch[b] * microVar;
+      const dur = (0.058 - b * 0.011);
 
       for (let p = 0; p < partialsHz.length; p++) {
         const freq = clampNumber(partialsHz[p] * bPitch, 120, 19500);
@@ -62,7 +59,7 @@ export function playShellCasingBounce(
     return;
   }
 
-  const hullOffsets = [0, 0.082 * stretch];
+  const hullOffsets = [0, 0.082];
   const hullGains = [0.26, 0.14];
   for (let b = 0; b < hullOffsets.length; b++) {
     const tb = t0 + hullOffsets[b];
@@ -72,7 +69,7 @@ export function playShellCasingBounce(
       chain.input,
       'WHITE',
       tb,
-      0.044 * stretch,
+      0.044,
       amp,
       'bandpass',
       710 * microVar,
@@ -86,9 +83,9 @@ export function playShellCasingBounce(
       chain.input,
       'triangle',
       tb,
-      0.038 * stretch,
-      1160 * microVar * pScale,
-      920 * microVar * pScale,
+      0.038,
+      1160 * microVar,
+      920 * microVar,
       amp * 0.48,
     );
     spawnPitchDropOsc(
@@ -96,9 +93,9 @@ export function playShellCasingBounce(
       chain.input,
       'sine',
       tb + 0.003,
-      0.032 * stretch,
-      4450 * microVar * pScale,
-      4380 * microVar * pScale,
+      0.032,
+      4450 * microVar,
+      4380 * microVar,
       amp * 0.25,
     );
   }

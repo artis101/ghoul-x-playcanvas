@@ -36,7 +36,6 @@ export interface CombatDirectorLoopContext {
   fxManager: GoreAndBallisticsFxManager;
   lastEngagedTarget: GhoulMannequinEntity | null;
   losCacheEpoch: number;
-  enableXRayInspector: boolean;
   lastHitClockByTarget: Map<string, number>;
   isLineOfSightBlocked?: (from: Vec3Like, to: Vec3Like) => boolean;
   grenadeSweepInterceptor?: GrenadeSweepInterceptor;
@@ -128,7 +127,7 @@ export function stepCombatDirectorLoop(
 
   ctx.hudTargetTracker.projectTargets(
     ctx.targets, camera ?? null, hud, ctx.physiologySystem, ctx.lastEngagedTarget,
-    viewerPos, totalElapsedTimeS, ctx.losCacheEpoch, ctx.enableXRayInspector,
+    viewerPos, totalElapsedTimeS, ctx.losCacheEpoch,
     ctx.lastHitClockByTarget, ctx.isLineOfSightBlocked
   );
 }

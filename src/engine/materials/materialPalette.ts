@@ -46,72 +46,62 @@ export function getOrCreateMaterials(): EngineMaterialPalette {
   const skinTone = createMat('skinTone', (m) => configurePbrDielectric(m, [0.76, 0.58, 0.46], 0.36));
   const bootsDark = createMat('bootsDark', (m) => configurePbrMetal(m, [0.11, 0.12, 0.13], 0.55, 0.48));
 
-  const xraySkinMat = createMat('xraySkinMat', (m) => {
-    m.diffuse = new pc.Color(0.05, 0.25, 0.45);
-    m.emissive = new pc.Color(0.02, 0.22, 0.38);
-    m.opacity = 0.22;
-    m.blendType = pc.BLEND_NORMAL;
-    m.depthWrite = false;
-    m.cull = pc.CULLFACE_BACK;
-    m.enableGGXSpecular = true;
-    m.fresnelModel = pc.FRESNEL_SCHLICK;
-    m.gloss = 0.78;
-  });
-
-  const boneMat = createMat('boneMat', (m) => configurePbrDielectric(m, [0.91, 0.88, 0.77], 0.54, [0.14, 0.14, 0.12]));
+  const boneMat = createMat('boneMat', (m) => configurePbrDielectric(m, [0.7, 0.62, 0.5], 0.4, [0.08, 0.08, 0.07]));
   const shatteredBoneMat = createMat('shatteredBoneMat', (m) => {
-    configurePbrDielectric(m, [0.94, 0.24, 0.15], 0.68, [0.22, 0.16, 0.14]);
-    m.emissive = new pc.Color(0.75, 0.12, 0.04);
+    // Splintered bone stained with blood, not a glowing ember.
+    configurePbrDielectric(m, [0.56, 0.32, 0.26], 0.4, [0.08, 0.06, 0.05]);
+    m.emissive = new pc.Color(0.0, 0.0, 0.0);
   });
 
   const brainMat = createMat('brainMat', (m) => {
-    configurePbrDielectric(m, [0.78, 0.36, 0.46], 0.84, [0.20, 0.14, 0.16]);
-    m.emissive = new pc.Color(0.18, 0.03, 0.06);
+    configurePbrDielectric(m, [0.56, 0.32, 0.32], 0.6, [0.1, 0.07, 0.07]);
+    m.emissive = new pc.Color(0.03, 0.006, 0.008);
   });
   const heartMat = createMat('heartMat', (m) => {
-    configurePbrDielectric(m, [0.72, 0.04, 0.07], 0.90, [0.28, 0.12, 0.14]);
-    m.emissive = new pc.Color(0.24, 0.01, 0.02);
+    configurePbrDielectric(m, [0.4, 0.06, 0.06], 0.6, [0.1, 0.05, 0.05]);
+    m.emissive = new pc.Color(0.04, 0.004, 0.004);
   });
   const lungMat = createMat('lungMat', (m) => {
-    configurePbrDielectric(m, [0.82, 0.42, 0.46], 0.72, [0.18, 0.12, 0.14]);
-    m.emissive = new pc.Color(0.14, 0.04, 0.05);
+    configurePbrDielectric(m, [0.52, 0.3, 0.3], 0.5, [0.08, 0.06, 0.06]);
+    m.emissive = new pc.Color(0.025, 0.008, 0.008);
   });
   const liverGutMat = createMat('liverGutMat', (m) => {
-    configurePbrDielectric(m, [0.46, 0.10, 0.12], 0.86, [0.22, 0.08, 0.09]);
-    m.emissive = new pc.Color(0.16, 0.02, 0.03);
+    configurePbrDielectric(m, [0.3, 0.08, 0.06], 0.58, [0.09, 0.05, 0.04]);
+    m.emissive = new pc.Color(0.02, 0.004, 0.003);
   });
   const arteryMat = createMat('arteryMat', (m) => {
-    configurePbrDielectric(m, [0.92, 0.03, 0.04], 0.94, [0.35, 0.10, 0.12]);
-    m.emissive = new pc.Color(0.40, 0.01, 0.02);
+    configurePbrDielectric(m, [0.46, 0.04, 0.04], 0.62, [0.1, 0.04, 0.04]);
+    m.emissive = new pc.Color(0.05, 0.004, 0.004);
   });
 
   const goreStumpMat = createMat('goreStumpMat', (m) => {
-    configurePbrDielectric(m, [0.55, 0.04, 0.05], 0.86, [0.24, 0.06, 0.08]);
-    m.emissive = new pc.Color(0.18, 0.01, 0.02);
+    configurePbrDielectric(m, [0.34, 0.04, 0.035], 0.45, [0.07, 0.03, 0.03]);
+    m.emissive = new pc.Color(0.02, 0.0, 0.0);
   });
   // Raw meat on a severed end: dark and matte, so it reads as a cut rather than a glossy ball.
   const stumpFleshMat = createMat('stumpFleshMat', (m) => {
-    configurePbrDielectric(m, [0.3, 0.035, 0.04], 0.35, [0.05, 0.02, 0.02]);
-    m.emissive = new pc.Color(0.05, 0.0, 0.005);
+    configurePbrDielectric(m, [0.26, 0.045, 0.035], 0.35, [0.05, 0.02, 0.02]);
+    m.emissive = new pc.Color(0.0, 0.0, 0.0);
   });
-  const exposedBoneMat = createMat('exposedBoneMat', (m) => configurePbrDielectric(m, [0.74, 0.66, 0.56], 0.42, [0.12, 0.12, 0.10]));
+  const exposedBoneMat = createMat('exposedBoneMat', (m) => configurePbrDielectric(m, [0.62, 0.52, 0.42], 0.36, [0.07, 0.07, 0.06]));
   const bloodPoolMat = createMat('bloodPoolMat', (m) => {
-    configurePbrDielectric(m, [0.28, 0.01, 0.02], 0.96, [0.40, 0.08, 0.10]);
+    configurePbrDielectric(m, [0.2, 0.012, 0.016], 0.74, [0.06, 0.03, 0.03]);
     m.opacity = 0.94;
     m.blendType = pc.BLEND_NORMAL;
     m.cull = pc.CULLFACE_BACK;
   });
   const bloodDropMat = createMat('bloodDropMat', (m) => {
-    configurePbrDielectric(m, [0.85, 0.02, 0.03], 0.95, [0.36, 0.06, 0.08]);
-    m.emissive = new pc.Color(0.32, 0.01, 0.02);
+    configurePbrDielectric(m, [0.3, 0.03, 0.026], 0.55, [0.07, 0.03, 0.03]);
+    m.emissive = new pc.Color(0.0, 0.0, 0.0);
   });
   const gibChunkMat = createMat('gibChunkMat', (m) => {
-    configurePbrDielectric(m, [0.48, 0.05, 0.07], 0.82, [0.22, 0.08, 0.10]);
-    m.emissive = new pc.Color(0.12, 0.01, 0.02);
+    configurePbrDielectric(m, [0.32, 0.06, 0.05], 0.45, [0.07, 0.03, 0.03]);
+    m.emissive = new pc.Color(0.0, 0.0, 0.0);
   });
   const woundGoreMat = createMat('woundGoreMat', (m) => {
-    configurePbrDielectric(m, [0.62, 0.02, 0.04], 0.88, [0.28, 0.06, 0.08]);
-    m.emissive = new pc.Color(0.25, 0.01, 0.02);
+    // Bullet holes: a dark, barely-wet crater, not a glowing red bead.
+    configurePbrDielectric(m, [0.16, 0.012, 0.016], 0.42, [0.06, 0.02, 0.02]);
+    m.emissive = new pc.Color(0.012, 0.0, 0.0);
   });
 
   const brassBulletMat = createMat('brassBulletMat', (m) => configurePbrMetal(m, [0.88, 0.72, 0.32], 0.88, 0.82));
@@ -148,7 +138,6 @@ export function getOrCreateMaterials(): EngineMaterialPalette {
     tacticalArmorVest,
     skinTone,
     bootsDark,
-    xraySkinMat,
     boneMat,
     shatteredBoneMat,
     brainMat,

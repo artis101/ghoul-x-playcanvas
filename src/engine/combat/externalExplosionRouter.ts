@@ -5,7 +5,6 @@ import { ALL_GHOUL_ZONES } from '../../core/ghoul/anatomy.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
 import type { CombatAudioEngine } from '../audio/combatAudioEngine.ts';
-import type { MayhemDirector } from '../fx/mayhemDirector.ts';
 import type { TacticalCombatAiSystem } from '../ai/tacticalCombatAi.ts';
 import type { CameraShakeCallback } from './combatTypes.ts';
 import { SYNTHETIC_SHRAPNEL_AMMO } from './combatTargetConfigs.ts';
@@ -18,7 +17,6 @@ export function routeExternalExplosionTrauma(
   targets: GhoulMannequinEntity[],
   fxManager: GoreAndBallisticsFxManager,
   combatAudio: CombatAudioEngine | null,
-  mayhemDirector: MayhemDirector | null,
   tacticalAi: TacticalCombatAiSystem | null,
   onCameraShake: CameraShakeCallback | undefined,
   getViewerPosVec3: () => Vec3Like,
@@ -89,23 +87,8 @@ export function routeExternalExplosionTrauma(
     }
   }
 
-  if (newlyKilledCount >= 2) {
-    const delta = tacticalAi?.grantBrutalKillReward('MULTI_KILL_BLAST') ?? {
-      armorRestored: 0,
-      healthRestored: 0,
-    };
-    if (lastKilledHs) tacticalAi?.notifyWitnessedBrutality(lastKilledHs, 'MULTI_KILL_BLAST');
-    mayhemDirector?.bulletTime.triggerKillPunch(0.35, 0.16, 'MULTI_KILL_BLAST');
-    impactCtx.app?.fire('combat:brutal_reward', {
-      kind: 'MULTI_KILL_BLAST',
-      targetId: lastKilledHs?.targetId ?? 'blast_multi',
-      targetName: `${newlyKilledCount}x HOSTILES`,
-      weaponLabel: sourceLabel,
-      isLethal: true,
-      armorRestored: delta.armorRestored,
-      healthRestored: delta.healthRestored,
-      bonusRoundsGranted: 2,
-    });
+  if (newlyKilledCount >= 2 && lastKilledHs) {
+    tacticalAi?.notifyWitnessedBrutality(lastKilledHs, 'MULTI_KILL_BLAST');
   }
 
   return newlyKilledCount;

@@ -70,9 +70,6 @@ function createUnifiedArenaHarness(): UnifiedArenaHarness {
   const mayhemDirector = new MayhemDirector({
     app,
     rapierWorld,
-    bulletTimeOptions: {
-      onVignetteUpdate: (st) => hudController.updateBulletTimeHud(st),
-    },
     onCasingBounce: (ev) => {
       combatAudio.playShellCasingBounce(
         ev.isShotgunHull ? 'SHOTGUN_HULL' : 'BRASS',
@@ -147,7 +144,7 @@ function createUnifiedArenaHarness(): UnifiedArenaHarness {
   combatDirector.onExplosionBlast = (center, radiusM, peakImpulseNs, peakEnergyJ) => {
     const blast = { centerWorld: center, radiusM, peakImpulseNs, peakEnergyJ };
     destructionManager.applyBlast(blast);
-    mayhemDirector.notifyExternalExplosion(blast, 0);
+    mayhemDirector.notifyExternalExplosion(blast);
     tacticalAi.notifyGunshotOrExplosion(center, 45.0, 0.72);
   };
 
@@ -156,13 +153,12 @@ function createUnifiedArenaHarness(): UnifiedArenaHarness {
   let elapsedS = 0;
   const stepFrames = (frameCount: number, rawDt = 1 / 60): void => {
     for (let i = 0; i < frameCount; i++) {
-      const scaledDt = mayhemDirector.update(rawDt);
-      elapsedS += scaledDt;
-      combatAudio.setTimeScale(mayhemDirector.bulletTime.timeScale);
+      mayhemDirector.update(rawDt);
+      elapsedS += rawDt;
       combatAudio.update(rawDt);
-      destructionManager.update(scaledDt);
-      combatDirector.update(scaledDt, elapsedS, null, hudController);
-      fxManager.update(scaledDt, false);
+      destructionManager.update(rawDt);
+      combatDirector.update(rawDt, elapsedS, null, hudController);
+      fxManager.update(rawDt, false);
     }
   };
 
@@ -391,17 +387,6 @@ describe('Phase 3 Grand Unified Max Mayhem Arena Integration', () => {
       expect(target5.healthState.isRagdollActive).toBe(false);
       expect(arena.combatAudio.getDiagnostics().explosionCount).toBe(1);
 
-      // Toggle [Z] Reflex Bullet-Time and verify timeScale dilates smoothly below 1.0x
-      const activated = arena.mayhemDirector.bulletTime.toggleReflex();
-      expect(activated).toBe(true);
-      arena.combatAudio.playSlowMoTransition(activated);
-      arena.stepFrames(12, 1 / 60);
-      expect(arena.mayhemDirector.bulletTime.timeScale).toBeLessThan(0.5);
-      expect(arena.combatAudio.getTimeScale()).toBeCloseTo(
-        arena.mayhemDirector.bulletTime.timeScale,
-        4
-      );
-      arena.mayhemDirector.bulletTime.setReflexActive(false);
 
       // Full Breaching Wave Reset restores intact walls, barrels, and 7 healthy combatants!
       arena.destructionManager.resetAll();
@@ -496,7 +481,7 @@ describe('Phase 3 Grand Unified Max Mayhem Arena Integration', () => {
     }
   });
 
-  it('enforces breach-aware wood wall LOS/fire and occludes floating HUD enemy health bars behind solid cover until X-Ray or wallbang', () => {
+  it('enforces breach-aware wood wall LOS/fire and occludes floating HUD enemy health bars behind solid cover until wallbang', () => {
     const arena = createUnifiedArenaHarness();
     try {
       // 1. Intact wood_shoot_house_wall (z = -7.2) blocks sight & proximity detection for target_1 at (-2.3, 0, -8.35)
@@ -515,7 +500,7 @@ describe('Phase 3 Grand Unified Max Mayhem Arena Integration', () => {
       }
       expect(arena.tacticalAi.getAgent('target_1')!.state).toBe('PATROL_GUARD');
 
-      // 2. Verify HUD floating health bar occlusion behind opaque walls when X-Ray mode is OFF
+      // 2. Verify HUD floating health bar occlusion behind opaque walls
       let capturedEntries: ProjectedTargetTriageEntry[] = [];
       let capturedFocusId: string | null = null;
       const origUpdateTriage = arena.hudController.updateTriageOverlays.bind(
@@ -540,7 +525,7 @@ describe('Phase 3 Grand Unified Max Mayhem Arena Integration', () => {
       const entryById = (id: string) =>
         capturedEntries.find((e) => e.state.targetId === id);
 
-      // X-Ray is OFF -> target_1 (behind wood), target_4 (behind brick), target_5 (behind concrete) are hidden!
+      // target_1 (behind wood), target_4 (behind brick), target_5 (behind concrete) are hidden!
       expect(entryById('target_1')?.visible).toBe(false);
       expect(entryById('target_4')?.visible).toBe(false);
       expect(entryById('target_5')?.visible).toBe(false);
@@ -554,17 +539,7 @@ describe('Phase 3 Grand Unified Max Mayhem Arena Integration', () => {
         )
       ).toBe(false);
 
-      // 3. Toggle X-Ray [X] ON -> occluded target_1 immediately becomes visible through the wall!
-      arena.combatDirector.setXRayMode(true);
-      arena.combatDirector.update(1 / 60, 0.6, camEntity.camera, arena.hudController);
-      expect(entryById('target_1')?.visible).toBe(true);
-
-      // Toggle X-Ray back OFF -> hidden again before breaching
-      arena.combatDirector.setXRayMode(false);
-      arena.combatDirector.update(1 / 60, 0.7, camEntity.camera, arena.hudController);
-      expect(entryById('target_1')?.visible).toBe(false);
-
-      // 4. Carve a wide shotgun breach hole through wood_shoot_house_wall at (-2.3, 1.52, -7.2)
+      // 3. Carve a wide shotgun breach hole through wood_shoot_house_wall at (-2.3, 1.52, -7.2)
       const breachOrigin = vec3(-2.3, 1.52, -5.6);
       const breachDir = vec3(0, 0, -1);
       arena.combatDirector.fireWeapon(

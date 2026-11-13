@@ -2,7 +2,7 @@ import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import type { DestructibleMaterialKind } from '../../../contracts/destruction.ts';
 import type { SynthContext } from './synthPrimitives.ts';
 import { spawnNoiseBurst, spawnPitchDropOsc } from './synthPrimitives.ts';
-import { clampNumber, computeImpactEnergyGain, computeSlowMoAudioFactors } from '../audioMath.ts';
+import { clampNumber, computeImpactEnergyGain } from '../audioMath.ts';
 import { synthesizeConcreteThud, synthesizeRubbleScatter, synthesizeSteelClang } from './surfaceThudSynth.ts';
 import { synthesizeRicochetWhine, synthesizeSteelZing } from './ricochetAudioSynth.ts';
 
@@ -20,9 +20,6 @@ export function playMaterialImpact(
 ): void {
   const g = ctx.graph;
   const t0 = g.ctx.currentTime + Math.max(0, startOffsetS);
-  const factors = computeSlowMoAudioFactors(ctx.timeScale);
-  const pScale = factors.oscillatorPitchScale;
-  const stretch = factors.envelopeStretch;
   const eGain = computeImpactEnergyGain(energyJ) * clampNumber(gainMultiplier, 0.15, 1.5);
 
   const chain = g.createSpatialChain(
@@ -41,7 +38,7 @@ export function playMaterialImpact(
       chain.input,
       'CRACKLE',
       t0,
-      0.16 * stretch,
+      0.16,
       0.52 * eGain,
       'highpass',
       isPlateVoronoi ? 2800 : 3600,
@@ -55,13 +52,13 @@ export function playMaterialImpact(
       ? [2750, 4450, 6350, 8900]
       : [4250, 5900, 7850, 10400];
     for (let i = 0; i < crystalModes.length; i++) {
-      const f = clampNumber(crystalModes[i] * pScale * (0.97 + ctx.rng() * 0.06), 180, 19500);
+      const f = clampNumber(crystalModes[i] * (0.97 + ctx.rng() * 0.06), 180, 19500);
       spawnPitchDropOsc(
         ctx,
         chain.input,
         'sine',
-        t0 + i * 0.004 * stretch,
-        0.095 * stretch,
+        t0 + i * 0.004,
+        0.095,
         f,
         f * 0.96,
         0.16 * eGain,
@@ -72,15 +69,15 @@ export function playMaterialImpact(
 
     const shardCount = 5;
     for (let s = 0; s < shardCount; s++) {
-      const delayS = (0.055 + s * 0.064 + ctx.rng() * 0.025) * stretch;
-      const shardFreq = clampNumber((5100 + s * 920 + ctx.rng() * 750) * pScale, 250, 19500);
+      const delayS = (0.055 + s * 0.064 + ctx.rng() * 0.025);
+      const shardFreq = clampNumber((5100 + s * 920 + ctx.rng() * 750), 250, 19500);
       const shardAmp = (0.13 - s * 0.018) * eGain;
       spawnPitchDropOsc(
         ctx,
         chain.input,
         'sine',
         t0 + delayS,
-        0.048 * stretch,
+        0.048,
         shardFreq,
         shardFreq * 1.02,
         Math.max(0.02, shardAmp),
@@ -98,9 +95,9 @@ export function playMaterialImpact(
       chain.input,
       'triangle',
       t0,
-      0.09 * stretch,
-      (isStud ? 390 : 215) * pScale,
-      (isStud ? 95 : 68) * pScale,
+      0.09,
+      (isStud ? 390 : 215),
+      (isStud ? 95 : 68),
       0.48 * eGain,
       g.warmDriveCurve,
     );
@@ -109,7 +106,7 @@ export function playMaterialImpact(
       chain.input,
       'CRACKLE',
       t0,
-      0.13 * stretch,
+      0.13,
       0.54 * eGain,
       'bandpass',
       isStud ? 1680 : 1150,
@@ -120,13 +117,13 @@ export function playMaterialImpact(
     );
 
     for (let s = 0; s < 3; s++) {
-      const ts = t0 + (0.042 + s * 0.052) * stretch;
+      const ts = t0 + (0.042 + s * 0.052);
       spawnNoiseBurst(
         ctx,
         chain.input,
         'CRACKLE',
         ts,
-        0.036 * stretch,
+        0.036,
         (0.18 - s * 0.04) * eGain,
         'bandpass',
         2450 + s * 380,

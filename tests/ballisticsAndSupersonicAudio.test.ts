@@ -27,7 +27,6 @@ import {
   pruneUnsupportedBloodSplatters,
 } from '../src/engine/fx/decals/bloodSplatterSystem.ts';
 import type { HardwareInstancedPool } from '../src/engine/physics/instancedPool.ts';
-import type { BulletTimeController } from '../src/engine/fx/bulletTime/bulletTimeController.ts';
 import type {
   AudioBufferLike,
   AudioContextLike,
@@ -385,7 +384,6 @@ describe('Ballistics, Magnetism, Hitstop & Supersonic Audio Upgrades', () => {
     const ctx = {
       rapierWorld,
       bloodSplatterPool: mockPool,
-      bulletTime: { triggerKillPunch: () => undefined } as unknown as BulletTimeController,
       slotAnchors,
     };
 

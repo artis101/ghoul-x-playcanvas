@@ -22,8 +22,8 @@ export function spawnBacklitMistPuff(
   puffMi?.setParameter('material_opacity', 0.52);
 
   const energyScale = Math.min(1.65, 0.75 + energyJ / 650);
-  const startScale = (0.16 + Math.random() * 0.08) * energyScale;
-  const endScale = (0.58 + Math.random() * 0.28) * energyScale;
+  const startScale = (0.1 + Math.random() * 0.06) * energyScale;
+  const endScale = (0.38 + Math.random() * 0.2) * energyScale;
   puff.setPosition(worldPos.x, worldPos.y, worldPos.z);
   puff.setLocalEulerAngles(90, Math.random() * 360, 0);
   puff.setLocalScale(startScale, 1, startScale);
@@ -39,7 +39,7 @@ export function spawnBacklitMistPuff(
       dir.z * driftSpeed + (Math.random() - 0.5) * 0.85,
     ),
     life: 0,
-    maxLife: 0.62 + Math.random() * 0.34,
+    maxLife: 0.32 + Math.random() * 0.2,
     startScale,
     endScale,
     spinSpeedDeg: (Math.random() - 0.5) * 65,
@@ -56,11 +56,12 @@ export function spawnBloodBurst(
   energyJ: number,
   count = 16,
 ): void {
-  const burstCount = Math.min(52, Math.max(count, Math.floor(energyJ / 22)));
+  // Kept restrained: a hit should spit a handful of drops, not hose the room.
+  const burstCount = Math.min(16, Math.max(count, Math.floor(energyJ / 50)));
   const baseSpeed = Math.min(10.2, Math.max(2.8, Math.sqrt(Math.max(1, energyJ)) * 0.175));
 
-  if (energyJ >= 32 && mistPuffs.length < 44) {
-    const mistCount = energyJ > 280 ? 3 : energyJ > 90 ? 2 : 1;
+  if (energyJ >= 32 && mistPuffs.length < 20) {
+    const mistCount = energyJ > 280 ? 2 : 1;
     for (let m = 0; m < mistCount; m++) {
       spawnBacklitMistPuff(fxRoot, goreSuite, mistPuffs, worldPos, normalDir, baseSpeed * (0.28 + m * 0.12), energyJ);
     }
@@ -77,15 +78,16 @@ export function spawnBloodBurst(
     const isStreamCore = i < burstCount * 0.4;
     const spreadScale = isStreamCore ? 0.42 : 1.08;
     const speedJitter = isStreamCore ? 0.85 + Math.random() * 0.45 : 0.55 + Math.random() * 0.7;
-    const radius = (isStreamCore ? 0.015 : 0.011) + Math.random() * 0.016;
+    // Fine atomised spray: thin needles of blood, never marble-sized beads.
+    const radius = (isStreamCore ? 0.006 : 0.0035) + Math.random() * 0.005;
 
     const vx = normalDir.x * baseSpeed * speedJitter + (Math.random() - 0.5) * baseSpeed * spreadScale;
     const vy = normalDir.y * baseSpeed * speedJitter + Math.random() * baseSpeed * 0.58 + 0.65;
     const vz = normalDir.z * baseSpeed * speedJitter + (Math.random() - 0.5) * baseSpeed * spreadScale;
 
     const spd = Math.hypot(vx, vy, vz);
-    const stretch = Math.min(3.4, 1.0 + spd * 0.24);
-    dropEnt.setLocalScale(radius * 0.82, radius * 0.82, radius * stretch);
+    const stretch = Math.min(7, 1.5 + spd * 0.6);
+    dropEnt.setLocalScale(radius * 0.7, radius * 0.7, radius * stretch);
     dropEnt.setPosition(worldPos.x, worldPos.y, worldPos.z);
     if (spd > 0.1) {
       dropEnt.lookAt(worldPos.x + vx, worldPos.y + vy, worldPos.z + vz);
@@ -97,7 +99,7 @@ export function spawnBloodBurst(
       position: new pc.Vec3(worldPos.x, worldPos.y, worldPos.z),
       velocity: new pc.Vec3(vx, vy, vz),
       life: 0,
-      maxLife: 2.5,
+      maxLife: 1.6,
       baseRadius: radius,
     });
   }

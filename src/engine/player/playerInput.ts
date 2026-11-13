@@ -146,8 +146,7 @@ export class PlayerInputManager {
         else if (e.code === 'KeyG') this.callbacks.onThrowGrenade();
         else if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) {
           this.aim.toggle();
-        } else if (e.code === 'KeyX') this.callbacks.onToggleXRay();
-        else if (e.code === 'KeyZ' && !e.repeat) this.callbacks.onToggleBulletTime?.();
+        }
       };
 
       const onKeyUp = (e: KeyboardEvent): void => {

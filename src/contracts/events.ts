@@ -3,7 +3,6 @@ import type {
   AiBarkCategory,
   AiBarkPayload,
   BrutalKillRewardKind,
-  BrutalRewardEventPayload,
   EnemyFireMode,
   PlayerCombatVitals,
   PlayerNearMissGrazeKind,
@@ -22,7 +21,6 @@ export type {
   AiBarkPayload,
   AssetLoadProgressEvent,
   BrutalKillRewardKind,
-  BrutalRewardEventPayload,
   EnemyFireMode,
   PlayerCombatVitals,
   PlayerNearMissGrazeKind,
@@ -66,11 +64,6 @@ export interface PlayerShakePayload {
   durationS: number;
 }
 
-export interface PlayerBulletTimeTogglePayload {
-  entering: boolean;
-  timeScale: number;
-}
-
 export interface CombatShotFiredPayload {
   weapon: WeaponSpec;
   ammo: AmmoSpec;
@@ -87,10 +80,6 @@ export interface CombatTargetHitPayload {
 
 export interface CombatWaveEventPayload {
   waveIndex: number;
-}
-
-export interface CombatXRayTogglePayload {
-  enabled: boolean;
 }
 
 export interface DestructionWallBreachedPayload {
@@ -137,14 +126,11 @@ export interface AppEventMap {
   'player:damage': PlayerDamagePayload;
   'player:near_miss_graze': PlayerNearMissGrazePayload;
   'player:shake': PlayerShakePayload;
-  'player:bullet_time_toggle': PlayerBulletTimeTogglePayload;
   'ai:bark': AiBarkPayload;
   'combat:shot_fired': CombatShotFiredPayload;
   'combat:target_hit': CombatTargetHitPayload;
-  'combat:brutal_reward': BrutalRewardEventPayload;
   'combat:wave_spawn': CombatWaveEventPayload;
   'combat:wave_cleared': CombatWaveEventPayload;
-  'combat:xray_toggle': CombatXRayTogglePayload;
   'destruction:blast': BlastEvent;
   'destruction:wall_breached': DestructionWallBreachedPayload;
   'fx:casing_bounce': FxCasingBouncePayload;

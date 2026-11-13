@@ -122,21 +122,21 @@ export function evaluateTissueCavitation(
     if (isLeg) {
       physEffect = `${col.label} Fractured — Structural Leg Collapse`;
     } else if (isArm) {
-      physEffect = `${col.label} Shattered — Combatant Disarmed`;
-      weaponDisarmed = true;
+      // A broken arm hurts but does not open the hand; they keep fighting with it.
+      physEffect = `${col.label} Fractured — Fighting Through It`;
     } else {
       physEffect = `${col.label} Comminuted Fracture`;
     }
   }
 
   const trigger = triggerSide(target.isLeftHanded);
-  const isTriggerArmZone =
-    col.ghoulZone === `HAND_${trigger}` ||
-    col.ghoulZone === `FOREARM_${trigger}` ||
-    col.ghoulZone === `UPPER_ARM_${trigger}`;
-
-  if (isTriggerArmZone && energyDeposited >= 65) {
+  // Only a hit to the hand on the grip, or a forearm shattered so the hand cannot close, makes a
+  // combatant let go of the gun. Hits higher up the arm are fought through.
+  const hitGripHand = col.ghoulZone === `HAND_${trigger}` && energyDeposited >= 30;
+  const shatteredGripForearm = col.ghoulZone === `FOREARM_${trigger}` && boneShattered;
+  if (hitGripHand || shatteredGripForearm) {
     weaponDisarmed = true;
+    physEffect = `${col.label} Hit — Weapon Knocked From Grip`;
   }
 
   const headgearKnockedOff =

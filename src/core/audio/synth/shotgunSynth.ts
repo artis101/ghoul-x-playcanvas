@@ -1,7 +1,6 @@
 import type { GainNodeLike } from '../contracts.ts';
 import type { SynthContext } from './synthPrimitives.ts';
 import { spawnNoiseBurst, spawnPitchDropOsc } from './synthPrimitives.ts';
-import { computeSlowMoAudioFactors } from '../audioMath.ts';
 
 export function synthesizeShotgunFire(
   ctx: SynthContext,
@@ -12,9 +11,6 @@ export function synthesizeShotgunFire(
   isAp: boolean,
 ): void {
   const g = ctx.graph;
-  const factors = computeSlowMoAudioFactors(ctx.timeScale);
-  const pScale = factors.oscillatorPitchScale;
-  const stretch = factors.envelopeStretch;
 
   warehouseSend.gain.setValueAtTime(isAds ? 0.44 : 0.54, t0);
   shotBus.connect(warehouseSend);
@@ -22,9 +18,9 @@ export function synthesizeShotgunFire(
 
   const subOsc = g.createOscillator();
   subOsc.type = 'sine';
-  subOsc.frequency.setValueAtTime(92 * pScale, t0);
-  subOsc.frequency.exponentialRampToValueAtTime(55 * pScale, t0 + 0.032 * stretch);
-  subOsc.frequency.exponentialRampToValueAtTime(33 * pScale, t0 + 0.22 * stretch);
+  subOsc.frequency.setValueAtTime(92, t0);
+  subOsc.frequency.exponentialRampToValueAtTime(55, t0 + 0.032);
+  subOsc.frequency.exponentialRampToValueAtTime(33, t0 + 0.22);
 
   const subShaper = g.createWaveShaper();
   subShaper.curve = g.warmDriveCurve;
@@ -34,16 +30,15 @@ export function synthesizeShotgunFire(
   subGain.gain.value = 0;
   subGain.gain.setValueAtTime(0.0001, t0);
   subGain.gain.linearRampToValueAtTime(0.84, t0 + 0.003);
-  subGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.24 * stretch);
-  subGain.gain.linearRampToValueAtTime(0, t0 + 0.246 * stretch);
+  subGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.24);
+  subGain.gain.linearRampToValueAtTime(0, t0 + 0.246);
 
-  const subStopAt = t0 + 0.255 * stretch;
+  const subStopAt = t0 + 0.255;
   subOsc.connect(subGain);
   subGain.connect(subShaper);
   subShaper.connect(shotBus);
   subOsc.start(t0);
   subOsc.stop(subStopAt);
-  ctx.registerScaledOscillator(subOsc, pScale, subStopAt);
   ctx.registerTransientNodes([subOsc, subGain, subShaper], subStopAt + 0.05);
 
   spawnNoiseBurst(
@@ -51,7 +46,7 @@ export function synthesizeShotgunFire(
     shotBus,
     'WHITE',
     t0,
-    0.25 * stretch,
+    0.25,
     isAp ? 0.78 : 0.85,
     'lowpass',
     isAp ? 6400 : 5200,
@@ -65,7 +60,7 @@ export function synthesizeShotgunFire(
     shotBus,
     'PINK',
     t0,
-    0.34 * stretch,
+    0.34,
     0.62,
     'bandpass',
     420,
@@ -75,15 +70,15 @@ export function synthesizeShotgunFire(
     0.002,
   );
 
-  const tRackBack = t0 + 0.22 * stretch;
-  const tRackFwd = t0 + 0.305 * stretch;
+  const tRackBack = t0 + 0.22;
+  const tRackFwd = t0 + 0.305;
 
   spawnNoiseBurst(
     ctx,
     g.dryBus,
     'CRACKLE',
     tRackBack,
-    0.068 * stretch,
+    0.068,
     0.28,
     'bandpass',
     2150,
@@ -97,9 +92,9 @@ export function synthesizeShotgunFire(
     g.dryBus,
     'triangle',
     tRackBack,
-    0.045 * stretch,
-    1860 * pScale,
-    1320 * pScale,
+    0.045,
+    1860,
+    1320,
     0.14,
   );
 
@@ -108,7 +103,7 @@ export function synthesizeShotgunFire(
     g.dryBus,
     'WHITE',
     tRackFwd,
-    0.055 * stretch,
+    0.055,
     0.32,
     'bandpass',
     1650,
@@ -121,20 +116,20 @@ export function synthesizeShotgunFire(
     ctx,
     g.dryBus,
     'sine',
-    tRackFwd + 0.012 * stretch,
-    0.042 * stretch,
-    3350 * pScale,
-    2850 * pScale,
+    tRackFwd + 0.012,
+    0.042,
+    3350,
+    2850,
     0.19,
   );
   spawnPitchDropOsc(
     ctx,
     g.dryBus,
     'sine',
-    tRackFwd + 0.016 * stretch,
-    0.036 * stretch,
-    4920 * pScale,
-    4400 * pScale,
+    tRackFwd + 0.016,
+    0.036,
+    4920,
+    4400,
     0.13,
   );
 }

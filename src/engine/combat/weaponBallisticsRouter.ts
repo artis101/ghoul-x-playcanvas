@@ -8,6 +8,7 @@ import type { EnvironmentRayInterceptor } from './combatTypes.ts';
 import { findBestTargetHit, truncateTrajectorySamples, buildSyntheticFlightSamples } from './hitRoutingUtils.ts';
 import { applyImpactFxAndState, type ImpactDispatcherContext } from './impactDamageDispatcher.ts';
 import { fireMultiPelletShot } from './shotgunPelletSolver.ts';
+import { strikeHeldWeapon } from './heldWeaponStrikeDispatch.ts';
 
 function dispatchSecondaryRicochet(
   weapon: WeaponSpec,
@@ -95,6 +96,12 @@ export function routeWeaponFire(
   }
 
   const match = findBestTargetHit(weapon, ammo, origin, normAim, targets, environment);
+  const bodyHitDistM = match?.report.hitTarget && match.report.woundEvents[0]
+    ? distance(origin, match.report.woundEvents[0].entryPointWorld)
+    : 150.0;
+  if (strikeHeldWeapon(weapon, ammo, origin, normAim, targets, bodyHitDistM, muzzleEnergyJ, muzzleSpeedMs, isAp, environment, fxManager, interceptor, impactCtx)) {
+    return null;
+  }
   if (!match || !match.report.hitTarget) {
     let stoppedDistM: number | undefined;
     if (interceptor) {

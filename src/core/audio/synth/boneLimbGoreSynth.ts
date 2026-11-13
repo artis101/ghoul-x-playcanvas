@@ -1,37 +1,33 @@
 import type { GainNodeLike } from '../contracts.ts';
 import type { SynthContext } from './synthPrimitives.ts';
 import { spawnNoiseBurst, spawnPitchDropOsc } from './synthPrimitives.ts';
-import { computeSlowMoAudioFactors } from '../audioMath.ts';
 
 export function synthesizeBoneShatter(
   ctx: SynthContext,
   destination: GainNodeLike,
   t0: number,
 ): void {
-  const factors = computeSlowMoAudioFactors(ctx.timeScale);
-  const pScale = factors.oscillatorPitchScale;
-  const stretch = factors.envelopeStretch;
 
   spawnPitchDropOsc(
     ctx,
     destination,
     'sine',
     t0,
-    0.10 * stretch,
-    135 * pScale,
-    46 * pScale,
+    0.10,
+    135,
+    46,
     0.58,
     ctx.graph.warmDriveCurve,
   );
   const crackFreqs = [1780, 2680, 3550];
   for (let c = 0; c < crackFreqs.length; c++) {
-    const tc = t0 + c * 0.017 * stretch;
+    const tc = t0 + c * 0.017;
     spawnNoiseBurst(
       ctx,
       destination,
       'CRACKLE',
       tc,
-      0.042 * stretch,
+      0.042,
       0.52 - c * 0.1,
       'bandpass',
       crackFreqs[c],
@@ -45,9 +41,9 @@ export function synthesizeBoneShatter(
       destination,
       'triangle',
       tc,
-      0.028 * stretch,
-      crackFreqs[c] * pScale,
-      crackFreqs[c] * 0.55 * pScale,
+      0.028,
+      crackFreqs[c],
+      crackFreqs[c] * 0.55,
       0.24,
     );
   }
@@ -58,18 +54,15 @@ export function synthesizeLimbSever(
   destination: GainNodeLike,
   t0: number,
 ): void {
-  const factors = computeSlowMoAudioFactors(ctx.timeScale);
-  const pScale = factors.oscillatorPitchScale;
-  const stretch = factors.envelopeStretch;
 
   spawnPitchDropOsc(
     ctx,
     destination,
     'triangle',
     t0,
-    0.15 * stretch,
-    128 * pScale,
-    40 * pScale,
+    0.15,
+    128,
+    40,
     0.68,
     ctx.graph.heavyDriveCurve,
   );
@@ -78,7 +71,7 @@ export function synthesizeLimbSever(
     destination,
     'CRACKLE',
     t0,
-    0.18 * stretch,
+    0.18,
     0.60,
     'bandpass',
     1950,
@@ -91,8 +84,8 @@ export function synthesizeLimbSever(
     ctx,
     destination,
     'PINK',
-    t0 + 0.03 * stretch,
-    0.22 * stretch,
+    t0 + 0.03,
+    0.22,
     0.46,
     'bandpass',
     1350,

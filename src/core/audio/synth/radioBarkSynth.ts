@@ -2,7 +2,6 @@ import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import type { RadioBarkCueAudioParams, VocalTraumaCueKind } from '../types.ts';
 import type { SynthContext } from './synthPrimitives.ts';
 import { spawnNoiseBurst, spawnPitchDropOsc } from './synthPrimitives.ts';
-import { computeSlowMoAudioFactors } from '../audioMath.ts';
 import { playVocalTraumaCue } from './vocalTraumaSynth.ts';
 
 function isKnownVocalCue(cue?: string): cue is VocalTraumaCueKind {
@@ -27,9 +26,6 @@ export function playRadioBarkCue(
 ): void {
   const g = ctx.graph;
   const t0 = g.ctx.currentTime;
-  const factors = computeSlowMoAudioFactors(ctx.timeScale);
-  const pScale = factors.oscillatorPitchScale;
-  const stretch = factors.envelopeStretch;
 
   const lPos = params.listenerPos ?? listenerPos;
   const wPos = params.worldPos;
@@ -38,7 +34,7 @@ export function playRadioBarkCue(
     const radioBus = g.createGain();
     radioBus.gain.setValueAtTime(0.85, t0);
     radioBus.connect(g.dryBus);
-    ctx.registerTransientNodes([radioBus], t0 + 1.8 * stretch);
+    ctx.registerTransientNodes([radioBus], t0 + 1.8);
 
     // 1. Opening PTT key-click + military two-tone squelch chirp
     spawnNoiseBurst(
@@ -46,7 +42,7 @@ export function playRadioBarkCue(
       radioBus,
       'WHITE',
       t0,
-      0.014 * stretch,
+      0.014,
       0.26,
       'bandpass',
       2450,
@@ -59,18 +55,18 @@ export function playRadioBarkCue(
       ctx,
       radioBus,
       'sine',
-      t0 + 0.004 * stretch,
-      0.022 * stretch,
-      1880 * pScale,
-      2360 * pScale,
+      t0 + 0.004,
+      0.022,
+      1880,
+      2360,
       0.14,
       undefined,
       0.001,
     );
 
     // 2. Bandpass-filtered comms carrier + formant syllable modulation
-    const carrierDur = 0.16 * stretch;
-    const tCarrier = t0 + 0.024 * stretch;
+    const carrierDur = 0.16;
+    const tCarrier = t0 + 0.024;
     spawnNoiseBurst(
       ctx,
       radioBus,
@@ -90,9 +86,9 @@ export function playRadioBarkCue(
       radioBus,
       'sawtooth',
       tCarrier,
-      0.072 * stretch,
-      152 * pScale,
-      128 * pScale,
+      0.072,
+      152,
+      128,
       0.095,
       g.warmDriveCurve,
       0.004,
@@ -101,23 +97,23 @@ export function playRadioBarkCue(
       ctx,
       radioBus,
       'sawtooth',
-      tCarrier + 0.082 * stretch,
-      0.068 * stretch,
-      164 * pScale,
-      116 * pScale,
+      tCarrier + 0.082,
+      0.068,
+      164,
+      116,
       0.088,
       g.warmDriveCurve,
       0.004,
     );
 
     // 3. Closing PTT release squelch tail
-    const tTail = tCarrier + carrierDur + 0.006 * stretch;
+    const tTail = tCarrier + carrierDur + 0.006;
     spawnNoiseBurst(
       ctx,
       radioBus,
       'WHITE',
       tTail,
-      0.026 * stretch,
+      0.026,
       0.22,
       'bandpass',
       1950,
@@ -147,8 +143,8 @@ export function playRadioBarkCue(
         ctx,
         targetBus,
         'CRACKLE',
-        t0 + 0.015 * stretch,
-        0.24 * stretch,
+        t0 + 0.015,
+        0.24,
         0.16,
         'bandpass',
         880,
@@ -161,10 +157,10 @@ export function playRadioBarkCue(
         ctx,
         targetBus,
         'sawtooth',
-        t0 + 0.02 * stretch,
-        0.22 * stretch,
-        118 * pScale,
-        74 * pScale,
+        t0 + 0.02,
+        0.22,
+        118,
+        74,
         0.075,
         undefined,
         0.01,

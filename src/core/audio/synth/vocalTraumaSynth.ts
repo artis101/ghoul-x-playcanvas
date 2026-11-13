@@ -3,7 +3,7 @@ import type { AudioNodeLike } from '../contracts.ts';
 import type { VocalTraumaCueKind } from '../types.ts';
 import type { SynthContext } from './synthPrimitives.ts';
 import { spawnNoiseBurst, spawnPitchDropOsc } from './synthPrimitives.ts';
-import { clampNumber, computeSlowMoAudioFactors } from '../audioMath.ts';
+import { clampNumber } from '../audioMath.ts';
 
 export function playVocalTraumaCue(
   ctx: SynthContext,
@@ -16,9 +16,6 @@ export function playVocalTraumaCue(
 ): void {
   const g = ctx.graph;
   const t0 = g.ctx.currentTime;
-  const factors = computeSlowMoAudioFactors(ctx.timeScale);
-  const pScale = factors.oscillatorPitchScale;
-  const stretch = factors.envelopeStretch;
 
   const targetBus: AudioNodeLike =
     worldPos && listenerPos
@@ -37,8 +34,8 @@ export function playVocalTraumaCue(
       ctx,
       targetBus,
       'WHITE',
-      t0 + 0.015 * stretch,
-      0.16 * stretch,
+      t0 + 0.015,
+      0.16,
       0.16,
       'bandpass',
       720,
@@ -51,8 +48,8 @@ export function playVocalTraumaCue(
       ctx,
       targetBus,
       'WHITE',
-      t0 + 0.015 * stretch,
-      0.15 * stretch,
+      t0 + 0.015,
+      0.15,
       0.11,
       'bandpass',
       1580,
@@ -65,10 +62,10 @@ export function playVocalTraumaCue(
       ctx,
       targetBus,
       'sawtooth',
-      t0 + 0.02 * stretch,
-      0.12 * stretch,
-      145 * pScale,
-      192 * pScale,
+      t0 + 0.02,
+      0.12,
+      145,
+      192,
       0.065,
       undefined,
       0.02,
@@ -78,8 +75,8 @@ export function playVocalTraumaCue(
 
   if (cue === 'WET_HEMOTHORAX_COUGH') {
     for (let c = 0; c < 2; c++) {
-      const tc = t0 + (0.02 + c * 0.135) * stretch;
-      const dur = (0.11 - c * 0.015) * stretch;
+      const tc = t0 + (0.02 + c * 0.135);
+      const dur = (0.11 - c * 0.015);
       spawnNoiseBurst(
         ctx,
         targetBus,
@@ -114,8 +111,8 @@ export function playVocalTraumaCue(
         'sawtooth',
         tc,
         dur * 0.85,
-        122 * pScale,
-        86 * pScale,
+        122,
+        86,
         0.08,
         undefined,
         0.005,
@@ -128,29 +125,28 @@ export function playVocalTraumaCue(
   const maxFreqHz = Math.max(2000, Math.min(20000, (g.ctx.sampleRate || 44100) * 0.48));
   const glottal = g.createOscillator();
   glottal.type = 'sawtooth';
-  glottal.frequency.setValueAtTime(142 * pScale, t0 + 0.015 * stretch);
-  glottal.frequency.exponentialRampToValueAtTime(96 * pScale, t0 + 0.19 * stretch);
+  glottal.frequency.setValueAtTime(142, t0 + 0.015);
+  glottal.frequency.exponentialRampToValueAtTime(96, t0 + 0.19);
 
   const formant1 = g.createBiquadFilter();
   formant1.type = 'bandpass';
-  formant1.frequency.setValueAtTime(clampNumber(590 * factors.lowpassScale, 80, maxFreqHz), t0);
+  formant1.frequency.setValueAtTime(clampNumber(590, 80, maxFreqHz), t0);
   formant1.Q.setValueAtTime(4.8, t0);
 
   const gruntEnv = g.createGain();
   gruntEnv.gain.value = 0;
   gruntEnv.gain.setValueAtTime(0.0001, t0);
-  gruntEnv.gain.setValueAtTime(0.0001, t0 + 0.015 * stretch);
-  gruntEnv.gain.linearRampToValueAtTime(0.14, t0 + 0.038 * stretch);
-  gruntEnv.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.20 * stretch);
-  gruntEnv.gain.linearRampToValueAtTime(0, t0 + 0.208 * stretch);
+  gruntEnv.gain.setValueAtTime(0.0001, t0 + 0.015);
+  gruntEnv.gain.linearRampToValueAtTime(0.14, t0 + 0.038);
+  gruntEnv.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.20);
+  gruntEnv.gain.linearRampToValueAtTime(0, t0 + 0.208);
 
-  const stopAt = t0 + 0.218 * stretch;
+  const stopAt = t0 + 0.218;
   glottal.connect(formant1);
   formant1.connect(gruntEnv);
   gruntEnv.connect(targetBus);
 
-  glottal.start(t0 + 0.015 * stretch);
+  glottal.start(t0 + 0.015);
   glottal.stop(stopAt);
-  ctx.registerScaledOscillator(glottal, pScale, stopAt);
   ctx.registerTransientNodes([glottal, formant1, gruntEnv], stopAt + 0.05);
 }

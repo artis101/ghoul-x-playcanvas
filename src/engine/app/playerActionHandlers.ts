@@ -41,11 +41,6 @@ export function handleThrowGrenade(app: IGhoulXApp): void {
   });
 }
 
-export function handleToggleBulletTime(app: IGhoulXApp): void {
-  const entering = app.mayhemDirector.bulletTime.toggleReflex();
-  app.combatAudio.playSlowMoTransition(entering);
-}
-
 export function spawnFreshWave(app: IGhoulXApp): void {
   app.destructionManager.resetAll();
   app.mayhemDirector.resetWave(true);

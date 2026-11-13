@@ -119,7 +119,7 @@ export class VascularBloodFxEmitter {
       switch (emissionMode) {
         case 'ARTERIAL_PULSING_JET': {
           const pulseGate = 0.22 + 0.78 * systolicWave;
-          const intervalS = Math.max(0.022, 0.075 / Math.max(0.25, pulseGate * mapRatio));
+          const intervalS = Math.max(0.05, 0.15 / Math.max(0.25, pulseGate * mapRatio));
           while (timer >= intervalS) {
             timer -= intervalS;
             if (systolicWave >= 0.25) {
@@ -132,7 +132,7 @@ export class VascularBloodFxEmitter {
         }
         case 'VENOUS_OOZE': {
           const factor = state.alive ? Math.max(0.25, mapRatio) : 0.12;
-          const intervalS = Math.max(0.065, 0.18 / Math.max(0.2, (wound.baseBleedMlPerSec / 14) * factor));
+          const intervalS = Math.max(0.12, 0.32 / Math.max(0.2, (wound.baseBleedMlPerSec / 14) * factor));
           while (timer >= intervalS) {
             timer -= intervalS;
             this.spawnVenousOozeDrip(origin, dir, 0.38 + 0.35 * factor);
@@ -156,7 +156,7 @@ export class VascularBloodFxEmitter {
       drop.addComponent('render', { type: 'sphere', material: this.vascularMaterials.arterialJetMat, castShadows: false });
     }
     const streakLen = Math.min(0.068, Math.max(0.028, jetSpeedMs * 0.009));
-    drop.setLocalScale(0.013, 0.013, streakLen);
+    drop.setLocalScale(0.006, 0.006, streakLen);
     drop.setPosition(originWorld.x, originWorld.y, originWorld.z);
     this.fxRoot.addChild(drop);
 
@@ -182,7 +182,7 @@ export class VascularBloodFxEmitter {
     if (this.app.systems?.render) {
       drip.addComponent('render', { type: 'sphere', material: this.vascularMaterials.venousOozeMat, castShadows: false });
     }
-    drip.setLocalScale(0.018, 0.026, 0.018);
+    drip.setLocalScale(0.007, 0.016, 0.007);
     drip.setPosition(originWorld.x, originWorld.y, originWorld.z);
     this.fxRoot.addChild(drip);
 
@@ -222,7 +222,7 @@ export class VascularBloodFxEmitter {
       if (pool.vesselKind !== vesselKind) continue;
       const dx = pool.centerX - x, dz = pool.centerZ - z;
       if (dx * dx + dz * dz <= 0.18 * 0.18) {
-        const nextTarget = Math.min(0.74, pool.targetRadiusM + 0.036);
+        const nextTarget = Math.min(0.5, pool.targetRadiusM + 0.024);
         if (nextTarget > pool.currentRadiusM) {
           pool.targetRadiusM = nextTarget;
           pool.phase = 'EXPANDING';
@@ -251,7 +251,7 @@ export class VascularBloodFxEmitter {
 
     this.pools.push({
       entity: poolEnt, vesselKind, centerX: x, centerZ: z, currentRadiusM: 0.05,
-      targetRadiusM: vesselKind === 'ARTERIAL' ? 0.3 : 0.38,
+      targetRadiusM: vesselKind === 'ARTERIAL' ? 0.2 : 0.24,
       growthRateMPerSec: vesselKind === 'ARTERIAL' ? 0.32 : 0.18,
       phase: 'EXPANDING',
     });
@@ -290,7 +290,7 @@ export class VascularBloodFxEmitter {
         if (spd > 0.15) {
           this.scratchLookAt.set(p.position.x + p.velocity.x, p.position.y + p.velocity.y, p.position.z + p.velocity.z);
           p.entity.lookAt(this.scratchLookAt);
-          p.entity.setLocalScale(0.012, 0.012, Math.min(0.075, Math.max(0.022, spd * 0.0085)));
+          p.entity.setLocalScale(0.006, 0.006, Math.min(0.09, Math.max(0.03, spd * 0.011)));
         }
       }
       if (p.position.y <= 0.012) {

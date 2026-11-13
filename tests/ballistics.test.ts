@@ -180,7 +180,7 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       expect(m855LastWound.exitEnergyJ).toBeGreaterThan(500);
     });
 
-    it('NIJ IIIA Kevlar stops 00 Buckshot, .50 AE JHP, and 5.56 JHP while Sabot Slug, M855, and 7.62 AP perforate it', () => {
+    it('rifle plate stops buckshot, pistol rounds, ball, JHP and slugs; only 7.62 tungsten AP perforates it', () => {
       const shooterPos = vec3(-0.02, 1.33, 0);
       const chestTargetPos = vec3(0, 0, -12);
       const aimDir = normalize(sub(vec3(-0.02, 1.33, -12), shooterPos));
@@ -204,14 +204,13 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       const m855Rep = simulateShot(WEAPON_M4A1, AMMO_556_NATO_M855, shooterPos, aimDir, m855Target, DEFAULT_ENVIRONMENT);
       const ap762Rep = simulateShot(WEAPON_MSG90, AMMO_762_NATO_AP_TUNGSTEN, shooterPos, aimDir, ap762Target, DEFAULT_ENVIRONMENT);
 
-      expect(slugRep.woundEvents.some((w) => w.armorStopped)).toBe(false);
-      expect(slugRep.woundEvents.some((w) => w.layerType === 'CORTICAL_BONE')).toBe(true);
-      expect(m855Rep.woundEvents.some((w) => w.armorStopped)).toBe(false);
+      expect(slugRep.woundEvents.every((w) => w.armorStopped)).toBe(true);
+      expect(m855Rep.woundEvents.every((w) => w.armorStopped)).toBe(true);
       expect(ap762Rep.woundEvents.some((w) => w.armorStopped)).toBe(false);
       expect(ap762Rep.woundEvents.some((w) => w.layerType === 'ORGAN_HEART')).toBe(true);
     });
 
-    it('femur fracture disables leg support and weapon-arm shot disarms enemy without instant death', () => {
+    it('femur fracture disables leg support, an upper-arm wound is fought through, a grip-hand hit disarms', () => {
       const target = createTargetHealthState('target_limb', 'Militia', vec3(0, 0, -6), 0);
 
       const rArmPos = target.ragdollBones.UPPER_ARM_LEFT.position;
@@ -227,6 +226,21 @@ describe('GHOUL-X Realistic Ballistics, Stopping vs Penetration Power & Heavy-Bo
       );
       expect(armReport.hitTarget).toBe(true);
       applyShotReportToTarget(target, armReport);
+      expect(target.alive).toBe(true);
+      expect(target.weaponDropped).toBe(false);
+
+      const gripPos = target.ragdollBones.HAND_RIGHT.position;
+      const gripOrigin = vec3(gripPos.x, gripPos.y, 0);
+      const gripReport = simulateShot(
+        WEAPON_M4A1,
+        AMMO_556_NATO_M855,
+        gripOrigin,
+        normalize(sub(gripPos, gripOrigin)),
+        target,
+        DEFAULT_ENVIRONMENT
+      );
+      expect(gripReport.woundEvents.some((w) => w.ghoulZone === 'HAND_RIGHT')).toBe(true);
+      applyShotReportToTarget(target, gripReport);
       expect(target.alive).toBe(true);
       expect(target.weaponDropped).toBe(true);
 

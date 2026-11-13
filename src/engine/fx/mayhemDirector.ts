@@ -1,16 +1,4 @@
 // MayhemDirector Root Facade & Re-export Barrel
-export {
-  BulletTimeController,
-} from './bulletTime/bulletTimeController.ts';
-export {
-  type BulletTimeOptions,
-  type BulletTimeVignetteState,
-  type BulletTimeVignetteTint,
-  type KillPunchReason,
-  type KillPunchState,
-  type ReflexMeterState,
-} from './bulletTime/bulletTimeTypes.ts';
-export { BulletTimeScript, type BulletTimeScriptLifecycleState } from './bulletTime/bulletTimeScript.ts';
 
 export {
   basisColumnsToQuaternion,
@@ -40,7 +28,6 @@ export {
   BARREL_SYMPATHETIC_IGNITION_J,
   DEFAULT_HAZARD_BARREL_POSITIONS,
 } from './barrels/barrelTypes.ts';
-export { HazardBarrelsScript, type HazardBarrelsScriptLifecycleState } from './barrels/hazardBarrelScript.ts';
 
 export {
   type CasingBounceEvent,
@@ -57,4 +44,3 @@ export {
   type MayhemDirectorOptions,
 } from './mayhemDirectorCore.ts';
 export { LingeringGunsmokePool } from './smoke/lingeringGunsmokePool.ts';
-export { MayhemDirectorScript } from './mayhemDirectorScript.ts';

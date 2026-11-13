@@ -7,8 +7,6 @@ export interface EngineMaterialPalette {
   skinTone: pc.StandardMaterial;
   bootsDark: pc.StandardMaterial;
 
-  // X-Ray silhouette
-  xraySkinMat: pc.StandardMaterial;
 
   // Internal skeleton
   boneMat: pc.StandardMaterial;

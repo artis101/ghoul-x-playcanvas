@@ -8,13 +8,10 @@ export class AudioCounters {
   public vocalCueCount = 0;
   public explosionCount = 0;
   public tinnitusTriggerCount = 0;
-  public slowMoTransitionCount = 0;
 
   public buildDiagnostics(
     isAvailable: boolean,
     isUnlocked: boolean,
-    timeScale: number,
-    slowMoActive: boolean,
     pannerModel: PanningModelType,
     masterVolume: number,
     lastWeaponPitchJitter: number,
@@ -22,8 +19,6 @@ export class AudioCounters {
     return {
       available: isAvailable,
       unlocked: isUnlocked,
-      timeScale,
-      slowMoActive,
       pannerModel,
       masterVolume,
       weaponFireCount: this.weaponFireCount,
@@ -33,7 +28,6 @@ export class AudioCounters {
       vocalCueCount: this.vocalCueCount,
       explosionCount: this.explosionCount,
       tinnitusTriggerCount: this.tinnitusTriggerCount,
-      slowMoTransitionCount: this.slowMoTransitionCount,
       lastWeaponPitchJitter,
     };
   }

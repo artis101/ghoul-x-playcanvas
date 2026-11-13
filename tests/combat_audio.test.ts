@@ -1,11 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   CombatAudioEngine,
-  MIN_AUDIO_TIME_SCALE,
-  MAX_AUDIO_TIME_SCALE,
   TINNITUS_PROXIMITY_RADIUS_M,
-  clampTimeScale,
-  computeSlowMoAudioFactors,
   computeSpatialAudioParams,
   createMasterLimiterCurve,
   createSoftClipCurve,
@@ -352,34 +348,7 @@ class MockAudioContext implements AudioContextLike<MockAudioBuffer> {
 // ============================================================================
 
 describe('AAA 3D Spatial Combat, Destruction & Gore WebAudio Engine', () => {
-  describe('1. Parameter Curves, Slow-Mo Clamping & 3D Spatial Attenuation/Panning Math', () => {
-    it('clamps timeScale strictly into [0.08, 2.0] and handles non-finite values safely', () => {
-      expect(clampTimeScale(1.0)).toBe(1.0);
-      expect(clampTimeScale(0.2)).toBeCloseTo(0.2, 6);
-      expect(clampTimeScale(-5.0)).toBe(MIN_AUDIO_TIME_SCALE);
-      expect(clampTimeScale(0.0)).toBe(MIN_AUDIO_TIME_SCALE);
-      expect(clampTimeScale(0.01)).toBe(MIN_AUDIO_TIME_SCALE);
-      expect(clampTimeScale(99.0)).toBe(MAX_AUDIO_TIME_SCALE);
-      expect(clampTimeScale(Number.NaN)).toBe(1.0);
-      expect(clampTimeScale(Number.POSITIVE_INFINITY)).toBe(1.0);
-    });
-
-    it('computes deep cinematic F.E.A.R. slow-motion pitch drop and envelope time-stretching at 0.2x', () => {
-      const normal = computeSlowMoAudioFactors(1.0);
-      expect(normal.playbackRate).toBe(1.0);
-      expect(normal.oscillatorPitchScale).toBe(1.0);
-      expect(normal.envelopeStretch).toBe(1.0);
-      expect(normal.lowpassScale).toBe(1.0);
-
-      const reflexSlowMo = computeSlowMoAudioFactors(0.2);
-      expect(reflexSlowMo.clampedTimeScale).toBeCloseTo(0.2, 6);
-      expect(reflexSlowMo.playbackRate).toBeCloseTo(0.2, 6);
-      expect(reflexSlowMo.oscillatorPitchScale).toBeGreaterThanOrEqual(0.22);
-      expect(reflexSlowMo.oscillatorPitchScale).toBeLessThan(0.35);
-      expect(reflexSlowMo.envelopeStretch).toBeGreaterThan(3.5);
-      expect(reflexSlowMo.lowpassScale).toBeLessThan(0.65);
-    });
-
+  describe('1. Parameter Curves & 3D Spatial Attenuation/Panning Math', () => {
     it('computes 3D distance attenuation, air-absorption filtering, warehouse wet send, and yaw-aware stereo pan', () => {
       const listener = { x: 0, y: 1.62, z: 0 };
 
@@ -473,7 +442,7 @@ describe('AAA 3D Spatial Combat, Destruction & Gore WebAudio Engine', () => {
   });
 
   describe('2. Safe Headless Degradation (Absent AudioContext in Node/Vitest)', () => {
-    it('degrades cleanly to a zero-throw no-op across all combat, destruction, gore, explosion, and slow-mo APIs', async () => {
+    it('degrades cleanly to a zero-throw no-op across all combat, destruction, gore and explosion APIs', async () => {
       const engine = new CombatAudioEngine();
       expect(engine.isUnlocked()).toBe(false);
       expect(await engine.unlock()).toBe(false);
@@ -482,8 +451,6 @@ describe('AAA 3D Spatial Combat, Destruction & Gore WebAudio Engine', () => {
       const targetPos = { x: 1.5, y: 1.2, z: -3.0 };
 
       engine.updateListener(listener, 15, -4);
-      engine.setTimeScale(0.2);
-      expect(engine.getTimeScale()).toBeCloseTo(0.2, 6);
 
       engine.playWeaponFire('m590_shotgun', 'BUCKSHOT_00', false);
       engine.playWeaponFire('silver_talon_50ae', 'JHP', true);
@@ -529,9 +496,7 @@ describe('AAA 3D Spatial Combat, Destruction & Gore WebAudio Engine', () => {
       }
 
       engine.playExplosion(targetPos, listener, 1.2);
-      engine.playSlowMoTransition(true);
       engine.update(0.5);
-      engine.playSlowMoTransition(false);
 
       const diag = engine.getDiagnostics();
       expect(diag.weaponFireCount).toBe(4);
@@ -541,7 +506,6 @@ describe('AAA 3D Spatial Combat, Destruction & Gore WebAudio Engine', () => {
       expect(diag.vocalCueCount).toBe(3);
       expect(diag.explosionCount).toBe(1);
       expect(diag.tinnitusTriggerCount).toBe(1); // targetPos is ~3.38m <= 4.5m!
-      expect(diag.slowMoTransitionCount).toBe(2);
 
       engine.destroy();
       expect(engine.isAvailable()).toBe(false);
@@ -837,66 +801,6 @@ describe('AAA 3D Spatial Combat, Destruction & Gore WebAudio Engine', () => {
         ),
       ).toBe(true);
       expect(engine.getDiagnostics().tinnitusTriggerCount).toBe(1);
-
-      engine.destroy();
-    });
-
-    it('drops active & newly spawned sounds into slow-mo pitch on setTimeScale(0.2) and schedules/cancels Reflex heartbeat', () => {
-      const mockCtx = new MockAudioContext('running', 22050);
-      mockCtx.currentTime = 2.0;
-
-      const engine = new CombatAudioEngine({
-        context: mockCtx,
-        random: () => 0.5,
-        autoUnlockOnGesture: false,
-      });
-
-      // Fire a shot at normal 1.0x speed, then engage F.E.A.R. slow-mo (0.2x) 30ms mid-blast!
-      engine.playWeaponFire('silver_talon_50ae', 'FMJ', false);
-      const inFlightSource = mockCtx.bufferSources[0];
-      const inFlightOsc = mockCtx.oscillators[0];
-      expect(inFlightSource.playbackRate.value).toBeCloseTo(1.05, 3);
-
-      mockCtx.currentTime = 2.03;
-      engine.playSlowMoTransition(true);
-      engine.setTimeScale(0.2);
-
-      // Active in-flight buffer source playbackRate & oscillator detune immediately ramp down!
-      expect(inFlightSource.playbackRate.value).toBeCloseTo(1.05 * 0.2, 4);
-      expect(inFlightOsc.detune.value).toBeLessThan(-1800); // > 1.5 octaves pitch drop in cents!
-
-      // Newly fired M590 shotgun in 0.2x slow-mo pitches down AND stretches 220ms pump rack!
-      const oscBeforeSlowShotgun = mockCtx.oscillators.length;
-      engine.playWeaponFire('m590_shotgun', 'BUCKSHOT_00', false);
-      const slowFactors = computeSlowMoAudioFactors(0.2);
-      const slowShotgunOscs = mockCtx.oscillators.slice(oscBeforeSlowShotgun);
-      const expectedRackStart = 2.03 + 0.22 * slowFactors.envelopeStretch;
-      expect(
-        slowShotgunOscs.some(
-          (o) =>
-            o.startTime !== null &&
-            Math.abs(o.startTime - expectedRackStart) < 0.01,
-        ),
-      ).toBe(true);
-
-      // Extending slow-mo past pre-scheduled cardiac cycles schedules fresh lub-dub beats via update()
-      mockCtx.currentTime = 7.5;
-      const oscCountBeforeTick = mockCtx.oscillators.length;
-      engine.update(0.016);
-      expect(mockCtx.oscillators.length).toBeGreaterThan(oscCountBeforeTick);
-
-      // Exiting slow-mo cancels heartbeat bus and plays upward snap-back time-warp whoosh (32Hz -> 178Hz)
-      const oscBeforeExit = mockCtx.oscillators.length;
-      engine.playSlowMoTransition(false);
-      engine.setTimeScale(1.0);
-      const exitOscs = mockCtx.oscillators.slice(oscBeforeExit);
-      expect(
-        exitOscs.some(
-          (o) =>
-            o.frequency.events.some((e) => Math.abs(e.value - 32) < 1) &&
-            o.frequency.events.some((e) => Math.abs(e.value - 178) < 1),
-        ),
-      ).toBe(true);
 
       engine.destroy();
     });

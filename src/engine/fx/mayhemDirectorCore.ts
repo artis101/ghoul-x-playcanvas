@@ -4,8 +4,6 @@ import type { BlastEvent, DestructibleMaterialKind } from '../../contracts/destr
 import { add, cross, normalize, scale, vec3 } from '../../core/ballistics/vec3.ts';
 import type { HardwareInstancedPool } from '../physics/instancedPool.ts';
 import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
-import { BulletTimeController } from './bulletTime/bulletTimeController.ts';
-import type { BulletTimeOptions } from './bulletTime/bulletTimeTypes.ts';
 import { ExplosiveBarrelManager } from './barrels/explosiveBarrelManager.ts';
 import type { HazardBarrelInstance } from './barrels/barrelTypes.ts';
 import { buildUnitQuadZMesh } from './particles/fxMeshBuilders.ts';
@@ -52,7 +50,6 @@ export interface MayhemDirectorOptions {
   maxBloodSplatters?: number;
   maxShrapnelShards?: number;
   dynamicLightPoolSize?: number;
-  bulletTimeOptions?: BulletTimeOptions;
   onCasingBounce?: (event: CasingBounceEvent) => void;
   onExplosionBlast?: (blast: BlastEvent) => void;
   onBarrelIgnited?: (barrel: HazardBarrelInstance) => void;
@@ -65,7 +62,6 @@ export class MayhemDirector {
   public readonly rapierWorld: RapierPhysicsWorld;
   public readonly rootEntity: pc.Entity;
 
-  public readonly bulletTime: BulletTimeController;
   public readonly barrels: ExplosiveBarrelManager;
 
   public readonly brassCasingPool: HardwareInstancedPool;
@@ -135,7 +131,6 @@ export class MayhemDirector {
     this.templates = createExplosionTemplateMaterials(dev);
     this.lightPool = createDynamicLightPool(this.app, this.rootEntity, options.dynamicLightPoolSize ?? 2);
 
-    this.bulletTime = new BulletTimeController(options.bulletTimeOptions);
     this.barrels = new ExplosiveBarrelManager({
       app: this.app,
       rapierWorld: this.rapierWorld,
@@ -290,7 +285,6 @@ export class MayhemDirector {
       {
         rapierWorld: this.rapierWorld,
         bloodSplatterPool: this.bloodSplatterPool,
-        bulletTime: this.bulletTime,
         isSurfaceOpenAtHit: this.isSurfaceOpenAtHit,
         slotAnchors: this.bloodSplatterAnchors,
       },
@@ -304,7 +298,6 @@ export class MayhemDirector {
       {
         rapierWorld: this.rapierWorld,
         bloodSplatterPool: this.bloodSplatterPool,
-        bulletTime: this.bulletTime,
         isSurfaceOpenAtHit: this.isSurfaceOpenAtHit,
         slotAnchors: this.bloodSplatterAnchors,
       },
@@ -317,7 +310,6 @@ export class MayhemDirector {
     return pruneUnsupportedBloodSplatters({
       rapierWorld: this.rapierWorld,
       bloodSplatterPool: this.bloodSplatterPool,
-      bulletTime: this.bulletTime,
       isSurfaceOpenAtHit: this.isSurfaceOpenAtHit,
       slotAnchors: this.bloodSplatterAnchors,
     });
@@ -332,49 +324,44 @@ export class MayhemDirector {
     this.rapierWorld.wakeAllSleepingDynamicBodies();
   }
 
-  public notifyExternalExplosion(blast: BlastEvent, killedEnemyCount = 0): void {
+  public notifyExternalExplosion(blast: BlastEvent): void {
     if (this.destroyed) return;
     this.triggerExplosionLight(blast.centerWorld, Math.max(18.0, blast.radiusM * 2.5));
     this.spawnMultiStageExplosionFx(blast);
     this.lingeringSmokePool.applyBlastSwirl(blast.centerWorld, blast.radiusM, blast.peakImpulseNs);
     this.barrels.applyBlast(blast);
     this.syncSurfaceBreaches();
-    if (killedEnemyCount >= 2) this.bulletTime.triggerKillPunch(0.35, 0.16, 'MULTI_KILL_BLAST');
   }
 
-  public update(rawDt: number): number {
-    if (this.destroyed || !Number.isFinite(rawDt) || rawDt <= 0) return 0;
-    const scaledDt = this.bulletTime.update(rawDt);
+  public update(dt: number): void {
+    if (this.destroyed || !Number.isFinite(dt) || dt <= 0) return;
 
-    this.barrels.update(scaledDt);
+    this.barrels.update(dt);
     this.syncSurfaceBreaches();
-    stepDynamicLights(this.lightPool, scaledDt);
+    stepDynamicLights(this.lightPool, dt);
 
-    stepFireballLobes(this.fireballLobes, scaledDt);
+    stepFireballLobes(this.fireballLobes, dt);
     const camPos =
       this.cachedCameraPos ??
       (this.cachedCameraEntity && this.cachedCameraEntity.parent
         ? this.cachedCameraEntity.getPosition()
         : null);
-    stepBillowPlumes(this.billowPlumes, scaledDt, camPos);
-    this.lingeringSmokePool.update(scaledDt, camPos);
+    stepBillowPlumes(this.billowPlumes, dt, camPos);
+    this.lingeringSmokePool.update(dt, camPos);
 
-    stepTrackedCasingBounces(this.trackedBuffer, scaledDt, this.onCasingBounce);
+    stepTrackedCasingBounces(this.trackedBuffer, dt, this.onCasingBounce);
 
-    this.brassCasingPool.syncFromPhysics(this.rapierWorld, scaledDt);
-    this.shotgunHullPool.syncFromPhysics(this.rapierWorld, scaledDt);
-    this.shrapnelPool.syncFromPhysics(this.rapierWorld, scaledDt);
-    this.tracerCorePool.syncFromPhysics(null, scaledDt);
-    this.tracerHaloPool.syncFromPhysics(null, scaledDt);
-    this.impactSparkPool.syncFromPhysics(null, scaledDt);
+    this.brassCasingPool.syncFromPhysics(this.rapierWorld, dt);
+    this.shotgunHullPool.syncFromPhysics(this.rapierWorld, dt);
+    this.shrapnelPool.syncFromPhysics(this.rapierWorld, dt);
+    this.tracerCorePool.syncFromPhysics(null, dt);
+    this.tracerHaloPool.syncFromPhysics(null, dt);
+    this.impactSparkPool.syncFromPhysics(null, dt);
     this.bloodSplatterPool.upload();
-
-    return scaledDt;
   }
 
   public resetWave(clearBloodDecals = false): void {
     if (this.destroyed) return;
-    this.bulletTime.reset();
     this.barrels.resetBarrels();
     this.trackedBuffer.reset();
     this.lingeringSmokePool.clear();
@@ -402,7 +389,6 @@ export class MayhemDirector {
     }
     this.clearTransientExplosionAndImpactFx();
     destroyExplosionTemplateMaterials(this.templates);
-    this.bulletTime.destroy();
     this.barrels.destroy();
     this.lingeringSmokePool.destroy();
     destroyMayhemPools(this.pools);

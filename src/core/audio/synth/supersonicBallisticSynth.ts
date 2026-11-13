@@ -5,7 +5,7 @@ import type {
 } from '../types.ts';
 import type { SynthContext } from './synthPrimitives.ts';
 import { spawnNoiseBurst, spawnPitchDropOsc } from './synthPrimitives.ts';
-import { clampNumber, computeSlowMoAudioFactors } from '../audioMath.ts';
+import { clampNumber } from '../audioMath.ts';
 import { synthesizeRicochetWhine, synthesizeSteelZing } from './ricochetAudioSynth.ts';
 
 const SPEED_OF_SOUND_MS = 343.0;
@@ -49,9 +49,6 @@ export function playEnemyBallisticShot(
 ): SupersonicShotAudioResult {
   const g = ctx.graph;
   const now = g.ctx.currentTime;
-  const factors = computeSlowMoAudioFactors(ctx.timeScale);
-  const pScale = factors.oscillatorPitchScale;
-  const stretch = factors.envelopeStretch;
 
   const muzzle = params.muzzleOrigin;
   const impact = params.impactPoint;
@@ -86,7 +83,7 @@ export function playEnemyBallisticShot(
 
     if (tAlong > 0.35 && dPerp < SUPERSONIC_CRACK_MAX_RADIUS_M) {
       firedSupersonicCrack = true;
-      crackDelayS = clampNumber((tAlong / speedMs) * stretch, 0, 0.45);
+      crackDelayS = clampNumber((tAlong / speedMs), 0, 0.45);
       const tCrack = now + crackDelayS;
       const prox = clampNumber(1.0 - dPerp / SUPERSONIC_CRACK_MAX_RADIUS_M, 0.24, 1.0);
 
@@ -100,15 +97,15 @@ export function playEnemyBallisticShot(
       );
 
       // Pre-crack supersonic Doppler whiz sweep (2.4kHz -> 680Hz)
-      const tWhiz = Math.max(now, tCrack - 0.008 * stretch);
+      const tWhiz = Math.max(now, tCrack - 0.008);
       spawnPitchDropOsc(
         ctx,
         crackChain.input,
         'sine',
         tWhiz,
-        0.056 * stretch,
-        2400 * pScale,
-        680 * pScale,
+        0.056,
+        2400,
+        680,
         0.28 * prox,
         undefined,
         0.002,
@@ -120,7 +117,7 @@ export function playEnemyBallisticShot(
         crackChain.input,
         'WHITE',
         tCrack,
-        0.028 * stretch,
+        0.028,
         0.92 * prox,
         'highpass',
         2600,
@@ -134,9 +131,9 @@ export function playEnemyBallisticShot(
         crackChain.input,
         'sawtooth',
         tCrack,
-        0.024 * stretch,
-        3800 * pScale,
-        920 * pScale,
+        0.024,
+        3800,
+        920,
         0.54 * prox,
         g.heavyDriveCurve,
         0.0004,
@@ -146,9 +143,9 @@ export function playEnemyBallisticShot(
 
   // Stage 2: Speed-of-sound delayed, distance-LPF 3D muzzle thump
   const distToMuzzle = Math.hypot(lPos.x - muzzle.x, lPos.y - muzzle.y, lPos.z - muzzle.z);
-  const rawAcousticDelayS = clampNumber((distToMuzzle / SPEED_OF_SOUND_MS) * stretch, 0, 0.65);
+  const rawAcousticDelayS = clampNumber((distToMuzzle / SPEED_OF_SOUND_MS), 0, 0.65);
   const muzzleDelayS = firedSupersonicCrack
-    ? Math.max(rawAcousticDelayS, crackDelayS + 0.012 * stretch)
+    ? Math.max(rawAcousticDelayS, crackDelayS + 0.012)
     : rawAcousticDelayS;
   const tMuzzle = now + muzzleDelayS;
 
@@ -167,9 +164,9 @@ export function playEnemyBallisticShot(
     muzzleChain.input,
     'triangle',
     tMuzzle,
-    0.135 * stretch,
-    158 * pScale,
-    46 * pScale,
+    0.135,
+    158,
+    46,
     0.72,
     g.warmDriveCurve,
     0.0012,
@@ -179,7 +176,7 @@ export function playEnemyBallisticShot(
     muzzleChain.input,
     'WHITE',
     tMuzzle,
-    0.125 * stretch,
+    0.125,
     0.74,
     'lowpass',
     lpfStartHz,
@@ -192,8 +189,8 @@ export function playEnemyBallisticShot(
     ctx,
     muzzleChain.input,
     'PINK',
-    tMuzzle + 0.006 * stretch,
-    0.26 * stretch,
+    tMuzzle + 0.006,
+    0.26,
     0.48,
     'lowpass',
     1750,
@@ -217,9 +214,6 @@ export function playNearMissGrazeTinnitus(
 ): void {
   const g = ctx.graph;
   const t0 = g.ctx.currentTime;
-  const factors = computeSlowMoAudioFactors(ctx.timeScale);
-  const pScale = factors.oscillatorPitchScale;
-  const stretch = factors.envelopeStretch;
 
   const chain = g.createSpatialChain(
     hitOrigin,
@@ -232,17 +226,17 @@ export function playNearMissGrazeTinnitus(
 
   if (kind === 'HELMET_POP') {
     synthesizeSteelZing(ctx, chain.input, t0, 1.15);
-    spawnPitchDropOsc(ctx, chain.input, 'triangle', t0, 0.14 * stretch, 1920 * pScale, 1280 * pScale, 0.56, g.heavyDriveCurve, 0.0005);
-    spawnNoiseBurst(ctx, chain.input, 'CRACKLE', t0, 0.095 * stretch, 0.68, 'bandpass', 2400, 1450, 2.2, 1.1, 0.0006);
+    spawnPitchDropOsc(ctx, chain.input, 'triangle', t0, 0.14, 1920, 1280, 0.56, g.heavyDriveCurve, 0.0005);
+    spawnNoiseBurst(ctx, chain.input, 'CRACKLE', t0, 0.095, 0.68, 'bandpass', 2400, 1450, 2.2, 1.1, 0.0006);
   } else {
-    spawnNoiseBurst(ctx, chain.input, 'WHITE', t0, 0.075 * stretch, 0.78, 'bandpass', 3200, 1100, 1.9, 1.15, 0.0005);
-    spawnPitchDropOsc(ctx, chain.input, 'sine', t0, 0.12 * stretch, 165 * pScale, 52 * pScale, 0.64, g.warmDriveCurve, 0.001);
+    spawnNoiseBurst(ctx, chain.input, 'WHITE', t0, 0.075, 0.78, 'bandpass', 3200, 1100, 1.9, 1.15, 0.0005);
+    spawnPitchDropOsc(ctx, chain.input, 'sine', t0, 0.12, 165, 52, 0.64, g.warmDriveCurve, 0.001);
   }
 
   const ringOsc = g.createOscillator();
   ringOsc.type = 'sine';
   const ringFreq = kind === 'HELMET_POP' ? 3960 : 4180;
-  const ringDur = (kind === 'HELMET_POP' ? 1.55 : 1.32) * stretch;
+  const ringDur = (kind === 'HELMET_POP' ? 1.55 : 1.32);
   ringOsc.frequency.setValueAtTime(ringFreq, t0 + 0.012);
 
   const ringGain = g.createGain();
@@ -258,7 +252,6 @@ export function playNearMissGrazeTinnitus(
   const stopAt = t0 + ringDur + 0.025;
   ringOsc.start(t0 + 0.012);
   ringOsc.stop(stopAt);
-  ctx.registerScaledOscillator(ringOsc, pScale, stopAt);
   ctx.registerTransientNodes([ringOsc, ringGain], stopAt + 0.05);
 }
 
