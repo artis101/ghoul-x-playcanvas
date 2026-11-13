@@ -13,6 +13,7 @@ import { stepWeaponBurstFire } from './tacticalBurstAndTracers.ts';
 import type { TacticalFsmContext } from './tacticalFsmContext.ts';
 import { stepWoundedBehaviour } from './woundFallback.ts';
 import { stepWeaponRecovery } from './weaponRecovery.ts';
+import { isAgentReloading } from './enemyWeaponMagazine.ts';
 
 /** Peeking states a combatant abandons when the duck reflex fires. */
 function duckedSubstate(substate: AlertedEngagementSubstate): AlertedEngagementSubstate {
@@ -96,8 +97,10 @@ export function stepAlertedEngagingState(
   });
   const woundedSubstate =
     doctrineSubstate === 'CLUTCHING_RETREAT' ? null : stepWoundedBehaviour(dt, hs, agent, playerDistM, ctx);
+  // A fighter changing magazines does it behind cover, not leaning out into the line of fire.
+  const shelter = ducking || isAgentReloading(agent);
   const substate =
-    woundedSubstate ?? (ducking ? duckedSubstate(doctrineSubstate) : doctrineSubstate);
+    woundedSubstate ?? (shelter ? duckedSubstate(doctrineSubstate) : doctrineSubstate);
   agent.engagementSubstate = substate;
 
   if (hs.combatantStatusTag === null) {

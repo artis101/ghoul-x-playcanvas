@@ -14,6 +14,7 @@ import type {
 } from '../../contracts/ai/aiContracts.ts';
 import type { EnemyArchetypeId, GhoulZoneId, Vec3Like } from '../../contracts/ballistics.ts';
 import type { EnemyArmamentState } from '../../core/ai/enemyArmamentFsm.ts';
+import type { EnemyMagazineState } from '../../core/ai/enemyGunHandling.ts';
 import type {
   AlertedEngagementSubstate,
   TraumaShockState,
@@ -215,6 +216,10 @@ export interface EnemyAiAgentRuntime {
   weaponPickupTimerS?: number;
   lastRelocationClockS?: number;
   lastObservedBurstCount?: number;
+
+  /** Rounds in and for the long gun and the backup pistol; see `enemyWeaponMagazine.ts`. */
+  primaryMagazine?: EnemyMagazineState;
+  sidearmMagazine?: EnemyMagazineState;
 
   armamentState?: EnemyArmamentState;
   burstState?: WeaponBurstState;

@@ -1,6 +1,6 @@
 import type { AmmoSpec, WeaponSpec } from '../../contracts/ballistics.ts';
-import { WEAPONS } from '../../core/ballistics/weapons.ts';
-import { type WeaponAmmoState, WEAPON_CAPACITIES } from './arsenalTypes.ts';
+import { WEAPONS, weaponCapacity } from '../../core/ballistics/weapons.ts';
+import type { WeaponAmmoState } from './arsenalTypes.ts';
 
 export class AmmoInventory {
   public readonly states: Map<string, WeaponAmmoState> = new Map();
@@ -12,7 +12,7 @@ export class AmmoInventory {
   public init(): void {
     this.states.clear();
     for (const w of WEAPONS) {
-      const cap = WEAPON_CAPACITIES[w.id] || { magCap: 12, reserve: 48 };
+      const cap = weaponCapacity(w.id);
       this.states.set(w.id, {
         magCap: cap.magCap,
         mag: cap.magCap,

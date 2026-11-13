@@ -156,6 +156,7 @@ export function simulateShot(
     let pelletImpactTime = 0;
     let pelletImpactPoint: Vec3Like | null = null;
     let pelletImpactZone: GhoulZoneId | null = null;
+    let pelletImpactSpeedMs = initialPelletSpeedMs;
     let pelletEnergyDeposited = 0;
     let pelletImpulseTransferred = 0;
     let stepIdx = 0;
@@ -212,6 +213,7 @@ export function simulateShot(
               pelletImpactPoint = hit.entryWorld;
               pelletImpactZone = col.ghoulZone;
               pelletImpactTime = proj.flightTimeS;
+              pelletImpactSpeedMs = length(proj.velocity);
 
               if (!primaryHitZone) {
                 primaryHitZone = col.ghoulZone;
@@ -254,7 +256,7 @@ export function simulateShot(
             }
 
             const cavRes = evaluateTissueCavitation(
-              proj, ammo, target, hit, currentSpeed, entryEnergy, bulletDir, variance, tissueDepthM
+              proj, ammo, target, hit, currentSpeed, entryEnergy, bulletDir, variance, tissueDepthM, pelletImpactSpeedMs
             );
             tissueDepthM += hit.pathLen;
             if (variance && !primaryVariance) primaryVariance = variance;

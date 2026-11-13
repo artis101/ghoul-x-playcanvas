@@ -15,6 +15,7 @@ import {
   jitterThreshold,
   rollsRibGlance,
 } from './terminalVariance.ts';
+import { pelletExpansionAtSpeed, pelletPatternSynergy } from './buckshotRangeFalloff.ts';
 
 export interface TissueCavitationResult {
   layerDamage: number;
@@ -42,15 +43,18 @@ export function evaluateTissueCavitation(
   entryEnergy: number,
   bulletDir: Vec3Like,
   variance?: PelletVariance,
-  tissueDepthM = 0
+  tissueDepthM = 0,
+  /** Speed the pellet struck the body at; buckshot deforms less the slower it lands. */
+  impactSpeedMs = currentSpeed
 ): TissueCavitationResult {
   const col = hit.collider;
+  const expansion = pelletExpansionAtSpeed(ammo, impactSpeedMs);
 
   if (col.layerType === 'SOFT_FLESH' || col.layerType.startsWith('ORGAN_')) {
-    const maxDiam = ammo.diameterM * ammo.tissueExpansionFactor;
+    const maxDiam = ammo.diameterM * expansion;
     const expansionProgress = Math.min(1.0, hit.pathLen / 0.11);
     const targetDiam =
-      ammo.diameterM * (1.0 + (ammo.tissueExpansionFactor - 1.0) * expansionProgress);
+      ammo.diameterM * (1.0 + (expansion - 1.0) * expansionProgress);
     proj.currentDiameterM = Math.min(maxDiam, Math.max(proj.currentDiameterM, targetDiam));
   }
 
@@ -78,8 +82,9 @@ export function evaluateTissueCavitation(
     (deltaP + energyDeposited / 195.0) * ammo.ragdollImpulseMultiplier;
   const impulseVec = scale(bulletDir, impulseMagnitude);
 
-  const pelletSynergy = ammo.pelletCount > 1 ? 1.48 : 1.0;
-  const stoppingDamageMult = Math.pow(ammo.tissueExpansionFactor, 1.25) * pelletSynergy;
+  // A tight pattern's overlapping channels hit harder; downrange the pellets are separate wounds.
+  const pelletSynergy = pelletPatternSynergy(ammo, proj.distanceTraveledM);
+  const stoppingDamageMult = Math.pow(expansion, 1.25) * pelletSynergy;
   const layerDamage =
     (energyDeposited / 36.0) * col.vitalityMultiplier * stoppingDamageMult;
 
@@ -165,11 +170,11 @@ export function evaluateTissueCavitation(
 
   const permRadiusCm = Math.max(
     0.4,
-    proj.currentDiameterM * 100 * 0.5 * ammo.tissueExpansionFactor
+    proj.currentDiameterM * 100 * 0.5 * expansion
   );
   const tempRadiusCm = Math.min(
     14.0,
-    permRadiusCm * (currentSpeed / 120.0) * Math.sqrt(ammo.tissueExpansionFactor)
+    permRadiusCm * (currentSpeed / 120.0) * Math.sqrt(expansion)
   );
 
   const woundEvent: WoundChannelEvent = {

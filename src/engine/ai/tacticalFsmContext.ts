@@ -22,6 +22,7 @@ export interface TacticalFsmContext {
   computeAimProfile: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => EnemyAimProfile;
   onAgentFlankShift?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => void;
   onAgentSidearmDrawStart?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => void;
+  onAgentReloadStart?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => void;
   onAgentCoverRetreat?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => void;
   tryRelocateCoverAnchor?: (hs: TargetHealthState, agent: EnemyAiAgentRuntime) => boolean;
 }

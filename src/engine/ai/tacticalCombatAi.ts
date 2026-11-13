@@ -247,7 +247,8 @@ export class TacticalCombatAiSystem {
     targets: readonly TargetHealthState[],
     playerEyeWorldPos: Vec3Like,
     playFireVisual?: BurstContext['playFireVisual'],
-    playerForwardWorld?: Vec3Like
+    playerForwardWorld?: Vec3Like,
+    playReloadVisual?: BurstContext['playReloadVisual']
   ): void {
     if (this.destroyed || !Number.isFinite(dt) || dt <= 0) return;
 
@@ -297,6 +298,7 @@ export class TacticalCombatAiSystem {
         interceptEnemyShotCover: this.interceptEnemyShotCover,
         onEnemyFireTracer: this.onEnemyFireTracer,
         playFireVisual,
+        playReloadVisual,
         onPlayerDamaged: this.onPlayerDamaged,
         onPlayerNearMissGraze: (ev) => {
           this.onPlayerNearMissGraze?.(ev);
@@ -319,6 +321,10 @@ export class TacticalCombatAiSystem {
         );
       },
       onAgentSidearmDrawStart: (hs) => this.notifyAgentSidearmDraw(hs),
+      onAgentReloadStart: (hs) =>
+        this.barkCoordinator.notifyReloading(hs.targetId, hs.archetype, hs.worldPosition, this.elapsedClockS, (b) =>
+          this.emitBark(b)
+        ),
       onAgentCoverRetreat: (hs) => {
         this.barkCoordinator.notifyCoverRetreat(
           hs.targetId,

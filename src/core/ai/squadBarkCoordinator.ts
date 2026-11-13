@@ -34,6 +34,7 @@ const SUPPRESS_REPLY_LINES = [
   'Keeping his head down! Go!',
 ];
 const COVER_RETREAT_LINES = ['Taking heavy fire! Shifting cover!', 'Pinned down! Need suppression!'];
+const RELOAD_LINES = ['Reloading!', 'Changing mags—cover me!', 'Mag out! Covering fire!'];
 const SIDEARM_LINES = ['Primary disabled—transitioning to M9!', 'Drawing backup sidearm!'];
 const ALLY_DOWN_LINES = [
   'Man down! Check your sectors!',
@@ -186,6 +187,17 @@ export class SquadBarkCoordinator {
     onBark: (bark: AiBarkPayload) => void
   ): void {
     const text = COVER_RETREAT_LINES[this.lineCounter++ % COVER_RETREAT_LINES.length];
+    this.tryEmitRadioBark(speakerId, archetype, 'RELOADING_COVER', text, worldPos, elapsedClockS, onBark);
+  }
+
+  public notifyReloading(
+    speakerId: string,
+    archetype: EnemyArchetypeId,
+    worldPos: Vec3Like,
+    elapsedClockS: number,
+    onBark: (bark: AiBarkPayload) => void
+  ): void {
+    const text = RELOAD_LINES[this.lineCounter++ % RELOAD_LINES.length];
     this.tryEmitRadioBark(speakerId, archetype, 'RELOADING_COVER', text, worldPos, elapsedClockS, onBark);
   }
 

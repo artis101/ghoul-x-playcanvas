@@ -2,6 +2,14 @@ import type { PlayerNearMissGrazePayload } from '../../contracts/ai/aiContracts.
 import type { GhoulZoneId, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
 import { computeSuppressionTargetWorld } from '../../core/ai/attackTokenPool.ts';
 import { cancelActiveBurst, stepWeaponBurstCadence } from '../../core/ai/weaponBurstFsm.ts';
+import {
+  canFireFromMagazine,
+  consumeMagazineRound,
+  enemyShotDamageScaleAtRange,
+  nextVolleyShotDelayS,
+  planVolleyShots,
+  resolveEnemyGunHandling,
+} from '../../core/ai/enemyGunHandling.ts';
 import { canDownedBodyAimAt } from '../../core/ballistics/triage/downedAimReach.ts';
 import {
   add,
@@ -27,7 +35,12 @@ import type {
   PlayerCombatVitals,
 } from './tacticalAiTypes.ts';
 import { wrapAngleRad, yawToward } from './combatantArmEvaluation.ts';
-import { ARCHETYPE_TUNING, SIDEARM_M9_TUNING } from './archetypeTuning.ts';
+import { ARCHETYPE_TUNING, BACKUP_SIDEARM_WEAPON_ID, SIDEARM_M9_TUNING } from './archetypeTuning.ts';
+import { getAgentMagazine } from './enemyWeaponMagazine.ts';
+
+function primaryHandling(hs: TargetHealthState) {
+  return resolveEnemyGunHandling(ARCHETYPE_TUNING[hs.archetype].primaryWeaponId);
+}
 import { resolveIncomingPlayerShotDamage } from './playerVitalsController.ts';
 
 export interface BurstContext {
@@ -37,6 +50,8 @@ export interface BurstContext {
   rapierWorld: RapierPhysicsWorld | null;
   interceptEnemyShotCover?: (origin: Vec3Like, dir: Vec3Like, maxDist: number) => EnemyCoverShotInterceptResult;
   playFireVisual?: (targetId: string, usingSidearm: boolean) => Vec3Like | undefined;
+  /** Plays the gun's reload clip; returns how long the reload takes, timed like the player's. */
+  playReloadVisual?: (targetId: string, usingSidearm: boolean) => number | undefined;
   onEnemyFireTracer?: (event: EnemyTracerFireEvent) => void;
   onPlayerDamaged?: (vitals: Readonly<PlayerCombatVitals>, event: EnemyTracerFireEvent) => void;
   onPlayerNearMissGraze?: (event: PlayerNearMissGrazePayload) => void;
@@ -83,17 +98,25 @@ export function stepWeaponBurstFire(
   const isAimAligned =
     !holdFire && (hs.isRagdollActive || Math.abs(wrapAngleRad(aimYaw - hs.yawRad)) <= Math.PI / 12);
 
-  let desiredBurstShots: number;
-  if (aimProfile.usingBackupSidearm) {
-    desiredBurstShots = agent.completedBurstCount % 2 === 0 ? 2 : 3;
-  } else {
-    let desiredBurst = tuning.burstCount;
-    if (agent.resolveProfile === 'FANATIC_BERSERKER' && isWounded) desiredBurst += 2;
-    else if (agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded) desiredBurst += 3;
-    desiredBurstShots = aimProfile.isOneHandedDownedFire
-      ? Math.max(2, Math.ceil(desiredBurst * 0.65))
-      : desiredBurst;
+  // The gun runs by the same rules as the player's: its own cycle, one shot per pull unless
+  // it is full-auto, and nothing fires from an empty or reloading magazine.
+  const usingSidearm = aimProfile.usingBackupSidearm;
+  const handling = resolveEnemyGunHandling(usingSidearm ? BACKUP_SIDEARM_WEAPON_ID : tuning.primaryWeaponId);
+  const magazine = getAgentMagazine(hs, agent, usingSidearm);
+  if (!canFireFromMagazine(magazine)) {
+    cancelActiveBurst(agent);
+    return;
   }
+
+  const volleySeed = agent.tracerSeedCounter + agent.completedBurstCount * 131;
+  let extraShots = 0;
+  if (agent.resolveProfile === 'FANATIC_BERSERKER' && isWounded) extraShots = 2;
+  else if (agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded) extraShots = 3;
+  let desiredBurstShots = planVolleyShots(handling, volleySeed, extraShots);
+  if (aimProfile.isOneHandedDownedFire && !usingSidearm) {
+    desiredBurstShots = Math.max(1, Math.ceil(desiredBurstShots * 0.65));
+  }
+  desiredBurstShots = Math.min(desiredBurstShots, magazine.mag);
 
   const cadenceScale =
     agent.resolveProfile === 'PANICKED_SCRAPPER' && isWounded
@@ -107,25 +130,24 @@ export function stepWeaponBurstFire(
     agent.triageStatus === 'MORTALLY_WOUNDED' && agent.resolveProfile !== 'FANATIC_BERSERKER'
       ? 1.18
       : 1.0;
+  const oneHandedSlowdown = aimProfile.isOneHandedDownedFire && !usingSidearm ? 1.3 : 1.0;
 
-  const baseInterShot = aimProfile.usingBackupSidearm
-    ? SIDEARM_M9_TUNING.interShotDelayS
-    : tuning.interShotDelayS;
-  const nextInterShotDelayS =
-    baseInterShot *
-    cadenceScale *
-    raggedWoundDelay *
-    (aimProfile.isOneHandedDownedFire && !aimProfile.usingBackupSidearm ? 1.3 : 1.0);
+  // Haste or weakness changes how fast the shooter gets back on target, never the gun's cycle.
+  const nextInterShotDelayS = nextVolleyShotDelayS(
+    handling,
+    volleySeed + agent.burstShotsRemaining * 17,
+    cadenceScale * raggedWoundDelay * oneHandedSlowdown
+  );
 
-  const baseCooldown = aimProfile.usingBackupSidearm
-    ? SIDEARM_M9_TUNING.burstCooldownS
-    : tuning.burstCooldownS;
+  const baseCooldown = usingSidearm ? SIDEARM_M9_TUNING.burstCooldownS : tuning.burstCooldownS;
   const offScreenCooldownMul = agent.isOffScreen ? 2.0 : 1.0;
-  const nextBurstCooldownS =
+  const nextBurstCooldownS = Math.max(
+    handling.fireCycleS,
     baseCooldown *
-    cadenceScale *
-    offScreenCooldownMul *
-    (aimProfile.isOneHandedDownedFire && !aimProfile.usingBackupSidearm ? 1.25 : 1.0);
+      cadenceScale *
+      offScreenCooldownMul *
+      (aimProfile.isOneHandedDownedFire && !usingSidearm ? 1.25 : 1.0)
+  );
 
   const burstRes = stepWeaponBurstCadence(agent, {
     dt,
@@ -139,6 +161,7 @@ export function stepWeaponBurstFire(
   if (!burstRes.shouldFireShot || !exposedAimTarget) {
     return;
   }
+  consumeMagazineRound(magazine);
 
   emitEnemyTracerShot(hs, agent, aimProfile, playerEyeWorldPos, exposedAimTarget, ctx);
 
@@ -182,7 +205,7 @@ export function emitEnemyTracerShot(
   const isSuppressionToken = agent.fireMode === 'CINEMATIC_SUPPRESSION';
   const firstShotGrace =
     !agent.hasFiredWarningShot &&
-    (agent.isOffScreen === true || tuning.burstCount > 1 || isSuppressionToken);
+    (agent.isOffScreen === true || primaryHandling(hs).fireCycleS < 1.5 || isSuppressionToken);
   agent.hasFiredWarningShot = true;
   const suppressionMode = isSuppressionToken || firstShotGrace;
 
@@ -269,7 +292,10 @@ export function emitEnemyTracerShot(
       ? coreOrigin
       : visualMuzzle ?? rawMuzzleOrigin;
   const tracerSpeedMs = usingSidearm ? SIDEARM_M9_TUNING.tracerSpeedMs : tuning.tracerSpeedMs;
-  const rawChip = usingSidearm ? SIDEARM_M9_TUNING.baseChipDamage : tuning.baseChipDamage;
+  const firedWeaponId = usingSidearm ? SIDEARM_M9_TUNING.weaponId : tuning.primaryWeaponId;
+  const rawChip =
+    (usingSidearm ? SIDEARM_M9_TUNING.baseChipDamage : tuning.baseChipDamage) *
+    enemyShotDamageScaleAtRange(firedWeaponId, distance(coreOrigin, playerChestTarget));
 
   let hitPlayer = false;
   let armorChipApplied = 0;
@@ -312,7 +338,7 @@ export function emitEnemyTracerShot(
     );
   }
 
-  const weaponId = usingSidearm ? SIDEARM_M9_TUNING.weaponId : tuning.primaryWeaponId;
+  const weaponId = firedWeaponId;
   const event: EnemyTracerFireEvent = {
     targetId: hs.targetId,
     archetype: hs.archetype,

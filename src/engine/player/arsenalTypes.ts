@@ -8,12 +8,7 @@ export interface WeaponAmmoState {
   ammoIndex: number;
 }
 
-export const WEAPON_CAPACITIES: Record<string, { magCap: number; reserve: number }> = {
-  m590_shotgun: { magCap: 8, reserve: 40 },
-  silver_talon_50ae: { magCap: 7, reserve: 35 },
-  msg90_sniper: { magCap: 5, reserve: 25 },
-  m4a1_carbine: { magCap: 30, reserve: 120 },
-};
+export { WEAPON_CAPACITIES } from '../../core/ballistics/weapons/weaponHandling.ts';
 
 export interface BarrelSmokeWisp {
   entity: pc.Entity;

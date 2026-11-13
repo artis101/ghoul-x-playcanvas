@@ -23,6 +23,17 @@ import {
 } from '../assets/glbLoader.ts';
 import { getPreferredPrimaryHand, isArmChainIntactAndFunctional } from '../ai/combatantArmEvaluation.ts';
 import { CombatantWeaponHands } from './combatantWeaponHands.ts';
+import { RELOAD_ANIM_SPEED, reloadDurationS } from '../../core/ballistics/weapons/weaponHandling.ts';
+
+/**
+ * Plays a held gun's reload clip at the player's reload speed and returns the reload time the
+ * player would get from the same clip.
+ */
+export function playWeaponReloadClip(glb: WeaponGlbInstance | null | undefined): number | undefined {
+  if (!glb) return undefined;
+  if (glb.rootEntity.enabled) glb.playReload(RELOAD_ANIM_SPEED);
+  return reloadDurationS(glb.getClipDuration(glb.reloadClipName));
+}
 import { CombatantWeaponGrip, M4A1_PALM_OFFSET_X } from './combatantWeaponGrip.ts';
 import { CombatantWeaponHold } from './combatantWeaponHold.ts';
 import { isOneHandedStance } from '../../core/ghoul/anatomy/weaponHold.ts';
@@ -228,6 +239,11 @@ export class CombatantWeaponMount {
       this.grip.align(this.heldWeaponNode, this.heldWeaponNode, weaponId, palmTrig, gunFwd, triggerOffset);
       if (glb) this.hands?.sync(glb, triggerHand, canUseSupport, twoHandReadyIdle);
     }
+  }
+
+  /** Starts the gun's reload clip; returns how long the reload takes. */
+  public playReload(): number | undefined {
+    return playWeaponReloadClip(this.heldWeaponGlb);
   }
 
   public playFire(): Vec3Like | undefined {

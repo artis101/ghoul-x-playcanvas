@@ -1,6 +1,6 @@
 import * as pc from 'playcanvas';
 import type { AmmoSpec, WeaponSpec } from '../../contracts/ballistics.ts';
-import { WEAPONS, WEAPON_M590 } from '../../core/ballistics/weapons.ts';
+import { WEAPONS, WEAPON_M590, fireCycleS, RELOAD_ANIM_SPEED, reloadDurationS } from '../../core/ballistics/weapons.ts';
 import type { EngineMaterialPalette } from '../materials.ts';
 import type { HudController } from '../hudController.ts';
 import type { GlbModelRegistry, WeaponGlbInstance } from '../assets/glbLoader.ts';
@@ -162,8 +162,8 @@ export class ArsenalManager {
     this.currentAmmo = nextAmmo;
     if (this.actionState.kind === 'RELOADING') {
       const weapon = this.activeWeaponGlb;
-      const reloadSpeed = 1.15;
-      const durationS = Math.max(0.65, (weapon?.getClipDuration(weapon.reloadClipName) ?? 0) / reloadSpeed);
+      const reloadSpeed = RELOAD_ANIM_SPEED;
+      const durationS = reloadDurationS(weapon?.getClipDuration(weapon.reloadClipName) ?? 0);
       this.actionState = transitionViewmodelAction(
         this.actionState,
         { kind: 'RELOADING', remainingS: durationS },
@@ -182,7 +182,7 @@ export class ArsenalManager {
       return false;
     }
 
-    const cooldownS = 60 / this.currentWeapon.fireRateRpm;
+    const cooldownS = fireCycleS(this.currentWeapon);
     const weapon = this.activeWeaponGlb;
     const fireDuration = weapon?.getClipDuration(weapon.fireClipName) ?? 0;
     const fireSpeed = Math.max(1, fireDuration / cooldownS);
@@ -248,8 +248,8 @@ export class ArsenalManager {
     if (!canStartReloadAction(this.actionState)) return;
     if (!this.inventory.prepareReload(this.currentWeapon.id, allTargetsDead, onRespawnAll)) return;
     const weapon = this.activeWeaponGlb;
-    const reloadSpeed = 1.15;
-    const remainingS = Math.max(0.65, (weapon?.getClipDuration(weapon.reloadClipName) ?? 0) / reloadSpeed);
+    const reloadSpeed = RELOAD_ANIM_SPEED;
+    const remainingS = reloadDurationS(weapon?.getClipDuration(weapon.reloadClipName) ?? 0);
     this.actionState = transitionViewmodelAction(
       this.actionState,
       { kind: 'RELOADING', remainingS },

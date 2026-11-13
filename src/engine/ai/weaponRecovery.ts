@@ -1,6 +1,7 @@
 import type { TargetHealthState } from '../../contracts/ballistics.ts';
 import { isArmChainIntactAndFunctional, getPreferredPrimaryHand } from './combatantArmEvaluation.ts';
 import { moveHorizontalClamped } from './tacticalLocomotion.ts';
+import { isPrimaryShotDry } from './enemyWeaponMagazine.ts';
 import type { EnemyAiAgentRuntime } from './tacticalAiTypes.ts';
 import type { TacticalFsmContext } from './tacticalFsmContext.ts';
 
@@ -25,7 +26,8 @@ export function stepWeaponRecovery(
   ctx: TacticalFsmContext,
 ): boolean {
   const gun = hs.droppedWeaponWorld;
-  if (!gun || !hs.alive || hs.isRagdollActive || agent.triageStatus === 'MORTALLY_WOUNDED') {
+  // A gun shot empty with no rounds left to load is left where it fell.
+  if (!gun || !hs.alive || hs.isRagdollActive || agent.triageStatus === 'MORTALLY_WOUNDED' || isPrimaryShotDry(agent)) {
     agent.weaponPickupTimerS = 0;
     return false;
   }

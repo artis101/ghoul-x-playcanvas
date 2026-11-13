@@ -4,8 +4,7 @@ import type { CombatantResolveProfile } from './tacticalAiTypes.ts';
 export interface ArchetypeCombatTuning {
   readonly primaryWeaponId: string;
   readonly baseSpreadRad: number;
-  readonly burstCount: number;
-  readonly interShotDelayS: number;
+  /** Pause between trigger sequences. Shot spacing within one comes from the gun itself. */
   readonly burstCooldownS: number;
   readonly strafeSpeedMs: number;
   readonly tracerSpeedMs: number;
@@ -16,8 +15,6 @@ export const ARCHETYPE_TUNING: Record<EnemyArchetypeId, ArchetypeCombatTuning> =
   SKINHEAD_PUNK: {
     primaryWeaponId: 'silver_talon_50ae',
     baseSpreadRad: 0.052,
-    burstCount: 4,
-    interShotDelayS: 0.11,
     burstCooldownS: 1.55,
     strafeSpeedMs: 2.15,
     tracerSpeedMs: 78,
@@ -27,8 +24,6 @@ export const ARCHETYPE_TUNING: Record<EnemyArchetypeId, ArchetypeCombatTuning> =
   MILITIA_GUNNER: {
     primaryWeaponId: 'm4a1_carbine',
     baseSpreadRad: 0.038,
-    burstCount: 3,
-    interShotDelayS: 0.14,
     burstCooldownS: 1.75,
     strafeSpeedMs: 1.85,
     tracerSpeedMs: 92,
@@ -38,8 +33,6 @@ export const ARCHETYPE_TUNING: Record<EnemyArchetypeId, ArchetypeCombatTuning> =
   HEAVY_ENFORCER: {
     primaryWeaponId: 'm590_shotgun',
     baseSpreadRad: 0.062,
-    burstCount: 2,
-    interShotDelayS: 0.34,
     burstCooldownS: 2.05,
     strafeSpeedMs: 1.35,
     tracerSpeedMs: 72,
@@ -49,8 +42,6 @@ export const ARCHETYPE_TUNING: Record<EnemyArchetypeId, ArchetypeCombatTuning> =
   SNIPER_OPERATIVE: {
     primaryWeaponId: 'msg90_sniper',
     baseSpreadRad: 0.018,
-    burstCount: 1,
-    interShotDelayS: 0.25,
     burstCooldownS: 2.65,
     strafeSpeedMs: 1.5,
     tracerSpeedMs: 125,
@@ -62,7 +53,6 @@ export const ARCHETYPE_TUNING: Record<EnemyArchetypeId, ArchetypeCombatTuning> =
 export const SIDEARM_M9_TUNING = {
   weaponId: 'weapon_beretta_m9',
   baseSpreadRad: 0.042,
-  interShotDelayS: 0.14,
   burstCooldownS: 1.25,
   tracerSpeedMs: 88,
   // 9 mm pistol round.

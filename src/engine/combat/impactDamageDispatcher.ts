@@ -15,6 +15,7 @@ import type { CombatAudioEngine, GoreImpactAudioKind } from '../audio/combatAudi
 import { SYNTHETIC_SHRAPNEL_AMMO } from './combatTargetConfigs.ts';
 import { syncPhysiologyToHealthState } from './physiologySyncAdapter.ts';
 import { startTerminalCountdown } from '../../core/physiology/physiologyVariance.ts';
+import { pelletAmmoAtImpact } from '../../core/ballistics/shot/buckshotRangeFalloff.ts';
 
 export interface ImpactDispatcherContext {
   app?: pc.AppBase | null;
@@ -71,7 +72,7 @@ export function applyImpactFxAndState(
     }
 
     const primaryWound = report.woundEvents[0];
-    const marchAmmo = ammoForInternalMarch ?? SYNTHETIC_SHRAPNEL_AMMO;
+    const shotAmmo = ammoForInternalMarch ?? SYNTHETIC_SHRAPNEL_AMMO;
     const marchDir = primaryWound
       ? normalize(primaryWound.impactDirectionWorld)
       : normalize(report.aimDirectionWorld);
@@ -86,6 +87,8 @@ export function applyImpactFxAndState(
       60,
       (primaryWound ? primaryWound.entryVelocityMs : report.impactSpeedMs) * varianceSpeedScale
     );
+    // A buckshot pellet that has slowed downrange no longer flattens, so its organ channel is narrower.
+    const marchAmmo = pelletAmmoAtImpact(shotAmmo, marchSpeedMs);
 
     internalReport = marchInternalBallistics(
       {

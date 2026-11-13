@@ -6,6 +6,7 @@ import { PlayerCameraRig, type PlayerSightState, type ViewmodelHandsState } from
 import { PlayerInputManager } from './playerInput.ts';
 import { HIP_FOV_DEG } from './playerSightController.ts';
 import { deflectWithinCone } from '../../core/ballistics/aim/aimDownSights.ts';
+import { isFullAuto } from '../../core/ballistics/weapons/weaponHandling.ts';
 import { PlayerMovementSolver } from './playerMovement.ts';
 
 export * from './fpsTypes.ts';
@@ -166,7 +167,7 @@ export class FpsController {
 
     this.syncCameraTransform();
 
-    if (this.input.isTriggerHeld && currentWeapon.role === 'ASSAULT_RIFLE') {
+    if (this.input.isTriggerHeld && isFullAuto(currentWeapon)) {
       this.callbacks.onTriggerPull();
     }
   }

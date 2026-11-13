@@ -13,6 +13,7 @@ import type { EnemyAiAgentRuntime, EnemyTacticalAiState } from './tacticalAiType
 import { approachAngleRad, yawToward } from './combatantArmEvaluation.ts';
 import { syncAgentArmamentAndSidearm } from './agentArmamentController.ts';
 import { moveHorizontalClamped } from './tacticalLocomotion.ts';
+import { stepAgentMagazine } from './enemyWeaponMagazine.ts';
 import { stepWeaponBurstFire } from './tacticalBurstAndTracers.ts';
 import { stepAlertedEngagingState } from './alertedEngagementStep.ts';
 import { DOWNED_TURN_RATE_RAD_S, type TacticalFsmContext } from './tacticalFsmContext.ts';
@@ -61,6 +62,7 @@ export function stepSingleEnemyAgent(
     },
     () => ctx.onAgentSidearmDrawStart?.(hs, agent)
   );
+  stepAgentMagazine(dt, hs, agent, ctx);
 
   tickNeurogenicShockRecovery(dt, agent, hs);
   agent.suppression = Math.max(0, agent.suppression - 0.28 * dt);

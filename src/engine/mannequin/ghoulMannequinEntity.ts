@@ -214,6 +214,10 @@ export class GhoulMannequinEntity {
     return node && node.enabled && this.weaponMount.wasWeaponHeld ? node : null;
   }
 
+  public playWeaponReload(): number | undefined {
+    return this.weaponMount.playReload();
+  }
+
   public playWeaponFire(): Vec3Like | undefined {
     return this.weaponMount.playFire();
   }

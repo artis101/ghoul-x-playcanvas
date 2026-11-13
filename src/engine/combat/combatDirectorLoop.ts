@@ -16,6 +16,7 @@ import { stepActiveGrenades } from './fragGrenadePhysics.ts';
 import { stepBlastFlashes } from './blastVisualFx.ts';
 import { syncPhysiologyToHealthState } from './physiologySyncAdapter.ts';
 import { createOffhandSidearmRig } from './offhandSidearmRig.ts';
+import { playWeaponReloadClip } from '../mannequin/combatantWeaponMount.ts';
 import { OffhandSidearmSync } from './offhandSidearmSync.ts';
 import { getArchetypeWeaponAssetId } from '../assets/glbLoader.ts';
 import type { CombatantAimPose } from '../mannequin/combatantAnimController.ts';
@@ -94,7 +95,11 @@ export function stepCombatDirectorLoop(
         }
         return ctx.targets.find((target) => target.healthState.targetId === targetId)?.playWeaponFire();
       },
-      playerFwd
+      playerFwd,
+      (targetId, usingSidearm) =>
+        usingSidearm
+          ? playWeaponReloadClip(ctx.offhandSidearmRigs.get(targetId)?.glbInstance)
+          : ctx.targets.find((target) => target.healthState.targetId === targetId)?.playWeaponReload()
     );
   }
 
