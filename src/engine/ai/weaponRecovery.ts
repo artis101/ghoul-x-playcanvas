@@ -99,7 +99,7 @@ export function stepWeaponRecovery(
 
   if (dist > PICKUP_REACH_M) {
     setPickupProgress(hs, agent, 0);
-    moveHorizontalClamped(hs, gun.x, gun.z, RECOVERY_RUN_SPEED_MS * dt, ctx.rapierWorld);
+    moveHorizontalClamped(hs, gun.x, gun.z, RECOVERY_RUN_SPEED_MS * dt, ctx.rapierWorld, ctx.arenaNav);
     return true;
   }
 

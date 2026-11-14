@@ -1,33 +1,29 @@
 import type { AiBarkPayload } from '../../contracts/ai/aiContracts.ts';
 import type { ShotSimulationReport, TargetHealthState } from '../../contracts/ballistics.ts';
 import type { PhysiologicalEntityState } from '../../contracts/physiology.ts';
-import { computeCombatantTriageStatus } from '../../core/ballistics/solver.ts';
+import { HudTargetCard } from './hudTargetCard.ts';
 import {
-  formatTriageLabel,
   type ProjectedTargetTriageEntry,
   queryEl,
-  triageCardClass,
-  triageColorClass,
   type WorldTriagePlateDom,
 } from './hudTypes.ts';
 import { createWorldTriagePlateDom, updateWorldPlateEntry } from './hudWorldPlates.ts';
 
+interface FeedRowTimers {
+  fade: ReturnType<typeof setTimeout>;
+  remove: ReturnType<typeof setTimeout> | null;
+}
+
 export class HudTriageFeed {
   private worldTriageLayerEl = queryEl('hud-world-triage-layer');
   private worldPlates = new Map<string, WorldTriagePlateDom>();
+  private readonly seenPlateIds = new Set<string>();
   private activeBarks = new Map<string, { text: string; expiresAtMs: number }>();
 
-  private targetCardEl = queryEl('hud-target-triage-card');
-  private targetNameEl = queryEl('hud-target-name');
-  private targetTriageBadgeEl = queryEl('hud-target-triage-badge');
-  private targetHpFillEl = queryEl('hud-target-hp-fill');
-  private targetHpTextEl = queryEl('hud-target-hp-text');
-  private targetArmorTrackEl = queryEl('hud-target-armor-track');
-  private targetArmorFillEl = queryEl('hud-target-armor-fill');
-  private targetPhysioVitalsEl = queryEl('hud-target-physio-vitals');
-  private targetPhysioTraumaEl = queryEl('hud-target-physio-trauma');
+  private readonly targetCard = new HudTargetCard();
 
   private killfeedEl = queryEl('hud-killfeed');
+  private readonly feedRowTimers = new Map<HTMLElement, FeedRowTimers>();
   private promptEl = queryEl('hud-prompt');
   private lastPromptText = '';
   private lastPromptOpacity = '';
@@ -39,9 +35,10 @@ export class HudTriageFeed {
   ): void {
     const nowMs = Date.now();
     if (this.worldTriageLayerEl && typeof document !== 'undefined') {
-      const seenRefs = new Set<string>();
+      const seenRefs = this.seenPlateIds;
+      seenRefs.clear();
       for (const entry of entries) {
-        const key = `${entry.state.targetId}`;
+        const key = entry.state.targetId;
         seenRefs.add(key);
 
         let dom = this.worldPlates.get(key);
@@ -66,63 +63,7 @@ export class HudTriageFeed {
       }
     }
 
-    if (this.targetCardEl) {
-      if (!focusedTarget) {
-        this.targetCardEl.classList.remove('active');
-        return;
-      }
-
-      this.targetCardEl.classList.add('active');
-      const status = computeCombatantTriageStatus(focusedTarget);
-      const colorCls = triageColorClass(status);
-      const cardCls = triageCardClass(status);
-
-      this.targetCardEl.className = `hud-target-triage-card active ${cardCls}`;
-      if (this.targetNameEl) {
-        this.targetNameEl.textContent = (focusedTarget.name || focusedTarget.targetId).toUpperCase();
-      }
-      if (this.targetTriageBadgeEl) {
-        this.targetTriageBadgeEl.textContent = formatTriageLabel(status);
-        this.targetTriageBadgeEl.className = `ttc-badge ${colorCls}`;
-      }
-
-      const hpClamped = focusedTarget.alive ? Math.max(1, Math.round(focusedTarget.currentHp)) : 0;
-      const hpPct = focusedTarget.alive
-        ? Math.max(0, Math.min(100, (focusedTarget.currentHp / Math.max(1, focusedTarget.maxHp)) * 100))
-        : 0;
-      if (this.targetHpFillEl) {
-        this.targetHpFillEl.style.width = `${hpPct.toFixed(1)}%`;
-        this.targetHpFillEl.className = `ttc-hp-fill ${colorCls}`;
-      }
-      if (this.targetHpTextEl) this.targetHpTextEl.textContent = `${hpClamped} / ${Math.round(focusedTarget.maxHp)}`;
-
-      if (this.targetArmorTrackEl && this.targetArmorFillEl) {
-        const armor = (focusedTarget.hasChestArmor ? focusedTarget.chestArmorIntegrity : 0) || 0;
-        if (armor > 0) {
-          this.targetArmorTrackEl.classList.remove('hidden');
-          this.targetArmorFillEl.style.width = `${(armor * 100).toFixed(1)}%`;
-        } else {
-          this.targetArmorTrackEl.classList.add('hidden');
-        }
-      }
-
-      if (this.targetPhysioVitalsEl && this.targetPhysioTraumaEl) {
-        if (focusedPhysiology) {
-          const bpSys = Math.round(focusedPhysiology.systolicBpMmHg);
-          const bpDia = Math.round(focusedPhysiology.diastolicBpMmHg);
-          const volL = (focusedPhysiology.bloodVolumeMl / 1000).toFixed(2);
-          this.targetPhysioVitalsEl.textContent = `HR: ${Math.round(focusedPhysiology.heartRateBpm)} BPM • BP: ${bpSys}/${bpDia} • BLOOD: ${volL}L`;
-          const traumas: string[] = [];
-          if (focusedPhysiology.shockStage !== 'NONE') traumas.push(`SHOCK: ${focusedPhysiology.shockStage}`);
-          if (!focusedPhysiology.conscious) traumas.push('UNCONSCIOUS');
-          if (!focusedPhysiology.alive) traumas.push(`DEAD (${focusedPhysiology.causeOfDeath})`);
-          this.targetPhysioTraumaEl.textContent = traumas.length > 0 ? traumas.join(' • ') : 'NO CRITICAL TRAUMA';
-        } else {
-          this.targetPhysioVitalsEl.textContent = '';
-          this.targetPhysioTraumaEl.textContent = '';
-        }
-      }
-    }
+    this.targetCard.update(focusedTarget, focusedPhysiology ?? null);
   }
 
   public pushCombatFeed(
@@ -176,19 +117,52 @@ export class HudTriageFeed {
     if (!this.killfeedEl || typeof document === 'undefined') return;
     const item = document.createElement('div');
     item.className = `killfeed-item${isLethal ? ' lethal' : ''}`;
+    const tagEl = document.createElement('span');
+    tagEl.className = 'kf-tag';
+    tagEl.textContent = `[${tag}]`;
     if (outcome) {
-      item.innerHTML = `${subject} <span class="kf-tag">[${tag}]</span> ${outcome}`;
+      item.append(`${subject} `, tagEl, ` ${outcome}`);
     } else {
-      item.innerHTML = `<span class="kf-tag">[${tag}]</span> ${subject}`;
+      item.append(tagEl, ` ${subject}`);
     }
     this.killfeedEl.appendChild(item);
     while (this.killfeedEl.children.length > 4 && this.killfeedEl.firstElementChild) {
-      this.killfeedEl.firstElementChild.remove();
+      const evicted = this.killfeedEl.firstElementChild as HTMLElement;
+      this.clearFeedRowTimers(evicted);
+      evicted.remove();
     }
-    globalThis.setTimeout(() => {
-      item.style.opacity = '0';
-      globalThis.setTimeout(() => item.remove(), 360);
-    }, 3100);
+    const timers: FeedRowTimers = {
+      fade: globalThis.setTimeout(() => {
+        item.style.opacity = '0';
+        timers.remove = globalThis.setTimeout(() => {
+          this.feedRowTimers.delete(item);
+          item.remove();
+        }, 360);
+      }, 3100),
+      remove: null,
+    };
+    this.feedRowTimers.set(item, timers);
+  }
+
+  public destroy(): void {
+    for (const row of Array.from(this.feedRowTimers.keys())) {
+      this.clearFeedRowTimers(row);
+      if (typeof row.remove === 'function') row.remove();
+    }
+    for (const dom of this.worldPlates.values()) {
+      if (typeof dom.root.remove === 'function') dom.root.remove();
+    }
+    this.worldPlates.clear();
+    this.activeBarks.clear();
+    this.seenPlateIds.clear();
+  }
+
+  private clearFeedRowTimers(row: HTMLElement): void {
+    const timers = this.feedRowTimers.get(row);
+    if (!timers) return;
+    globalThis.clearTimeout(timers.fade);
+    if (timers.remove !== null) globalThis.clearTimeout(timers.remove);
+    this.feedRowTimers.delete(row);
   }
 
   public updateContextPrompt(isPointerLocked: boolean, allDead: boolean): void {

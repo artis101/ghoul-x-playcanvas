@@ -2,6 +2,7 @@ import * as pc from 'playcanvas';
 import { solveTwoBoneIk } from '../../core/ghoul/anatomy/twoBoneIk.ts';
 import type { ActiveFiringHand } from '../ai/tacticalAiTypes.ts';
 import type { CombatantGlbInstance } from '../assets/glbLoader.ts';
+import { FOREARM_ZONE, HAND_ZONE, UPPER_ARM_ZONE } from './armZoneKeys.ts';
 
 /**
  * Contact IK for a palm on a grip. It is only ever asked to move a hand a few centimetres (the
@@ -21,15 +22,15 @@ export class CombatantSupportGrip {
     handRotation.transformVector(pc.Vec3.UP, this.wristGoal);
     this.wristGoal.mulScalar(-palmOffset).add(palm);
     if (this.reach(glb, side, this.wristGoal)) {
-      glb.boneNodes.get(`HAND_${side}`)?.setRotation(handRotation);
+      glb.boneNodes.get(HAND_ZONE[side])?.setRotation(handRotation);
     }
   }
 
   /** Bends the arm so the wrist lands on the goal. Leaves the hand's own rotation alone. */
   public reach(glb: CombatantGlbInstance, side: ActiveFiringHand, wrist: pc.Vec3): boolean {
-    const upper = glb.boneNodes.get(`UPPER_ARM_${side}`);
-    const forearm = glb.boneNodes.get(`FOREARM_${side}`);
-    const hand = glb.boneNodes.get(`HAND_${side}`);
+    const upper = glb.boneNodes.get(UPPER_ARM_ZONE[side]);
+    const forearm = glb.boneNodes.get(FOREARM_ZONE[side]);
+    const hand = glb.boneNodes.get(HAND_ZONE[side]);
     if (!upper || !forearm || !hand) return false;
     const pose = solveTwoBoneIk(upper.getPosition(), forearm.getPosition(), hand.getPosition(), wrist);
     if (!pose) return false;

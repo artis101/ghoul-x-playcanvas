@@ -79,7 +79,7 @@ export function stepDisarmedFlight(
 
   if (distTo(goal) > ARRIVED_M) {
     hs.yawRad = approachAngleRad(hs.yawRad, yawToward(hs.worldPosition, goal, hs.yawRad), RUN_TURN_RAD_S * dt);
-    moveHorizontalClamped(hs, goal.x, goal.z, FLEE_RUN_SPEED_MS * dt, ctx.rapierWorld);
+    moveHorizontalClamped(hs, goal.x, goal.z, FLEE_RUN_SPEED_MS * dt, ctx.rapierWorld, ctx.arenaNav);
     return;
   }
   // Hidden: keep an eye on where the player is.

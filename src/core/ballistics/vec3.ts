@@ -66,6 +66,92 @@ export function lerp(a: Vec3Like, b: Vec3Like, t: number): Vec3Like {
   };
 }
 
+/** A vector the in-place helpers below write into. Every helper returns `out`; `out` may be one of the inputs. */
+export type MutableVec3 = Vec3Like;
+
+export function setVec3(out: MutableVec3, x: number, y: number, z: number): MutableVec3 {
+  out.x = x;
+  out.y = y;
+  out.z = z;
+  return out;
+}
+
+export function copyInto(out: MutableVec3, v: Vec3Like): MutableVec3 {
+  out.x = v.x;
+  out.y = v.y;
+  out.z = v.z;
+  return out;
+}
+
+export function addInto(out: MutableVec3, a: Vec3Like, b: Vec3Like): MutableVec3 {
+  out.x = a.x + b.x;
+  out.y = a.y + b.y;
+  out.z = a.z + b.z;
+  return out;
+}
+
+export function subInto(out: MutableVec3, a: Vec3Like, b: Vec3Like): MutableVec3 {
+  out.x = a.x - b.x;
+  out.y = a.y - b.y;
+  out.z = a.z - b.z;
+  return out;
+}
+
+export function scaleInto(out: MutableVec3, v: Vec3Like, s: number): MutableVec3 {
+  out.x = v.x * s;
+  out.y = v.y * s;
+  out.z = v.z * s;
+  return out;
+}
+
+/** out = a + b * s, with the same rounding as add(a, scale(b, s)). */
+export function addScaledInto(out: MutableVec3, a: Vec3Like, b: Vec3Like, s: number): MutableVec3 {
+  out.x = a.x + b.x * s;
+  out.y = a.y + b.y * s;
+  out.z = a.z + b.z * s;
+  return out;
+}
+
+export function crossInto(out: MutableVec3, a: Vec3Like, b: Vec3Like): MutableVec3 {
+  const x = a.y * b.z - a.z * b.y;
+  const y = a.z * b.x - a.x * b.z;
+  const z = a.x * b.y - a.y * b.x;
+  out.x = x;
+  out.y = y;
+  out.z = z;
+  return out;
+}
+
+/** Same result as normalize(v), including the zero vector for a zero or non-finite length. */
+export function normalizeInto(out: MutableVec3, v: Vec3Like): MutableVec3 {
+  const len = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+  if (len === 0 || !Number.isFinite(len)) {
+    out.x = 0;
+    out.y = 0;
+    out.z = 0;
+    return out;
+  }
+  const inv = 1 / len;
+  out.x = v.x * inv;
+  out.y = v.y * inv;
+  out.z = v.z * inv;
+  return out;
+}
+
+export function lerpInto(out: MutableVec3, a: Vec3Like, b: Vec3Like, t: number): MutableVec3 {
+  out.x = a.x + (b.x - a.x) * t;
+  out.y = a.y + (b.y - a.y) * t;
+  out.z = a.z + (b.z - a.z) * t;
+  return out;
+}
+
+export function distanceSq(a: Vec3Like, b: Vec3Like): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const dz = a.z - b.z;
+  return dx * dx + dy * dy + dz * dz;
+}
+
 export function reflect(v: Vec3Like, normal: Vec3Like): Vec3Like {
   const d = dot(v, normal);
   return {

@@ -1,56 +1,39 @@
 import * as pc from 'playcanvas';
 import type { TrajectorySample } from '../../../contracts/ballistics.ts';
-import { length, normalize } from '../../../core/ballistics/vec3.ts';
-import type { EngineMaterialPalette } from '../../materials.ts';
-import type { ActiveProjectileFx, WetGoreMaterialSuite } from './goreTypes.ts';
+import { length } from '../../../core/ballistics/vec3.ts';
+import { recycleOldestWhenFull, releaseFxEntity } from '../particles/fxEntityPool.ts';
+import type { ActiveProjectileFx } from './goreTypes.ts';
+import { MAX_LIVE_PROJECTILES, getRifleRoundShockwaveRing, type GoreFxPools } from './goreFxPools.ts';
+
+const scratchLookTarget = new pc.Vec3();
+const scratchCurPos = new pc.Vec3();
 
 export function spawnFlyingProjectile(
-  fxRoot: pc.Entity,
-  materials: EngineMaterialPalette,
-  goreSuite: WetGoreMaterialSuite,
+  pools: GoreFxPools,
   activeProjectiles: ActiveProjectileFx[],
   trajectorySamples: TrajectorySample[],
   isShotgunPellet = false,
 ): ActiveProjectileFx | null {
   if (!trajectorySamples || trajectorySamples.length < 2) return null;
 
-  const pEntity = new pc.Entity(isShotgunPellet ? 'PelletProjectile' : 'RifleProjectile');
-  pEntity.addComponent('render', {
-    type: isShotgunPellet ? 'sphere' : 'capsule',
-    material: isShotgunPellet ? materials.copperPelletMat : materials.brassBulletMat,
-  });
+  recycleOldestWhenFull(activeProjectiles, MAX_LIVE_PROJECTILES);
+  const pEntity = (isShotgunPellet ? pools.pellet : pools.rifleRound).acquire();
 
   if (isShotgunPellet) {
     pEntity.setLocalScale(0.015, 0.015, 0.015);
   } else {
     pEntity.setLocalScale(0.016, 0.052, 0.016);
-
-    const tracerTail = new pc.Entity('ProjectileTracerStreak');
-    tracerTail.addComponent('render', {
-      type: 'cone',
-      material: goreSuite.tracerTailMat,
-      castShadows: false,
-    });
-    tracerTail.setLocalPosition(0, -1.8, 0);
-    tracerTail.setLocalEulerAngles(180, 0, 0);
-    tracerTail.setLocalScale(0.85, 3.6, 0.85);
-    pEntity.addChild(tracerTail);
   }
 
   const firstPos = trajectorySamples[0].position;
   pEntity.setPosition(firstPos.x, firstPos.y, firstPos.z);
-  fxRoot.addChild(pEntity);
 
   let shockwaveRing: pc.Entity | undefined;
-  if (!isShotgunPellet && trajectorySamples[0].mach > 1.0) {
-    shockwaveRing = new pc.Entity('MachShockwaveRing');
-    shockwaveRing.addComponent('render', {
-      type: 'cone',
-      material: materials.shockwaveRingMat,
-      castShadows: false,
-    });
-    shockwaveRing.setLocalScale(4.8, 1.4, 4.8);
-    pEntity.addChild(shockwaveRing);
+  if (!isShotgunPellet) {
+    const ring = getRifleRoundShockwaveRing(pEntity);
+    const supersonic = trajectorySamples[0].mach > 1.0;
+    if (ring) ring.enabled = supersonic;
+    if (supersonic && ring) shockwaveRing = ring;
   }
 
   const totalFlightTimeS = Math.max(0.045, trajectorySamples[trajectorySamples.length - 1].timeS);
@@ -108,18 +91,18 @@ export function updateProjectiles(
     const vel = curSample.velocity;
     const speed = length(vel);
     if (speed > 1e-2) {
-      const dir = normalize(vel);
-      const lookTarget = new pc.Vec3(px + dir.x, py + dir.y, pz + dir.z);
-      p.entity.lookAt(lookTarget);
+      const inv = 1 / speed;
+      scratchLookTarget.set(px + vel.x * inv, py + vel.y * inv, pz + vel.z * inv);
+      p.entity.lookAt(scratchLookTarget);
       p.entity.rotateLocal(90, 0, 0);
     }
 
-    const curPosVec = new pc.Vec3(px, py, pz);
+    scratchCurPos.set(px, py, pz);
     if (
       p.trailPoints.length === 0 ||
-      curPosVec.distance(p.trailPoints[p.trailPoints.length - 1]) > 0.35
+      scratchCurPos.distance(p.trailPoints[p.trailPoints.length - 1]) > 0.35
     ) {
-      p.trailPoints.push(curPosVec);
+      p.trailPoints.push(scratchCurPos.clone());
     }
 
     if (showTrails && p.trailPoints.length >= 2) {
@@ -130,7 +113,7 @@ export function updateProjectiles(
 
     if (p.progressTimeS >= p.totalFlightTimeS) {
       p.finished = true;
-      p.entity.destroy();
+      releaseFxEntity(p.entity);
       activeProjectiles.splice(i, 1);
     }
   }

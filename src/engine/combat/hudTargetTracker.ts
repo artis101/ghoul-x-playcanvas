@@ -21,6 +21,9 @@ export class HudTargetTracker {
   private readonly scratchWorldPt = new pc.Vec3();
   private readonly scratchScreenPt = new pc.Vec3();
   private readonly scratchBodyScreenPt = new pc.Vec3();
+  // Reused every frame: the HUD reads the entries during the call and keeps no references.
+  private readonly entries: ProjectedTargetTriageEntry[] = [];
+  private readonly entryPool: ProjectedTargetTriageEntry[] = [];
 
   public projectTargets(
     targets: GhoulMannequinEntity[],
@@ -40,7 +43,8 @@ export class HudTargetTracker {
     const vh = typeof window !== 'undefined' ? window.innerHeight : 720;
     const cx = vw * 0.5;
     const cy = vh * 0.5;
-    const entries: ProjectedTargetTriageEntry[] = [];
+    const entries = this.entries;
+    entries.length = 0;
     let bestCrosshairDist = 240;
     let aimedTarget: GhoulMannequinEntity | null = null;
 
@@ -122,12 +126,16 @@ export class HudTargetTracker {
         totalElapsedTimeS - lastHitClock <= 0.8;
 
       const visible = onScreen && (!occludedByCover || recentlyWallbanged);
-      entries.push({
-        state: hs,
-        screenX: this.scratchScreenPt.x,
-        screenY: this.scratchScreenPt.y,
-        visible,
-      });
+      let entry = this.entryPool[i];
+      if (!entry) {
+        entry = { state: hs, screenX: 0, screenY: 0, visible: false };
+        this.entryPool[i] = entry;
+      }
+      entry.state = hs;
+      entry.screenX = this.scratchScreenPt.x;
+      entry.screenY = this.scratchScreenPt.y;
+      entry.visible = visible;
+      entries.push(entry);
 
       this.scratchWorldPt.set(bodyPos.x, bodyPos.y, bodyPos.z);
       camera.worldToScreen(this.scratchWorldPt, this.scratchBodyScreenPt);

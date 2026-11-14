@@ -1,11 +1,13 @@
 import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import {
   createJaggedHoleStamp,
-  recheckUnanchoredWoodShells,
-  stampHoleInWoodPanel,
   type SplinterSpawnDescriptor,
-  type WoodMeshBuildStats,
 } from '../../../core/destruction/woodPolygonClipper.ts';
+import {
+  cutStampFromWoodPanel,
+  detachUnanchoredWoodShells,
+} from '../../../core/destruction/wood/clipperBooleanSolver.ts';
+import { markWallPanelMeshDirty } from './woodPanelMeshSync.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 import type { HardwareInstancedPool } from '../../physics/instancedPool.ts';
 import {
@@ -41,7 +43,6 @@ export function damageInteriorStudSections(
   impulseDirWorld: Vec3Like,
   exitSignZ: number,
   energyJ: number,
-  uploadWallPanelMesh?: (wall: WoodWallInstance, stats: WoodMeshBuildStats) => void,
   slabPool?: WoodSlabDynamicPool,
 ): boolean {
   if (damageHp <= 0) return false;
@@ -109,9 +110,9 @@ export function damageInteriorStudSections(
     rebuildWallStudColliders(physicsWorld, wall, internal);
     uploadWallStudFrameMesh(wall, internal);
 
-    const recheck = recheckUnanchoredWoodShells(wall.panelState, wall.scratchBuffers, 6);
+    const recheck = detachUnanchoredWoodShells(wall.panelState, 6);
     if (recheck.cutAnyWood) {
-      uploadWallPanelMesh?.(wall, recheck.meshStats);
+      markWallPanelMeshDirty(wall);
       spawnPerimeterSplinters(
         splinterPools,
         nextRand,
@@ -153,7 +154,6 @@ export function tryApplyBuckshotClusterBlowout(
   physicsWorld: RapierPhysicsWorld,
   splinterPools: readonly HardwareInstancedPool[],
   nextRand: () => number,
-  uploadWallPanelMesh: (wall: WoodWallInstance, stats: WoodMeshBuildStats) => void,
   wall: WoodWallInstance,
   internal: WallInternalState,
   volley: PelletVolleyState,
@@ -192,7 +192,6 @@ export function tryApplyBuckshotClusterBlowout(
         lastImp.dirWorld,
         lastImp.exitSignZ,
         lastImp.energyJ * tight.count,
-        uploadWallPanelMesh,
         slabPool,
       );
     }
@@ -208,11 +207,11 @@ export function tryApplyBuckshotClusterBlowout(
       grainStretchOverride: 1.44,
     });
 
-    const subRes = stampHoleInWoodPanel(wall.panelState, clusterStamp, wall.scratchBuffers, targetTier === 'TIGHT_8' ? 8 : 11);
+    const subRes = cutStampFromWoodPanel(wall.panelState, clusterStamp, targetTier === 'TIGHT_8' ? 8 : 11);
     volley.clusterCuts.push({ u: tight.centerU, v: tight.centerV, cutRadiusM: clusterRadiusM * 1.48 });
 
     if (subRes.cutAnyWood) {
-      uploadWallPanelMesh(wall, subRes.meshStats);
+      markWallPanelMeshDirty(wall);
       spawnPerimeterSplinters(splinterPools, nextRand, wall, subRes.splinters, lastImp.dirWorld, lastImp.exitSignZ, lastImp.energyJ * 4.5);
       slabPool?.spawnDroppedSlabs(wall, subRes.droppedSlabs, lastImp.dirWorld, lastImp.exitSignZ, lastImp.energyJ * 4.5, nextRand);
       spawnPlankChunkBurst(splinterPools, nextRand, wall, tight.centerU, tight.centerV, clusterRadiusM, lastImp.dirWorld, lastImp.exitSignZ, lastImp.energyJ * 5.0, targetTier === 'TIGHT_8' ? 5 : 9);
@@ -245,7 +244,6 @@ export function tryApplyBuckshotClusterBlowout(
           lastImp.dirWorld,
           lastImp.exitSignZ,
           lastImp.energyJ * med.count,
-          uploadWallPanelMesh,
           slabPool,
         );
       }
@@ -261,11 +259,11 @@ export function tryApplyBuckshotClusterBlowout(
         grainStretchOverride: 1.38,
       });
 
-      const subRes = stampHoleInWoodPanel(wall.panelState, clusterStamp, wall.scratchBuffers, 7);
+      const subRes = cutStampFromWoodPanel(wall.panelState, clusterStamp, 7);
       volley.clusterCuts.push({ u: med.centerU, v: med.centerV, cutRadiusM: clusterRadiusM * 1.42 });
 
       if (subRes.cutAnyWood) {
-        uploadWallPanelMesh(wall, subRes.meshStats);
+        markWallPanelMeshDirty(wall);
         spawnPerimeterSplinters(splinterPools, nextRand, wall, subRes.splinters, lastImp.dirWorld, lastImp.exitSignZ, lastImp.energyJ * 3.0);
         slabPool?.spawnDroppedSlabs(wall, subRes.droppedSlabs, lastImp.dirWorld, lastImp.exitSignZ, lastImp.energyJ * 3.0, nextRand);
         spawnPlankChunkBurst(splinterPools, nextRand, wall, med.centerU, med.centerV, clusterRadiusM, lastImp.dirWorld, lastImp.exitSignZ, lastImp.energyJ * 3.2, 4);

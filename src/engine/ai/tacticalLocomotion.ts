@@ -1,7 +1,12 @@
-import type { TargetHealthState } from '../../contracts/ballistics.ts';
+import type { TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
 import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
 import { isSeatedAnimated } from '../../core/ballistics/triage/seatedLastStand.ts';
 import { isFlinchHoldingBody, isWoundClipHoldingBody } from './woundClipHold.ts';
+import { HALL_ARENA_NAV_SPEC, type ArenaNavSpec } from './arenaNavSpec.ts';
+
+const STEP_ORIGIN: Vec3Like = { x: 0, y: 0, z: 0 };
+const STEP_DIR: Vec3Like = { x: 0, y: 0, z: 1 };
+const anySurfaceBlocks = (): boolean => true;
 
 export function isWaistStepBlocked(
   originX: number,
@@ -15,22 +20,22 @@ export function isWaistStepBlocked(
   const stepDist = Math.hypot(stepX, stepZ);
   if (stepDist < 1e-5) return false;
 
-  const waistOrigin = { x: originX, y: originY + 0.75, z: originZ };
-  const clearanceHits = rapierWorld.castPenetrationRay(
-    waistOrigin,
-    { x: stepX / stepDist, y: 0, z: stepZ / stepDist },
-    stepDist + 0.42
-  );
-  return clearanceHits.length > 0 && clearanceHits[0].distanceM <= stepDist + 0.42;
+  STEP_ORIGIN.x = originX;
+  STEP_ORIGIN.y = originY + 0.75;
+  STEP_ORIGIN.z = originZ;
+  STEP_DIR.x = stepX / stepDist;
+  STEP_DIR.y = 0;
+  STEP_DIR.z = stepZ / stepDist;
+  return rapierWorld.hasAnyBlockingHit(STEP_ORIGIN, STEP_DIR, stepDist + 0.42, anySurfaceBlocks);
 }
 
-/** The walkable arena floor; movement goals are clamped to it. */
-export function clampArenaGoalX(x: number): number {
-  return Math.max(-8.1, Math.min(8.1, x));
+/** Movement goals are clamped to the arena's walkable floor. */
+export function clampArenaGoalX(x: number, nav: ArenaNavSpec = HALL_ARENA_NAV_SPEC): number {
+  return Math.max(nav.walkMinX, Math.min(nav.walkMaxX, x));
 }
 
-export function clampArenaGoalZ(z: number): number {
-  return Math.max(-46.0, Math.min(-3.2, z));
+export function clampArenaGoalZ(z: number, nav: ArenaNavSpec = HALL_ARENA_NAV_SPEC): number {
+  return Math.max(nav.walkMinZ, Math.min(nav.walkMaxZ, z));
 }
 
 export function moveHorizontalClamped(
@@ -38,7 +43,8 @@ export function moveHorizontalClamped(
   goalX: number,
   goalZ: number,
   maxStepM: number,
-  rapierWorld: RapierPhysicsWorld | null
+  rapierWorld: RapierPhysicsWorld | null,
+  nav: ArenaNavSpec = HALL_ARENA_NAV_SPEC
 ): void {
   if (!hs.alive || hs.currentHp <= 0 || hs.isRagdollActive || maxStepM <= 0) return;
   // A wound clip playing owns the root; stepping it would make the fall skate across the floor.
@@ -48,8 +54,8 @@ export function moveHorizontalClamped(
   // A seated last stand stays where it sat down; only a crawler drags itself along the floor.
   if (isSeatedAnimated(hs)) return;
 
-  const clampedGoalX = clampArenaGoalX(goalX);
-  const clampedGoalZ = clampArenaGoalZ(goalZ);
+  const clampedGoalX = clampArenaGoalX(goalX, nav);
+  const clampedGoalZ = clampArenaGoalZ(goalZ, nav);
 
   const dx = clampedGoalX - hs.worldPosition.x;
   const dz = clampedGoalZ - hs.worldPosition.z;

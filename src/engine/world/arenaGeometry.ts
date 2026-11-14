@@ -17,7 +17,8 @@ export function buildArenaGeometry(
   materials: EngineMaterialPalette,
   rapierWorld: RapierPhysicsWorld | null,
   colliderHandles: number[],
-  customDetailMaterials: pc.StandardMaterial[]
+  customDetailMaterials: pc.StandardMaterial[],
+  staticBatchEntities?: pc.Entity[]
 ): void {
   // 1. Checker-Tiled Hall Floor
   const floor = new pc.Entity('ArenaFloor');
@@ -44,6 +45,7 @@ export function buildArenaGeometry(
       post.setLocalScale(0.32, 1.1, 0.32);
       post.setPosition(side, 0.55, -d);
       arenaRootEntity.addChild(post);
+      staticBatchEntities?.push(post);
 
       if (rapierWorld) {
         const postTag: ColliderSurfaceTag = {
@@ -78,6 +80,7 @@ export function buildArenaGeometry(
       barrier.setLocalScale(1.1, 1.35, 7.5);
       barrier.setPosition(side, 0.675, z);
       arenaRootEntity.addChild(barrier);
+      staticBatchEntities?.push(barrier);
 
       const footing = new pc.Entity(`${objectId}_Footing`);
       footing.addComponent('render', {
@@ -89,6 +92,7 @@ export function buildArenaGeometry(
       footing.setLocalScale(1.44, 0.24, 7.56);
       footing.setPosition(side, 0.12, z);
       arenaRootEntity.addChild(footing);
+      staticBatchEntities?.push(footing);
 
       if (rapierWorld) {
         const barrierTag: ColliderSurfaceTag = {
@@ -110,5 +114,5 @@ export function buildArenaGeometry(
   }
 
   // 4. Tiled Walls, Ceiling, Beams & Fluorescent Fixtures
-  buildHallShell(arenaRootEntity, device, materials, rapierWorld, colliderHandles, customDetailMaterials);
+  buildHallShell(arenaRootEntity, device, materials, rapierWorld, colliderHandles, customDetailMaterials, staticBatchEntities);
 }

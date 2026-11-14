@@ -31,6 +31,15 @@ export class FrameSlicedWorkQueue {
     else this.jobs.unshift(job);
   }
 
+  /** Like `deferFirst` for several jobs: they go ahead of anything waiting and run in the given order. */
+  public deferFirstAll(jobs: ReadonlyArray<() => void>): void {
+    if (this.budgetMs === null) {
+      for (const job of jobs) job();
+    } else if (jobs.length > 0) {
+      this.jobs.unshift(...jobs);
+    }
+  }
+
   /** Runs queued jobs until the budget is spent. Always runs at least one, so the queue drains. */
   public drain(): void {
     if (this.jobs.length === 0) return;

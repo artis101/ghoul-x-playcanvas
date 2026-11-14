@@ -1,8 +1,15 @@
 import type { TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
-import { length, scale, sub } from '../../core/ballistics/vec3.ts';
+import type { ColliderSurfaceTag } from '../../contracts/destruction.ts';
 import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
 import type { EnemyAiAgentRuntime } from './tacticalAiTypes.ts';
 import { isSeatedAnimated } from '../../core/ballistics/triage/seatedLastStand.ts';
+
+const SIGHT_DIR: Vec3Like = { x: 0, y: 0, z: 1 };
+
+/** Glass is see-through for sight lines; every other tagged surface blocks. */
+function isOpaqueSurface(surface: ColliderSurfaceTag): boolean {
+  return surface.material !== 'GLASS_MARCHING_256' && surface.material !== 'GLASS_VORONOI';
+}
 
 export function isSightBlockedBySolidCover(
   eyeOrigin: Vec3Like,
@@ -15,27 +22,25 @@ export function isSightBlockedBySolidCover(
   }
   if (!rapierWorld) return false;
 
-  const delta = sub(targetPoint, eyeOrigin);
-  const dist = length(delta);
+  const dx = targetPoint.x - eyeOrigin.x;
+  const dy = targetPoint.y - eyeOrigin.y;
+  const dz = targetPoint.z - eyeOrigin.z;
+  const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
   if (dist <= 0.05) return false;
 
-  const dir = scale(delta, 1 / dist);
+  const inv = 1 / dist;
+  SIGHT_DIR.x = dx * inv;
+  SIGHT_DIR.y = dy * inv;
+  SIGHT_DIR.z = dz * inv;
   const maxDist = Math.max(0.01, dist - 0.02);
-  const hits = rapierWorld.castPenetrationRay(eyeOrigin, dir, maxDist);
-  for (const h of hits) {
-    if (h.distanceM > maxDist) continue;
-    if (h.surface.material === 'GLASS_MARCHING_256' || h.surface.material === 'GLASS_VORONOI') continue;
-    return true;
-  }
-  return false;
+  return rapierWorld.hasAnyBlockingHit(eyeOrigin, SIGHT_DIR, maxDist, isOpaqueSurface);
 }
 
 export function resolveExposedPlayerAimPoint(
   hs: TargetHealthState,
   agent: EnemyAiAgentRuntime,
   playerEyeWorldPos: Vec3Like,
-  rapierWorld: RapierPhysicsWorld | null,
-  isLineOfSightBlockedCallback?: (from: Vec3Like, to: Vec3Like) => boolean
+  isSightBlocked: (from: Vec3Like, to: Vec3Like) => boolean
 ): Vec3Like | null {
   // A seated last stand shoots and looks from the floor, like a crawler, not from standing height.
   const isGroundedOrDowned = agent.state === 'DOWNED_CRAWLING' || hs.isRagdollActive || isSeatedAnimated(hs);
@@ -63,12 +68,12 @@ export function resolveExposedPlayerAimPoint(
     z: playerEyeWorldPos.z,
   };
 
-  const chestClear = !isSightBlockedBySolidCover(enemyCorePos, playerChestTarget, rapierWorld, isLineOfSightBlockedCallback);
-  const eyeClear = !isSightBlockedBySolidCover(enemyEyePos, playerEyeWorldPos, rapierWorld, isLineOfSightBlockedCallback);
+  const chestClear = !isSightBlocked(enemyCorePos, playerChestTarget);
+  const eyeClear = !isSightBlocked(enemyEyePos, playerEyeWorldPos);
 
   if (!chestClear && !eyeClear) return null;
   if (chestClear) return playerChestTarget;
-  if (!isSightBlockedBySolidCover(enemyCorePos, playerEyeWorldPos, rapierWorld, isLineOfSightBlockedCallback)) {
+  if (!isSightBlocked(enemyCorePos, playerEyeWorldPos)) {
     return playerEyeWorldPos;
   }
   return null;

@@ -57,4 +57,24 @@ describe('FrameSlicedWorkQueue', () => {
     queue.drain();
     expect(ran).toEqual(['barrel', 'chain']);
   });
+
+  it('runs a batch on the spot in order when it has no budget', () => {
+    const queue = new FrameSlicedWorkQueue();
+    const ran: string[] = [];
+    queue.deferFirstAll([() => ran.push('wood'), () => ran.push('brick'), () => ran.push('breaches')]);
+    expect(ran).toEqual(['wood', 'brick', 'breaches']);
+    expect(queue.pendingCount).toBe(0);
+  });
+
+  it('puts a batch ahead of waiting work, keeping the batch order', () => {
+    const queue = new FrameSlicedWorkQueue();
+    queue.budgetMs = 50;
+    const ran: string[] = [];
+    queue.defer(() => ran.push('body-1'));
+    queue.deferFirstAll([() => ran.push('wood'), () => ran.push('brick'), () => ran.push('breaches')]);
+    queue.deferFirstAll([]);
+    expect(queue.pendingCount).toBe(4);
+    queue.drain();
+    expect(ran).toEqual(['wood', 'brick', 'breaches', 'body-1']);
+  });
 });

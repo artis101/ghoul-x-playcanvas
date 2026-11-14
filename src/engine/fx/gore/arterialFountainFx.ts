@@ -1,7 +1,10 @@
 import * as pc from 'playcanvas';
 import type { DismembermentEvent, TargetHealthState, Vec3Like } from '../../../contracts/ballistics.ts';
-import { copyVec3, length, normalize, scale, sub } from '../../../core/ballistics/vec3.ts';
+import { copyInto, copyVec3, length, normalizeInto, subInto } from '../../../core/ballistics/vec3.ts';
 import type { ArterialFountainStream } from './goreTypes.ts';
+
+const scratchOut = { x: 0, y: 0, z: 0 };
+const scratchSprayDir = { x: 0, y: 0, z: 0 };
 
 export function attachArterialFountain(
   arterialFountains: ArterialFountainStream[],
@@ -34,12 +37,12 @@ export function updateArterialFountains(
       const socketZone = f.parentZone || f.zone;
       if (socketZone && f.target.ragdollBones[socketZone]) {
         const b = f.target.ragdollBones[socketZone];
-        f.stumpPos = copyVec3(b.distalPosition || b.position);
-        const out = sub(b.distalPosition, b.position);
-        if (length(out) > 0.02) {
-          f.sprayDir = normalize(scale(out, 1));
+        copyInto(f.stumpPos, b.distalPosition || b.position);
+        subInto(scratchOut, b.distalPosition, b.position);
+        if (length(scratchOut) > 0.02) {
+          normalizeInto(f.sprayDir, scratchOut);
         } else {
-          f.sprayDir = copyVec3(b.basisUp);
+          copyInto(f.sprayDir, b.basisUp);
         }
       }
     }
@@ -49,7 +52,7 @@ export function updateArterialFountains(
     const pulseRate = systolicPulse * pressureDecay;
     if (f.dropTimerS >= 0.11 / Math.max(0.3, pulseRate)) {
       f.dropTimerS = 0;
-      const sprayDirNorm = normalize(f.sprayDir);
+      const sprayDirNorm = normalizeInto(scratchSprayDir, f.sprayDir);
       onSpawnBloodBurst(f.stumpPos, sprayDirNorm, 48 * pulseRate, 3);
     }
 

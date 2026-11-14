@@ -42,8 +42,8 @@ export function resolveWoundEmissionMode(
 export class VascularBloodFxEmitter {
   public readonly app: pc.AppBase;
   public readonly palette: EngineMaterialPalette;
-  public readonly vascularMaterials: VascularBloodMaterials;
-  public readonly fxRoot: pc.Entity;
+  private vascularMaterialsCache: VascularBloodMaterials | null = null;
+  private fxRootEntity: pc.Entity | null = null;
 
   private readonly maxParticles: number;
   private readonly maxPools: number;
@@ -51,17 +51,36 @@ export class VascularBloodFxEmitter {
   private readonly pools: ActiveVascularFloorPool[] = [];
   private readonly mistPuffs: ActiveVascularMistPuff[] = [];
   private readonly boundEntities = new Map<string, BoundPhysiologyEmitter>();
-  private readonly mistMaterial: pc.StandardMaterial | null = null;
+  private mistMaterialCache: pc.StandardMaterial | null = null;
+  private mistMaterialBuilt = false;
   private readonly scratchLookAt = new pc.Vec3();
 
   constructor(app: pc.AppBase, palette: EngineMaterialPalette, maxParticles = 160, maxPools = 48) {
     this.app = app;
     this.palette = palette;
-    const device = app.graphicsDevice ?? null;
-    this.vascularMaterials = createVascularBloodMaterials(palette, device);
     this.maxParticles = maxParticles;
     this.maxPools = maxPools;
+  }
 
+  public get vascularMaterials(): VascularBloodMaterials {
+    if (!this.vascularMaterialsCache) {
+      this.vascularMaterialsCache = createVascularBloodMaterials(this.palette, this.app.graphicsDevice ?? null);
+    }
+    return this.vascularMaterialsCache;
+  }
+
+  public get fxRoot(): pc.Entity {
+    if (!this.fxRootEntity) {
+      this.fxRootEntity = new pc.Entity('VascularBloodFxRoot', this.app);
+      this.app.root.addChild(this.fxRootEntity);
+    }
+    return this.fxRootEntity;
+  }
+
+  private getMistMaterial(): pc.StandardMaterial | null {
+    if (this.mistMaterialBuilt) return this.mistMaterialCache;
+    this.mistMaterialBuilt = true;
+    const device = this.app.graphicsDevice ?? null;
     if (device) {
       const maps = getOrCreateWetBloodMaps(device);
       const mistMat = new pc.StandardMaterial();
@@ -76,11 +95,9 @@ export class VascularBloodFxEmitter {
       mistMat.cull = pc.CULLFACE_NONE;
       mistMat.useLighting = true;
       mistMat.update();
-      this.mistMaterial = mistMat;
+      this.mistMaterialCache = mistMat;
     }
-
-    this.fxRoot = new pc.Entity('VascularBloodFxRoot', this.app);
-    this.app.root.addChild(this.fxRoot);
+    return this.mistMaterialCache;
   }
 
   public bindEntity(state: PhysiologicalEntityState, getTransform?: () => CharacterTransform): void {
@@ -200,10 +217,12 @@ export class VascularBloodFxEmitter {
   }
 
   private spawnArterialMistWisp(originWorld: Vec3Like, sprayDirWorld: Vec3Like, driftSpeedMs: number): void {
-    if (!this.app.systems?.render || !this.mistMaterial) return;
+    if (!this.app.systems?.render) return;
+    const mistMaterial = this.getMistMaterial();
+    if (!mistMaterial) return;
     const dir = normalize(sprayDirWorld);
     const wisp = new pc.Entity('ArterialMistWisp', this.app);
-    wisp.addComponent('render', { type: 'plane', material: this.mistMaterial, castShadows: false });
+    wisp.addComponent('render', { type: 'plane', material: mistMaterial, castShadows: false });
     wisp.setPosition(originWorld.x, originWorld.y, originWorld.z);
     wisp.setLocalEulerAngles(90, Math.random() * 360, (Math.random() - 0.5) * 45);
     const startScale = 0.065 + Math.random() * 0.035;
@@ -266,6 +285,7 @@ export class VascularBloodFxEmitter {
 
   public update(dt: number): void {
     if (dt <= 0 || !Number.isFinite(dt)) return;
+    if (this.boundEntities.size === 0 && this.particles.length === 0 && this.mistPuffs.length === 0 && this.pools.length === 0) return;
     for (const bound of this.boundEntities.values()) {
       const transform = bound.getTransform ? bound.getTransform() : undefined;
       this.emitFromEntityState(bound.state, dt, transform, bound.woundTimers);
@@ -347,7 +367,8 @@ export class VascularBloodFxEmitter {
   public destroy(): void {
     this.clearAll();
     this.boundEntities.clear();
-    this.fxRoot.destroy();
+    this.fxRootEntity?.destroy();
+    this.fxRootEntity = null;
   }
 }
 

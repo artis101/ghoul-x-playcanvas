@@ -18,8 +18,10 @@ import { TacticalCombatAiSystem } from '../ai/tacticalCombatAi.ts';
 import type { IGhoulXApp } from './appContext.ts';
 import { createPlayCanvasApp, unbindPlayCanvasAppResize } from './appSetup.ts';
 import { CinematicFrame } from './cinematicFrame.ts';
+import { disposeDevRuntime } from '../dev/devRuntime.ts';
 import { onEngineUpdate } from './engineUpdateLoop.ts';
 import { wireCombatDirectorInterceptors } from './combatEventWiring.ts';
+import { fanOutBlast, BARREL_BLAST_PROFILE } from './blastFanout.ts';
 import {
   handleTriggerPull,
   handleThrowGrenade,
@@ -60,6 +62,9 @@ export class GhoulXApplication implements IGhoulXApp {
   public totalElapsedTimeS = 0;
   public lifecycleState: AppLifecycleState = { kind: 'INITIALIZED' };
 
+  private readonly ownsApp: boolean;
+  private readonly ownsGlbRegistry: boolean;
+
   constructor(
     canvas?: HTMLCanvasElement,
     app?: pc.Application,
@@ -76,6 +81,7 @@ export class GhoulXApplication implements IGhoulXApp {
       this.canvas = el;
     }
 
+    this.ownsApp = !app;
     this.app = app ?? createPlayCanvasApp(this.canvas);
     this.rapierWorld = new RapierPhysicsWorld();
     this.materials = options?.materials ?? getOrCreateMaterials();
@@ -87,6 +93,7 @@ export class GhoulXApplication implements IGhoulXApp {
 
     this.hudController = new HudController();
     this.combatAudio = options?.combatAudio ?? new CombatAudioEngine({ pannerModel: 'equalpower' });
+    this.ownsGlbRegistry = !glbRegistry;
     this.glbRegistry = glbRegistry ?? new GlbModelRegistry(this.app);
     this.fxManager = new GoreAndBallisticsFxManager(this.app, this.materials, this.glbRegistry);
 
@@ -105,24 +112,7 @@ export class GhoulXApplication implements IGhoulXApp {
           vec3(eye.x, eye.y, eye.z)
         );
       },
-      onExplosionBlast: (blast) => {
-        this.combatDirector.blastWork.deferFirst(() => {
-          this.destructionManager.applyBlast(blast);
-          this.mayhemDirector.syncSurfaceBreaches();
-        });
-        this.combatDirector.applyExternalExplosionTrauma(blast, 'HAZARD BARREL');
-        this.tacticalAi.notifyGunshotOrExplosion(blast.centerWorld, 45.0, 0.78);
-        // Blast thump and shake fall off with distance, reaching about three blast radii.
-        const eye = this.fpsController?.getEyePosition();
-        if (eye) {
-          const dist = Math.hypot(eye.x - blast.centerWorld.x, eye.y - blast.centerWorld.y, eye.z - blast.centerWorld.z);
-          const near = 1 - dist / Math.max(1, blast.radiusM * 3);
-          if (near > 0) {
-            this.fpsController.applyBump(near * 1.6);
-            this.fpsController.applyCameraShake(near * 3.2, 0.5);
-          }
-        }
-      },
+      onExplosionBlast: (blast) => fanOutBlast(this, blast, BARREL_BLAST_PROFILE),
     });
 
     this.destructionManager = new DestructionManager(this.app, this.rapierWorld, {
@@ -136,9 +126,6 @@ export class GhoulXApplication implements IGhoulXApp {
       },
       buildDefaultArena: true,
     });
-    this.mayhemDirector.isSurfaceOpenAtHit = (hit, origin, dir, maxDistM) =>
-      this.destructionManager.isSurfaceOpenAtHit(hit, origin, dir, maxDistM);
-    this.mayhemDirector.getBreachVersion = () => this.destructionManager.breachVersion;
 
     this.tacticalAi = new TacticalCombatAiSystem({
       app: this.app,
@@ -234,6 +221,9 @@ export class GhoulXApplication implements IGhoulXApp {
       (prev, next) => this.destructionManager.resolvePlayerHorizontalCollision(prev, next, 0.36)
     );
     this.cinematicFrame = new CinematicFrame(this.app, this.fpsController.cameraEntity.camera);
+    // Smoke, plume and mist billboards turn to face this camera.
+    this.mayhemDirector.setCameraEntity(this.fpsController.cameraEntity);
+    this.fxManager.setCameraEntity(this.fpsController.cameraEntity);
 
     this.arsenalManager = new ArsenalManager(
       this.fpsController.cameraEntity,
@@ -267,7 +257,8 @@ export class GhoulXApplication implements IGhoulXApp {
       this.combatDirector,
       this.destructionManager,
       this.mayhemDirector,
-      this.tacticalAi
+      this.tacticalAi,
+      this.fpsController
     );
 
     this.combatDirector.spawnAllTargets();
@@ -290,17 +281,40 @@ export class GhoulXApplication implements IGhoulXApp {
     this.app.on('update', updateHandler);
   }
 
+  /**
+   * Tears down every subsystem in reverse construction order. Each step runs even if an earlier one
+   * throws; the errors are re-thrown together afterwards. The pc.Application, GLB registry and canvas
+   * are released only when this instance created them. The shared material palette is never destroyed.
+   */
   public destroy(): void {
     if (this.lifecycleState.kind === 'DESTROYED') return;
     if (this.lifecycleState.kind === 'RUNNING') {
       this.app.off('update', this.lifecycleState.updateHandler);
     }
     this.lifecycleState = { kind: 'DESTROYED' };
-    unbindPlayCanvasAppResize(this.app);
-    this.cinematicFrame.destroy();
-    this.fpsController.destroy();
-    this.arsenalManager.destroy();
-    this.arenaBuilder.destroy();
-    this.combatAudio.destroy();
+
+    const errors: unknown[] = [];
+    const step = (release: () => void): void => {
+      try { release(); } catch (err) { errors.push(err); }
+    };
+    step(() => disposeDevRuntime(this));
+    step(() => unbindPlayCanvasAppResize(this.app));
+    step(() => this.combatDirector.destroy());
+    step(() => this.arsenalManager.destroy());
+    step(() => this.cinematicFrame.destroy());
+    step(() => this.fpsController.destroy());
+    step(() => this.tacticalAi.destroy());
+    step(() => this.destructionManager.destroy());
+    step(() => this.mayhemDirector.destroy());
+    step(() => this.arenaBuilder.destroy());
+    step(() => this.fxManager.destroy());
+    if (this.ownsGlbRegistry) step(() => this.glbRegistry.destroy());
+    step(() => this.combatAudio.destroy());
+    step(() => this.hudController.destroy());
+    step(() => this.rapierWorld.destroy());
+    if (this.ownsApp) step(() => this.app.destroy());
+
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, `GhoulXApplication teardown: ${errors.length} subsystems failed`);
   }
 }

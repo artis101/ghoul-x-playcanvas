@@ -68,7 +68,12 @@ export interface WoodWallInstance {
   readonly studFrameMesh: pc.Mesh;
   readonly panelState: WoodPanelClipperState;
   readonly scratchBuffers: WoodMeshScratchBuffers;
-  lastMeshStats: WoodMeshBuildStats;
+  /** Stats of the panel mesh on the GPU; reading it first rebuilds a panel whose shape changed. */
+  readonly lastMeshStats: WoodMeshBuildStats;
+  /** Stats of the last uploaded panel triangulation (may lag the logical shape until flushed). */
+  panelMeshStats: WoodMeshBuildStats;
+  /** True when panelState changed since the render mesh was last rebuilt. */
+  panelMeshDirty: boolean;
 }
 
 export interface StudSectionState {

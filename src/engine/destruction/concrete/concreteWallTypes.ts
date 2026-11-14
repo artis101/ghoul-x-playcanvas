@@ -73,6 +73,10 @@ export interface ActiveDynamicConcreteChunk {
   ttlS: number;
   sleepingSynced: boolean;
   phase: ConcreteChunkPhase;
+  /** Body matrix (with fade shrink) the chunk's vertices were last written with. */
+  uploadedPose: Float32Array;
+  /** True when the chunk's vertices must be rewritten regardless of pose (new or moved in the buffer). */
+  verticesStale: boolean;
 }
 
 export interface ConcreteWallSystemOptions {

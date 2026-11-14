@@ -19,12 +19,7 @@ export function buildWeaponViewmodel(
   glbRegistry: GlbModelRegistry | null,
   activeMaterials: pc.StandardMaterial[]
 ): BuiltViewmodel {
-  while (parentEntity.children.length > 0) {
-    parentEntity.children[0].destroy();
-  }
-  for (const m of activeMaterials) m.destroy();
-  activeMaterials.length = 0;
-
+  const firstMaterial = activeMaterials.length;
   const device = resolveGraphicsDeviceFromEntity(cameraEntity);
   const assetId = toWeaponAssetId(weapon.id);
 
@@ -43,8 +38,7 @@ export function buildWeaponViewmodel(
       return { activeGlb: glbInst, flashEntity: flashRoot, baseScale };
     } catch {
       glbInst?.destroy();
-      for (const material of activeMaterials) material.destroy();
-      activeMaterials.length = 0;
+      for (const material of activeMaterials.splice(firstMaterial)) material.destroy();
     }
   }
 

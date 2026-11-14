@@ -3,7 +3,8 @@ import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
 import type {
   EnemyAimProfile, EnemyAiAgentRuntime, EnemyHitNotification, EnemyTacticalAiState,
 } from './tacticalAiTypes.ts';
-import type { PeekPlanCacheEntry } from './tacticalCoverFinder.ts';
+import type { ArenaNavSpec } from './arenaNavSpec.ts';
+import type { PeekPlanCacheEntry, PeekPlanPolicy } from './tacticalCoverFinder.ts';
 import type { BurstContext } from './tacticalBurstAndTracers.ts';
 
 // A crawler drags itself round slowly to face away from the player. A downed shooter never turns
@@ -16,6 +17,8 @@ export interface TacticalFsmContext {
   rapierWorld: RapierPhysicsWorld | null;
   peekPlanCache: Map<string, PeekPlanCacheEntry>;
   hasCoverQueries: boolean;
+  peekPolicy: PeekPlanPolicy;
+  arenaNav: ArenaNavSpec;
   isSightBlocked: (from: Vec3Like, to: Vec3Like) => boolean;
   burstCtx: BurstContext;
   transitionState: (agent: EnemyAiAgentRuntime, next: EnemyTacticalAiState) => void;

@@ -1,5 +1,6 @@
 import * as pc from 'playcanvas';
 import type { InFlightBloodDrop } from './goreTypes.ts';
+import { releaseFxEntity } from '../particles/fxEntityPool.ts';
 
 export function updateBloodDrops(
   bloodDrops: InFlightBloodDrop[],
@@ -33,13 +34,13 @@ export function updateBloodDrops(
     if (drop.position.y <= 0.015) {
       // A landing drop leaves a spatter, not a puddle; puddles build up as spatters merge.
       onSpawnBloodPool(drop.position, 0.06 + Math.random() * 0.05);
-      drop.entity.destroy();
+      releaseFxEntity(drop.entity);
       bloodDrops.splice(i, 1);
       continue;
     }
 
     if (drop.life >= drop.maxLife) {
-      drop.entity.destroy();
+      releaseFxEntity(drop.entity);
       bloodDrops.splice(i, 1);
     }
   }

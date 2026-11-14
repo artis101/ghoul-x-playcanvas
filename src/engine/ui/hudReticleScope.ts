@@ -34,6 +34,13 @@ export class HudReticleScope {
     }
   }
 
+  public destroy(): void {
+    if (this.hitmarkerTimeout !== null) {
+      globalThis.clearTimeout(this.hitmarkerTimeout);
+      this.hitmarkerTimeout = null;
+    }
+  }
+
   public triggerHitmarker(mode: 'NORMAL' | 'ARMOR' | 'LETHAL' | boolean): void {
     if (!this.hitmarkerEl) return;
     const resolved = typeof mode === 'boolean' ? (mode ? 'LETHAL' : 'NORMAL') : mode;

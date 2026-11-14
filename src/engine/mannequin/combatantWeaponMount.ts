@@ -1,7 +1,6 @@
 import { oppositeSide } from '../../core/ghoul/anatomy/handedness.ts';
 import * as pc from 'playcanvas';
 import type {
-  GhoulZoneId,
   TargetHealthState,
   Vec3Like,
 } from '../../contracts/ballistics.ts';
@@ -22,6 +21,7 @@ import {
   type WeaponGlbInstance,
 } from '../assets/glbLoader.ts';
 import { getPreferredPrimaryHand, isArmChainIntactAndFunctional } from '../ai/combatantArmEvaluation.ts';
+import { FOREARM_ZONE, HAND_ZONE } from './armZoneKeys.ts';
 import { armsClipName, CombatantWeaponHands } from './combatantWeaponHands.ts';
 import { CombatantPistolHold } from './combatantPistolHold.ts';
 import { gunKindOf, isOneHandPistolClip } from './combatantWeaponPoseMap.ts';
@@ -117,8 +117,8 @@ export class CombatantWeaponMount {
   ): void {
     const triggerHand = getPreferredPrimaryHand(healthState);
     const supportHand = oppositeSide(triggerHand);
-    const triggerHandZone: GhoulZoneId = `HAND_${triggerHand}`;
-    const supportHandZone: GhoulZoneId = `HAND_${supportHand}`;
+    const triggerHandZone = HAND_ZONE[triggerHand];
+    const supportHandZone = HAND_ZONE[supportHand];
 
     const armIntact = isArmChainIntactAndFunctional(healthState, triggerHand);
     const shouldHoldWeapon =
@@ -199,7 +199,7 @@ export class CombatantWeaponMount {
         const uT = glbTrigNode.up;
         palmTrig = vec3(pT.x + uT.x * 0.052, pT.y + uT.y * 0.052, pT.z + uT.z * 0.052);
 
-        const elbow = glb?.boneNodes.get(`FOREARM_${triggerHand}`)?.getPosition();
+        const elbow = glb?.boneNodes.get(FOREARM_ZONE[triggerHand])?.getPosition();
         const forearm = elbow ? normalize(vec3(pT.x - elbow.x, pT.y - elbow.y, pT.z - elbow.z)) : uT;
         gunFwd = animatedBarrelDirection(glb ?? null, forearm, charFwd);
 

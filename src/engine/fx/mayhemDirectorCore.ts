@@ -89,7 +89,6 @@ export class MayhemDirector {
 
   private cachedCameraEntity: pc.Entity | null = null;
   private cachedCameraPos: pc.Vec3 | null = null;
-  private readonly _eventCleanups: Array<() => void> = [];
   private readonly splatterRecycleCursor = { value: 0 };
   private readonly splatterSeedCounter = { value: 1 };
   private casingSeedCounter = 1;
@@ -143,25 +142,9 @@ export class MayhemDirector {
         this.spawnMultiStageExplosionFx(blast);
         this.lingeringSmokePool.applyBlastSwirl(blast.centerWorld, blast.radiusM, blast.peakImpulseNs);
         this.onExplosionBlast?.(blast);
-        this.syncSurfaceBreaches();
       },
     });
 
-    this.cachedCameraEntity =
-      (this.app.root?.findByName?.('PlayerCamera') as pc.Entity | null) ?? null;
-    if (typeof this.app.on === 'function' && typeof this.app.off === 'function') {
-      const onCameraTransform = (data: unknown): void => {
-        const p = data as { position?: pc.Vec3; entity?: pc.Entity } | undefined;
-        if (p?.entity) {
-          this.cachedCameraEntity = p.entity;
-        }
-        if (p?.position) {
-          this.cachedCameraPos = p.position;
-        }
-      };
-      this.app.on('camera:transform', onCameraTransform, this);
-      this._eventCleanups.push(() => this.app.off('camera:transform', onCameraTransform, this));
-    }
   }
 
   public setCameraEntity(cameraEntity: pc.Entity | null): void {
@@ -321,7 +304,6 @@ export class MayhemDirector {
     if (v === this.lastSyncedBreachVersion) return;
     this.lastSyncedBreachVersion = v;
     this.pruneUnsupportedDecals();
-    this.rapierWorld.wakeAllSleepingDynamicBodies();
   }
 
   public notifyExternalExplosion(blast: BlastEvent): void {
@@ -330,7 +312,6 @@ export class MayhemDirector {
     this.spawnMultiStageExplosionFx(blast);
     this.lingeringSmokePool.applyBlastSwirl(blast.centerWorld, blast.radiusM, blast.peakImpulseNs);
     this.barrels.applyBlast(blast);
-    this.syncSurfaceBreaches();
   }
 
   public update(dt: number): void {
@@ -383,10 +364,6 @@ export class MayhemDirector {
   public destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    while (this._eventCleanups.length > 0) {
-      const cleanup = this._eventCleanups.pop();
-      cleanup?.();
-    }
     this.clearTransientExplosionAndImpactFx();
     destroyExplosionTemplateMaterials(this.templates);
     this.barrels.destroy();

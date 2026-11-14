@@ -38,7 +38,36 @@ export function createWorldTriagePlateDom(parent: HTMLElement): WorldTriagePlate
   root.appendChild(armorTrack);
   root.appendChild(barkPill);
   parent.appendChild(root);
-  return { root, triageLabel, hpNum, hpFill, armorTrack, armorFill, barkPill };
+  return {
+    root,
+    triageLabel,
+    hpNum,
+    hpFill,
+    armorTrack,
+    armorFill,
+    barkPill,
+    lastVisible: -1,
+    lastXTenths: Number.NaN,
+    lastYTenths: Number.NaN,
+    lastDead: -1,
+    lastStatus: '',
+    lastStatusTag: '\u0000',
+    lastHpClamped: -1,
+    lastHpTenths: -1,
+    lastArmorTenths: -2,
+    lastBark: null,
+  };
+}
+
+function buildPlateLabel(baseLabel: string, statusTag: string): string {
+  return statusTag === 'SIDEARM_DRAWN' ? `${baseLabel} • SIDEARM DRAWN`
+    : statusTag === 'SIDEARM_DRAWING' ? `${baseLabel} • DRAWING .50 AE`
+    : statusTag === 'DISARMED' ? 'DISARMED'
+    : statusTag === 'LAST_STAND' ? `${baseLabel} • LAST STAND`
+    : statusTag === 'PANIC_SHAKEN' ? `${baseLabel} • SHAKEN`
+    : statusTag === 'JUGGERNAUT' ? `${baseLabel} • ARMORED PUSH`
+    : statusTag === 'RUSHING' ? `${baseLabel} • RUSHING`
+    : baseLabel;
 }
 
 export function updateWorldPlateEntry(
@@ -47,54 +76,83 @@ export function updateWorldPlateEntry(
   activeBarkText?: string
 ): void {
   if (!entry.visible) {
-    dom.root.style.display = 'none';
+    if (dom.lastVisible !== 0) {
+      dom.root.style.display = 'none';
+      dom.lastVisible = 0;
+    }
     return;
   }
 
-  dom.root.style.display = 'block';
-  dom.root.style.transform = `translate3d(${entry.screenX.toFixed(1)}px, ${entry.screenY.toFixed(1)}px, 0) translate(-50%, -100%)`;
+  if (dom.lastVisible !== 1) {
+    dom.root.style.display = 'block';
+    dom.lastVisible = 1;
+  }
+  const xT = Math.round(entry.screenX * 10);
+  const yT = Math.round(entry.screenY * 10);
+  if (xT !== dom.lastXTenths || yT !== dom.lastYTenths) {
+    dom.lastXTenths = xT;
+    dom.lastYTenths = yT;
+    dom.root.style.transform = `translate3d(${(xT / 10).toFixed(1)}px, ${(yT / 10).toFixed(1)}px, 0) translate(-50%, -100%)`;
+  }
 
   const status = computeCombatantTriageStatus(entry.state);
-  const statusTag = entry.state.alive ? entry.state.combatantStatusTag : null;
-  const baseLabel = formatTriageLabel(status);
-  const label =
-    statusTag === 'SIDEARM_DRAWN' ? `${baseLabel} • SIDEARM DRAWN`
-    : statusTag === 'SIDEARM_DRAWING' ? `${baseLabel} • DRAWING .50 AE`
-    : statusTag === 'DISARMED' ? 'DISARMED'
-    : statusTag === 'LAST_STAND' ? `${baseLabel} • LAST STAND`
-    : statusTag === 'PANIC_SHAKEN' ? `${baseLabel} • SHAKEN`
-    : statusTag === 'JUGGERNAUT' ? `${baseLabel} • ARMORED PUSH`
-    : statusTag === 'RUSHING' ? `${baseLabel} • RUSHING`
-    : baseLabel;
+  const statusTag = (entry.state.alive ? entry.state.combatantStatusTag : null) ?? '';
 
-  const colorCls = triageColorClass(status);
+  const dead = status === 'DEAD' ? 1 : 0;
+  if (dead !== dom.lastDead) {
+    dom.root.classList.toggle('is-dead', dead === 1);
+    dom.lastDead = dead;
+  }
+
+  if (status !== dom.lastStatus || statusTag !== dom.lastStatusTag) {
+    dom.triageLabel.textContent = buildPlateLabel(formatTriageLabel(status), statusTag);
+    if (status !== dom.lastStatus) {
+      const colorCls = triageColorClass(status);
+      dom.triageLabel.className = `wtp-triage ${colorCls}`;
+      dom.hpFill.className = `wtp-hp-fill ${colorCls}`;
+    }
+    dom.lastStatus = status;
+    dom.lastStatusTag = statusTag;
+  }
+
   const hpClamped = entry.state.alive ? Math.max(1, Math.round(entry.state.currentHp)) : 0;
+  if (hpClamped !== dom.lastHpClamped) {
+    dom.hpNum.textContent = String(hpClamped);
+    dom.lastHpClamped = hpClamped;
+  }
+
   const hpPct = entry.state.alive
     ? Math.max(0, Math.min(100, (entry.state.currentHp / Math.max(1, entry.state.maxHp)) * 100))
     : 0;
-
-  dom.root.classList.toggle('is-dead', status === 'DEAD');
-  dom.triageLabel.textContent = label;
-  dom.triageLabel.className = `wtp-triage ${colorCls}`;
-  dom.hpNum.textContent = `${hpClamped}`;
-  dom.hpFill.className = `wtp-hp-fill ${colorCls}`;
-  dom.hpFill.style.width = `${hpPct.toFixed(1)}%`;
+  const hpT = Math.round(hpPct * 10);
+  if (hpT !== dom.lastHpTenths) {
+    dom.hpFill.style.width = `${(hpT / 10).toFixed(1)}%`;
+    dom.lastHpTenths = hpT;
+  }
 
   const armorIntegrity = (entry.state.hasChestArmor ? entry.state.chestArmorIntegrity : 0) || 0;
-  if (armorIntegrity > 0) {
-    dom.armorTrack.classList.remove('hidden');
-    dom.armorFill.style.width = `${(armorIntegrity * 100).toFixed(1)}%`;
-  } else {
-    dom.armorTrack.classList.add('hidden');
+  const armorT = armorIntegrity > 0 ? Math.round(armorIntegrity * 1000) : -1;
+  if (armorT !== dom.lastArmorTenths) {
+    if (armorT < 0) {
+      dom.armorTrack.classList.add('hidden');
+    } else {
+      if (dom.lastArmorTenths < 0) dom.armorTrack.classList.remove('hidden');
+      dom.armorFill.style.width = `${(armorT / 10).toFixed(1)}%`;
+    }
+    dom.lastArmorTenths = armorT;
   }
 
   if (dom.barkPill) {
-    if (activeBarkText && entry.state.alive) {
-      dom.barkPill.classList.remove('hidden');
-      dom.barkPill.textContent = activeBarkText;
-    } else {
-      dom.barkPill.classList.add('hidden');
-      dom.barkPill.textContent = '';
+    const bark = activeBarkText && entry.state.alive ? activeBarkText : '';
+    if (bark !== dom.lastBark) {
+      if (bark) {
+        dom.barkPill.classList.remove('hidden');
+        dom.barkPill.textContent = bark;
+      } else {
+        dom.barkPill.classList.add('hidden');
+        dom.barkPill.textContent = '';
+      }
+      dom.lastBark = bark;
     }
   }
 }

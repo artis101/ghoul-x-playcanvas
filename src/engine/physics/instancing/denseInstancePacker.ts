@@ -83,6 +83,7 @@ export class DenseInstancePacker {
     return true;
   }
 
+  /** The body stays owned by the caller until the slot's TTL expires or clear(world) runs. */
   public bindSlotToRapierBody(
     slotId: number,
     bodyHandle: number,
@@ -314,7 +315,21 @@ export class DenseInstancePacker {
     }
   }
 
-  public clear(): void {
+  /** Frees every slot. Rapier bodies bound with bindSlotToRapierBody are removed only when the world is passed; otherwise they stay owned by the caller. */
+  public clear(rapierWorld?: RapierPhysicsWorld | null): void {
+    if (rapierWorld) {
+      for (let d = 0; d < this.soa.count; d++) {
+        const phase = this.soa.densePhase[d] as SlotLifecyclePhase;
+        if (
+          (phase === SlotLifecyclePhase.RAPIER_AWAKE ||
+            phase === SlotLifecyclePhase.RAPIER_SLEEPING_SYNCED ||
+            phase === SlotLifecyclePhase.RAPIER_SHRINKING) &&
+          this.soa.denseBodyHandle[d] >= 0
+        ) {
+          rapierWorld.removeBody(this.soa.denseBodyHandle[d]);
+        }
+      }
+    }
     this.soa.count = 0;
     this.soa.freeCount = this.maxInstances;
     this.soa.densePhase.fill(SlotLifecyclePhase.FREE);

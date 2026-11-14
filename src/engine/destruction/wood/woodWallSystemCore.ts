@@ -8,7 +8,6 @@ import type {
 import {
   computePanelRemainingAreaM2,
   resetWoodPanelState,
-  triangulateWoodPanelToBuffers,
 } from '../../../core/destruction/woodPolygonClipper.ts';
 import { HardwareInstancedPool } from '../../physics/instancedPool.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
@@ -27,8 +26,8 @@ import { createWoodWallInstance } from './woodWallInstanceBuilder.ts';
 import {
   applyWoodWallRadialBlast,
   handleWoodWallRaySegment,
-  uploadWallPanelMesh,
 } from './woodWallRayBlastSolver.ts';
+import { flushWallPanelMesh, rebuildWallPanelMesh } from './woodPanelMeshSync.ts';
 import { WoodSlabDynamicPool } from './woodSlabDynamicPool.ts';
 import {
   DEFAULT_WOOD_WALL_MAX_INDICES,
@@ -221,6 +220,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
 
   public update(dt: number): void {
     if (this.destroyed) return;
+    this.flushPendingMeshRebuilds();
     if (Number.isFinite(dt) && dt > 0) {
       this.elapsedSimTimeS += dt;
     }
@@ -228,6 +228,14 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       this.splinterPools[i].syncFromPhysics(this.physicsWorld, dt);
     }
     this.slabPool.syncFromPhysics(false);
+  }
+
+  /** Rebuilds the render mesh of every wood panel whose shape changed since its last upload. */
+  public flushPendingMeshRebuilds(): void {
+    if (this.destroyed) return;
+    for (let i = 0; i < this.walls.length; i++) {
+      flushWallPanelMesh(this.walls[i]);
+    }
   }
 
   public handleRaySegment(seg: BallisticSegmentImpact): BallisticPenetrationResult | null {
@@ -287,8 +295,7 @@ export class WoodWallSystem implements IDestructibleSubsystem {
       }
 
       resetWoodPanelState(wall.panelState);
-      const stats = triangulateWoodPanelToBuffers(wall.panelState, wall.scratchBuffers);
-      uploadWallPanelMesh(wall, stats);
+      rebuildWallPanelMesh(wall);
     }
     for (let i = 0; i < this.splinterPools.length; i++) {
       this.splinterPools[i].clear();

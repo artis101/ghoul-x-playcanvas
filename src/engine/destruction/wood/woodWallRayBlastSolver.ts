@@ -9,9 +9,9 @@ import {
   createJaggedHoleStamp,
   inferWoodStampProfile,
   isPointInOpenHole,
-  stampHoleInWoodPanel,
   type SplinterSpawnDescriptor,
 } from '../../../core/destruction/woodPolygonClipper.ts';
+import { cutStampFromWoodPanel } from '../../../core/destruction/wood/clipperBooleanSolver.ts';
 import type { HardwareInstancedPool } from '../../physics/instancedPool.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 import {
@@ -28,10 +28,8 @@ import {
   spawnPerimeterSplinters,
   spawnPlankChunkBurst,
 } from './woodSplinterEmitter.ts';
-import {
-  applyWoodWallRadialBlast,
-  uploadWallPanelMesh,
-} from './woodWallBlastSolver.ts';
+import { applyWoodWallRadialBlast } from './woodWallBlastSolver.ts';
+import { markWallPanelMeshDirty, uploadWallPanelMesh } from './woodPanelMeshSync.ts';
 import type { WoodSlabDynamicPool } from './woodSlabDynamicPool.ts';
 import {
   DEFAULT_WOOD_STUD_WIDTH_M,
@@ -170,7 +168,7 @@ export function handleWoodWallRaySegment(
     let studDamageV = midplaneOverStud || !studHitUv ? v : studHitUv.v;
 
     const rawAlreadyOpen =
-      wall.lastMeshStats.indexCount <= 0 || isPointInOpenHole(wall.panelState, u, v);
+      wall.panelState.shells.length === 0 || isPointInOpenHole(wall.panelState, u, v);
     let alreadyOpenBeforeThisShot = rawAlreadyOpen;
 
     if (profile === 'BUCKSHOT_PELLET') {
@@ -194,16 +192,16 @@ export function handleWoodWallRaySegment(
             isArmorPiercing: false,
             seed: wall.panelState.shotCount + 1,
           });
-          const subRes = stampHoleInWoodPanel(wall.panelState, pelletStamp, wall.scratchBuffers, 3);
+          const subRes = cutStampFromWoodPanel(wall.panelState, pelletStamp, 3);
           if (subRes.cutAnyWood) {
-            uploadWallPanelMesh(wall, subRes.meshStats);
+            markWallPanelMeshDirty(wall);
             spawnPerimeterSplinters(splinterPools, nextRand, wall, subRes.splinters, unitDir, exitSignZ, currentEnergyJ);
             slabPool?.spawnDroppedSlabs(wall, subRes.droppedSlabs, unitDir, exitSignZ, currentEnergyJ, nextRand);
           }
         }
 
         volley.impacts.push({ u, v, cutRadiusM: 0.052, energyJ: currentEnergyJ, dirWorld: unitDir, exitSignZ });
-        tryApplyBuckshotClusterBlowout(physicsWorld, splinterPools, nextRand, uploadWallPanelMesh, wall, internal, volley, seg.caliberRadiusM, slabPool);
+        tryApplyBuckshotClusterBlowout(physicsWorld, splinterPools, nextRand, wall, internal, volley, seg.caliberRadiusM, slabPool);
 
         if (
           hitStud &&
@@ -232,10 +230,10 @@ export function handleWoodWallRaySegment(
         });
 
         const splinterHint = profile === 'HEAVY_50AE_SLUG' || profile === 'BLAST_BREACH' ? 6 : 5;
-        const subResult = stampHoleInWoodPanel(wall.panelState, stamp, wall.scratchBuffers, splinterHint);
+        const subResult = cutStampFromWoodPanel(wall.panelState, stamp, splinterHint);
 
         if (subResult.cutAnyWood) {
-          uploadWallPanelMesh(wall, subResult.meshStats);
+          markWallPanelMeshDirty(wall);
           spawnPerimeterSplinters(splinterPools, nextRand, wall, subResult.splinters, unitDir, exitSignZ, currentEnergyJ);
           const spawnedSlabs = slabPool
             ? slabPool.spawnDroppedSlabs(wall, subResult.droppedSlabs, unitDir, exitSignZ, currentEnergyJ, nextRand)
@@ -299,7 +297,6 @@ export function handleWoodWallRaySegment(
         unitDir,
         exitSignZ,
         currentEnergyJ,
-        uploadWallPanelMesh,
         slabPool,
       );
     } else {

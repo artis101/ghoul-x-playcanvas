@@ -27,7 +27,7 @@ export interface DestructionRaycastContext {
   readonly barrelManager: ExplosiveBarrelManager | null;
   readonly combatAudio: CombatAudioEngine | null;
   readonly getListenerPos?: () => Vec3Like;
-  notifyBreach: () => void;
+  notifyBreach: (centerWorld?: Vec3Like, radiusM?: number) => void;
 }
 
 export function classifyHitGroup(tag: ColliderSurfaceTag): string {
@@ -48,6 +48,19 @@ export function classifyHitGroup(tag: ColliderSurfaceTag): string {
       return 'CONCRETE';
     case 'STEEL':
       return 'STEEL';
+  }
+}
+
+/** Whether damaging this surface can open a path through cover without adding or removing a collider. */
+export function surfaceHitMayOpenPath(tag: ColliderSurfaceTag): boolean {
+  if (tag.objectId.startsWith('hazard_barrel_')) return true;
+  switch (tag.material) {
+    case 'CONCRETE_CHUNKS':
+    case 'CONCRETE_INTACT':
+    case 'STEEL':
+      return false;
+    default:
+      return true;
   }
 }
 
@@ -201,6 +214,7 @@ export function interceptRaySegment(
 
     const energyBefore = curEnergyJ;
     const speedBefore = curSpeedMs;
+    const structureBefore = ctx.rapierWorld.colliderStructureVersion;
     const res = dispatchSubsystemRaySegment(ctx, hit, seg);
     if (!res) {
       continue;
@@ -209,8 +223,12 @@ export function interceptRaySegment(
     const energyLost = energyBefore - res.remainingEnergyJ;
     const audioMat: DestructibleMaterialKind = res.hitMaterial ?? hit.surface.material;
     const audioPt = res.impactPointWorld ?? hit.pointWorld;
-    if (energyLost > 1.0 || res.stopped) {
-      ctx.notifyBreach();
+    const significantHit = energyLost > 1.0 || res.stopped;
+    const structureChanged = ctx.rapierWorld.colliderStructureVersion !== structureBefore;
+    if (structureChanged || (significantHit && surfaceHitMayOpenPath(hit.surface))) {
+      ctx.notifyBreach(audioPt);
+    }
+    if (significantHit) {
       ctx.combatAudio?.playMaterialImpact(audioMat, audioPt, energyBefore, listenerPos);
     }
 

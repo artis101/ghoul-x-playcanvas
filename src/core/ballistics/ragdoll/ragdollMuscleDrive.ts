@@ -1,4 +1,4 @@
-import type { GhoulZoneId, TargetHealthState, Vec3Like } from '../../../contracts/ballistics.ts';
+import type { GhoulZoneId, RagdollBoneState, TargetHealthState, Vec3Like } from '../../../contracts/ballistics.ts';
 import { ALL_GHOUL_ZONES } from '../../ghoul/anatomy/ghoulHierarchyTypes.ts';
 import { computePelvisFrame } from '../../ghoul/anatomy/ragdollBodyFrames.ts';
 import { add, cross, scale, sub, vec3 } from '../vec3.ts';
@@ -11,6 +11,7 @@ const MAX_POSE_ACCEL_MS2 = 28.0;
 /** The parts a downed body sits on and braces every muscle pull against. */
 export const SEAT_ZONES: readonly GhoulZoneId[] = ['PELVIS_GROIN', 'THIGH_RIGHT', 'THIGH_LEFT'];
 const MAX_SEAT_REACTION_MS2 = 4.5;
+const SEAT_SCRATCH: RagdollBoneState[] = [];
 
 export type MuscleDrive = Partial<Record<GhoulZoneId, Vec3Like>>;
 
@@ -59,10 +60,15 @@ export function computeMuscleDrive(
   // The pulls are braced against the seat of the body: the pelvis and hips take the equal and
   // opposite push. It is kept below what their grip on the floor can hold, so posing never
   // slides the body along.
-  const seat = SEAT_ZONES.map((zone) => target.ragdollBones[zone]).filter(
-    (bone) => bone.componentId === 'BODY' && isRagdollBoneParticleActive(target, bone)
-  );
-  const seatMassKg = seat.reduce((sum, bone) => sum + bone.massKg, 0);
+  SEAT_SCRATCH.length = 0;
+  let seatMassKg = 0;
+  for (const zone of SEAT_ZONES) {
+    const bone = target.ragdollBones[zone];
+    if (bone.componentId === 'BODY' && isRagdollBoneParticleActive(target, bone)) {
+      SEAT_SCRATCH.push(bone);
+      seatMassKg += bone.massKg;
+    }
+  }
   if (drivenMassKg <= 0 || seatMassKg <= 0) return drive;
 
   const netForce = Math.hypot(netForceX, netForceZ);
@@ -72,7 +78,7 @@ export function computeMuscleDrive(
     drive[zone]!.x *= ease;
     drive[zone]!.z *= ease;
   }
-  for (const bone of seat) {
+  for (const bone of SEAT_SCRATCH) {
     const braced = drive[bone.zone] ?? (drive[bone.zone] = vec3(0, 0, 0));
     braced.x -= (netForceX * ease) / seatMassKg;
     braced.z -= (netForceZ * ease) / seatMassKg;

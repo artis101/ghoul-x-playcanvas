@@ -1,11 +1,9 @@
-import * as pc from 'playcanvas';
 import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import type { BlastEvent } from '../../../contracts/destruction.ts';
 import {
   createJaggedHoleStamp,
-  stampHoleInWoodPanel,
-  type WoodMeshBuildStats,
 } from '../../../core/destruction/woodPolygonClipper.ts';
+import { cutStampFromWoodPanel } from '../../../core/destruction/wood/clipperBooleanSolver.ts';
 import {
   BLAST_REACH_SCALE,
   blastLocalEnergyJ,
@@ -13,6 +11,7 @@ import {
 } from '../../../core/destruction/blastFalloff.ts';
 import type { HardwareInstancedPool } from '../../physics/instancedPool.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
+import { markWallPanelMeshDirty } from './woodPanelMeshSync.ts';
 import { resetPelletVolley } from './buckshotVolleyTracker.ts';
 import { damageInteriorStudSections } from './woodStudDamageSolver.ts';
 import { spawnBlastSplinterShower } from './woodSplinterEmitter.ts';
@@ -36,25 +35,6 @@ function breachRadiusOnPlaneM(blast: BlastEvent, distToPanelM: number, threshold
   const reachM = blastReachForEnergyM(blast.peakEnergyJ, blast.radiusM, thresholdJ);
   if (reachM <= distToPanelM) return 0;
   return Math.sqrt(reachM * reachM - distToPanelM * distToPanelM);
-}
-
-export function uploadWallPanelMesh(
-  wall: WoodWallInstance,
-  stats: WoodMeshBuildStats,
-): void {
-  wall.lastMeshStats = stats;
-  if (stats.vertexCount <= 0 || stats.indexCount <= 0) {
-    wall.panelEntity.enabled = false;
-    return;
-  }
-  wall.panelEntity.enabled = true;
-  const mesh = wall.panelMesh;
-  const buf = wall.scratchBuffers;
-  mesh.setPositions(buf.positions, 3, stats.vertexCount);
-  mesh.setNormals(buf.normals, 3, stats.vertexCount);
-  mesh.setUvs(0, buf.uvs, 2, stats.vertexCount);
-  mesh.setIndices(buf.indices, stats.indexCount);
-  mesh.update(pc.PRIMITIVE_TRIANGLES, false);
 }
 
 export function applyWoodWallRadialBlast(
@@ -132,7 +112,6 @@ export function applyWoodWallRadialBlast(
         awayDir,
         awaySignZ,
         blast.peakEnergyJ,
-        uploadWallPanelMesh,
         slabPool,
       );
     }
@@ -147,9 +126,9 @@ export function applyWoodWallRadialBlast(
       overrideRadiusM: breachRadiusM,
     });
 
-    const subRes = stampHoleInWoodPanel(wall.panelState, stamp, wall.scratchBuffers, 6);
+    const subRes = cutStampFromWoodPanel(wall.panelState, stamp, 6);
     if (subRes.cutAnyWood) {
-      uploadWallPanelMesh(wall, subRes.meshStats);
+      markWallPanelMeshDirty(wall);
       const awayDir: Vec3Like = {
         x: awaySignZ * wall.sinYaw,
         y: 0.25,

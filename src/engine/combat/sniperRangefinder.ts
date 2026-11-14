@@ -1,16 +1,18 @@
-import * as pc from 'playcanvas';
 import type { AmmoSpec, EnvironmentState, Vec3Like, WeaponSpec } from '../../contracts/ballistics.ts';
 import { normalize } from '../../core/ballistics/vec3.ts';
 import type { HudController } from '../hudController.ts';
 import type { GhoulMannequinEntity } from '../mannequin.ts';
 import { findBestTargetHit } from './hitRoutingUtils.ts';
 
+// Range and drop are recomputed at most this often while the scope stays up.
+const RECOMPUTE_INTERVAL_S = 0.1;
+
 export class SniperRangefinder {
   private lastClockS = -1;
+  private lastFrame = -2;
   private lastWeaponId = '';
   private lastAmmoId = '';
-  private readonly lastOrigin = new pc.Vec3(Infinity, Infinity, Infinity);
-  private readonly lastAimDir = new pc.Vec3(0, 0, -1);
+  private lastLabelKey = '';
 
   public update(
     weapon: WeaponSpec,
@@ -20,47 +22,39 @@ export class SniperRangefinder {
     hudController: HudController,
     targets: GhoulMannequinEntity[],
     environment: EnvironmentState,
-    clockS: number
+    clockS: number,
+    frame: number
   ): void {
-    const normAim = normalize(aimDir);
-    const dxO = origin.x - this.lastOrigin.x;
-    const dyO = origin.y - this.lastOrigin.y;
-    const dzO = origin.z - this.lastOrigin.z;
-    const dxA = normAim.x - this.lastAimDir.x;
-    const dyA = normAim.y - this.lastAimDir.y;
-    const dzA = normAim.z - this.lastAimDir.z;
-
-    if (
-      this.lastClockS >= 0 &&
-      clockS - this.lastClockS < 0.06 &&
-      weapon.id === this.lastWeaponId &&
-      ammo.id === this.lastAmmoId &&
-      dxO * dxO + dyO * dyO + dzO * dzO < 0.0004 &&
-      dxA * dxA + dyA * dyA + dzA * dzA < 1e-6
-    ) {
-      return;
-    }
-
+    // A call that does not follow the previous frame's call starts a new scope session, whose
+    // labels were reset when the scope opened.
+    const continuing = frame === this.lastFrame || frame === this.lastFrame + 1;
+    this.lastFrame = frame;
+    const fresh =
+      !continuing || this.lastClockS < 0 || weapon.id !== this.lastWeaponId || ammo.id !== this.lastAmmoId;
+    if (!fresh && clockS - this.lastClockS < RECOMPUTE_INTERVAL_S) return;
     this.lastClockS = clockS;
     this.lastWeaponId = weapon.id;
     this.lastAmmoId = ammo.id;
-    this.lastOrigin.set(origin.x, origin.y, origin.z);
-    this.lastAimDir.set(normAim.x, normAim.y, normAim.z);
 
+    const normAim = normalize(aimDir);
     const zoom = weapon.scopeZoomLevels[0] || 4.0;
+    let rangeM: number;
+    let dropCm: number;
     const match = findBestTargetHit(weapon, ammo, origin, normAim, targets, environment);
     if (match) {
-      hudController.setScopeOverlay(
-        true,
-        zoom,
-        match.report.targetDistanceM,
-        match.report.bulletDropAtImpactCm
-      );
+      rangeM = match.report.targetDistanceM;
+      dropCm = match.report.bulletDropAtImpactCm;
     } else {
       const refDistM = 42.0;
       const flightS = refDistM / Math.max(120, ammo.muzzleVelocityMs * 0.92);
-      const dropCm = 0.5 * 9.81 * flightS * flightS * 100;
-      hudController.setScopeOverlay(true, zoom, refDistM, dropCm);
+      rangeM = refDistM;
+      dropCm = 0.5 * 9.81 * flightS * flightS * 100;
     }
+
+    // Same rounding the scope labels display.
+    const labelKey = `${zoom.toFixed(1)}|${rangeM.toFixed(0)}|${Math.abs(dropCm).toFixed(1)}`;
+    if (!fresh && labelKey === this.lastLabelKey) return;
+    this.lastLabelKey = labelKey;
+    hudController.setScopeOverlay(true, zoom, rangeM, dropCm);
   }
 }

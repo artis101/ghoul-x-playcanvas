@@ -63,3 +63,8 @@ export const SLEEP_SETTLE_DURATION_S = 0.45;
 export const MAX_STEP_DT = 1 / 10;
 export const TARGET_SUBSTEP_DT = 1 / 60;
 export const MAX_SUBSTEPS = 6;
+/**
+ * A frame may run up to this fraction of a substep long before it is split into one more substep.
+ * Display frames jitter around 1/60 s; without the slack every frame a hair over it steps twice.
+ */
+export const SUBSTEP_SPLIT_SLACK = 0.25;

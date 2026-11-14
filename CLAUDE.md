@@ -29,7 +29,7 @@ There is no linter. `npm run build` / `npm run verify` / `npm test` run tsc plus
 
 **Startup.** `runGamePreloader` (`src/engine/preloader/gamePreloader.ts`) creates the PlayCanvas app, loads every GLB through `GlbModelRegistry.preloadAll()`, warms shaders, and only then constructs `GhoulXApplication`. It reports progress through `preloader:*` app events and the DOM `PreloaderScreen`.
 
-**Composition root.** `GhoulXApplication` (`src/engine/app/ghoulXApp.ts`) builds the subsystems as plain classes and shares them through `IGhoulXApp` (`appContext.ts`): `RapierPhysicsWorld`, `ArenaBuilder`, `MayhemDirector` (barrels, tracers, casings, explosion FX), `DestructionManager`, `TacticalCombatAiSystem`, `CombatDirector` (targets, shots, grenades, physiology, ragdolls), `GoreAndBallisticsFxManager`, `CombatAudioEngine`, `FpsController`, `ArsenalManager` and `HudController`. Cross-system callbacks are wired in the constructor and in `combatEventWiring.ts`. The remaining `*Script.ts` files are thin `pc.Script` wrappers around these classes; none is attached to an entity at runtime.
+**Composition root.** `GhoulXApplication` (`src/engine/app/ghoulXApp.ts`) builds the subsystems as plain classes and shares them through `IGhoulXApp` (`appContext.ts`): `RapierPhysicsWorld`, `ArenaBuilder`, `MayhemDirector` (barrels, tracers, casings, explosion FX), `DestructionManager`, `TacticalCombatAiSystem`, `CombatDirector` (targets, shots, grenades, physiology, ragdolls), `GoreAndBallisticsFxManager`, `CombatAudioEngine`, `FpsController`, `ArsenalManager` and `HudController`. Cross-system callbacks are wired in the constructor and in `combatEventWiring.ts`; every explosion (barrel or grenade) is dispatched once through `fanOutBlast` in `blastFanout.ts`. `GhoulXApplication.destroy()` tears every subsystem down in reverse construction order. There are no `pc.Script` components; the subsystems are plain classes.
 
 **Frame order** (`src/engine/app/engineUpdateLoop.ts`) matters when you add a system:
 1. Player and arsenal update.
@@ -42,6 +42,14 @@ There is no linter. `npm run build` / `npm run verify` / `npm test` run tsc plus
 **Shot path.** `handleTriggerPull` (`playerActionHandlers.ts`) → `CombatDirector.fireWeapon` → `weaponBallisticsRouter` / `shotgunPelletSolver` run the pure RK4 solver in `src/core/ballistics/` → hits reach `impactDamageDispatcher` → GHOUL zone trauma (`src/core/ghoul/`) and the physiology model (`src/core/physiology/`) → `physiologySyncAdapter` drives the mannequin, ragdoll and gore FX. Blasts go through `MayhemDirector.onExplosionBlast` into destruction, combat trauma and AI alerting.
 
 **Core vs. engine.** `src/core/` holds the simulation (ballistics, anatomy and BVH, physiology, AI state machines, destruction geometry, audio DSP) and must stay free of `playcanvas` imports. `src/core/events.ts` only re-exports `src/contracts/events.ts`.
+
+## Dev tooling
+
+- `src/engine/dev/` holds the frame profiler, the sim clock and the debug overlay. `onEngineUpdate` wraps each stage in a profiler section, so a new stage needs a section in `frameProfiler.ts`.
+- Dev keys (dev builds, or any build with `?debug`): F3 overlay (per-stage ms, draw calls, Rapier bodies, steps, query flushes and rays per frame), F6 pause, F7 single step, F8 time scale.
+- URL flags: `?debug` opens the overlay at load; `?fast` skips the font wait, frame yields and preloader fade. Boot prints one `[GHOUL-X boot]` line with per-phase milliseconds.
+- In dev builds `window.__ghoulx` is `{ app, dev }`: the `GhoulXApplication` and its `DevRuntime`.
+- `tests/architectureGuards.test.ts` enforces the layering rules and the 450 LOC ceiling. `vitest.config.ts` limits runs to `tests/**/*.test.ts`.
 
 ## Tests
 

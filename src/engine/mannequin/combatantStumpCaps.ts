@@ -31,14 +31,17 @@ const MAX_OVERLAP_M = 0.11;
 
 interface CutSurvey {
   /** Limb radius just below the joint. */
-  radius: number;
+  readonly radius: number;
   /** Radius of the body's mesh where it ends at the joint. */
-  bodyRadius: number;
+  readonly bodyRadius: number;
   /** Where the body's mesh ends along the bone, measured from the joint. */
-  bodyEnd: number;
+  readonly bodyEnd: number;
   /** Where the limb's mesh begins along the bone, measured from the joint. */
-  limbStart: number;
+  readonly limbStart: number;
 }
+
+// The survey reads only the shared zone meshes and the bind pose, both fixed by the GLB, so it is measured once per mesh.
+const surveyCache = new WeakMap<pc.Mesh, Map<GhoulZoneId, CutSurvey>>();
 
 function forEachVertex(entity: pc.Entity | undefined, visit: (v: pc.Vec3) => void): void {
   const point = new pc.Vec3();
@@ -93,6 +96,29 @@ function surveyCut(
   return { radius, bodyRadius, bodyEnd, limbStart: Math.max(limbStart, -MAX_OVERLAP_M) };
 }
 
+function cachedSurveyCut(
+  glb: CombatantGlbInstance,
+  zone: GhoulZoneId,
+  parent: GhoulZoneId,
+  joint: pc.Vec3,
+  axis: pc.Vec3,
+  fallbackRadius: number
+): CutSurvey {
+  const key = glb.zoneEntities.get(zone)?.render?.meshInstances[0]?.mesh;
+  if (!key) return surveyCut(glb, zone, parent, joint, axis, fallbackRadius);
+  let byZone = surveyCache.get(key);
+  if (!byZone) {
+    byZone = new Map();
+    surveyCache.set(key, byZone);
+  }
+  let cut = byZone.get(zone);
+  if (!cut) {
+    cut = surveyCut(glb, zone, parent, joint, axis, fallbackRadius);
+    byZone.set(zone, cut);
+  }
+  return cut;
+}
+
 /** Raw flesh over the cut, with the end of the bone standing out of it along local +Y. */
 function createCap(name: string, radius: number, materials: EngineMaterialPalette): pc.Entity {
   const root = new pc.Entity(name);
@@ -138,7 +164,7 @@ export function buildStumpCaps(
     if (!parent || !bind || !node || !parentBind || !parentNode) continue;
 
     const axis = bind.modelRot.transformVector(pc.Vec3.UP, new pc.Vec3());
-    const cut = surveyCut(glb, zone, parent, bind.modelPos, axis, CUT_RADIUS_M[zone]!);
+    const cut = cachedSurveyCut(glb, zone, parent, bind.modelPos, axis, CUT_RADIUS_M[zone]!);
     const lift = cut.radius * 0.15;
 
     const socket = createCap(`${zone}_SocketCap`, cut.bodyRadius, materials);

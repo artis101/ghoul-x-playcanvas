@@ -111,7 +111,7 @@ function stepBlaze(
   const dist = Math.hypot(playerEye.x - hs.worldPosition.x, playerEye.z - hs.worldPosition.z);
   if (dist > BLAZE_STAND_OFF_M) {
     const before = { x: hs.worldPosition.x, z: hs.worldPosition.z };
-    moveHorizontalClamped(hs, playerEye.x, playerEye.z, BLAZE_WALK_SPEED_MPS * dt, ctx.rapierWorld);
+    moveHorizontalClamped(hs, playerEye.x, playerEye.z, BLAZE_WALK_SPEED_MPS * dt, ctx.rapierWorld, ctx.arenaNav);
     const moved = Math.hypot(hs.worldPosition.x - before.x, hs.worldPosition.z - before.z);
     agent.moveSpeedMs = dt > 0 ? moved / dt : 0;
   }
@@ -166,6 +166,6 @@ export function crawlAwayFromPlayer(
   hs.yawRad = approachAngleRad(hs.yawRad, crawlYaw, DOWNED_TURN_RATE_RAD_S * dt);
   if (Math.cos(crawlYaw - hs.yawRad) > 0.8) {
     const { effort } = evaluateCrawlCondition(hs, ctx.elapsedClockS);
-    moveHorizontalClamped(hs, goal.x, goal.z, CRAWL_SPEED_MPS * effort * dt, ctx.rapierWorld);
+    moveHorizontalClamped(hs, goal.x, goal.z, CRAWL_SPEED_MPS * effort * dt, ctx.rapierWorld, ctx.arenaNav);
   }
 }

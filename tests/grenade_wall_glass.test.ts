@@ -51,8 +51,9 @@ describe('Grenade Wall Bounce & Glass / Armored Glass Impact Physics', () => {
       expect(gBrick.velocity.z).toBeGreaterThan(0);
 
       // 2. Punch a 2-course breach hole through the brick wall at (brickPos.x, y=0.96..1.04) and throw a grenade through it!
+      // A 100-HP brick takes about eight of these rounds; once it is gone the rest fly through the hole.
       for (const hitY of [0.95, 1.03]) {
-        for (let shot = 0; shot < 3; shot++) {
+        for (let shot = 0; shot < 12; shot++) {
           dm.interceptRaySegment(
             { x: brickPos.x, y: hitY, z: brickPos.z + 2.0 },
             { x: 0, y: 0, z: -1 },

@@ -11,16 +11,8 @@ import {
 } from '../lifecycle/targetLifecycleFsm.ts';
 import { stepDeathAnimation } from '../lifecycle/deathAnimationStep.ts';
 import { buildLivingGroundedPoseTargets } from '../triage/groundedPoseTargets.ts';
-import {
-  add,
-  copyVec3,
-  length,
-  lengthSq,
-  scale,
-  sub,
-  vec3,
-  Vec3Like,
-} from '../vec3.ts';
+import { copyVec3, length, lengthSq, vec3, Vec3Like } from '../vec3.ts';
+import type { LimitEffort } from './ragdollJointLimitMath.ts';
 import {
   jointLimitEffort,
   stepCorpseSettleAndSleep,
@@ -43,6 +35,15 @@ const CORPSE_GRIP_SPEED_MS = 0.1;
 const LIVING_GRIP_SPEED_MS = 0.3;
 const JOINT_LIMIT_PASSES = 3;
 const POSE_HOLD_FLOOR = 0.55;
+
+// Per call of stepRagdollPhysics: 1 once this call has given the particle its own
+// position/prevPosition (or velocity) object, so later sub-steps can write into it in place.
+const boneStateOwned = new Uint8Array(ALL_GHOUL_ZONES.length);
+const boneVelocityOwned = new Uint8Array(ALL_GHOUL_ZONES.length);
+const auxStateOwned = new Uint8Array(ALL_AUX_PARTICLES.length);
+const auxVelocityOwned = new Uint8Array(ALL_AUX_PARTICLES.length);
+const NEW_VELOCITY: Vec3Like = { x: 0, y: 0, z: 0 };
+const LIMIT_EFFORT: LimitEffort = { recovery: 0, maxKickMs: 0 };
 
 function clampParticleVelocity(vel: Vec3Like, grounded: boolean): void {
   if (grounded && vel.y > MAX_GROUNDED_UPWARD_POP_MS) {
@@ -135,6 +136,11 @@ export function stepRagdollPhysics(
 
   // Nothing below re-creates a bone or a constraint, so one lookup serves every sub-step.
   const scratch = resolveRagdollSolverScratch(target);
+  const invH = 1 / h;
+  boneStateOwned.fill(0);
+  boneVelocityOwned.fill(0);
+  auxStateOwned.fill(0);
+  auxVelocityOwned.fill(0);
 
   let finalGroundedCount = 0;
   let sprawl: SprawlProgress = 'SETTLED';
@@ -146,12 +152,20 @@ export function stepRagdollPhysics(
       : null;
 
     // A. Symplectic Euler Prediction Step
-    for (const z of ALL_GHOUL_ZONES) {
+    for (let zi = 0; zi < ALL_GHOUL_ZONES.length; zi++) {
+      const z = ALL_GHOUL_ZONES[zi];
       const b = target.ragdollBones[z];
       if (!isRagdollBoneParticleActive(target, b)) continue;
 
       clampParticleVelocity(b.velocity, b.grounded);
-      b.prevPosition = copyVec3(b.position);
+      const owned = boneStateOwned[zi] === 1;
+      if (owned) {
+        b.prevPosition.x = b.position.x;
+        b.prevPosition.y = b.position.y;
+        b.prevPosition.z = b.position.z;
+      } else {
+        b.prevPosition = copyVec3(b.position);
+      }
       b.velocity.y += gravity * h;
 
       const pull = muscleDrive?.[z];
@@ -165,10 +179,22 @@ export function stepRagdollPhysics(
       b.velocity.x *= airDamp;
       b.velocity.z *= airDamp;
 
-      b.position = add(b.position, scale(b.velocity, h));
+      if (owned) {
+        b.position.x += b.velocity.x * h;
+        b.position.y += b.velocity.y * h;
+        b.position.z += b.velocity.z * h;
+      } else {
+        b.position = {
+          x: b.position.x + b.velocity.x * h,
+          y: b.position.y + b.velocity.y * h,
+          z: b.position.z + b.velocity.z * h,
+        };
+        boneStateOwned[zi] = 1;
+      }
     }
 
-    for (const aId of ALL_AUX_PARTICLES) {
+    for (let ai = 0; ai < ALL_AUX_PARTICLES.length; ai++) {
+      const aId = ALL_AUX_PARTICLES[ai];
       const a = target.auxParticles[aId];
       const parentBone = target.ragdollBones[a.parentZone];
       const active =
@@ -181,7 +207,14 @@ export function stepRagdollPhysics(
 
       const auxGrounded = a.position.y <= floorY + a.radiusM + 0.008;
       clampParticleVelocity(a.velocity, auxGrounded);
-      a.prevPosition = copyVec3(a.position);
+      const owned = auxStateOwned[ai] === 1;
+      if (owned) {
+        a.prevPosition.x = a.position.x;
+        a.prevPosition.y = a.position.y;
+        a.prevPosition.z = a.position.z;
+      } else {
+        a.prevPosition = copyVec3(a.position);
+      }
       a.velocity.y += gravity * h;
 
       if (activePoseTargets && a.componentId === 'BODY' && aId === 'HEAD_TOP') {
@@ -191,7 +224,18 @@ export function stepRagdollPhysics(
       a.velocity.x *= airDamp;
       a.velocity.z *= airDamp;
 
-      a.position = add(a.position, scale(a.velocity, h));
+      if (owned) {
+        a.position.x += a.velocity.x * h;
+        a.position.y += a.velocity.y * h;
+        a.position.z += a.velocity.z * h;
+      } else {
+        a.position = {
+          x: a.position.x + a.velocity.x * h,
+          y: a.position.y + a.velocity.y * h,
+          z: a.position.z + a.velocity.z * h,
+        };
+        auxStateOwned[ai] = 1;
+      }
     }
 
     // B. Iterative PBD Constraints
@@ -201,12 +245,16 @@ export function stepRagdollPhysics(
 
     // C. PBD Velocity Update + Ground Friction & Bounce Restitution
     let groundedCount = 0;
-    for (const z of ALL_GHOUL_ZONES) {
+    for (let zi = 0; zi < ALL_GHOUL_ZONES.length; zi++) {
+      const z = ALL_GHOUL_ZONES[zi];
       const b = target.ragdollBones[z];
       if (!isRagdollBoneParticleActive(target, b)) continue;
 
       const preImpactVy = b.velocity.y;
-      const newVel = scale(sub(b.position, b.prevPosition), 1 / h);
+      const newVel = NEW_VELOCITY;
+      newVel.x = (b.position.x - b.prevPosition.x) * invH;
+      newVel.y = (b.position.y - b.prevPosition.y) * invH;
+      newVel.z = (b.position.z - b.prevPosition.z) * invH;
 
       const minFloor = floorY + b.radiusM;
       if (b.position.y <= minFloor + 0.006) {
@@ -235,10 +283,18 @@ export function stepRagdollPhysics(
       }
 
       clampParticleVelocity(newVel, b.grounded);
-      b.velocity = newVel;
+      if (boneVelocityOwned[zi] === 1) {
+        b.velocity.x = newVel.x;
+        b.velocity.y = newVel.y;
+        b.velocity.z = newVel.z;
+      } else {
+        b.velocity = copyVec3(newVel);
+        boneVelocityOwned[zi] = 1;
+      }
     }
 
-    for (const aId of ALL_AUX_PARTICLES) {
+    for (let ai = 0; ai < ALL_AUX_PARTICLES.length; ai++) {
+      const aId = ALL_AUX_PARTICLES[ai];
       const a = target.auxParticles[aId];
       const parentBone = target.ragdollBones[a.parentZone];
       const active =
@@ -249,7 +305,10 @@ export function stepRagdollPhysics(
           a.componentId !== 'BODY');
       if (!active) continue;
 
-      const newVel = scale(sub(a.position, a.prevPosition), 1 / h);
+      const newVel = NEW_VELOCITY;
+      newVel.x = (a.position.x - a.prevPosition.x) * invH;
+      newVel.y = (a.position.y - a.prevPosition.y) * invH;
+      newVel.z = (a.position.z - a.prevPosition.z) * invH;
       const auxGrounded = a.position.y <= floorY + a.radiusM + 0.006;
       if (auxGrounded) {
         // Fingertips and toes trail their limb: they never hold it in place.
@@ -261,14 +320,22 @@ export function stepRagdollPhysics(
         }
       }
       clampParticleVelocity(newVel, auxGrounded);
-      a.velocity = newVel;
+      if (auxVelocityOwned[ai] === 1) {
+        a.velocity.x = newVel.x;
+        a.velocity.y = newVel.y;
+        a.velocity.z = newVel.z;
+      } else {
+        a.velocity = copyVec3(newVel);
+        auxVelocityOwned[ai] = 1;
+      }
     }
 
     // D. Anatomical joint limits
     if (target.isRagdollActive) {
       const { recovery, accelMs2 } = jointLimitEffort(target);
-      const effort = { recovery, maxKickMs: (accelMs2 * h) / JOINT_LIMIT_PASSES };
-      for (let pass = 0; pass < JOINT_LIMIT_PASSES; pass++) applyAnatomicalJointLimits(target, effort);
+      LIMIT_EFFORT.recovery = recovery;
+      LIMIT_EFFORT.maxKickMs = (accelMs2 * h) / JOINT_LIMIT_PASSES;
+      for (let pass = 0; pass < JOINT_LIMIT_PASSES; pass++) applyAnatomicalJointLimits(target, LIMIT_EFFORT);
       if (!target.alive) sprawl = applyCorpseSprawl(target, floorY, h);
     }
 

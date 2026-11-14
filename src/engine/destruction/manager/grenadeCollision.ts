@@ -129,7 +129,7 @@ export function resolveGrenadeSweepStep(
         if (didShatter) {
           brokeGlass = true;
           hitMaterial = 'GLASS_VORONOI';
-          ctx.notifyBreach();
+          ctx.notifyBreach(h.pointWorld);
           ctx.combatAudio?.playMaterialImpact('GLASS_VORONOI', h.pointWorld, 320, listenerPos);
         }
 
@@ -153,7 +153,7 @@ export function resolveGrenadeSweepStep(
           const didCraze = marWin.crazeFromBluntImpact(h.pointWorld, 0.24);
           if (didCraze) {
             crazedArmoredGlass = true;
-            ctx.notifyBreach();
+            ctx.notifyBreach(h.pointWorld);
           }
           ctx.combatAudio?.playMaterialImpact('GLASS_MARCHING_256', h.pointWorld, 280, listenerPos);
         }

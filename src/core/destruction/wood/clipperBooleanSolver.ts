@@ -4,6 +4,7 @@ import {
   type Point2D,
   type WoodMeshScratchBuffers,
   type WoodPanelClipperState,
+  type WoodStampCutResult,
   type WoodStampSubtractionResult,
 } from './woodClipperTypes.ts';
 import { points2DToPath64 } from './pathClassification.ts';
@@ -14,12 +15,23 @@ import { buildPerimeterSplinterDescriptors } from './splinterDescriptors.ts';
 import { extrudeDroppedWoodSlabs } from './woodSlabExtruder.ts';
 import { triangulateWoodPanelToBuffers } from './panelTriangulator.ts';
 
+// Also triangulates the panel into `buffers`.
 export function stampHoleInWoodPanel(
   state: WoodPanelClipperState,
   stamp: readonly Point2D[],
   buffers: WoodMeshScratchBuffers,
   splinterCountHint = 5,
 ): WoodStampSubtractionResult {
+  const cut = cutStampFromWoodPanel(state, stamp, splinterCountHint);
+  return { ...cut, meshStats: triangulateWoodPanelToBuffers(state, buffers) };
+}
+
+/** Applies the stamp to the panel state without triangulating it. */
+export function cutStampFromWoodPanel(
+  state: WoodPanelClipperState,
+  stamp: readonly Point2D[],
+  splinterCountHint = 5,
+): WoodStampCutResult {
   if (stamp.length < 3 || state.paths.length === 0) {
     return {
       cutAnyWood: false,
@@ -27,7 +39,6 @@ export function stampHoleInWoodPanel(
       droppedIslandAreaM2: 0,
       snappedBridgeCount: 0,
       splinters: [],
-      meshStats: triangulateWoodPanelToBuffers(state, buffers),
     };
   }
 
@@ -39,7 +50,6 @@ export function stampHoleInWoodPanel(
       droppedIslandAreaM2: 0,
       snappedBridgeCount: 0,
       splinters: [],
-      meshStats: triangulateWoodPanelToBuffers(state, buffers),
     };
   }
 
@@ -70,7 +80,6 @@ export function stampHoleInWoodPanel(
       droppedIslandAreaM2: 0,
       snappedBridgeCount: 0,
       splinters: [],
-      meshStats: triangulateWoodPanelToBuffers(state, buffers),
     };
   }
 
@@ -121,8 +130,6 @@ export function stampHoleInWoodPanel(
     state.shotCount,
   );
 
-  const meshStats = triangulateWoodPanelToBuffers(state, buffers);
-
   return {
     cutAnyWood: true,
     removedAreaM2,
@@ -130,8 +137,17 @@ export function stampHoleInWoodPanel(
     snappedBridgeCount,
     splinters,
     droppedSlabs,
-    meshStats,
   };
+}
+
+// Also triangulates the panel into `buffers`.
+export function recheckUnanchoredWoodShells(
+  state: WoodPanelClipperState,
+  buffers: WoodMeshScratchBuffers,
+  splinterCountHint = 5,
+): WoodStampSubtractionResult {
+  const cut = detachUnanchoredWoodShells(state, splinterCountHint);
+  return { ...cut, meshStats: triangulateWoodPanelToBuffers(state, buffers) };
 }
 
 /**
@@ -139,11 +155,10 @@ export function stampHoleInWoodPanel(
  * (e.g. after an interior 2x4 stud section breaks) and detaches any now-unanchored wood
  * shells into intact 3D `droppedSlabs`.
  */
-export function recheckUnanchoredWoodShells(
+export function detachUnanchoredWoodShells(
   state: WoodPanelClipperState,
-  buffers: WoodMeshScratchBuffers,
   splinterCountHint = 5,
-): WoodStampSubtractionResult {
+): WoodStampCutResult {
   if (state.paths.length === 0) {
     return {
       cutAnyWood: false,
@@ -152,7 +167,6 @@ export function recheckUnanchoredWoodShells(
       snappedBridgeCount: 0,
       splinters: [],
       droppedSlabs: [],
-      meshStats: triangulateWoodPanelToBuffers(state, buffers),
     };
   }
 
@@ -170,7 +184,6 @@ export function recheckUnanchoredWoodShells(
       snappedBridgeCount: 0,
       splinters: [],
       droppedSlabs: [],
-      meshStats: triangulateWoodPanelToBuffers(state, buffers),
     };
   }
 
@@ -198,7 +211,6 @@ export function recheckUnanchoredWoodShells(
     splinterCountHint,
     state.shotCount,
   );
-  const meshStats = triangulateWoodPanelToBuffers(state, buffers);
 
   return {
     cutAnyWood: true,
@@ -207,6 +219,5 @@ export function recheckUnanchoredWoodShells(
     snappedBridgeCount: 0,
     splinters,
     droppedSlabs,
-    meshStats,
   };
 }

@@ -16,6 +16,9 @@ export type BleedPulseState =
   | { readonly kind: 'NONE' }
   | { readonly kind: 'PULSING'; readonly phaseRad: number };
 
+const TRAUMA_IDLE: TraumaFlashState = { kind: 'IDLE' };
+const BLEED_NONE: BleedPulseState = { kind: 'NONE' };
+
 export class HudWeaponVitals {
   private healthValEl = queryEl('hud-health-val');
   private healthFillEl = queryEl('hud-health-fill');
@@ -30,19 +33,41 @@ export class HudWeaponVitals {
   private vignetteEl = queryEl('damage-vignette');
   private slotPips: HTMLElement[] = [];
 
-  public traumaFlashState: TraumaFlashState = { kind: 'IDLE' };
-  public bleedPulseState: BleedPulseState = { kind: 'NONE' };
+  public traumaFlashState: TraumaFlashState = TRAUMA_IDLE;
+  public bleedPulseState: BleedPulseState = BLEED_NONE;
 
-  private lastAppliedVignetteCss = '';
+  // The vignette layers have fixed box-shadows and are driven only by opacity.
+  private woundLayerEl: HTMLElement | null = null;
+  private deflectLayerEl: HTMLElement | null = null;
+  private lastWoundOpacity = '';
+  private lastDeflectOpacity = '';
+  private lastHpTenths = -1;
+  private lastArmorTenths = -1;
   private lastHpRounded = -1;
   private lastArmorRounded = -1;
-  private lastHpWidthStr = '';
-  private lastArmorWidthStr = '';
 
   constructor() {
+    if (this.vignetteEl && typeof document !== 'undefined' && typeof document.createElement === 'function') {
+      const wound = document.createElement('div');
+      wound.className = 'damage-vignette-layer vignette-wound';
+      const deflect = document.createElement('div');
+      deflect.className = 'damage-vignette-layer vignette-deflect';
+      this.vignetteEl.appendChild(wound);
+      this.vignetteEl.appendChild(deflect);
+      this.woundLayerEl = wound;
+      this.deflectLayerEl = deflect;
+    }
     if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
       this.slotPips = Array.from(document.querySelectorAll<HTMLElement>('.slot-pip'));
     }
+  }
+
+  public destroy(): void {
+    for (const el of [this.woundLayerEl, this.deflectLayerEl]) {
+      if (el && typeof el.remove === 'function') el.remove();
+    }
+    this.woundLayerEl = null;
+    this.deflectLayerEl = null;
   }
 
   public updateWeaponHud(
@@ -95,7 +120,7 @@ export class HudWeaponVitals {
         phaseRad: (prevPhase + dt * 7.5) % (Math.PI * 2),
       };
     } else {
-      this.bleedPulseState = { kind: 'NONE' };
+      this.bleedPulseState = BLEED_NONE;
     }
 
     if (isBleeding !== wasBleeding) {
@@ -103,19 +128,19 @@ export class HudWeaponVitals {
       this.healthFillEl?.classList.toggle('urgent-bleed', isBleeding);
     }
 
-    const hpWidthStr = `${hpPct.toFixed(1)}%`;
-    if (this.healthFillEl && hpWidthStr !== this.lastHpWidthStr) {
-      this.lastHpWidthStr = hpWidthStr;
-      this.healthFillEl.style.width = hpWidthStr;
+    const hpT = Math.round(hpPct * 10);
+    if (this.healthFillEl && hpT !== this.lastHpTenths) {
+      this.lastHpTenths = hpT;
+      this.healthFillEl.style.width = `${(hpT / 10).toFixed(1)}%`;
     }
     if (this.armorValEl && armorRounded !== this.lastArmorRounded) {
       this.lastArmorRounded = armorRounded;
       this.armorValEl.textContent = `${armorRounded}`;
     }
-    const armorWidthStr = `${armorPct.toFixed(1)}%`;
-    if (this.armorFillEl && armorWidthStr !== this.lastArmorWidthStr) {
-      this.lastArmorWidthStr = armorWidthStr;
-      this.armorFillEl.style.width = armorWidthStr;
+    const armorT = Math.round(armorPct * 10);
+    if (this.armorFillEl && armorT !== this.lastArmorTenths) {
+      this.lastArmorTenths = armorT;
+      this.armorFillEl.style.width = `${(armorT / 10).toFixed(1)}%`;
     }
 
     const wasFlashing = this.traumaFlashState.kind !== 'IDLE';
@@ -123,7 +148,7 @@ export class HudWeaponVitals {
       const nextAlpha = Math.max(0, this.traumaFlashState.alpha - dt * 2.4);
       this.traumaFlashState =
         nextAlpha <= 0
-          ? { kind: 'IDLE' }
+          ? TRAUMA_IDLE
           : { ...this.traumaFlashState, alpha: nextAlpha };
     }
 
@@ -147,7 +172,7 @@ export class HudWeaponVitals {
   }
 
   private refreshVignetteOverlay(): void {
-    if (!this.vignetteEl) return;
+    if (!this.woundLayerEl && !this.deflectLayerEl) return;
     const flashAlpha =
       this.traumaFlashState.kind === 'IDLE' ? 0 : this.traumaFlashState.alpha;
     const bleedAlpha =
@@ -155,22 +180,26 @@ export class HudWeaponVitals {
         ? 0.16 + 0.08 * Math.sin(this.bleedPulseState.phaseRad)
         : 0;
     const activeAlpha = Math.max(flashAlpha, bleedAlpha);
+    const isAmberHelmetDeflect =
+      this.traumaFlashState.kind === 'GRAZE_FLASH' &&
+      this.traumaFlashState.grazeKind === 'HELMET_DEFLECT' &&
+      flashAlpha >= bleedAlpha;
 
-    let targetCss: string;
+    let wound = 0;
+    let deflect = 0;
     if (activeAlpha > 0.01) {
-      const isAmberHelmetDeflect =
-        this.traumaFlashState.kind === 'GRAZE_FLASH' &&
-        this.traumaFlashState.grazeKind === 'HELMET_DEFLECT' &&
-        flashAlpha >= bleedAlpha;
-      const rgb = isAmberHelmetDeflect ? '255, 184, 52' : '255, 32, 48';
-      const dmgShadow = `inset 0 0 96px rgba(${rgb}, ${activeAlpha.toFixed(3)})`;
-      targetCss = dmgShadow;
-    } else {
-      targetCss = 'none';
+      if (isAmberHelmetDeflect) deflect = activeAlpha;
+      else wound = activeAlpha;
     }
-    if (targetCss !== this.lastAppliedVignetteCss) {
-      this.lastAppliedVignetteCss = targetCss;
-      this.vignetteEl.style.boxShadow = targetCss;
+    const woundStr = wound > 0 ? wound.toFixed(3) : '0';
+    const deflectStr = deflect > 0 ? deflect.toFixed(3) : '0';
+    if (this.woundLayerEl && woundStr !== this.lastWoundOpacity) {
+      this.woundLayerEl.style.opacity = woundStr;
+      this.lastWoundOpacity = woundStr;
+    }
+    if (this.deflectLayerEl && deflectStr !== this.lastDeflectOpacity) {
+      this.deflectLayerEl.style.opacity = deflectStr;
+      this.lastDeflectOpacity = deflectStr;
     }
   }
 }

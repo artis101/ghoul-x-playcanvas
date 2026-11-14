@@ -12,14 +12,19 @@ import {
   removeColliderFromWorld,
 } from './rapierBodies.ts';
 import { isRapierInitialized } from './rapierInit.ts';
-import { DEFAULT_RESTITUTION, MAX_STEP_DT, MAX_SUBSTEPS, TARGET_SUBSTEP_DT } from './rapierMath.ts';
+import {
+  DEFAULT_RESTITUTION, MAX_STEP_DT, MAX_SUBSTEPS, SUBSTEP_SPLIT_SLACK, TARGET_SUBSTEP_DT,
+} from './rapierMath.ts';
 import { extractRigidBodyPose, writeRigidBodyMatrix4 } from './rapierPose.ts';
 import { executePenetrationRay, testAnyBlockingHit } from './rapierRaycast.ts';
 import { updateDebrisSleepStates } from './rapierSleep.ts';
+import { type SphereRegion, wakeDynamicBodiesInRegions } from './rapierWake.ts';
 
 export class RapierPhysicsWorld {
   public readonly world: RAPIER.World;
   public readonly groundColliderHandle: number;
+  public readonly perf = { stepsThisFrame: 0, queryFlushesThisFrame: 0, raycastsThisFrame: 0 };
+  private structureVersion = 0;
 
   private readonly surfaceTags = new Map<number, ColliderSurfaceTag>();
   private readonly dynamicBodyHandles = new Set<number>();
@@ -50,11 +55,21 @@ export class RapierPhysicsWorld {
 
   public get activeDynamicBodyCount(): number { return this.dynamicBodyHandles.size; }
 
+  /** Bumps whenever a collider or body is added to or removed from the world. */
+  public get colliderStructureVersion(): number { return this.structureVersion; }
+
+  public resetPerfCounters(): void {
+    this.perf.stepsThisFrame = 0;
+    this.perf.queryFlushesThisFrame = 0;
+    this.perf.raycastsThisFrame = 0;
+  }
+
   public createStaticBox(
     center: Vec3Like, halfExtents: Vec3Like, rotationQuat?: QuatLike, tag?: ColliderSurfaceTag
   ): number {
     const col = createStaticBoxCollider(this.world, center, halfExtents, rotationQuat);
     this.queryPipelineDirty = true;
+    this.structureVersion++;
     if (tag) this.surfaceTags.set(col.handle, tag);
     return col.handle;
   }
@@ -65,6 +80,7 @@ export class RapierPhysicsWorld {
   ): { bodyHandle: number; colliderHandle: number } {
     const { body, collider } = spawnDynamicBoxBody(this.world, center, halfExtents, massKg, linVel, angVel, rotationQuat);
     this.queryPipelineDirty = true;
+    this.structureVersion++;
     this.dynamicBodyHandles.add(body.handle);
     this.bodySettleTimers.set(body.handle, 0);
     if (tag) this.surfaceTags.set(collider.handle, tag);
@@ -82,6 +98,7 @@ export class RapierPhysicsWorld {
       this.world, center, children, linVel, angVel, rotationQuat
     );
     this.queryPipelineDirty = true;
+    this.structureVersion++;
     this.dynamicBodyHandles.add(body.handle);
     this.bodySettleTimers.set(body.handle, 0);
     const colliderHandles: number[] = new Array(colliders.length);
@@ -109,6 +126,7 @@ export class RapierPhysicsWorld {
     }
     const { body, collider } = spawnDynamicConvexHullBody(this.world, center, verticesFlat, massKg, linVel, angVel, rotationQuat);
     this.queryPipelineDirty = true;
+    this.structureVersion++;
     this.dynamicBodyHandles.add(body.handle);
     this.bodySettleTimers.set(body.handle, 0);
     if (tag) this.surfaceTags.set(collider.handle, tag);
@@ -119,12 +137,14 @@ export class RapierPhysicsWorld {
     if (this.destroyed) return;
     removeRigidBodyFromWorld(this.world, this.surfaceTags, this.dynamicBodyHandles, this.bodySettleTimers, bodyHandle);
     this.queryPipelineDirty = true;
+    this.structureVersion++;
   }
 
   public removeCollider(colliderHandle: number): void {
     if (this.destroyed) return;
     removeColliderFromWorld(this.world, this.surfaceTags, colliderHandle);
     this.queryPipelineDirty = true;
+    this.structureVersion++;
   }
 
   public getSurfaceTag(colliderHandle: number): ColliderSurfaceTag | undefined {
@@ -132,12 +152,19 @@ export class RapierPhysicsWorld {
   }
 
   public setSurfaceTag(colliderHandle: number, tag: ColliderSurfaceTag): void {
+    const isNewHandle = !this.surfaceTags.has(colliderHandle);
     this.surfaceTags.set(colliderHandle, tag);
-    this.queryPipelineDirty = true;
+    // A first tag usually follows a world.createCollider() made outside this wrapper, which the broad phase has not seen yet.
+    if (isNewHandle) {
+      this.queryPipelineDirty = true;
+      this.structureVersion++;
+    }
   }
 
   public flushQueryPipeline(): void {
     if (this.destroyed || !this.queryPipelineDirty) return;
+    this.perf.queryFlushesThisFrame++;
+    this.perf.stepsThisFrame++;
     const prevDt = this.world.timestep;
     this.world.timestep = 0;
     this.world.step();
@@ -149,6 +176,7 @@ export class RapierPhysicsWorld {
     origin: Vec3Like, dir: Vec3Like, maxDistM: number, outHits?: PenetrationRayHit[]
   ): PenetrationRayHit[] {
     if (this.destroyed || maxDistM <= 0) return [];
+    this.perf.raycastsThisFrame++;
     if (this.queryPipelineDirty) this.flushQueryPipeline();
     const { hits, ray } = executePenetrationRay(this.world, this.surfaceTags, origin, dir, maxDistM, this.scratchRay);
     this.scratchRay = ray;
@@ -164,6 +192,7 @@ export class RapierPhysicsWorld {
     isBlocking: (surface: ColliderSurfaceTag, pointWorld: Vec3Like, distanceM: number) => boolean
   ): boolean {
     if (this.destroyed || maxDistM <= 0) return false;
+    this.perf.raycastsThisFrame++;
     if (this.queryPipelineDirty) this.flushQueryPipeline();
     const { blocked, ray } = testAnyBlockingHit(
       this.world, this.surfaceTags, origin, dir, maxDistM, isBlocking, this.scratchRay, this.scratchHitPoint
@@ -219,6 +248,11 @@ export class RapierPhysicsWorld {
     return woken;
   }
 
+  public wakeDynamicBodiesInRegions(regions: readonly SphereRegion[]): number {
+    if (this.destroyed) return 0;
+    return wakeDynamicBodiesInRegions(this.world, this.dynamicBodyHandles, this.bodySettleTimers, regions);
+  }
+
   public getBodyPose(bodyHandle: number): { position: Vec3Like; rotation: QuatLike } | null;
   public getBodyPose(bodyHandle: number, outPos: Vec3Like, outRot: QuatLike): boolean;
   public getBodyPose(
@@ -233,7 +267,8 @@ export class RapierPhysicsWorld {
   public step(dt: number): void {
     if (this.destroyed || dt <= 0 || !Number.isFinite(dt)) return;
     const clampedDt = Math.min(dt, MAX_STEP_DT);
-    const numSubsteps = Math.max(1, Math.min(MAX_SUBSTEPS, Math.ceil(clampedDt / TARGET_SUBSTEP_DT - 1e-6)));
+    const numSubsteps = Math.max(1, Math.min(MAX_SUBSTEPS, Math.ceil(clampedDt / TARGET_SUBSTEP_DT - SUBSTEP_SPLIT_SLACK)));
+    this.perf.stepsThisFrame += numSubsteps;
     const substepDt = clampedDt / numSubsteps;
     this.world.timestep = substepDt;
     for (let i = 0; i < numSubsteps; i++) this.world.step();

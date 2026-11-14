@@ -23,7 +23,6 @@ export function stageViewmodelsForWarmup(
     holder.setPosition((i - 1.5) * 0.3, -250, -2.5);
     holders.push(holder);
 
-    // The builder clears the list it is handed, so each weapon gets its own.
     const weaponMaterials: pc.StandardMaterial[] = [];
     buildWeaponViewmodel(holder, warmupCamera, WEAPONS[i], glbRegistry, weaponMaterials);
     materials.push(...weaponMaterials);

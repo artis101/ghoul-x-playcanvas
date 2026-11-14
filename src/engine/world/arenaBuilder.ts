@@ -3,6 +3,7 @@ import { EngineMaterialPalette, upgradePaletteWithProceduralPbrMaps } from '../m
 import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
 import { buildArenaGeometry } from './arenaGeometry.ts';
 import { getOrCreateProceduralIblEnvironment } from './arenaIblLighting.ts';
+import { batchStaticArenaEntities, releaseStaticArenaBatches } from './arenaStaticBatching.ts';
 
 export * from './arenaLayout.ts';
 export * from './arenaIblLighting.ts';
@@ -30,6 +31,7 @@ export class ArenaBuilder {
   public readonly rapierWorld: RapierPhysicsWorld | null;
   public readonly arenaRootEntity: pc.Entity;
   public buildState: ArenaBuildState = { kind: 'UNBUILT' };
+  private staticBatchGroupId: number | null = null;
 
   public constructor(
     app: pc.AppBase,
@@ -55,6 +57,7 @@ export class ArenaBuilder {
 
     const colliderHandles: number[] = [];
     const detailMaterials: pc.StandardMaterial[] = [];
+    const staticBatchEntities: pc.Entity[] = [];
 
     upgradePaletteWithProceduralPbrMaps(this.app.graphicsDevice, this.materials);
 
@@ -102,8 +105,10 @@ export class ArenaBuilder {
       this.materials,
       this.rapierWorld,
       colliderHandles,
-      detailMaterials
+      detailMaterials,
+      staticBatchEntities
     );
+    this.staticBatchGroupId = batchStaticArenaEntities(this.app, staticBatchEntities);
 
     this.buildState = {
       kind: 'BUILT',
@@ -120,6 +125,8 @@ export class ArenaBuilder {
   }
 
   private teardownBuiltResources(): void {
+    releaseStaticArenaBatches(this.app, this.staticBatchGroupId);
+    this.staticBatchGroupId = null;
     if (this.buildState.kind === 'BUILT') {
       if (this.rapierWorld) {
         for (const handle of this.buildState.colliderHandles) {

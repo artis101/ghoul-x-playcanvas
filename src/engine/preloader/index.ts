@@ -3,6 +3,12 @@ export {
   type GamePreloaderOptions,
 } from './gamePreloader.ts';
 export {
+  BootPhaseClock,
+  formatBootTimingReport,
+  type BootPhaseTiming,
+  type BootTimingReport,
+} from './bootTimings.ts';
+export {
   collectSceneMaterials,
   prewarmProceduralTexturesAndMaterials,
 } from './materialCollector.ts';

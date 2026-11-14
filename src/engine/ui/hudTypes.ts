@@ -16,6 +16,16 @@ export interface WorldTriagePlateDom {
   armorTrack: HTMLDivElement;
   armorFill: HTMLDivElement;
   barkPill?: HTMLDivElement;
+  lastVisible: number;
+  lastXTenths: number;
+  lastYTenths: number;
+  lastDead: number;
+  lastStatus: string;
+  lastStatusTag: string;
+  lastHpClamped: number;
+  lastHpTenths: number;
+  lastArmorTenths: number;
+  lastBark: string | null;
 }
 
 export function formatTriageLabel(status: CombatantTriageStatus): string {

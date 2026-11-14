@@ -70,7 +70,9 @@ export function stepAlertedEngagingState(
     ctx.elapsedClockS,
     ctx.peekPlanCache,
     ctx.isSightBlocked,
-    ctx.hasCoverQueries
+    ctx.hasCoverQueries,
+    ctx.peekPolicy,
+    ctx.arenaNav
   );
 
   const doctrineSubstate = evaluateTacticalEngagementSubstate({
@@ -161,7 +163,9 @@ export function stepAlertedEngagingState(
     ctx.elapsedClockS,
     ctx.peekPlanCache,
     ctx.isSightBlocked,
-    ctx.hasCoverQueries
+    ctx.hasCoverQueries,
+    ctx.peekPolicy,
+    ctx.arenaNav
   );
   if (agent.peekSign !== prevPeekSign) ctx.onAgentFlankShift?.(hs, agent);
 
@@ -174,7 +178,7 @@ export function stepAlertedEngagingState(
     : substate === 'PANIC_SCRAMBLE'
       ? Math.sin(agent.peekCycleTimerS * 5.2) * 0.62
       : !peekPlan.anchorBlockedByCover
-        ? stepCloseQuartersBound(dt, agent, playerDistM)
+        ? stepCloseQuartersBound(dt, agent, playerDistM, ctx.arenaNav.jukeHalfWidthM)
         : 0;
   // A hit that lands while the combatant is not bounding should not cut a later bound short.
   agent.jukeBreakPending = false;
@@ -192,9 +196,9 @@ export function stepAlertedEngagingState(
   if (rushing || substate === 'JUGGERNAUT_PRESS') {
     goalZ = Math.min(playerEyeWorldPos.z - minStandOff, peekPlan.goalZ + agent.berserkerAdvanceOffsetM);
   } else if (substate === 'EVASIVE_BACKPEDAL') {
-    goalZ = Math.max(-21.5, peekPlan.goalZ + agent.berserkerAdvanceOffsetM);
+    goalZ = Math.max(ctx.arenaNav.retreatLimitZ, peekPlan.goalZ + agent.berserkerAdvanceOffsetM);
   } else if (substate === 'PANIC_SCRAMBLE') {
-    goalZ = Math.max(-21.5, peekPlan.goalZ - 0.32);
+    goalZ = Math.max(ctx.arenaNav.retreatLimitZ, peekPlan.goalZ - 0.32);
   }
 
   driveEngagementFootwork(

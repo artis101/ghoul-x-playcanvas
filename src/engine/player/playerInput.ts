@@ -18,7 +18,6 @@ const BASE_LOOK_DEG_PER_COUNT = 0.15;
 
 export class PlayerInputManager {
   public captureState: InputCaptureState = { kind: 'UNLOCKED' };
-  public isTriggerHeld = false;
   public readonly keysPressed: Record<string, boolean> = {};
 
   private readonly canvas: HTMLCanvasElement;
@@ -26,21 +25,31 @@ export class PlayerInputManager {
   private readonly getCurrentWeapon: () => WeaponSpec;
   private readonly onLook: (deltaYaw: number, deltaPitch: number) => void;
   private readonly aim: AimInputSink;
+  /** True while the simulation clock is paused; game actions and mouse look are ignored then. */
+  private readonly isSimulationPaused: () => boolean;
   private readonly eventCleanups: Array<() => void> = [];
+  private mouseTriggerHeld = false;
+  private keyTriggerHeld = false;
 
   constructor(
     canvas: HTMLCanvasElement,
     callbacks: FpsInputCallbacks,
     getCurrentWeapon: () => WeaponSpec,
     onLook: (deltaYaw: number, deltaPitch: number) => void,
-    aim: AimInputSink
+    aim: AimInputSink,
+    isSimulationPaused: () => boolean = () => false
   ) {
     this.canvas = canvas;
     this.callbacks = callbacks;
     this.getCurrentWeapon = getCurrentWeapon;
     this.onLook = onLook;
     this.aim = aim;
+    this.isSimulationPaused = isSimulationPaused;
     this.bind();
+  }
+
+  public get isTriggerHeld(): boolean {
+    return this.mouseTriggerHeld || this.keyTriggerHeld;
   }
 
   public get isPointerLocked(): boolean {
@@ -58,11 +67,16 @@ export class PlayerInputManager {
     this.captureState = { kind: nextKind };
 
     if (prevKind === 'POINTER_LOCKED' && nextKind === 'UNLOCKED') {
-      this.isTriggerHeld = false;
-      for (const key of Object.keys(this.keysPressed)) {
-        delete this.keysPressed[key];
-      }
+      this.releaseHeldInput();
       this.aim.release();
+    }
+  }
+
+  private releaseHeldInput(): void {
+    this.mouseTriggerHeld = false;
+    this.keyTriggerHeld = false;
+    for (const key of Object.keys(this.keysPressed)) {
+      delete this.keysPressed[key];
     }
   }
 
@@ -74,6 +88,7 @@ export class PlayerInputManager {
       };
       const onMouseMove = (e: MouseEvent): void => {
         if (this.captureState.kind !== 'POINTER_LOCKED') return;
+        if (this.isSimulationPaused()) return;
         const sensitivity = BASE_LOOK_DEG_PER_COUNT * this.aim.getLookScale();
         this.onLook(e.movementX * sensitivity, e.movementY * sensitivity);
       };
@@ -92,11 +107,11 @@ export class PlayerInputManager {
           return;
         }
         if (e.button === 0) {
-          this.isTriggerHeld = true;
-          this.callbacks.onTriggerPull();
+          this.mouseTriggerHeld = true;
+          if (!this.isSimulationPaused()) this.callbacks.onTriggerPull();
         } else if (e.button === 1) {
           e.preventDefault();
-          this.callbacks.onThrowGrenade();
+          if (!this.isSimulationPaused()) this.callbacks.onThrowGrenade();
         } else if (e.button === 2) {
           e.preventDefault();
           this.aim.setHeld(true);
@@ -106,6 +121,7 @@ export class PlayerInputManager {
       const onWheel = (e: WheelEvent): void => {
         if (this.captureState.kind !== 'POINTER_LOCKED') return;
         e.preventDefault();
+        if (this.isSimulationPaused()) return;
         if (e.deltaY > 0) this.callbacks.onCycleWeapon(1);
         else if (e.deltaY < 0) this.callbacks.onCycleWeapon(-1);
       };
@@ -126,40 +142,51 @@ export class PlayerInputManager {
 
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
       const onMouseUp = (e: MouseEvent): void => {
-        if (e.button === 0) this.isTriggerHeld = false;
+        if (e.button === 0) this.mouseTriggerHeld = false;
         else if (e.button === 2) this.aim.setHeld(false);
       };
 
       const onKeyDown = (e: KeyboardEvent): void => {
         if (this.captureState.kind !== 'POINTER_LOCKED') return;
         this.keysPressed[e.code] = true;
+        if (e.code === 'KeyT' || e.code === 'Backspace') e.preventDefault();
+        if (e.repeat) return;
+        if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+          this.aim.toggle();
+          return;
+        }
+        if (e.code === 'KeyF') this.keyTriggerHeld = true;
+        if (this.isSimulationPaused()) return;
         if (e.code === 'Digit1') this.callbacks.onSelectWeapon(0);
         else if (e.code === 'Digit2') this.callbacks.onSelectWeapon(1);
         else if (e.code === 'Digit3') this.callbacks.onSelectWeapon(2);
         else if (e.code === 'Digit4') this.callbacks.onSelectWeapon(3);
         else if (e.code === 'KeyB') this.callbacks.onCycleAmmo();
         else if (e.code === 'KeyR') this.callbacks.onReload();
-        else if (e.code === 'KeyT' || e.code === 'Backspace') {
-          e.preventDefault();
-          this.callbacks.onSpawnWave();
-        } else if (e.code === 'KeyF') this.callbacks.onTriggerPull();
+        else if (e.code === 'KeyT' || e.code === 'Backspace') this.callbacks.onSpawnWave();
+        else if (e.code === 'KeyF') this.callbacks.onTriggerPull();
         else if (e.code === 'KeyG') this.callbacks.onThrowGrenade();
-        else if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) {
-          this.aim.toggle();
-        }
       };
 
       const onKeyUp = (e: KeyboardEvent): void => {
         this.keysPressed[e.code] = false;
+        if (e.code === 'KeyF') this.keyTriggerHeld = false;
+      };
+
+      const onBlur = (): void => {
+        this.releaseHeldInput();
+        this.aim.setHeld(false);
       };
 
       window.addEventListener('mouseup', onMouseUp);
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('keyup', onKeyUp);
+      window.addEventListener('blur', onBlur);
       this.eventCleanups.push(() => {
         window.removeEventListener('mouseup', onMouseUp);
         window.removeEventListener('keydown', onKeyDown);
         window.removeEventListener('keyup', onKeyUp);
+        window.removeEventListener('blur', onBlur);
       });
     }
   }

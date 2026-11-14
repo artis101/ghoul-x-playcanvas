@@ -27,6 +27,7 @@ function createDetailMaterial(name: string, detailMaterials: pc.StandardMaterial
 /**
  * Encloses the range in a tiled underground hall: four ceramic-tile walls, a stained panel
  * ceiling on concrete beams, tiled pilasters, and boxy fluorescent fixtures that light it.
+ * The boxes are appended to staticBatchEntities when given, since none of them ever moves or breaks.
  */
 export function buildHallShell(
   arenaRootEntity: pc.Entity,
@@ -34,7 +35,8 @@ export function buildHallShell(
   materials: EngineMaterialPalette,
   rapierWorld: RapierPhysicsWorld | null,
   colliderHandles: number[],
-  detailMaterials: pc.StandardMaterial[]
+  detailMaterials: pc.StandardMaterial[],
+  staticBatchEntities?: pc.Entity[]
 ): void {
   const { halfWidthM, frontZ, backZ, heightM, wallThicknessM } = HALL_SHELL;
   const textures = getOrCreateTileHallTextures(device);
@@ -78,6 +80,7 @@ export function buildHallShell(
     ent.setLocalScale(slab.size[0], slab.size[1], slab.size[2]);
     ent.setPosition(slab.center[0], slab.center[1], slab.center[2]);
     shell.addChild(ent);
+    staticBatchEntities?.push(ent);
   };
 
   const wallX = halfWidthM + wallThicknessM / 2;

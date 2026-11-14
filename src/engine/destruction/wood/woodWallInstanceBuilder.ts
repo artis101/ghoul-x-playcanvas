@@ -3,8 +3,10 @@ import type { ColliderSurfaceTag, QuatLike } from '../../../contracts/destructio
 import {
   createWoodPanelState,
   triangulateWoodPanelToBuffers,
+  type WoodMeshBuildStats,
   type WoodMeshScratchBuffers,
 } from '../../../core/destruction/woodPolygonClipper.ts';
+import { rebuildWallPanelMesh } from './woodPanelMeshSync.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 import {
   DEFAULT_WOOD_STUD_SPACING_M,
@@ -178,7 +180,12 @@ export function createWoodWallInstance(
     studFrameMesh,
     panelState,
     scratchBuffers,
-    lastMeshStats: initialStats,
+    panelMeshStats: initialStats,
+    panelMeshDirty: false,
+    get lastMeshStats(): WoodMeshBuildStats {
+      if (this.panelMeshDirty) rebuildWallPanelMesh(this);
+      return this.panelMeshStats;
+    },
   };
 
   const internal: WallInternalState = {

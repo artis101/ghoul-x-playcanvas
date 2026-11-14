@@ -20,18 +20,11 @@ interface ListenerPoseSnapshot {
 
 const listenerPoseCache = new WeakMap<AudioListenerLike, ListenerPoseSnapshot>();
 
-function updateListenerParam(
-  param: { setValueAtTime(v: number, t: number): unknown; setTargetAtTime(v: number, t: number, tc: number): unknown; cancelScheduledValues(t: number): unknown },
-  value: number,
-  t: number,
-  smooth: boolean,
-): void {
-  param.cancelScheduledValues(t);
-  if (smooth) {
-    param.setTargetAtTime(value, t, 0.012);
-  } else {
-    param.setValueAtTime(value, t);
-  }
+const LISTENER_POS_EPSILON_M = 1e-3;
+const LISTENER_ANGLE_EPSILON_DEG = 0.05;
+
+function writeListenerParam(param: { value: number }, value: number): void {
+  param.value = value;
 }
 
 export function setListenerCoordinates(
@@ -46,29 +39,25 @@ export function setListenerCoordinates(
 
   if (
     prev &&
-    Math.abs(pos.x - prev.x) < 1e-4 &&
-    Math.abs(pos.y - prev.y) < 1e-4 &&
-    Math.abs(pos.z - prev.z) < 1e-4 &&
-    Math.abs(yawDeg - prev.yawDeg) < 0.02 &&
-    Math.abs(clampedPitch - prev.pitchDeg) < 0.02
+    Math.abs(pos.x - prev.x) < LISTENER_POS_EPSILON_M &&
+    Math.abs(pos.y - prev.y) < LISTENER_POS_EPSILON_M &&
+    Math.abs(pos.z - prev.z) < LISTENER_POS_EPSILON_M &&
+    Math.abs(yawDeg - prev.yawDeg) < LISTENER_ANGLE_EPSILON_DEG &&
+    Math.abs(clampedPitch - prev.pitchDeg) < LISTENER_ANGLE_EPSILON_DEG
   ) {
     return;
   }
 
-  const jumpDistSq = prev
-    ? (pos.x - prev.x) ** 2 + (pos.y - prev.y) ** 2 + (pos.z - prev.z) ** 2
-    : Infinity;
-  const smooth = prev !== undefined && jumpDistSq < 9.0;
+  if (prev) {
+    prev.x = pos.x;
+    prev.y = pos.y;
+    prev.z = pos.z;
+    prev.yawDeg = yawDeg;
+    prev.pitchDeg = clampedPitch;
+  } else {
+    listenerPoseCache.set(listener, { x: pos.x, y: pos.y, z: pos.z, yawDeg, pitchDeg: clampedPitch });
+  }
 
-  listenerPoseCache.set(listener, {
-    x: pos.x,
-    y: pos.y,
-    z: pos.z,
-    yawDeg,
-    pitchDeg: clampedPitch,
-  });
-
-  const t = ctx.currentTime;
   const yawRad = (yawDeg * Math.PI) / 180;
   const pitchRad = (clampedPitch * Math.PI) / 180;
   const cosPitch = Math.cos(pitchRad);
@@ -86,9 +75,9 @@ export function setListenerCoordinates(
   const uz = cosYaw * sinPitch;
 
   if (listener.positionX && listener.positionY && listener.positionZ) {
-    updateListenerParam(listener.positionX, pos.x, t, smooth);
-    updateListenerParam(listener.positionY, pos.y, t, smooth);
-    updateListenerParam(listener.positionZ, pos.z, t, smooth);
+    writeListenerParam(listener.positionX, pos.x);
+    writeListenerParam(listener.positionY, pos.y);
+    writeListenerParam(listener.positionZ, pos.z);
   } else if (listener.setPosition) {
     listener.setPosition(pos.x, pos.y, pos.z);
   }
@@ -101,12 +90,12 @@ export function setListenerCoordinates(
     listener.upY &&
     listener.upZ
   ) {
-    updateListenerParam(listener.forwardX, fx, t, smooth);
-    updateListenerParam(listener.forwardY, fy, t, smooth);
-    updateListenerParam(listener.forwardZ, fz, t, smooth);
-    updateListenerParam(listener.upX, ux, t, smooth);
-    updateListenerParam(listener.upY, uy, t, smooth);
-    updateListenerParam(listener.upZ, uz, t, smooth);
+    writeListenerParam(listener.forwardX, fx);
+    writeListenerParam(listener.forwardY, fy);
+    writeListenerParam(listener.forwardZ, fz);
+    writeListenerParam(listener.upX, ux);
+    writeListenerParam(listener.upY, uy);
+    writeListenerParam(listener.upZ, uz);
   } else if (listener.setOrientation) {
     listener.setOrientation(fx, fy, fz, ux, uy, uz);
   }

@@ -88,9 +88,24 @@ export function getAudioRuntimeGraph(state: AudioRuntimeState): InternalAudioGra
   return state.kind === 'SUSPENDED' || state.kind === 'RUNNING' ? state.graph : null;
 }
 
-export function syncAudioRuntimeWithContextState(state: AudioRuntimeState): AudioRuntimeState {
+export function syncAudioRuntimeWithContextState(
+  state: AudioRuntimeState,
+  rebindGestureUnlock?: () => (() => void) | null,
+): AudioRuntimeState {
   if (state.kind === 'SUSPENDED' && state.graph.ctx.state === 'running') {
     return transitionAudioRuntimeState(state, { kind: 'RUNNING', graph: state.graph });
+  }
+  if (rebindGestureUnlock && state.kind === 'RUNNING') {
+    // Safari reports 'interrupted', which older lib typings do not list.
+    const ctxState = state.graph.ctx.state as string;
+    if (ctxState !== 'running' && ctxState !== 'closed') {
+      return transitionAudioRuntimeState(state, {
+        kind: 'SUSPENDED',
+        graph: state.graph,
+        unlockInFlight: null,
+        gestureCleanup: rebindGestureUnlock(),
+      });
+    }
   }
   return state;
 }

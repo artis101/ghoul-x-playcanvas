@@ -8,9 +8,8 @@ import {
 import type { EnemyAiAgentRuntime } from './tacticalAiTypes.ts';
 import { clampArenaGoalX, clampArenaGoalZ, moveHorizontalClamped } from './tacticalLocomotion.ts';
 import type { TacticalFsmContext } from './tacticalFsmContext.ts';
+import { HALL_ARENA_NAV_SPEC, type ArenaNavSpec } from './arenaNavSpec.ts';
 
-// Usable half-width of the arena floor for lateral bounds, a little inside the movement clamp.
-const JUKE_ARENA_HALF_WIDTH_M = 7.7;
 // Smoothing rate for the engaging ground-speed estimate that drives the moving-fire penalty.
 const MOVE_SPEED_SMOOTHING = 8;
 // Lateral moves longer than this are a dash between firing spots, taken at a run.
@@ -40,8 +39,8 @@ export function driveEngagementFootwork(
   const anchorX = agent.coverAnchorWorld.x;
   const held = holdFootworkGoal(
     footwork,
-    clampArenaGoalX(anchorX + request.lateralOffsetM),
-    clampArenaGoalZ(request.goalZ)
+    clampArenaGoalX(anchorX + request.lateralOffsetM, ctx.arenaNav),
+    clampArenaGoalZ(request.goalZ, ctx.arenaNav)
   );
 
   const deltaOffset = held.x - anchorX - agent.currentLateralOffsetM;
@@ -56,7 +55,7 @@ export function driveEngagementFootwork(
   const goalX = anchorX + agent.currentLateralOffsetM;
   const beforeX = hs.worldPosition.x;
   const beforeZ = hs.worldPosition.z;
-  moveHorizontalClamped(hs, goalX, held.z, maxStrideStep, ctx.rapierWorld);
+  moveHorizontalClamped(hs, goalX, held.z, maxStrideStep, ctx.rapierWorld, ctx.arenaNav);
 
   if (dt <= 0) return;
   const moved = Math.hypot(hs.worldPosition.x - beforeX, hs.worldPosition.z - beforeZ);
@@ -68,7 +67,9 @@ export function driveEngagementFootwork(
 }
 
 /** Advances the close-quarters bound, reacting to hits and to the player's aim. */
-export function stepCloseQuartersBound(dt: number, agent: EnemyAiAgentRuntime, playerDistM: number): number {
+export function stepCloseQuartersBound(dt: number, agent: EnemyAiAgentRuntime, playerDistM: number,
+  jukeHalfWidthM = HALL_ARENA_NAV_SPEC.jukeHalfWidthM
+): number {
   agent.closeQuartersJuke ??= createCloseQuartersJukeState(
     agent.coverAnchorWorld.x * 1.7 + agent.coverAnchorWorld.z + agent.tracerSeedCounter,
     agent.peekSign
@@ -82,7 +83,7 @@ export function stepCloseQuartersBound(dt: number, agent: EnemyAiAgentRuntime, p
     midBurst: agent.burstShotsRemaining > 0,
     lateralStalled: agent.lateralStalled === true,
     anchorX: agent.coverAnchorWorld.x,
-    arenaHalfWidthM: JUKE_ARENA_HALF_WIDTH_M,
+    arenaHalfWidthM: jukeHalfWidthM,
   });
   agent.jukeBreakPending = false;
   return offset;

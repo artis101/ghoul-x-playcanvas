@@ -33,6 +33,7 @@ import { OffhandSidearmSync } from './offhandSidearmSync.ts';
 import { type OffhandSidearmRig } from './offhandSidearmTypes.ts';
 import { spawnCombatTargets } from './combatTargetSpawner.ts';
 import { stepCombatDirectorLoop } from './combatDirectorLoop.ts';
+import { clearCombatantAimTargets } from '../mannequin/combatantAimDelta.ts';
 
 export { TARGET_CONFIGS };
 export type { RangeTargetConfig };
@@ -61,7 +62,11 @@ export class CombatDirector {
   public grenadeSweepInterceptor?: GrenadeSweepInterceptor;
   public isLineOfSightBlocked?: (fromWorld: Vec3Like, toWorld: Vec3Like) => boolean;
   public onExplosionBlast?: ExplosionBlastHandler;
-  public onCameraShake?: CameraShakeCallback;
+  /**
+   * When set, a detonating grenade's whole blast (body trauma included) is handed to this hook.
+   * When unset, the director applies the trauma itself and then reports through onExplosionBlast.
+   */
+  public onGrenadeBlast?: (blast: BlastEvent) => void;
   /** Blast aftermath (destruction, per-body trauma) spread over frames once it is given a budget. */
   public readonly blastWork = new FrameSlicedWorkQueue();
 
@@ -77,7 +82,9 @@ export class CombatDirector {
   private readonly lastHitClockByTarget = new Map<string, number>();
   private losCacheEpoch = 1;
   private lastUpdateClockS = 0;
+  private updateFrameCount = 0;
   private grenadeCooldownS = 0;
+  private destroyed = false;
 
   private readonly blastFireballMat: pc.StandardMaterial = createBlastFireballMaterial();
   private readonly sniperRangefinder = new SniperRangefinder();
@@ -112,6 +119,12 @@ export class CombatDirector {
 
   public spawnAllTargets(): void {
     this.blastWork.clear();
+    // Rigs hang off the old bodies and ids are reused, so they go before the bodies do.
+    this.offhandSidearmRigs.forEach(destroyOffhandSidearmRig);
+    this.offhandSidearmRigs.clear();
+    this.offhandSync.reset();
+    this.lastHitClockByTarget.clear();
+    this.lastEngagedTarget = null;
     for (const t of this.targets) t.destroy();
     this.targets = [];
     this.physiologySystem.reset();
@@ -165,7 +178,7 @@ export class CombatDirector {
     const order = this.blastWork.isDeferring ? [...this.targets].sort((a, b) => distSq(a) - distSq(b)) : this.targets;
     return routeExternalExplosionTrauma(
       blast, sourceLabel, order, this.fxManager, this.combatAudio, this.tacticalAi,
-      this.onCameraShake, () => this.getViewerPosVec3(),
+      () => this.getViewerPosVec3(),
       (c, r) => spawnBlastVisualFx(c, r, this.app, this.materials, this.blastFireballMat, this.activeBlastFlashes),
       {
         app: this.app,
@@ -183,11 +196,13 @@ export class CombatDirector {
   }
 
   public updateSniperRangefinder(weapon: WeaponSpec, ammo: AmmoSpec, origin: Vec3Like, aimDir: Vec3Like, hud: HudController): void {
-    this.sniperRangefinder.update(weapon, ammo, origin, aimDir, hud, this.targets, this.environment, this.lastUpdateClockS);
+    this.sniperRangefinder.update(weapon, ammo, origin, aimDir, hud, this.targets, this.environment, this.lastUpdateClockS, this.updateFrameCount);
   }
 
   public update(dt: number, totalElapsedTimeS: number, camera: pc.CameraComponent | null | undefined, hud: HudController): void {
+    if (this.destroyed) return;
     this.lastUpdateClockS = totalElapsedTimeS;
+    this.updateFrameCount++;
     this.blastWork.drain();
     if (this.grenadeCooldownS > 0) this.grenadeCooldownS -= dt;
     stepCombatDirectorLoop({
@@ -201,12 +216,15 @@ export class CombatDirector {
       isLineOfSightBlocked: this.isLineOfSightBlocked,
       grenadeSweepInterceptor: this.grenadeSweepInterceptor,
       onExplosionBlast: this.onExplosionBlast,
+      onGrenadeBlast: this.onGrenadeBlast,
       applyExternalExplosionTrauma: (b, l) => this.applyExternalExplosionTrauma(b, l),
       getViewerPosVec3: () => this.getViewerPosVec3(),
     }, dt, totalElapsedTimeS, camera, hud, this.environment);
   }
 
   public destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
     this.blastWork.clear();
     this.activeGrenades.forEach((g) => { g.glbInstance?.destroy(); g.entity.destroy(); });
     this.activeGrenades.length = 0;
@@ -214,9 +232,15 @@ export class CombatDirector {
     this.activeBlastFlashes.length = 0;
     this.offhandSidearmRigs.forEach(destroyOffhandSidearmRig);
     this.offhandSidearmRigs.clear();
+    this.offhandSync.reset();
     this.targets.forEach((t) => t.destroy());
     this.targets.length = 0;
-    this.vascularFx.clearAll();
+    this.lastHitClockByTarget.clear();
+    this.lastEngagedTarget = null;
+    this.physiologySystem.reset();
+    this.vascularFx.destroy();
+    // Aim targets live in a module-level map keyed by target id; a later director reuses the ids.
+    clearCombatantAimTargets();
     this.blastFireballMat.destroy();
   }
 }

@@ -9,6 +9,8 @@ import { deflectWithinCone } from '../../core/ballistics/aim/aimDownSights.ts';
 import { isFullAuto } from '../../core/ballistics/weapons/weaponHandling.ts';
 import { PlayerMovementSolver } from './playerMovement.ts';
 
+const MAX_AUTO_ROUNDS_PER_FRAME = 2;
+
 export * from './fpsTypes.ts';
 
 export class FpsController {
@@ -20,6 +22,9 @@ export class FpsController {
   private readonly input: PlayerInputManager;
   private readonly rig: PlayerCameraRig;
   private readonly movement: PlayerMovementSolver;
+
+  /** Supplied by the owner; while it returns true, input-driven game actions and mouse look are ignored. */
+  public isSimulationPaused: () => boolean = () => false;
 
   constructor(
     app: pc.AppBase,
@@ -47,7 +52,8 @@ export class FpsController {
         toggle: () => this.rig.sight.toggle(),
         release: () => this.rig.sight.release(),
         getLookScale: () => this.rig.sight.lookScale,
-      }
+      },
+      () => this.isSimulationPaused()
     );
 
     this.cameraEntity = new pc.Entity('PlayerCamera');
@@ -99,7 +105,7 @@ export class FpsController {
     );
   }
 
-  public getAimDirection(): pc.Vec3 {
+  public getAimDirection(out: pc.Vec3 = new pc.Vec3()): pc.Vec3 {
     const effectivePitch = Math.max(-89.5, Math.min(89.5, this.rig.cameraPitch + this.rig.recoilPitch + this.rig.lastShakePitchOffset + this.rig.punch.pitch.value));
     const effectiveYaw = this.rig.cameraYaw + this.rig.lastShakeYawOffset + this.rig.punch.yaw.value;
     const pitchRad = (effectivePitch * Math.PI) / 180;
@@ -107,7 +113,7 @@ export class FpsController {
     const x = -Math.sin(yawRad) * Math.cos(pitchRad);
     const y = Math.sin(pitchRad);
     const z = -Math.cos(yawRad) * Math.cos(pitchRad);
-    return new pc.Vec3(x, y, z).normalize();
+    return out.set(x, y, z).normalize();
   }
 
   /**
@@ -122,8 +128,8 @@ export class FpsController {
     return aim.set(fired.x, fired.y, fired.z);
   }
 
-  public getEyePosition(): pc.Vec3 {
-    return new pc.Vec3(this.playerPos.x, this.playerPos.y + this.rig.lastCamHeadBobY, this.playerPos.z);
+  public getEyePosition(out: pc.Vec3 = new pc.Vec3()): pc.Vec3 {
+    return out.set(this.playerPos.x, this.playerPos.y + this.rig.lastCamHeadBobY, this.playerPos.z);
   }
 
   public applyRecoilKick(recoilKickDeg: number, applyViewmodelKick = true, weaponId?: string): void {
@@ -178,7 +184,8 @@ export class FpsController {
     this.syncCameraTransform();
 
     if (this.input.isTriggerHeld && isFullAuto(currentWeapon)) {
-      this.callbacks.onTriggerPull();
+      // A long frame can complete two fire cycles; once the weapon is cycling, further pulls this frame do nothing.
+      for (let i = 0; i < MAX_AUTO_ROUNDS_PER_FRAME; i++) this.callbacks.onTriggerPull();
     }
   }
 

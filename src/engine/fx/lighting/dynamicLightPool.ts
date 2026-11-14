@@ -1,6 +1,9 @@
 import * as pc from 'playcanvas';
 import type { Vec3Like } from '../../../contracts/ballistics.ts';
 
+// The light.color setter copies the values, so one scratch serves every light.
+const scratchColor = new pc.Color();
+
 export interface PooledDynamicOmniLight {
   entity: pc.Entity;
   active: boolean;
@@ -75,7 +78,7 @@ export function activateDynamicOmniLight(
 
   chosen.entity.setPosition(pos.x, pos.y, pos.z);
   if (chosen.entity.light) {
-    chosen.entity.light.color.set(r, g, b);
+    chosen.entity.light.color = scratchColor.set(r, g, b);
     chosen.entity.light.intensity = intensity;
     chosen.entity.light.range = rangeM;
   }
@@ -102,7 +105,7 @@ export function stepDynamicLights(pool: PooledDynamicOmniLight[], dt: number): v
       slot.entity.light.intensity = slot.peakIntensity * rem * rem;
       if (slot.isExplosion) {
         const cool = Math.min(1, t * 3.2);
-        slot.entity.light.color.set(
+        slot.entity.light.color = scratchColor.set(
           1.0,
           0.92 * (1 - cool) + 0.44 * cool,
           0.68 * (1 - cool) + 0.1 * cool,

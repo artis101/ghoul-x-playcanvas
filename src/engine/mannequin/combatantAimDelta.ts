@@ -3,6 +3,7 @@ import type { TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts'
 import { applySwayToDirection, swayRotationForBarrel } from '../../core/ai/weaponSway.ts';
 import { sampleEnemyWeaponSway } from '../ai/enemyWeaponSway.ts';
 import type { CombatantGlbInstance } from '../assets/glbLoader.ts';
+import { HAND_ZONE, UPPER_ARM_ZONE } from './armZoneKeys.ts';
 
 /**
  * The one procedural touch on a living aimer: a small, clamped turn of the chest and the gun arm
@@ -125,8 +126,8 @@ export function applyAimDelta(
   if (weight < 1e-3) return;
 
   const chest = glb.boneNodes.get('TORSO_UPPER_THORAX');
-  const upperArm = glb.boneNodes.get(`UPPER_ARM_${input.hand}`);
-  const hand = glb.boneNodes.get(`HAND_${input.hand}`);
+  const upperArm = glb.boneNodes.get(UPPER_ARM_ZONE[input.hand]);
+  const hand = glb.boneNodes.get(HAND_ZONE[input.hand]);
   if (!chest || !upperArm || !hand) return;
 
   let reference = barrel;

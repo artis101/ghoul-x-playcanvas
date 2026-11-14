@@ -7,5 +7,4 @@ export { CombatantVisualGoreSync } from './mannequin/combatantVisualGoreSync.ts'
 export { CombatantWoundDecals } from './mannequin/combatantWoundDecals.ts';
 export { CombatantWeaponMount } from './mannequin/combatantWeaponMount.ts';
 export { buildStumpCaps } from './mannequin/combatantStumpCaps.ts';
-export { CombatantMannequinScript } from './mannequin/combatantMannequinScript.ts';
 export { GhoulMannequinEntity } from './mannequin/ghoulMannequinEntity.ts';

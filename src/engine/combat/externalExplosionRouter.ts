@@ -6,7 +6,6 @@ import type { GhoulMannequinEntity } from '../mannequin.ts';
 import type { GoreAndBallisticsFxManager } from '../goreFx.ts';
 import type { CombatAudioEngine } from '../audio/combatAudioEngine.ts';
 import type { TacticalCombatAiSystem } from '../ai/tacticalCombatAi.ts';
-import type { CameraShakeCallback } from './combatTypes.ts';
 import { SYNTHETIC_SHRAPNEL_AMMO } from './combatTargetConfigs.ts';
 import { buildFragBlastReportForTarget } from './fragBlastCalculator.ts';
 import { applyImpactFxAndState, type ImpactDispatcherContext } from './impactDamageDispatcher.ts';
@@ -18,7 +17,6 @@ export function routeExternalExplosionTrauma(
   fxManager: GoreAndBallisticsFxManager,
   combatAudio: CombatAudioEngine | null,
   tacticalAi: TacticalCombatAiSystem | null,
-  onCameraShake: CameraShakeCallback | undefined,
   getViewerPosVec3: () => Vec3Like,
   spawnBlastFx: (center: Vec3Like, radius: number) => void,
   impactCtx: ImpactDispatcherContext,
@@ -37,14 +35,6 @@ export function routeExternalExplosionTrauma(
   if (combatAudio) {
     const intensity = Math.min(2.0, Math.max(0.75, peakEnergyJ / 6000));
     combatAudio.playExplosion(center, getViewerPosVec3(), intensity);
-  }
-
-  if (onCameraShake) {
-    const viewerDist = distance(center, getViewerPosVec3());
-    if (viewerDist < 34.0) {
-      const proximity = Math.max(0.12, 1 - viewerDist / 34.0);
-      onCameraShake(4.2 * proximity * proximity + 0.55, 0.44);
-    }
   }
 
   let newlyKilledCount = 0;

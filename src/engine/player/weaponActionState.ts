@@ -5,6 +5,8 @@ export const GRENADE_GESTURE_SECONDS = 0.24;
 export interface GrenadeGestureResources {
   readonly model: WeaponGlbInstance;
   readonly release: () => void;
+  /** Ends the gesture's hold on the model (hides it); the model's owner decides its lifetime. */
+  readonly dispose: () => void;
 }
 
 export type ViewmodelActionState =
@@ -39,7 +41,7 @@ export function transitionViewmodelAction(
     current.kind === 'THROWING_GRENADE' &&
     (next.kind !== 'THROWING_GRENADE' || next.resources !== current.resources)
   ) {
-    current.resources.model.destroy();
+    current.resources.dispose();
     if (activeWeaponGlb) {
       activeWeaponGlb.rootEntity.enabled = true;
     }
@@ -73,7 +75,7 @@ export function getReloadRemainingS(state: ViewmodelActionState): number {
 }
 
 export function getFireCooldownRemainingS(state: ViewmodelActionState): number {
-  return state.kind === 'FIRING' ? state.cooldownRemainingS : 0;
+  return state.kind === 'FIRING' ? Math.max(0, state.cooldownRemainingS) : 0;
 }
 
 export function stepGrenadeThrowPose(

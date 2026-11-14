@@ -2,6 +2,7 @@ import * as pc from 'playcanvas';
 import { stepRagdollPhysics } from '../../core/ballistics/solver.ts';
 import { vec3 } from '../../core/ballistics/vec3.ts';
 import type { Vec3Like } from '../../contracts/ballistics.ts';
+import type { BlastEvent } from '../../contracts/destruction.ts';
 import type { PhysiologyEcsSystem } from '../../core/physiology/physiologySystem.ts';
 import type { VascularBloodFxEmitter } from '../gore/vascularBloodFx.ts';
 import type { HudController } from '../hudController.ts';
@@ -44,6 +45,7 @@ export interface CombatDirectorLoopContext {
   isLineOfSightBlocked?: (from: Vec3Like, to: Vec3Like) => boolean;
   grenadeSweepInterceptor?: GrenadeSweepInterceptor;
   onExplosionBlast?: (center: Vec3Like, radius: number, impulse: number, energy: number) => void;
+  onGrenadeBlast?: (blast: BlastEvent) => void;
   applyExternalExplosionTrauma: (blast: any, label: string) => number;
   getViewerPosVec3: () => Vec3Like;
 }
@@ -64,10 +66,17 @@ export function stepCombatDirectorLoop(
     dt,
     environment,
     (center) => {
-      ctx.applyExternalExplosionTrauma(
-        { centerWorld: center, radiusM: GRENADE_BLAST_RADIUS_M, peakImpulseNs: GRENADE_PEAK_IMPULSE_NS, peakEnergyJ: GRENADE_PEAK_ENERGY_J },
-        'M67 FRAG'
-      );
+      const blast: BlastEvent = {
+        centerWorld: center,
+        radiusM: GRENADE_BLAST_RADIUS_M,
+        peakImpulseNs: GRENADE_PEAK_IMPULSE_NS,
+        peakEnergyJ: GRENADE_PEAK_ENERGY_J,
+      };
+      if (ctx.onGrenadeBlast) {
+        ctx.onGrenadeBlast(blast);
+        return;
+      }
+      ctx.applyExternalExplosionTrauma(blast, 'M67 FRAG');
       ctx.onExplosionBlast?.(center, GRENADE_BLAST_RADIUS_M, GRENADE_PEAK_IMPULSE_NS, GRENADE_PEAK_ENERGY_J);
     },
     ctx.grenadeSweepInterceptor

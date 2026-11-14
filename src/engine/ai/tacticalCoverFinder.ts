@@ -1,12 +1,20 @@
 import type { TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
 import type { EnemyAiAgentRuntime } from './tacticalAiTypes.ts';
+import { HALL_ARENA_NAV_SPEC, type ArenaNavSpec } from './arenaNavSpec.ts';
+import { hashCombatantTargetId } from './archetypeTuning.ts';
 
 export interface PeekPlanCacheEntry {
   timestampS: number;
   isPeekingOut: boolean;
   peekSign: -1 | 1;
   playerX: number;
+  playerY: number;
   playerZ: number;
+  anchorX: number;
+  anchorZ: number;
+  baseY: number;
+  breachVersion: number | null;
+  deferred: boolean;
   baseOffset: number;
   goalZ: number;
   anchorBlockedByCover: boolean;
@@ -21,6 +29,66 @@ export interface AlertedPeekPlan {
   readonly firingPosition: boolean;
 }
 
+export interface PeekPlanPolicy {
+  /** Cover topology version for this update, or null when the AI has no breach feed. */
+  breachVersion: number | null;
+  /** Full replans still allowed this update in breach-aware mode. */
+  replansLeft: number;
+}
+
+export const PEEK_REPLANS_PER_UPDATE = 2;
+const LEGACY_PLAN_TTL_S = 0.08;
+const LEGACY_PLAYER_MOVE_M = 0.2;
+const PLAN_TTL_S = 0.3;
+const PLAN_TTL_STAGGER_S = 0.025;
+const PLAN_PLAYER_MOVE_M = 0.35;
+const PLAN_PLAYER_RISE_M = 0.25;
+
+function planStillValid(
+  cached: PeekPlanCacheEntry,
+  hs: TargetHealthState,
+  agent: EnemyAiAgentRuntime,
+  playerEye: Vec3Like,
+  now: number,
+  policy: PeekPlanPolicy | null,
+  ignoreAgeAndPlayer: boolean
+): boolean {
+  if (cached.isPeekingOut !== agent.isPeekingOut || cached.peekSign !== agent.peekSign) return false;
+  if (policy === null || policy.breachVersion === null) {
+    return (
+      !ignoreAgeAndPlayer &&
+      now - cached.timestampS < LEGACY_PLAN_TTL_S &&
+      Math.abs(playerEye.x - cached.playerX) < LEGACY_PLAYER_MOVE_M &&
+      Math.abs(playerEye.z - cached.playerZ) < LEGACY_PLAYER_MOVE_M
+    );
+  }
+  if (cached.breachVersion !== policy.breachVersion) return false;
+  if (
+    cached.anchorX !== agent.coverAnchorWorld.x ||
+    cached.anchorZ !== agent.coverAnchorWorld.z ||
+    cached.baseY !== hs.worldPosition.y
+  ) {
+    return false;
+  }
+  if (ignoreAgeAndPlayer) return true;
+  const ttl = PLAN_TTL_S + (hashCombatantTargetId(agent.targetId) % 4) * PLAN_TTL_STAGGER_S;
+  return (
+    now - cached.timestampS < ttl &&
+    Math.abs(playerEye.x - cached.playerX) < PLAN_PLAYER_MOVE_M &&
+    Math.abs(playerEye.z - cached.playerZ) < PLAN_PLAYER_MOVE_M &&
+    Math.abs(playerEye.y - cached.playerY) < PLAN_PLAYER_RISE_M
+  );
+}
+
+function planFromEntry(cached: PeekPlanCacheEntry): AlertedPeekPlan {
+  return {
+    targetOffset: cached.baseOffset,
+    goalZ: cached.goalZ,
+    anchorBlockedByCover: cached.anchorBlockedByCover,
+    firingPosition: cached.firingPosition,
+  };
+}
+
 export function computeAlertedPeekTarget(
   hs: TargetHealthState,
   agent: EnemyAiAgentRuntime,
@@ -28,7 +96,9 @@ export function computeAlertedPeekTarget(
   elapsedClockS: number,
   peekPlanCache: Map<string, PeekPlanCacheEntry>,
   isSightBlocked: (from: Vec3Like, to: Vec3Like) => boolean,
-  hasCoverQueries: boolean
+  hasCoverQueries: boolean,
+  policy: PeekPlanPolicy | null = null,
+  nav: ArenaNavSpec = HALL_ARENA_NAV_SPEC
 ): AlertedPeekPlan {
   // Peek spots are fixed points. A soldier steps out to a spot, plants and fires; it does not
   // sway on the spot, which would keep its walk cycle starting and stopping.
@@ -42,20 +112,21 @@ export function computeAlertedPeekTarget(
   }
 
   const cached = peekPlanCache.get(agent.targetId);
-  if (
-    cached &&
-    elapsedClockS - cached.timestampS < 0.08 &&
-    cached.isPeekingOut === agent.isPeekingOut &&
-    cached.peekSign === agent.peekSign &&
-    Math.abs(playerEyeWorldPos.x - cached.playerX) < 0.2 &&
-    Math.abs(playerEyeWorldPos.z - cached.playerZ) < 0.2
-  ) {
-    return {
-      targetOffset: cached.baseOffset,
-      goalZ: cached.goalZ,
-      anchorBlockedByCover: cached.anchorBlockedByCover,
-      firingPosition: cached.firingPosition,
-    };
+  if (cached && planStillValid(cached, hs, agent, playerEyeWorldPos, elapsedClockS, policy, false)) {
+    return planFromEntry(cached);
+  }
+  if (policy && policy.breachVersion !== null) {
+    // Over budget this update: an agent may keep its topology-valid plan for one more update.
+    if (
+      policy.replansLeft <= 0 &&
+      cached &&
+      !cached.deferred &&
+      planStillValid(cached, hs, agent, playerEyeWorldPos, elapsedClockS, policy, true)
+    ) {
+      cached.deferred = true;
+      return planFromEntry(cached);
+    }
+    policy.replansLeft--;
   }
 
   const savePeekCache = (
@@ -69,7 +140,13 @@ export function computeAlertedPeekTarget(
       isPeekingOut: agent.isPeekingOut,
       peekSign: agent.peekSign,
       playerX: playerEyeWorldPos.x,
+      playerY: playerEyeWorldPos.y,
       playerZ: playerEyeWorldPos.z,
+      anchorX: agent.coverAnchorWorld.x,
+      anchorZ: agent.coverAnchorWorld.z,
+      baseY: hs.worldPosition.y,
+      breachVersion: policy?.breachVersion ?? null,
+      deferred: false,
       baseOffset,
       goalZ,
       anchorBlockedByCover,
@@ -106,7 +183,7 @@ export function computeAlertedPeekTarget(
     if (!agent.isPeekingOut) {
       for (const sign of [-agent.peekSign, agent.peekSign] as const) {
         const shelterX = agent.coverAnchorWorld.x + sign * 0.72;
-        if (shelterX < -8.05 || shelterX > 8.05) continue;
+        if (shelterX < nav.peekSpotMinX || shelterX > nav.peekSpotMaxX) continue;
         const shelterCore: Vec3Like = {
           x: shelterX,
           y: hs.worldPosition.y + 1.32,
@@ -140,7 +217,7 @@ export function computeAlertedPeekTarget(
   for (const d of candidateDistances) {
     for (const s of signs) {
       const rawX = agent.coverAnchorWorld.x + s * d;
-      if (rawX < -8.05 || rawX > 8.05) continue;
+      if (rawX < nav.peekSpotMinX || rawX > nav.peekSpotMaxX) continue;
       const candCore: Vec3Like = { x: rawX, y: hs.worldPosition.y + 1.32, z: peekZ };
       const candClear =
         !isSightBlocked(candCore, playerChest) || !isSightBlocked(candCore, playerEyeWorldPos);
@@ -149,7 +226,7 @@ export function computeAlertedPeekTarget(
         agent.peekSign = s;
         let chosenDist = d;
         const nudgedX = agent.coverAnchorWorld.x + s * (d + 0.16);
-        if (nudgedX >= -8.05 && nudgedX <= 8.05) {
+        if (nudgedX >= nav.peekSpotMinX && nudgedX <= nav.peekSpotMaxX) {
           const nudgedCore: Vec3Like = { x: nudgedX, y: hs.worldPosition.y + 1.32, z: peekZ };
           if (!isSightBlocked(nudgedCore, playerChest) || !isSightBlocked(nudgedCore, playerEyeWorldPos)) {
             chosenDist = d + 0.16;

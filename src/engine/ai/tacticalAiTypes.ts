@@ -25,7 +25,10 @@ import type { AimDuckReflexState } from '../../core/ai/aimDuckReflex.ts';
 import type { CloseQuartersJukeState } from '../../core/ai/closeQuartersStrafe.ts';
 import type { PlantedFootworkState } from '../../core/ai/plantedFootwork.ts';
 import type { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
-import { DESTRUCTION_ZONE_LAYOUT } from '../world/arenaLayout.ts';
+import type { ArenaNavSpec } from './arenaNavSpec.ts';
+
+export type { TacticalCoverStation, ArenaNavSpec } from './arenaNavSpec.ts';
+export { TACTICAL_COVER_STATIONS } from './arenaNavSpec.ts';
 
 export type {
   ActiveFiringHand,
@@ -46,11 +49,13 @@ export type {
   WeaponBurstState,
 };
 
-export const BACKUP_SIDEARM_WEAPON_ID = 'silver_talon_50ae';
-export const DOWNED_ONE_HANDED_SPREAD_MULTIPLIER = 4.5;
-export const OFFHAND_SIDEARM_SPREAD_MULTIPLIER = 1.78;
-export const SIDEARM_DRAW_DURATION_S = 0.6;
-export const MIN_CONSCIOUSNESS_TO_FIGHT = 0.12;
+export {
+  BACKUP_SIDEARM_WEAPON_ID,
+  DOWNED_ONE_HANDED_SPREAD_MULTIPLIER,
+  MIN_CONSCIOUSNESS_TO_FIGHT,
+  OFFHAND_SIDEARM_SPREAD_MULTIPLIER,
+  SIDEARM_DRAW_DURATION_S,
+} from './archetypeTuning.ts';
 
 export type EnemyTacticalAiState =
   | 'PATROL_GUARD'
@@ -64,45 +69,6 @@ export type CombatantResolveProfile =
   | 'FANATIC_BERSERKER'
   | 'GRITTY_REGULAR'
   | 'PANICKED_SCRAPPER';
-
-export interface TacticalCoverStation {
-  readonly stationId: string;
-  readonly coverAnchorWorld: Vec3Like;
-  readonly peekSign: -1 | 1;
-  readonly peekStrideM: number;
-  readonly guardYawDeg: number;
-}
-
-export const TACTICAL_COVER_STATIONS: readonly TacticalCoverStation[] = [
-  {
-    stationId: DESTRUCTION_ZONE_LAYOUT.woodShootHouseWall.id,
-    coverAnchorWorld: { x: -2.3, y: 0, z: -8.35 },
-    peekSign: 1,
-    peekStrideM: 1.72,
-    guardYawDeg: 6,
-  },
-  {
-    stationId: DESTRUCTION_ZONE_LAYOUT.instancedBrickWall.id,
-    coverAnchorWorld: { x: -3.8, y: 0, z: -13.75 },
-    peekSign: 1,
-    peekStrideM: 1.72,
-    guardYawDeg: 10,
-  },
-  {
-    stationId: DESTRUCTION_ZONE_LAYOUT.voronoiConcreteWall.id,
-    coverAnchorWorld: { x: 2.3, y: 0, z: -14.85 },
-    peekSign: -1,
-    peekStrideM: 1.82,
-    guardYawDeg: -8,
-  },
-  {
-    stationId: DESTRUCTION_ZONE_LAYOUT.glassVoronoiWindow.id,
-    coverAnchorWorld: { x: 5.5, y: 0, z: -8.1 },
-    peekSign: -1,
-    peekStrideM: 0.75,
-    guardYawDeg: -14,
-  },
-];
 
 export interface EnemyCoverShotInterceptResult {
   readonly blocked: boolean;
@@ -265,6 +231,8 @@ export interface EnemyHitNotification {
 }
 
 export interface TacticalCombatAiOptions {
+  /** Bounds and cover stations of the arena; defaults to the hall. */
+  arenaNav?: ArenaNavSpec;
   app?: pc.Application | null;
   rapierWorld?: RapierPhysicsWorld | null;
   playerDamageEnabled?: boolean;
@@ -274,6 +242,8 @@ export interface TacticalCombatAiOptions {
   maxAggressiveTokens?: number;
   resolveProfileOverrides?: Readonly<Record<string, CombatantResolveProfile>>;
   hardenedSidearmOverrides?: Readonly<Record<string, boolean>>;
+  /** Cover topology version (destruction breachVersion); enables the longer peek-plan cache. */
+  getCoverBreachVersion?: () => number;
   isLineOfSightBlocked?: (fromWorld: Vec3Like, toWorld: Vec3Like) => boolean;
   interceptEnemyShotCover?: (
     originWorld: Vec3Like,

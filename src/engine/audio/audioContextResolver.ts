@@ -1,5 +1,5 @@
-import type { AudioBufferLike, AudioContextLike, AudioNodeLike } from '../../core/audio/contracts.ts';
-import { createInternalAudioGraph, type InternalAudioGraph } from '../../core/audio/audioGraph.ts';
+import type { AudioBufferLike, AudioContextLike } from '../../core/audio/contracts.ts';
+import { createInternalAudioGraph, type InternalAudioGraph, type SpatialChain } from '../../core/audio/audioGraph.ts';
 import type { CombatAudioEngineOptions } from '../../core/audio/types.ts';
 
 interface WindowWithWebkitAudio {
@@ -45,7 +45,7 @@ export function createGraphFactory(
   masterVolume: number,
   reverbWetMix: number,
   rng: () => number,
-  onChainCreated?: (nodes: readonly AudioNodeLike[], endTime: number) => void,
+  onChainCreated?: (chain: SpatialChain, createdAt: number) => void,
 ): () => InternalAudioGraph | null {
   if (options.context !== undefined) {
     const p = options.context;

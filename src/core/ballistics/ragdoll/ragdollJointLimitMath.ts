@@ -1,4 +1,4 @@
-import { Vec3Like, add, cross, dot, length, normalize, scale, sub } from '../vec3.ts';
+import { Vec3Like, type MutableVec3, add, cross, dot, length, normalize, scale, scaleInto, sub, subInto } from '../vec3.ts';
 
 export const DEG = Math.PI / 180;
 
@@ -25,6 +25,11 @@ export interface SwingLimits {
 const RECOVERY_RATE_PER_S = 14;
 const MAX_RECOVERY_SPEED_MS = 2.2;
 
+const PUSH_DIR: MutableVec3 = { x: 0, y: 0, z: 0 };
+const SEGMENT: MutableVec3 = { x: 0, y: 0, z: 0 };
+const SEGMENT_ERROR: MutableVec3 = { x: 0, y: 0, z: 0 };
+const RELATIVE_VELOCITY: MutableVec3 = { x: 0, y: 0, z: 0 };
+
 /** How strongly limits act this pass. */
 export interface LimitEffort {
   /** 0 to 1 share of the recovery speed to aim for; at 0 a limit only stops further travel. */
@@ -41,29 +46,26 @@ export interface LimitEffort {
  * The push that keeps a joint in range, given `error`: the displacement that would bring the
  * particle back inside. Motion further out of range is stopped dead, as by an inelastic stop.
  * Motion back toward range is then topped up toward the recovery speed, a little each pass.
+ * The push direction is written to PUSH_DIR; returns the push speed, or 0 when no push is needed.
  */
-function requiredPush(
-  relativeVelocity: Vec3Like,
-  error: Vec3Like,
-  effort: LimitEffort
-): { dir: Vec3Like; speed: number } | null {
+function requiredPush(relativeVelocity: Vec3Like, error: Vec3Like, effort: LimitEffort): number {
   const size = length(error);
-  if (size < 1e-5) return null;
-  const dir = scale(error, 1 / size);
-  const returning = dot(relativeVelocity, dir);
+  if (size < 1e-5) return 0;
+  scaleInto(PUSH_DIR, error, 1 / size);
+  const returning = dot(relativeVelocity, PUSH_DIR);
   const stop = Math.max(0, -returning);
   const wanted = Math.min(size * RECOVERY_RATE_PER_S, MAX_RECOVERY_SPEED_MS) * effort.recovery;
   const kick = Math.min(Math.max(0, wanted - Math.max(0, returning)), effort.maxKickMs);
   const speed = stop + kick;
-  return speed > 0 ? { dir, speed } : null;
+  return speed > 0 ? speed : 0;
 }
 
 export function driveParticleBy(p: LimitParticle, error: Vec3Like, effort: LimitEffort): void {
-  const push = requiredPush(p.velocity, error, effort);
-  if (!push) return;
-  p.velocity.x += push.dir.x * push.speed;
-  p.velocity.y += push.dir.y * push.speed;
-  p.velocity.z += push.dir.z * push.speed;
+  const speed = requiredPush(p.velocity, error, effort);
+  if (speed === 0) return;
+  p.velocity.x += PUSH_DIR.x * speed;
+  p.velocity.y += PUSH_DIR.y * speed;
+  p.velocity.z += PUSH_DIR.z * speed;
 }
 
 /**
@@ -111,20 +113,24 @@ export function driveSegmentToward(
   desiredDir: Vec3Like,
   effort: LimitEffort
 ): void {
-  const segment = sub(child.position, pivot.position);
-  const error = sub(scale(desiredDir, length(segment)), segment);
-  const push = requiredPush(sub(child.velocity, pivot.velocity), error, effort);
-  if (!push) return;
+  subInto(SEGMENT, child.position, pivot.position);
+  const segmentLength = length(SEGMENT);
+  SEGMENT_ERROR.x = desiredDir.x * segmentLength - SEGMENT.x;
+  SEGMENT_ERROR.y = desiredDir.y * segmentLength - SEGMENT.y;
+  SEGMENT_ERROR.z = desiredDir.z * segmentLength - SEGMENT.z;
+  subInto(RELATIVE_VELOCITY, child.velocity, pivot.velocity);
+  const speed = requiredPush(RELATIVE_VELOCITY, SEGMENT_ERROR, effort);
+  if (speed === 0) return;
   const wChild = 1 / child.massKg;
   const wPivot = 1 / pivot.massKg;
-  const toChild = (push.speed * wChild) / (wChild + wPivot);
-  const toPivot = (push.speed * wPivot) / (wChild + wPivot);
-  child.velocity.x += push.dir.x * toChild;
-  child.velocity.y += push.dir.y * toChild;
-  child.velocity.z += push.dir.z * toChild;
-  pivot.velocity.x -= push.dir.x * toPivot;
-  pivot.velocity.y -= push.dir.y * toPivot;
-  pivot.velocity.z -= push.dir.z * toPivot;
+  const toChild = (speed * wChild) / (wChild + wPivot);
+  const toPivot = (speed * wPivot) / (wChild + wPivot);
+  child.velocity.x += PUSH_DIR.x * toChild;
+  child.velocity.y += PUSH_DIR.y * toChild;
+  child.velocity.z += PUSH_DIR.z * toChild;
+  pivot.velocity.x -= PUSH_DIR.x * toPivot;
+  pivot.velocity.y -= PUSH_DIR.y * toPivot;
+  pivot.velocity.z -= PUSH_DIR.z * toPivot;
 }
 
 /** The displacement that turns `position` about the line through `origin` along unit `axis`. */

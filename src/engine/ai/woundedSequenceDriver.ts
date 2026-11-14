@@ -8,7 +8,7 @@ import {
 } from '../../core/ai/woundedSequenceFsm.ts';
 import type { SidearmRule } from '../../core/ai/enemyArmamentFsm.ts';
 import { isCommittedWoundReaction } from '../../core/ballistics/trauma/woundReactionTimings.ts';
-import type { EnemyAiAgentRuntime, WoundedPlayerSense } from './tacticalAiTypes.ts';
+import type { EnemyAiAgentRuntime, EnemyTacticalAiState, WoundedPlayerSense } from './tacticalAiTypes.ts';
 import { isArmChainIntactAndFunctional } from './combatantArmEvaluation.ts';
 import { isSeatedAnimated } from '../../core/ballistics/triage/seatedLastStand.ts';
 
@@ -114,7 +114,8 @@ export function stepAgentWoundedSequence(
   hs: TargetHealthState,
   agent: EnemyAiAgentRuntime,
   playerEye: Vec3Like,
-  isSightBlocked: (from: Vec3Like, to: Vec3Like) => boolean
+  isSightBlocked: (from: Vec3Like, to: Vec3Like) => boolean,
+  transitionState?: (agent: EnemyAiAgentRuntime, next: EnemyTacticalAiState) => void
 ): void {
   if (!hs.alive || hs.currentHp <= 0) {
     agent.woundedSense = NO_SENSE;
@@ -122,7 +123,8 @@ export function stepAgentWoundedSequence(
   }
   // A fighter that recovered from being downed is back on its feet: it fights normally again.
   if (agent.state === 'DOWNED_CRAWLING' && !hs.isRagdollActive && hs.rightLegFunctional && hs.leftLegFunctional && currentWoundedPhase(hs) === 'NONE') {
-    agent.state = 'ALERTED_ENGAGING';
+    if (transitionState) transitionState(agent, 'ALERTED_ENGAGING');
+    else agent.state = 'ALERTED_ENGAGING';
   }
   hs.resolveProfile ??= agent.resolveProfile;
   rollFortitude(hs);

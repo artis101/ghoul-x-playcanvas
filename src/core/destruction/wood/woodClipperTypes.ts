@@ -119,12 +119,15 @@ export interface WoodMeshBuildStats {
   shellCount: number;
 }
 
-export interface WoodStampSubtractionResult {
+export interface WoodStampCutResult {
   cutAnyWood: boolean;
   removedAreaM2: number;
   droppedIslandAreaM2: number;
   snappedBridgeCount: number;
   splinters: SplinterSpawnDescriptor[];
   droppedSlabs?: ExtrudedWoodSlabMesh[];
+}
+
+export interface WoodStampSubtractionResult extends WoodStampCutResult {
   meshStats: WoodMeshBuildStats;
 }

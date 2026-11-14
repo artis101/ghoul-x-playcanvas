@@ -89,7 +89,7 @@ export function createInternalAudioGraph<TBuffer extends AudioBufferLike>(
   initialMasterVolume: number,
   initialReverbWetMix: number,
   rng: () => number,
-  onChainCreated?: (nodes: readonly AudioNodeLike[], endTime: number) => void,
+  onChainCreated?: (chain: SpatialChain, createdAt: number) => void,
 ): InternalAudioGraph {
   const sr = Math.max(8000, ctx.sampleRate || 44100);
   let lastListenerPitchDeg = 0;
@@ -195,7 +195,7 @@ export function createInternalAudioGraph<TBuffer extends AudioBufferLike>(
         opts,
         lastListenerPitchDeg,
       );
-      onChainCreated?.(chain.nodes, ctx.currentTime + 4.8);
+      onChainCreated?.(chain, ctx.currentTime);
       return chain;
     },
   };

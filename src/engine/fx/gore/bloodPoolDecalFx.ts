@@ -1,9 +1,10 @@
 import * as pc from 'playcanvas';
-import type { BloodPoolDecal, WetGoreMaterialSuite } from './goreTypes.ts';
+import type { BloodPoolDecal } from './goreTypes.ts';
+import { releaseFxEntity } from '../particles/fxEntityPool.ts';
+import type { GoreFxPools } from './goreFxPools.ts';
 
 export function spawnBloodPool(
-  fxRoot: pc.Entity,
-  goreSuite: WetGoreMaterialSuite,
+  pools: GoreFxPools,
   bloodPools: BloodPoolDecal[],
   poolCounter: { val: number },
   pos: pc.Vec3,
@@ -19,29 +20,13 @@ export function spawnBloodPool(
     }
   }
 
-  const pool = new pc.Entity('BloodPoolDecal');
-  if (goreSuite.floorQuadMesh) {
-    const mi = new pc.MeshInstance(goreSuite.floorQuadMesh, goreSuite.wetBloodPoolMat);
-    pool.addComponent('render', {
-      meshInstances: [mi],
-      castShadows: false,
-      receiveShadows: true,
-    });
-  } else {
-    pool.addComponent('render', {
-      type: 'cylinder',
-      material: goreSuite.wetBloodPoolMat,
-      castShadows: false,
-      receiveShadows: true,
-    });
-  }
+  const pool = pools.bloodPool.acquire();
 
   const depthBias = 0.0065 + ((poolCounter.val++ % 16) * 0.00018);
   const aspectRatio = 0.84 + Math.random() * 0.34;
   pool.setLocalScale(0.05, 0.003, 0.05 * aspectRatio);
   pool.setPosition(pos.x, depthBias, pos.z);
   pool.setLocalEulerAngles(0, Math.random() * 360, 0);
-  fxRoot.addChild(pool);
 
   bloodPools.push({
     entity: pool,
@@ -53,7 +38,7 @@ export function spawnBloodPool(
 
   if (bloodPools.length > 65) {
     const oldest = bloodPools.shift();
-    if (oldest) oldest.entity.destroy();
+    if (oldest) releaseFxEntity(oldest.entity);
   }
 }
 

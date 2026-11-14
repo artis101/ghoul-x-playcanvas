@@ -21,6 +21,7 @@ export interface BarrelSmokeWisp {
   endScale: number;
   baseOpacity: number;
   spinSpeedDeg: number;
+  active: boolean;
 }
 
 export interface ViewmodelMuzzleFxAssets {

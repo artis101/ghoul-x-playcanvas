@@ -2,7 +2,7 @@ import * as pc from 'playcanvas';
 import type { Vec3Like } from '../../../contracts/ballistics.ts';
 import type { PenetrationRayHit } from '../../../contracts/destruction.ts';
 import { HardwareInstancedPool } from '../../physics/instancedPool.ts';
-import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
+import type { RapierPhysicsWorld, SphereRegion } from '../../physics/rapierWorld.ts';
 import {
   MAX_SHADER_WORLD_CRATERS,
   type CraterImpactRecord,
@@ -214,6 +214,7 @@ export class PomCraterDecalSystem {
       dir: Vec3Like,
       maxDistM: number,
     ) => boolean,
+    regions?: readonly SphereRegion[],
   ): number {
     if (this.destroyed) return 0;
     let prunedCount = 0;
@@ -228,6 +229,7 @@ export class PomCraterDecalSystem {
       const px = this.slotPointX[s];
       const py = this.slotPointY[s];
       const pz = this.slotPointZ[s];
+      if (regions && !isPointInAnyRegion(px, py, pz, regions)) continue;
       const nx = this.slotNormalX[s];
       const ny = this.slotNormalY[s];
       const nz = this.slotNormalZ[s];
@@ -339,4 +341,15 @@ export class PomCraterDecalSystem {
     this.rngState = x >>> 0;
     return (this.rngState >>> 0) / 4294967296;
   }
+}
+
+function isPointInAnyRegion(x: number, y: number, z: number, regions: readonly SphereRegion[]): boolean {
+  for (let i = 0; i < regions.length; i++) {
+    const r = regions[i];
+    const dx = x - r.x;
+    const dy = y - r.y;
+    const dz = z - r.z;
+    if (dx * dx + dy * dy + dz * dz <= r.radiusM * r.radiusM) return true;
+  }
+  return false;
 }

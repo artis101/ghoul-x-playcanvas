@@ -48,6 +48,7 @@ export function handleThrowGrenade(app: IGhoulXApp): void {
 export function spawnFreshWave(app: IGhoulXApp): void {
   app.destructionManager.resetAll();
   app.mayhemDirector.resetWave(true);
+  app.fxManager.clearAll();
   app.tacticalAi.notifyWaveCleared();
   app.combatDirector.spawnAllTargets();
   app.arsenalManager.initAmmoInventory();

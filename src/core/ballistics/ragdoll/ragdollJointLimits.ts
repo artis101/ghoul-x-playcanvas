@@ -1,11 +1,23 @@
-import type { TargetHealthState } from '../../../contracts/ballistics.ts';
+import type { RagdollBoneState, TargetHealthState } from '../../../contracts/ballistics.ts';
 import {
   type BodyFrame,
   computeChestFrame,
   computePelvisFrame,
   rejectFromAxis,
 } from '../../ghoul/anatomy/ragdollBodyFrames.ts';
-import { Vec3Like, add, cross, dot, length, normalize, scale, sub } from '../vec3.ts';
+import {
+  type MutableVec3,
+  Vec3Like,
+  add,
+  cross,
+  dot,
+  length,
+  normalize,
+  normalizeInto,
+  scale,
+  scaleInto,
+  subInto,
+} from '../vec3.ts';
 import {
   DEG,
   type LimitEffort,
@@ -36,12 +48,31 @@ const TORSO_MAX_TWIST_ONE_HIP = 12 * DEG;
 
 const SIDES = ['RIGHT', 'LEFT'] as const;
 
-function attached(...particles: { componentId: string }[]): boolean {
-  return particles.every((p) => p.componentId === 'BODY');
+const SIDE_ZONES = {
+  RIGHT: { thigh: 'THIGH_RIGHT', knee: 'KNEE_RIGHT', shin: 'SHIN_RIGHT', foot: 'FOOT_RIGHT', toe: 'FOOT_TOE_RIGHT', upperArm: 'UPPER_ARM_RIGHT', forearm: 'FOREARM_RIGHT' },
+  LEFT: { thigh: 'THIGH_LEFT', knee: 'KNEE_LEFT', shin: 'SHIN_LEFT', foot: 'FOOT_LEFT', toe: 'FOOT_TOE_LEFT', upperArm: 'UPPER_ARM_LEFT', forearm: 'FOREARM_LEFT' },
+} as const;
+
+const SWING_DIR: MutableVec3 = { x: 0, y: 0, z: 0 };
+const SPINE_AXIS: MutableVec3 = { x: 0, y: 0, z: 0 };
+const THIGH_DIR: MutableVec3 = { x: 0, y: 0, z: 0 };
+const SHIN_DIR: MutableVec3 = { x: 0, y: 0, z: 0 };
+const LOWER_LEG_DIR: MutableVec3 = { x: 0, y: 0, z: 0 };
+const TOE_DIR: MutableVec3 = { x: 0, y: 0, z: 0 };
+const ARM_DIR: MutableVec3 = { x: 0, y: 0, z: 0 };
+const TWIST_SPINE: MutableVec3 = { x: 0, y: 0, z: 0 };
+const HIP_OUTWARD: MutableVec3 = { x: 0, y: 0, z: 0 };
+const REACH: MutableVec3 = { x: 0, y: 0, z: 0 };
+const REL: MutableVec3 = { x: 0, y: 0, z: 0 };
+const TWIST_HIPS: RagdollBoneState[] = [];
+
+function attached(a: { componentId: string }, b = a, c = a): boolean {
+  return a.componentId === 'BODY' && b.componentId === 'BODY' && c.componentId === 'BODY';
 }
 
-function direction(from: LimitParticle, to: LimitParticle): Vec3Like {
-  return normalize(sub(to.position, from.position));
+function directionInto(out: MutableVec3, from: LimitParticle, to: LimitParticle): Vec3Like {
+  subInto(out, to.position, from.position);
+  return normalizeInto(out, out);
 }
 
 /** Limits how far `child` swings about `pivot`, measured in a frame whose up is `axis`. */
@@ -56,7 +87,7 @@ function limitSwing(
   const sideRaw = rejectFromAxis(sideHint, axis);
   if (length(sideRaw) < 0.2) return;
   const side = normalize(sideRaw);
-  const clamped = clampSwingDirection(direction(pivot, child), axis, side, cross(side, axis), limits);
+  const clamped = clampSwingDirection(directionInto(SWING_DIR, pivot, child), axis, side, cross(side, axis), limits);
   if (clamped) driveSegmentToward(pivot, child, clamped, effort);
 }
 
@@ -103,12 +134,12 @@ function limitSpineAndNeck(
   }
   if (!chest) return;
   if (attached(abdomen, thorax, neck)) {
-    limitSwing(thorax, neck, direction(abdomen, thorax), chest.right, THORACIC, effort);
+    limitSwing(thorax, neck, directionInto(SPINE_AXIS, abdomen, thorax), chest.right, THORACIC, effort);
   }
   if (!attached(thorax, neck, head) || head.goreMode === 'CRANIAL_POP') return;
   limitSwing(neck, head, chest.up, chest.right, NECK, effort);
   const crown = target.auxParticles.HEAD_TOP;
-  if (attached(crown)) limitSwing(head, crown, direction(neck, head), chest.right, SKULL, effort);
+  if (attached(crown)) limitSwing(head, crown, directionInto(SPINE_AXIS, neck, head), chest.right, SKULL, effort);
 }
 
 /** Ball-and-socket hips, hinge knees that only fold backward, and feet that follow the shin. */
@@ -116,18 +147,25 @@ function limitLegs(target: TargetHealthState, pelvis: BodyFrame, effort: LimitEf
   const b = target.ragdollBones;
   const down = scale(pelvis.up, -1);
   for (const side of SIDES) {
-    const thigh = b[`THIGH_${side}`];
-    const knee = b[`KNEE_${side}`];
+    const zones = SIDE_ZONES[side];
+    const thigh = b[zones.thigh];
+    const knee = b[zones.knee];
     if (!attached(b.PELVIS_GROIN, thigh, knee)) continue;
 
-    const outSign = dot(sub(thigh.position, b.PELVIS_GROIN.position), pelvis.right) >= 0 ? 1 : -1;
-    const hipDir = clampHipDirection(direction(thigh, knee), scale(pelvis.right, outSign), down, pelvis.forward);
+    subInto(REL, thigh.position, b.PELVIS_GROIN.position);
+    const outSign = dot(REL, pelvis.right) >= 0 ? 1 : -1;
+    const hipDir = clampHipDirection(
+      directionInto(THIGH_DIR, thigh, knee),
+      scaleInto(HIP_OUTWARD, pelvis.right, outSign),
+      down,
+      pelvis.forward
+    );
     if (hipDir) driveSegmentToward(thigh, knee, hipDir, effort);
 
-    const shin = b[`SHIN_${side}`];
-    const foot = b[`FOOT_${side}`];
+    const shin = b[zones.shin];
+    const foot = b[zones.foot];
     if (!attached(shin, foot)) continue;
-    const thighDir = direction(thigh, knee);
+    const thighDir = directionInto(THIGH_DIR, thigh, knee);
     const hingeRaw = rejectFromAxis(pelvis.right, thighDir);
     if (length(hingeRaw) < 0.25) continue;
     const hinge = normalize(hingeRaw);
@@ -135,7 +173,7 @@ function limitLegs(target: TargetHealthState, pelvis: BodyFrame, effort: LimitEf
 
     // The shin folds back from the thigh by `flex`. Rotation at the hip swings a bent shin
     // sideways about the thigh, which a straight leg cannot show.
-    const shinDir = direction(knee, foot);
+    const shinDir = directionInto(SHIN_DIR, knee, foot);
     const along = Math.max(-1, Math.min(1, dot(shinDir, thighDir)));
     const flex = Math.acos(along);
     const offAxis = Math.sin(flex);
@@ -155,11 +193,11 @@ function limitLegs(target: TargetHealthState, pelvis: BodyFrame, effort: LimitEf
       driveSegmentToward(knee, foot, wanted, effort);
     }
 
-    const toe = target.auxParticles[`FOOT_TOE_${side}`];
+    const toe = target.auxParticles[zones.toe];
     if (!attached(toe)) continue;
-    const lowerLeg = direction(knee, foot);
+    const lowerLeg = directionInto(LOWER_LEG_DIR, knee, foot);
     const toeAxis = normalize(cross(lowerLeg, hinge));
-    const clamped = clampSwingDirection(direction(foot, toe), toeAxis, hinge, cross(hinge, toeAxis), ANKLE);
+    const clamped = clampSwingDirection(directionInto(TOE_DIR, foot, toe), toeAxis, hinge, cross(hinge, toeAxis), ANKLE);
     if (clamped) driveSegmentToward(foot, toe, clamped, effort);
   }
 }
@@ -168,14 +206,18 @@ function limitLegs(target: TargetHealthState, pelvis: BodyFrame, effort: LimitEf
 function limitShoulders(target: TargetHealthState, chest: BodyFrame, effort: LimitEffort): void {
   const b = target.ragdollBones;
   for (const side of SIDES) {
-    const upperArm = b[`UPPER_ARM_${side}`];
-    const forearm = b[`FOREARM_${side}`];
+    const zones = SIDE_ZONES[side];
+    const upperArm = b[zones.upperArm];
+    const forearm = b[zones.forearm];
     if (!attached(b.TORSO_UPPER_THORAX, upperArm, forearm)) continue;
-    const outSign = dot(sub(upperArm.position, b.TORSO_UPPER_THORAX.position), chest.right) >= 0 ? 1 : -1;
-    const reach = normalize(
-      add(add(scale(chest.right, 0.7 * outSign), scale(chest.up, -0.25)), scale(chest.forward, 0.67))
-    );
-    const clamped = clampConeDirection(direction(upperArm, forearm), reach, SHOULDER_MAX_SWING);
+    subInto(REL, upperArm.position, b.TORSO_UPPER_THORAX.position);
+    const outSign = dot(REL, chest.right) >= 0 ? 1 : -1;
+    const rightShare = 0.7 * outSign;
+    REACH.x = chest.right.x * rightShare + chest.up.x * -0.25 + chest.forward.x * 0.67;
+    REACH.y = chest.right.y * rightShare + chest.up.y * -0.25 + chest.forward.y * 0.67;
+    REACH.z = chest.right.z * rightShare + chest.up.z * -0.25 + chest.forward.z * 0.67;
+    normalizeInto(REACH, REACH);
+    const clamped = clampConeDirection(directionInto(ARM_DIR, upperArm, forearm), REACH, SHOULDER_MAX_SWING);
     if (clamped) driveSegmentToward(upperArm, forearm, clamped, effort);
   }
 }
@@ -188,9 +230,12 @@ function limitTorsoTwist(
   effort: LimitEffort
 ): void {
   const b = target.ragdollBones;
-  const hips = SIDES.map((side) => b[`THIGH_${side}`]).filter((thigh) => attached(thigh));
+  const hips = TWIST_HIPS;
+  hips.length = 0;
+  if (attached(b.THIGH_RIGHT)) hips.push(b.THIGH_RIGHT);
+  if (attached(b.THIGH_LEFT)) hips.push(b.THIGH_LEFT);
   if (hips.length === 0 || !attached(b.PELVIS_GROIN, b.TORSO_UPPER_THORAX)) return;
-  const spine = direction(b.PELVIS_GROIN, b.TORSO_UPPER_THORAX);
+  const spine = directionInto(TWIST_SPINE, b.PELVIS_GROIN, b.TORSO_UPPER_THORAX);
   const hipLine = rejectFromAxis(pelvis.right, spine);
   const shoulderLine = rejectFromAxis(chest.right, spine);
   if (length(hipLine) < 0.3 || length(shoulderLine) < 0.3) return;
@@ -201,9 +246,16 @@ function limitTorsoTwist(
   if (excess <= 0) return;
   const unwind = -Math.sign(twist) * excess;
   const shoulderMid = scale(add(b.SHOULDER_RIGHT.position, b.SHOULDER_LEFT.position), 0.5);
-  for (const shoulder of [b.SHOULDER_RIGHT, b.SHOULDER_LEFT]) {
-    driveParticleBy(shoulder, turnAbout(shoulder.position, shoulderMid, spine, unwind * 0.6), effort);
-  }
+  driveParticleBy(
+    b.SHOULDER_RIGHT,
+    turnAbout(b.SHOULDER_RIGHT.position, shoulderMid, spine, unwind * 0.6),
+    effort
+  );
+  driveParticleBy(
+    b.SHOULDER_LEFT,
+    turnAbout(b.SHOULDER_LEFT.position, shoulderMid, spine, unwind * 0.6),
+    effort
+  );
   for (const thigh of hips) {
     driveParticleBy(thigh, turnAbout(thigh.position, b.PELVIS_GROIN.position, spine, -unwind * 0.4), effort);
   }

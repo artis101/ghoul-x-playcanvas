@@ -4,6 +4,7 @@ import type { ColliderSurfaceTag, QuatLike } from '../../../contracts/destructio
 import type { ExtrudedWoodSlabMesh } from '../../../core/destruction/woodPolygonClipper.ts';
 import type { RapierPhysicsWorld } from '../../physics/rapierWorld.ts';
 import type { WoodWallInstance } from './woodWallTypes.ts';
+import { CombinedDebrisMeshWriter, isPoseWithinEpsilon, writeTransformedPieceVertices } from '../concrete/combinedDebrisMeshWriter.ts';
 
 interface ActiveDynamicWoodSlab {
   wallId: string;
@@ -14,6 +15,10 @@ interface ActiveDynamicWoodSlab {
   baseIndex: number;
   indexCount: number;
   sleepingSynced: boolean;
+  /** Pose matrix the slab's vertices were last written with. */
+  uploadedPose: Float32Array;
+  /** True when the slab's vertices must be rewritten, e.g. it is new or moved in the buffer. */
+  verticesStale: boolean;
 }
 
 export class WoodSlabDynamicPool {
@@ -23,8 +28,7 @@ export class WoodSlabDynamicPool {
 
   private readonly maxVertices: number;
   private readonly maxIndices: number;
-  private readonly dynPositions: Float32Array;
-  private readonly dynNormals: Float32Array;
+  private readonly meshWriter: CombinedDebrisMeshWriter;
   private readonly dynUvs: Float32Array;
   private readonly dynIndices: Uint32Array;
   private readonly scratchMat16 = new Float32Array(16);
@@ -44,17 +48,11 @@ export class WoodSlabDynamicPool {
     this.maxVertices = maxVertices;
     this.maxIndices = maxIndices;
 
-    this.dynPositions = new Float32Array(maxVertices * 3);
-    this.dynNormals = new Float32Array(maxVertices * 3);
     this.dynUvs = new Float32Array(maxVertices * 2);
     this.dynIndices = new Uint32Array(maxIndices);
 
-    this.dynamicMesh = new pc.Mesh(app.graphicsDevice);
-    this.dynamicMesh.setPositions(this.dynPositions, 3, 0);
-    this.dynamicMesh.setNormals(this.dynNormals, 3, 0);
-    this.dynamicMesh.setUvs(0, this.dynUvs, 2, 0);
-    this.dynamicMesh.setIndices(this.dynIndices, 0);
-    this.dynamicMesh.update(pc.PRIMITIVE_TRIANGLES, false);
+    this.meshWriter = new CombinedDebrisMeshWriter(app.graphicsDevice, maxVertices, maxIndices, this.dynUvs, this.dynIndices);
+    this.dynamicMesh = this.meshWriter.mesh;
 
     this.dynamicMeshInstance = new pc.MeshInstance(this.dynamicMesh, panelMaterial);
     this.dynamicMeshInstance.castShadow = true;
@@ -105,13 +103,16 @@ export class WoodSlabDynamicPool {
         continue;
       }
 
+      let evicted = 0;
       while (
         this.activeSlabs.length > 0 &&
         (this.activeVertCount + vCount > this.maxVertices ||
           this.activeIndexCount + iCount > this.maxIndices)
       ) {
-        this.removeSlabAt(0);
+        this.removeSlabAt(0, false);
+        evicted++;
       }
+      if (evicted > 0) this.repackSlabOffsets();
 
       const lx = slab.localCenter.x;
       const ly = slab.localCenter.y;
@@ -162,6 +163,8 @@ export class WoodSlabDynamicPool {
         baseIndex: this.activeIndexCount,
         indexCount: iCount,
         sleepingSynced: false,
+        uploadedPose: new Float32Array(16),
+        verticesStale: true,
       };
 
       this.writeStaticStreams(entry);
@@ -173,7 +176,7 @@ export class WoodSlabDynamicPool {
     }
 
     if (spawnedCount > 0) {
-      this.syncFromPhysics(true);
+      this.syncFromPhysics(false);
     }
     return spawnedCount;
   }
@@ -185,48 +188,28 @@ export class WoodSlabDynamicPool {
       return;
     }
 
-    let anyUpdated = this.topologyDirty || forceAll;
     const mat = this.scratchMat16;
+    const positions = this.meshWriter.positions;
+    const normals = this.meshWriter.normals;
 
     for (let i = this.activeSlabs.length - 1; i >= 0; i--) {
       const entry = this.activeSlabs[i];
       const sleeping = this.physicsWorld.isBodySleeping(entry.bodyHandle);
-      if (!forceAll && !this.topologyDirty && sleeping && entry.sleepingSynced) {
-        continue;
-      }
+      if (!forceAll && !entry.verticesStale && sleeping && entry.sleepingSynced) continue;
 
       const ok = this.physicsWorld.writeBodyMatrix4(entry.bodyHandle, mat, 0, 1, 1, 1);
       if (!ok) {
         this.removeSlabAt(i);
-        anyUpdated = true;
         continue;
       }
 
-      const m00 = mat[0], m01 = mat[1], m02 = mat[2];
-      const m10 = mat[4], m11 = mat[5], m12 = mat[6];
-      const m20 = mat[8], m21 = mat[9], m22 = mat[10];
-      const tx = mat[12], ty = mat[13], tz = mat[14];
-
-      const srcPos = entry.slab.localPositions;
-      const srcNorm = entry.slab.normals;
-      const dstOff = entry.baseVertex * 3;
-      const vLen3 = entry.vertexCount * 3;
-
-      for (let k = 0; k < vLen3; k += 3) {
-        const lx = srcPos[k], ly = srcPos[k + 1], lz = srcPos[k + 2];
-        const d = dstOff + k;
-        this.dynPositions[d] = m00 * lx + m10 * ly + m20 * lz + tx;
-        this.dynPositions[d + 1] = m01 * lx + m11 * ly + m21 * lz + ty;
-        this.dynPositions[d + 2] = m02 * lx + m12 * ly + m22 * lz + tz;
-
-        const nx = srcNorm[k], ny = srcNorm[k + 1], nz = srcNorm[k + 2];
-        this.dynNormals[d] = m00 * nx + m10 * ny + m20 * nz;
-        this.dynNormals[d + 1] = m01 * nx + m11 * ny + m21 * nz;
-        this.dynNormals[d + 2] = m02 * nx + m12 * ny + m22 * nz;
+      if (forceAll || entry.verticesStale || !isPoseWithinEpsilon(mat, entry.uploadedPose)) {
+        writeTransformedPieceVertices(mat, 1, entry.slab.localPositions, entry.slab.normals, entry.vertexCount, positions, normals, entry.baseVertex);
+        entry.uploadedPose.set(mat);
+        entry.verticesStale = false;
+        this.meshWriter.markVerticesWritten(entry.baseVertex, entry.vertexCount);
       }
-
       entry.sleepingSynced = sleeping;
-      anyUpdated = true;
     }
 
     if (this.activeSlabs.length === 0 || this.activeVertCount === 0) {
@@ -236,15 +219,11 @@ export class WoodSlabDynamicPool {
     }
 
     this.dynamicEntity.enabled = true;
-    if (anyUpdated) {
-      this.dynamicMesh.setPositions(this.dynPositions, 3, this.activeVertCount);
-      this.dynamicMesh.setNormals(this.dynNormals, 3, this.activeVertCount);
-      if (this.topologyDirty) {
-        this.dynamicMesh.setUvs(0, this.dynUvs, 2, this.activeVertCount);
-        this.dynamicMesh.setIndices(this.dynIndices, this.activeIndexCount);
-        this.topologyDirty = false;
-      }
-      this.dynamicMesh.update(pc.PRIMITIVE_TRIANGLES, false);
+    if (this.topologyDirty) {
+      this.meshWriter.commitTopology(this.dynUvs, this.dynIndices, this.activeVertCount, this.activeIndexCount);
+      this.topologyDirty = false;
+    } else {
+      this.meshWriter.uploadWrittenVertices();
     }
   }
 
@@ -262,7 +241,7 @@ export class WoodSlabDynamicPool {
   public destroy(): void {
     this.clear();
     this.dynamicEntity.destroy();
-    this.dynamicMesh.destroy();
+    this.meshWriter.destroy();
   }
 
   private writeStaticStreams(entry: ActiveDynamicWoodSlab): void {
@@ -275,18 +254,31 @@ export class WoodSlabDynamicPool {
     }
   }
 
-  private removeSlabAt(idx: number): void {
+  private removeSlabAt(idx: number, repack = true): void {
     const removed = this.activeSlabs[idx];
     this.physicsWorld.removeBody(removed.bodyHandle);
     this.activeSlabs.splice(idx, 1);
+    if (repack) {
+      this.repackSlabOffsets();
+      return;
+    }
+    this.activeVertCount -= removed.vertexCount;
+    this.activeIndexCount -= removed.indexCount;
+    this.topologyDirty = true;
+  }
+
+  private repackSlabOffsets(): void {
     let vCur = 0;
     let iCur = 0;
     for (let i = 0; i < this.activeSlabs.length; i++) {
       const e = this.activeSlabs[i];
-      e.baseVertex = vCur;
-      e.baseIndex = iCur;
-      e.sleepingSynced = false;
-      this.writeStaticStreams(e);
+      if (e.baseVertex !== vCur || e.baseIndex !== iCur) {
+        e.baseVertex = vCur;
+        e.baseIndex = iCur;
+        e.sleepingSynced = false;
+        e.verticesStale = true;
+        this.writeStaticStreams(e);
+      }
       vCur += e.vertexCount;
       iCur += e.indexCount;
     }

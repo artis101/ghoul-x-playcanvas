@@ -1,5 +1,5 @@
 import * as pc from 'playcanvas';
-import type { GhoulZoneId, TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
+import type { TargetHealthState, Vec3Like } from '../../contracts/ballistics.ts';
 import {
   type ArmSide,
   createProceduralTraumaTracker,
@@ -10,6 +10,7 @@ import {
 } from '../../core/ghoul/anatomy/proceduralTraumaIk.ts';
 import type { CombatantGlbInstance } from '../assets/glbLoader.ts';
 import type { CombatantBoneSync } from './combatantBoneSync.ts';
+import { ARM_CHAIN_ZONES, UPPER_ARM_ZONE } from './armZoneKeys.ts';
 
 /**
  * The procedural layer left on top of the body clip: the graze jolt (chest and head kick back and
@@ -40,21 +41,20 @@ export class CombatantDeadLimbOverlay {
     // An arm disabled by a plexus hit or a shattered bone swings from the animated shoulder.
     let anyDeadLimbApplied = false;
     for (const side of ['RIGHT', 'LEFT'] as const) {
-      const upperNode = glb.boneNodes.get(`UPPER_ARM_${side}`);
+      const upperNode = glb.boneNodes.get(UPPER_ARM_ZONE[side]);
       if (upperNode) {
         const p = upperNode.getPosition();
         this.shoulderPos[side].x = p.x;
         this.shoulderPos[side].y = p.y;
         this.shoulderPos[side].z = p.z;
       } else {
-        Object.assign(this.shoulderPos[side], healthState.ragdollBones[`UPPER_ARM_${side}`].position);
+        Object.assign(this.shoulderPos[side], healthState.ragdollBones[UPPER_ARM_ZONE[side]].position);
       }
       const stepped = stepPinnedDeadArmVerlet(
         healthState, this.tracker, side, this.shoulderPos[side], dt, distalStumpAnimated
       );
       if (stepped) {
-        const armZones: GhoulZoneId[] = [`UPPER_ARM_${side}`, `FOREARM_${side}`, `HAND_${side}`];
-        for (const zone of armZones) boneSync.applyRagdollBoneToGlbJoint(glb, zone, healthState);
+        for (const zone of ARM_CHAIN_ZONES[side]) boneSync.applyRagdollBoneToGlbJoint(glb, zone, healthState);
         anyDeadLimbApplied = true;
       }
     }

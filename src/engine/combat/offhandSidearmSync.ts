@@ -31,6 +31,11 @@ export class OffhandSidearmSync {
   private readonly fist = new SidearmFistGrip();
   private readonly twoHandBlend = new Map<string, number>();
 
+  /** Forgets per-combatant grip state, for when the combatants are replaced. */
+  public reset(): void {
+    this.twoHandBlend.clear();
+  }
+
   public sync(
     target: GhoulMannequinEntity,
     viewerWorldPos: Vec3Like,

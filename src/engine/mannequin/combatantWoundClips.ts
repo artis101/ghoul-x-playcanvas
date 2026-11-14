@@ -3,6 +3,7 @@ import type { WoundClipOwner } from '../../core/ghoul/anatomy/proceduralTraumaIk
 import { LEG_LOSS_PHASE_SECONDS } from '../../core/ballistics/trauma/woundReactionTimings.ts';
 import type { CombatantAnimationClipName } from '../assets/glbTypes.ts';
 import { isArmChainIntactAndFunctional } from '../ai/combatantArmEvaluation.ts';
+import { FOREARM_ZONE, HAND_ZONE, SHOULDER_ZONE, UPPER_ARM_ZONE } from './armZoneKeys.ts';
 
 export type { WoundClipOwner };
 
@@ -131,10 +132,10 @@ export function flinchPlaybackSpeed(reaction: ActivePainReaction): number {
  */
 export function lostArmSide(state: Pick<TargetHealthState, 'severedZones' | 'isLeftHanded'>): ArmSide | null {
   const lost = (side: ArmSide): boolean =>
-    state.severedZones.has(`HAND_${side}`) ||
-    state.severedZones.has(`FOREARM_${side}`) ||
-    state.severedZones.has(`UPPER_ARM_${side}`) ||
-    state.severedZones.has(`SHOULDER_${side}`);
+    state.severedZones.has(HAND_ZONE[side]) ||
+    state.severedZones.has(FOREARM_ZONE[side]) ||
+    state.severedZones.has(UPPER_ARM_ZONE[side]) ||
+    state.severedZones.has(SHOULDER_ZONE[side]);
   const gunSide: ArmSide = state.isLeftHanded ? 'LEFT' : 'RIGHT';
   const otherSide: ArmSide = gunSide === 'RIGHT' ? 'LEFT' : 'RIGHT';
   if (lost(gunSide)) return gunSide;

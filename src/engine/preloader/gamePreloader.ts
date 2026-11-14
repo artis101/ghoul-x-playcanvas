@@ -1,5 +1,6 @@
 import type * as pc from 'playcanvas';
 import type {
+  AssetLoadProgressEvent,
   PreloadPhaseId,
   PreloadProgressCallback,
   PreloadProgressSnapshot,
@@ -12,6 +13,7 @@ import { CombatAudioEngine } from '../audio/combatAudioEngine.ts';
 import { getOrCreateMaterials } from '../materials.ts';
 import { initRapierPhysics } from '../physics/rapierWorld.ts';
 import { PreloaderScreen } from '../ui/preloaderScreen.ts';
+import { BootPhaseClock, formatBootTimingReport, type BootTimingReport } from './bootTimings.ts';
 import { prewarmProceduralTexturesAndMaterials } from './materialCollector.ts';
 import { compileAllGameShaders } from './shaderWarmup.ts';
 
@@ -25,6 +27,11 @@ export interface GamePreloaderOptions {
   readonly yieldFrames?: boolean;
   readonly dismissDelayMs?: number;
   readonly allowMissingGlbsForTests?: boolean;
+  /** Skip waiting for web fonts before dismissing the preloader. */
+  readonly skipFontWait?: boolean;
+  /** When false, resolve as soon as the dismissal starts instead of waiting for the fade-out. Default true. */
+  readonly awaitDismissFade?: boolean;
+  readonly onBootTimings?: (report: BootTimingReport) => void;
 }
 
 interface PhaseRange {
@@ -99,6 +106,8 @@ export async function runGamePreloader(
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     return Math.max(0, now - startTimeMs);
   };
+  const bootClock = new BootPhaseClock();
+  bootClock.mark('FONTS_AND_DOM');
 
   let bootState: PreloaderBootState = {
     kind: 'RUNNING',
@@ -111,6 +120,7 @@ export async function runGamePreloader(
 
   const advancePhase = (phase: PreloadPhaseId): void => {
     if (bootState.kind !== 'RUNNING') return;
+    bootClock.mark(phase);
     bootState = { ...bootState, phase };
   };
 
@@ -173,8 +183,31 @@ export async function runGamePreloader(
     }
 
     app = app ?? createPlayCanvasApp(canvas);
+    const glbRegistry = options.glbRegistry ?? new GlbModelRegistry(app);
+
+    // Fonts, the Rapier WASM kernel and the GLB fetches do not depend on each other, so they start together.
+    const fontsReady = options.skipFontWait ? Promise.resolve() : awaitFontsReady(1200);
+    const rapierReady = initRapierPhysics();
+    void rapierReady.catch(() => undefined);
+    let loadedAssets = 0;
+    let modelsPhaseOpen = false;
+    let pendingGlbEvent: AssetLoadProgressEvent | null = null;
+    const reportGlbProgress = (ev: AssetLoadProgressEvent): void => {
+      const ratio = (ev.loadedCount / Math.max(1, ev.totalCount)) * 0.82;
+      emitProgress('MODELS_AND_GRAPHS', ratio, `Loaded ${ev.assetKey} (${ev.loadedCount}/${ev.totalCount})`);
+    };
+    const glbOutcome = glbRegistry
+      .preloadAll((ev) => {
+        loadedAssets = ev.loadedCount;
+        if (modelsPhaseOpen) reportGlbProgress(ev);
+        else pendingGlbEvent = ev;
+      })
+      .then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error })
+      );
+
     emitProgress('FONTS_AND_DOM', 0.6, 'Synchronizing tactical HUD typography...');
-    await awaitFontsReady(1200);
     emitProgress('FONTS_AND_DOM', 1.0, 'DOM runtime & WebGL2 viewport ready');
     await yieldAnimationFrame(yieldFrames);
 
@@ -182,25 +215,21 @@ export async function runGamePreloader(
     advancePhase('WASM_PHYSICS');
     emitProgress('WASM_PHYSICS', 0.15, 'Initializing Rapier3D SIMD WebAssembly physics kernel...');
     await yieldAnimationFrame(yieldFrames);
-    await initRapierPhysics();
+    await rapierReady;
     emitProgress('WASM_PHYSICS', 1.0, 'Rapier3D rigid-body & BVH physics kernel online');
     await yieldAnimationFrame(yieldFrames);
 
     // 3. MODELS_AND_GRAPHS
     advancePhase('MODELS_AND_GRAPHS');
-    const glbRegistry = options.glbRegistry ?? new GlbModelRegistry(app);
     emitProgress('MODELS_AND_GRAPHS', 0.02, 'Loading 3D GLB arsenal, GHOUL rig & Voronoi fracture graphs...');
-
-    let loadedAssets = 0;
-    try {
-      await glbRegistry.preloadAll((ev) => {
-        loadedAssets = ev.loadedCount;
-        const ratio = (ev.loadedCount / Math.max(1, ev.totalCount)) * 0.82;
-        emitProgress('MODELS_AND_GRAPHS', ratio, `Loaded ${ev.assetKey} (${ev.loadedCount}/${ev.totalCount})`);
-      });
-    } catch (err: unknown) {
-      if (!options.allowMissingGlbsForTests) throw err;
+    modelsPhaseOpen = true;
+    const pending = pendingGlbEvent as AssetLoadProgressEvent | null;
+    if (pending) {
+      pendingGlbEvent = null;
+      reportGlbProgress(pending);
     }
+    const glbResult = await glbOutcome;
+    if (!glbResult.ok && !options.allowMissingGlbsForTests) throw glbResult.error;
 
     await yieldAnimationFrame(yieldFrames);
     let warmStep = 0;
@@ -276,7 +305,15 @@ export async function runGamePreloader(
       compiledShaders: warmup.warmedVariants,
       loadedAssets,
     });
-    await preloaderScreen.completeAndDismiss(options.dismissDelayMs);
+
+    const fontWaitStartMs = getElapsedMs();
+    await fontsReady;
+    const report = bootClock.finish(getElapsedMs() - fontWaitStartMs);
+    console.info(formatBootTimingReport(report));
+    options.onBootTimings?.(report);
+    const dismissal = preloaderScreen.completeAndDismiss(options.dismissDelayMs);
+    if (options.awaitDismissFade !== false) await dismissal;
+    else void dismissal.catch(() => undefined);
 
     return ghoulApp;
   } catch (err: unknown) {

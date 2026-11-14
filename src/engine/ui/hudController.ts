@@ -16,6 +16,16 @@ export class HudController {
   private readonly vitals = new HudWeaponVitals();
   private readonly reticle = new HudReticleScope();
   private readonly triage = new HudTriageFeed();
+  private destroyed = false;
+
+  /** Clears the HUD's timers and removes the DOM nodes it created; the page's own HUD elements stay. */
+  public destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.reticle.destroy();
+    this.triage.destroy();
+    this.vitals.destroy();
+  }
 
   public updateWeaponHud(
     weapon: WeaponSpec,

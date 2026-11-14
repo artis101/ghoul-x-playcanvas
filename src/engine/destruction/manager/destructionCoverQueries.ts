@@ -29,7 +29,7 @@ export function isWoodWallRayInOpenHole(
 ): boolean {
   const wall = woodWalls.getWall(objectId);
   if (!wall) return false;
-  if (wall.lastMeshStats.indexCount <= 0) return true;
+  if (wall.panelState.shells.length === 0) return true;
 
   const relOx = rayOrigin.x - wall.centerWorld.x;
   const relOy = rayOrigin.y - wall.centerWorld.y;
@@ -213,8 +213,8 @@ export function interceptEnemyShot(
         isArmorPiercing: false,
       });
       if (!barrelRes) continue;
-      ctx.notifyBreach();
       const impactPt = barrelRes.impactPointWorld ?? hit.pointWorld;
+      ctx.notifyBreach(impactPt);
       const impactNrm = barrelRes.impactNormalWorld ?? hit.normalWorld;
       ctx.combatAudio?.playMaterialImpact('STEEL', impactPt, curEnergyJ, listenerPos);
       if (barrelRes.stopped || barrelRes.remainingEnergyJ <= 20) {
@@ -248,7 +248,7 @@ export function interceptEnemyShot(
       const impactNrm = res.impactNormalWorld ?? hit.normalWorld;
       const hitMat = res.hitMaterial ?? mat;
       if (energyLost > 1.0 || res.stopped) {
-        ctx.notifyBreach();
+        ctx.notifyBreach(impactPt);
         ctx.combatAudio?.playMaterialImpact(
           hitMat,
           impactPt,
@@ -300,8 +300,8 @@ export function interceptEnemyShot(
         continue;
       }
 
-      ctx.notifyBreach();
       const impactPt = res.impactPointWorld ?? hit.pointWorld;
+      ctx.notifyBreach(impactPt);
       const impactNrm = res.impactNormalWorld ?? hit.normalWorld;
       const hitMat = res.hitMaterial ?? (entry.hitStud ? 'WOOD_STUD' : 'WOOD_DRYWALL');
       ctx.combatAudio?.playMaterialImpact(
@@ -334,8 +334,8 @@ export function interceptEnemyShot(
       });
       if (!res) continue;
 
-      ctx.notifyBreach();
       const impactPt = res.impactPointWorld ?? hit.pointWorld;
+      ctx.notifyBreach(impactPt);
       const impactNrm = res.impactNormalWorld ?? hit.normalWorld;
       ctx.combatAudio?.playMaterialImpact('BRICK_MASONRY', impactPt, curEnergyJ, listenerPos);
       if (res.stopped || res.remainingEnergyJ <= 20) {
@@ -353,6 +353,7 @@ export function interceptEnemyShot(
     }
 
     if (mat === 'CONCRETE_CHUNKS' || mat === 'CONCRETE_INTACT') {
+      const structureBefore = ctx.rapierWorld.colliderStructureVersion;
       let impactPt = hit.pointWorld;
       let impactNrm = hit.normalWorld;
       if (ctx.concreteWalls.getWall(objId)) {
@@ -375,7 +376,7 @@ export function interceptEnemyShot(
       } else {
         ctx.pomDecals.spawnCraterImpact(hit.pointWorld, hit.normalWorld, normDir, curEnergyJ, 0.0045);
       }
-      ctx.notifyBreach();
+      if (ctx.rapierWorld.colliderStructureVersion !== structureBefore) ctx.notifyBreach(impactPt);
       ctx.combatAudio?.playMaterialImpact(mat, impactPt, curEnergyJ, listenerPos);
       return {
         blocked: true,
@@ -386,7 +387,6 @@ export function interceptEnemyShot(
       };
     }
 
-    ctx.notifyBreach();
     ctx.combatAudio?.playMaterialImpact('STEEL', hit.pointWorld, curEnergyJ, listenerPos);
     return {
       blocked: true,

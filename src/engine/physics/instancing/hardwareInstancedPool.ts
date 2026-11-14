@@ -15,6 +15,8 @@ export class HardwareInstancedPool {
   public onSlotExpired?: OnInstanceSlotExpired;
 
   private readonly packer: DenseInstancePacker;
+  private readonly uploadsInPlace: boolean;
+  private readonly instanceStrideBytes: number;
   private destroyed = false;
 
   public constructor(
@@ -35,6 +37,12 @@ export class HardwareInstancedPool {
       usage: pc.BUFFER_DYNAMIC,
       data: this.matrixData,
     });
+    this.instanceStrideBytes = instancingFormat.size;
+    // The buffer keeps matrixData itself as its storage, so a ranged unlock uploads the packed matrices directly.
+    const storage = this.vertexBuffer.lock();
+    this.uploadsInPlace = ArrayBuffer.isView(storage)
+      ? storage.buffer === this.matrixData.buffer && storage.byteOffset === this.matrixData.byteOffset
+      : storage === this.matrixData.buffer;
 
     this.entity = new pc.Entity(name);
     this.meshInstance = new pc.MeshInstance(mesh, material);
@@ -132,15 +140,19 @@ export class HardwareInstancedPool {
 
     if (this.packer.dirty) {
       if (count > 0) {
-        this.vertexBuffer.setData(this.matrixData.buffer as ArrayBuffer);
+        if (this.uploadsInPlace) {
+          this.vertexBuffer.unlock(0, count * this.instanceStrideBytes);
+        } else {
+          this.vertexBuffer.setData(this.matrixData.buffer as ArrayBuffer);
+        }
       }
       this.packer.clearDirty();
     }
   }
 
-  public clear(): void {
+  public clear(rapierWorld?: RapierPhysicsWorld | null): void {
     if (this.destroyed) return;
-    this.packer.clear();
+    this.packer.clear(rapierWorld);
     this.syncVisibilityCount();
     this.packer.clearDirty();
   }

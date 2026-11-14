@@ -62,6 +62,8 @@ export class LingeringGunsmokePool {
   public readonly instancedPool: HardwareInstancedPool;
   private readonly smokeTexture: pc.Texture;
   private readonly smokeMaterial: pc.StandardMaterial;
+  /** Maps each grid puff to its instance slot; -1 means none. */
+  private readonly puffSlots: Int32Array;
   private destroyed = false;
 
   public constructor(
@@ -70,6 +72,7 @@ export class LingeringGunsmokePool {
     options: GunsmokeGridOptions = {}
   ) {
     this.grid = new GunsmokeGrid(options);
+    this.puffSlots = new Int32Array(this.grid.maxPuffs).fill(-1);
     const dev = app.graphicsDevice;
     this.smokeTexture = createSoftCorditeSmokeTexture(dev);
 
@@ -120,11 +123,13 @@ export class LingeringGunsmokePool {
 
   private syncInstances(cameraWorldPos: Vec3Like | null): void {
     const puffs = this.grid.getPuffs();
-    for (let i = 0; i < puffs.length; i++) {
+    for (let i = 0; i < puffs.length && i < this.puffSlots.length; i++) {
       const p = puffs[i];
+      let slot = this.puffSlots[i];
       if (!p.active || p.density <= 0.01) {
-        if (this.instancedPool.isSlotActive(i)) {
-          this.instancedPool.freeSlot(i);
+        if (slot >= 0) {
+          this.instancedPool.freeSlot(slot);
+          this.puffSlots[i] = -1;
         }
         continue;
       }
@@ -134,15 +139,22 @@ export class LingeringGunsmokePool {
       const fadeOut = Math.max(0.0, 1.0 - lifeFrac * lifeFrac);
       const visScale = p.radiusM * 2.0 * (0.45 + 0.55 * fadeIn) * (0.35 + 0.65 * fadeOut);
       if (visScale <= 0.05) {
-        if (this.instancedPool.isSlotActive(i)) {
-          this.instancedPool.freeSlot(i);
+        if (slot >= 0) {
+          this.instancedPool.freeSlot(slot);
+          this.puffSlots[i] = -1;
         }
         continue;
       }
 
+      if (slot < 0) {
+        slot = this.instancedPool.allocSlot();
+        if (slot < 0) continue;
+        this.puffSlots[i] = slot;
+      }
+
       const quat = this.computeBillboardQuat(p.posX, p.posY, p.posZ, p.rollRad, cameraWorldPos);
       this.instancedPool.setSlotTRS(
-        i,
+        slot,
         { x: p.posX, y: p.posY, z: p.posZ },
         quat,
         { x: visScale, y: visScale * 0.82, z: 1.0 }
@@ -208,6 +220,7 @@ export class LingeringGunsmokePool {
     if (this.destroyed) return;
     this.grid.clear();
     this.instancedPool.clear();
+    this.puffSlots.fill(-1);
   }
 
   public destroy(): void {

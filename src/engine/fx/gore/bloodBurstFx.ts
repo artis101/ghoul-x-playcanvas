@@ -1,23 +1,18 @@
 import * as pc from 'playcanvas';
 import type { Vec3Like } from '../../../contracts/ballistics.ts';
-import type { BloodMistPuff, InFlightBloodDrop, WetGoreMaterialSuite } from './goreTypes.ts';
+import type { BloodMistPuff, InFlightBloodDrop } from './goreTypes.ts';
+import { recycleOldestWhenFull, releaseFxEntity } from '../particles/fxEntityPool.ts';
+import { MAX_LIVE_BLOOD_DROPS, type GoreFxPools } from './goreFxPools.ts';
 
 export function spawnBacklitMistPuff(
-  fxRoot: pc.Entity,
-  goreSuite: WetGoreMaterialSuite,
+  pools: GoreFxPools,
   mistPuffs: BloodMistPuff[],
   worldPos: Vec3Like,
   dir: Vec3Like,
   driftSpeed: number,
   energyJ: number,
 ): void {
-  const puff = new pc.Entity('ArterialMistPuff');
-  puff.addComponent('render', {
-    type: 'plane',
-    material: goreSuite.wetBloodMistBaseMat,
-    castShadows: false,
-    receiveShadows: false,
-  });
+  const puff = pools.mistPuff.acquire();
   const puffMi = puff.render?.meshInstances?.[0] ?? null;
   puffMi?.setParameter('material_opacity', 0.52);
 
@@ -27,7 +22,6 @@ export function spawnBacklitMistPuff(
   puff.setPosition(worldPos.x, worldPos.y, worldPos.z);
   puff.setLocalEulerAngles(90, Math.random() * 360, 0);
   puff.setLocalScale(startScale, 1, startScale);
-  fxRoot.addChild(puff);
 
   mistPuffs.push({
     entity: puff,
@@ -47,8 +41,7 @@ export function spawnBacklitMistPuff(
 }
 
 export function spawnBloodBurst(
-  fxRoot: pc.Entity,
-  goreSuite: WetGoreMaterialSuite,
+  pools: GoreFxPools,
   bloodDrops: InFlightBloodDrop[],
   mistPuffs: BloodMistPuff[],
   worldPos: Vec3Like,
@@ -63,17 +56,13 @@ export function spawnBloodBurst(
   if (energyJ >= 32 && mistPuffs.length < 20) {
     const mistCount = energyJ > 280 ? 2 : 1;
     for (let m = 0; m < mistCount; m++) {
-      spawnBacklitMistPuff(fxRoot, goreSuite, mistPuffs, worldPos, normalDir, baseSpeed * (0.28 + m * 0.12), energyJ);
+      spawnBacklitMistPuff(pools, mistPuffs, worldPos, normalDir, baseSpeed * (0.28 + m * 0.12), energyJ);
     }
   }
 
   for (let i = 0; i < burstCount; i++) {
-    const dropEnt = new pc.Entity('BloodDrop');
-    dropEnt.addComponent('render', {
-      type: 'sphere',
-      material: goreSuite.wetBloodDropMat,
-      castShadows: false,
-    });
+    recycleOldestWhenFull(bloodDrops, MAX_LIVE_BLOOD_DROPS);
+    const dropEnt = pools.bloodDrop.acquire();
 
     const isStreamCore = i < burstCount * 0.4;
     const spreadScale = isStreamCore ? 0.42 : 1.08;
@@ -92,7 +81,6 @@ export function spawnBloodBurst(
     if (spd > 0.1) {
       dropEnt.lookAt(worldPos.x + vx, worldPos.y + vy, worldPos.z + vz);
     }
-    fxRoot.addChild(dropEnt);
 
     bloodDrops.push({
       entity: dropEnt,
@@ -114,7 +102,7 @@ export function updateMistPuffs(
     const puff = mistPuffs[i];
     puff.life += dt;
     if (puff.life >= puff.maxLife) {
-      puff.entity.destroy();
+      releaseFxEntity(puff.entity);
       mistPuffs.splice(i, 1);
       continue;
     }

@@ -51,7 +51,7 @@ export function stepSingleEnemyAgent(
   agent.lastObservedHp = hs.currentHp;
 
   // The wounded sequence picks this tick's phase first, so the draw and fire gates below see it.
-  stepAgentWoundedSequence(dt, hs, agent, playerEyeWorldPos, ctx.isSightBlocked);
+  stepAgentWoundedSequence(dt, hs, agent, playerEyeWorldPos, ctx.isSightBlocked, ctx.transitionState);
   syncAgentArmamentAndSidearm(
     dt,
     hs,
@@ -156,7 +156,7 @@ export function stepSingleEnemyAgent(
         hs.combatantStatusTag = 'PANIC_SHAKEN';
       }
       if (agent.resolveProfile !== 'FANATIC_BERSERKER') {
-        moveHorizontalClamped(hs, agent.coverAnchorWorld.x, agent.coverAnchorWorld.z, 0.75 * dt, ctx.rapierWorld);
+        moveHorizontalClamped(hs, agent.coverAnchorWorld.x, agent.coverAnchorWorld.z, 0.75 * dt, ctx.rapierWorld, ctx.arenaNav);
       }
       turnTowardPlayer(2.8);
 

@@ -1,14 +1,20 @@
-import type { BlastEvent } from '../../contracts/destruction.ts';
 import type { CombatDirector } from '../combat/combatDirector.ts';
 import type { DestructionManager } from '../destruction/destructionManager.ts';
 import type { MayhemDirector } from '../fx/mayhemDirector.ts';
 import type { TacticalCombatAiSystem } from '../ai/tacticalCombatAi.ts';
+import {
+  fanOutBlast,
+  GRENADE_BLAST_PROFILE,
+  type BlastFanoutPlayer,
+  type BlastFanoutSystems,
+} from './blastFanout.ts';
 
 export function wireCombatDirectorInterceptors(
   combatDirector: CombatDirector,
   destructionManager: DestructionManager,
   mayhemDirector: MayhemDirector,
-  tacticalAi: TacticalCombatAiSystem
+  tacticalAi: TacticalCombatAiSystem,
+  player: BlastFanoutPlayer | null = null
 ): void {
   combatDirector.environmentRayInterceptor = (
     origin,
@@ -50,11 +56,6 @@ export function wireCombatDirectorInterceptors(
     destructionManager.isSurfaceOpenAtHit(hit, origin, dir, maxDistM);
   mayhemDirector.getBreachVersion = () => destructionManager.breachVersion;
 
-  combatDirector.onExplosionBlast = (center, radiusM, peakImpulseNs, peakEnergyJ) => {
-    const blast: BlastEvent = { centerWorld: center, radiusM, peakImpulseNs, peakEnergyJ };
-    // The fireball and the noise are immediate; the walls come apart a frame behind them.
-    combatDirector.blastWork.deferFirst(() => destructionManager.applyBlast(blast));
-    mayhemDirector.notifyExternalExplosion(blast);
-    tacticalAi.notifyGunshotOrExplosion(center, 45.0, 0.72);
-  };
+  const blastSystems: BlastFanoutSystems = { combatDirector, destructionManager, mayhemDirector, tacticalAi, fpsController: player };
+  combatDirector.onGrenadeBlast = (blast) => fanOutBlast(blastSystems, blast, GRENADE_BLAST_PROFILE);
 }

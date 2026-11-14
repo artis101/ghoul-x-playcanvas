@@ -260,6 +260,10 @@ export class ExplosiveBarrelManager implements IDestructibleSubsystem {
     this.flushRapierBroadPhaseQueries();
   }
 
+  /**
+   * Steps the world once at zero dt, on top of the wrapper's own lazy flush before the next ray.
+   * A collider re-created in a freed Rapier slot needs both broad-phase updates before rays see it.
+   */
   private flushRapierBroadPhaseQueries(): void {
     const prevDt = this.rapierWorld.world.timestep;
     this.rapierWorld.world.timestep = 0;

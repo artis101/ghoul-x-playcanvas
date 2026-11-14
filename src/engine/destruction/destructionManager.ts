@@ -10,6 +10,7 @@ import type { CombatAudioEngine } from '../audio/combatAudioEngine.ts';
 import type { EnvironmentRayInterceptResult } from '../combat/combatDirector.ts';
 import type { ExplosiveBarrelManager } from '../fx/mayhemDirector.ts';
 import { RapierPhysicsWorld } from '../physics/rapierWorld.ts';
+import { BLAST_BREACH_MARGIN_M, BreachRegionTracker } from './manager/breachRegionTracker.ts';
 import { BrickWallSystem } from './brickWallSystem.ts';
 import { ConcreteWallSystem } from './concreteWallSystem.ts';
 import { GlassSystem } from './glassSystem.ts';
@@ -40,11 +41,16 @@ import { PomCraterDecalSystem } from './pomCraterDecals.ts';
 import { WoodWallSystem } from './woodWallSystem.ts';
 
 export * from './manager/destructionManagerTypes.ts';
+export * from './manager/breachRegionTracker.ts';
 export * from './manager/arenaStationBuilder.ts';
 export * from './manager/destructionRaycast.ts';
 export * from './manager/destructionCoverQueries.ts';
 export * from './manager/destructionCollision.ts';
 export * from './manager/grenadeCollision.ts';
+
+type MutableRaycastContext = { -readonly [K in keyof DestructionRaycastContext]: DestructionRaycastContext[K] };
+
+const MAX_BLAST_RECURSION_DEPTH = 4;
 
 /**
  * Coordinates all Wave-2 destructible cover & hazard subsystems inside the shared `RapierPhysicsWorld`:
@@ -66,15 +72,21 @@ export class DestructionManager {
   public barrelManager: ExplosiveBarrelManager | null;
   public combatAudio: CombatAudioEngine | null;
   public getListenerPos?: () => Vec3Like;
-  public breachVersion = 0;
 
   private readonly rootEntity: pc.Entity;
   private readonly staticFixtures: StaticCoverFixture[] = [];
   private readonly sillConcreteMat: pc.StandardMaterial;
   private readonly ownsSillMaterial: boolean;
+  private readonly breaches = new BreachRegionTracker();
+  private readonly raycastCtx: MutableRaycastContext;
+  private readonly isSurfaceOpenFn = (hit: PenetrationRayHit, o: Vec3Like, d: Vec3Like, m: number): boolean =>
+    this.isSurfaceOpenAtHit(hit, o, d, m);
   private blastRecursionDepth = 0;
-  private lastPrunedBreachVersion = 0;
   private destroyed = false;
+
+  public get breachVersion(): number {
+    return this.breaches.version;
+  }
 
   public constructor(
     app: pc.Application,
@@ -134,6 +146,19 @@ export class DestructionManager {
     this.concreteWalls = new ConcreteWallSystem(app, rapierWorld, {
       pomDecalSystem: this.pomDecals,
     });
+
+    this.raycastCtx = {
+      rapierWorld: this.rapierWorld,
+      woodWalls: this.woodWalls,
+      glassSystem: this.glassSystem,
+      brickWalls: this.brickWalls,
+      concreteWalls: this.concreteWalls,
+      pomDecals: this.pomDecals,
+      barrelManager: this.barrelManager,
+      combatAudio: this.combatAudio,
+      getListenerPos: this.getListenerPos,
+      notifyBreach: (centerWorld?: Vec3Like, radiusM?: number) => this.breaches.note(centerWorld, radiusM),
+    };
 
     if (options.buildDefaultArena !== false) {
       this.buildBreachingArenaStations(options.glbRegistry);
@@ -243,28 +268,59 @@ export class DestructionManager {
     return interceptEnemyShot(this.getRaycastContext(), origin, dir, maxDistM, kineticEnergyJ);
   }
 
-  public applyBlast(blast: BlastEvent): number {
-    if (this.destroyed || this.blastRecursionDepth >= 4) {
-      return 0;
-    }
+  /**
+   * The pieces of one blast in execution order: wall families, barrels, body impulses, then the
+   * crater prune and debris wake for the blasted region. Running them all in order equals applyBlast.
+   */
+  public planBlastJobs(blast: BlastEvent): Array<() => void> {
+    return this.buildBlastJobs(blast, { impulsedBodies: 0 });
+  }
 
-    this.blastRecursionDepth += 1;
-    this.breachVersion++;
+  public applyBlast(blast: BlastEvent): number {
+    if (this.destroyed || this.blastRecursionDepth >= MAX_BLAST_RECURSION_DEPTH) return 0;
+    const out = { impulsedBodies: 0 };
+    const jobs = this.buildBlastJobs(blast, out);
+    const last = jobs.length - 1;
     try {
-      this.woodWalls.applyBlast(blast);
-      this.glassSystem.applyBlast(blast);
-      this.brickWalls.applyBlast(blast);
-      this.concreteWalls.applyBlast(blast);
-      this.barrelManager?.applyBlast(blast);
-      return this.rapierWorld.applyRadialBlastImpulse(blast);
+      for (let i = 0; i < last; i++) jobs[i]();
+    } finally {
+      if (last >= 0) jobs[last]();
+    }
+    return out.impulsedBodies;
+  }
+
+  private buildBlastJobs(blast: BlastEvent, out: { impulsedBodies: number }): Array<() => void> {
+    if (this.destroyed) return [];
+    const breachRadiusM = blast.radiusM + BLAST_BREACH_MARGIN_M;
+    // Every topology stage records the breach after its work, so jobs spread over several frames
+    // never leave a change behind a breach that update() has already processed.
+    const noteBreach = (): void => this.breaches.note(blast.centerWorld, breachRadiusM);
+    return [
+      () => this.runBlastStage(() => {
+        noteBreach();
+        this.woodWalls.applyBlast(blast);
+        noteBreach();
+      }),
+      () => this.runBlastStage(() => { this.glassSystem.applyBlast(blast); noteBreach(); }),
+      () => this.runBlastStage(() => { this.brickWalls.applyBlast(blast); noteBreach(); }),
+      () => this.runBlastStage(() => { this.concreteWalls.applyBlast(blast); noteBreach(); }),
+      () => this.runBlastStage(() => { this.barrelManager?.applyBlast(blast); noteBreach(); }),
+      () => this.runBlastStage(() => {
+        out.impulsedBodies = this.rapierWorld.applyRadialBlastImpulse(blast);
+      }),
+      () => {
+        if (!this.destroyed && this.blastRecursionDepth === 0) this.processPendingBreaches();
+      },
+    ];
+  }
+
+  private runBlastStage(stage: () => void): void {
+    if (this.destroyed || this.blastRecursionDepth >= MAX_BLAST_RECURSION_DEPTH) return;
+    this.blastRecursionDepth += 1;
+    try {
+      stage();
     } finally {
       this.blastRecursionDepth -= 1;
-      if (this.blastRecursionDepth === 0 && this.breachVersion !== this.lastPrunedBreachVersion) {
-        this.lastPrunedBreachVersion = this.breachVersion;
-        this.pomDecals.pruneUnsupportedCraters(this.rapierWorld, (hit, o, d, m) =>
-          this.isSurfaceOpenAtHit(hit, o, d, m)
-        );
-      }
     }
   }
 
@@ -294,17 +350,12 @@ export class DestructionManager {
     this.glassSystem.update(dt);
     this.brickWalls.update(dt);
     this.concreteWalls.update(dt);
-    if (this.breachVersion !== this.lastPrunedBreachVersion) {
-      this.lastPrunedBreachVersion = this.breachVersion;
-      this.pomDecals.pruneUnsupportedCraters(this.rapierWorld, (hit, o, d, m) =>
-        this.isSurfaceOpenAtHit(hit, o, d, m)
-      );
-    }
+    if (this.breaches.hasPending) this.processPendingBreaches();
   }
 
   public resetAll(): void {
     if (this.destroyed) return;
-    this.breachVersion++;
+    this.breaches.note();
     this.woodWalls.reset();
     this.glassSystem.reset();
     this.brickWalls.reset();
@@ -334,20 +385,15 @@ export class DestructionManager {
     this.rootEntity.destroy();
   }
 
+  private processPendingBreaches(): void {
+    this.breaches.process(this.rapierWorld, this.pomDecals, this.isSurfaceOpenFn);
+  }
+
   private getRaycastContext(): DestructionRaycastContext {
-    return {
-      rapierWorld: this.rapierWorld,
-      woodWalls: this.woodWalls,
-      glassSystem: this.glassSystem,
-      brickWalls: this.brickWalls,
-      concreteWalls: this.concreteWalls,
-      pomDecals: this.pomDecals,
-      barrelManager: this.barrelManager,
-      combatAudio: this.combatAudio,
-      getListenerPos: this.getListenerPos,
-      notifyBreach: () => {
-        this.breachVersion++;
-      },
-    };
+    const ctx = this.raycastCtx;
+    ctx.barrelManager = this.barrelManager;
+    ctx.combatAudio = this.combatAudio;
+    ctx.getListenerPos = this.getListenerPos;
+    return ctx;
   }
 }

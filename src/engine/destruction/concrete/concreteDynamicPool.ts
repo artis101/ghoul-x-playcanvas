@@ -9,6 +9,7 @@ import {
   type ConcreteWallInstanceState,
   IDENTITY_QUAT,
 } from './concreteWallTypes.ts';
+import { CombinedDebrisMeshWriter, isPoseWithinEpsilon, writeTransformedPieceVertices } from './combinedDebrisMeshWriter.ts';
 
 export class ConcreteDynamicChunkPool {
   public readonly dynamicEntity: pc.Entity;
@@ -17,8 +18,7 @@ export class ConcreteDynamicChunkPool {
 
   public readonly maxDynamicVertices: number;
   public readonly maxDynamicIndices: number;
-  private readonly dynPositions: Float32Array;
-  private readonly dynNormals: Float32Array;
+  private readonly meshWriter: CombinedDebrisMeshWriter;
   private readonly dynUvs: Float32Array;
   private readonly dynIndices: Uint32Array;
   private readonly scratchMat16 = new Float32Array(16);
@@ -38,17 +38,11 @@ export class ConcreteDynamicChunkPool {
     this.maxDynamicVertices = maxDynamicVertices;
     this.maxDynamicIndices = maxDynamicIndices;
 
-    this.dynPositions = new Float32Array(maxDynamicVertices * 3);
-    this.dynNormals = new Float32Array(maxDynamicVertices * 3);
     this.dynUvs = new Float32Array(maxDynamicVertices * 2);
     this.dynIndices = new Uint32Array(maxDynamicIndices);
 
-    this.dynamicMesh = new pc.Mesh(app.graphicsDevice);
-    this.dynamicMesh.setPositions(this.dynPositions, 3, 0);
-    this.dynamicMesh.setNormals(this.dynNormals, 3, 0);
-    this.dynamicMesh.setUvs(0, this.dynUvs, 2, 0);
-    this.dynamicMesh.setIndices(this.dynIndices, 0);
-    this.dynamicMesh.update(pc.PRIMITIVE_TRIANGLES, false);
+    this.meshWriter = new CombinedDebrisMeshWriter(app.graphicsDevice, maxDynamicVertices, maxDynamicIndices, this.dynUvs, this.dynIndices);
+    this.dynamicMesh = this.meshWriter.mesh;
 
     this.dynamicMeshInstance = new pc.MeshInstance(this.dynamicMesh, concreteMaterial);
     this.dynamicMeshInstance.castShadow = true;
@@ -112,13 +106,16 @@ export class ConcreteDynamicChunkPool {
       return;
     }
 
+    let evicted = 0;
     while (
       this.activeDynamicChunks.length > 0 &&
       (this.activeDynVertCount + vCount > this.maxDynamicVertices ||
         this.activeDynIndexCount + iCount > this.maxDynamicIndices)
     ) {
-      this.removeDynamicChunkEntryAt(0, wallsById);
+      this.removeDynamicChunkEntryAt(0, wallsById, false);
+      evicted++;
     }
+    if (evicted > 0) this.repackAllDynamicChunkOffsets();
 
     if (
       this.activeDynVertCount + vCount > this.maxDynamicVertices ||
@@ -172,6 +169,8 @@ export class ConcreteDynamicChunkPool {
       ttlS: wall.dynamicDebrisTtlS,
       sleepingSynced: false,
       phase: ConcreteChunkPhase.DYNAMIC_ACTIVE,
+      uploadedPose: new Float32Array(16),
+      verticesStale: true,
     };
 
     this.writeChunkStaticStreams(entry);
@@ -191,7 +190,8 @@ export class ConcreteDynamicChunkPool {
     }
   }
 
-  public removeDynamicChunkEntryAt(idx: number, wallsById?: Map<string, ConcreteWallInstanceState>): void {
+  /** With repack=false the caller must call repackAllDynamicChunkOffsets before the next mesh write. */
+  public removeDynamicChunkEntryAt(idx: number, wallsById?: Map<string, ConcreteWallInstanceState>, repack = true): void {
     const removed = this.activeDynamicChunks[idx];
     this.rapierWorld.removeBody(removed.bodyHandle);
     removed.phase = ConcreteChunkPhase.EVICTED_DESTROYED;
@@ -206,7 +206,13 @@ export class ConcreteDynamicChunkPool {
     }
 
     this.activeDynamicChunks.splice(idx, 1);
-    this.repackAllDynamicChunkOffsets();
+    if (repack) {
+      this.repackAllDynamicChunkOffsets();
+    } else {
+      this.activeDynVertCount -= removed.vertexCount;
+      this.activeDynIndexCount -= removed.indexCount;
+      this.dynamicTopologyDirty = true;
+    }
   }
 
   public repackAllDynamicChunkOffsets(): void {
@@ -214,10 +220,13 @@ export class ConcreteDynamicChunkPool {
     let iCursor = 0;
     for (let i = 0; i < this.activeDynamicChunks.length; i++) {
       const entry = this.activeDynamicChunks[i];
-      entry.baseVertex = vCursor;
-      entry.baseIndex = iCursor;
-      entry.sleepingSynced = false;
-      this.writeChunkStaticStreams(entry);
+      if (entry.baseVertex !== vCursor || entry.baseIndex !== iCursor) {
+        entry.baseVertex = vCursor;
+        entry.baseIndex = iCursor;
+        entry.sleepingSynced = false;
+        entry.verticesStale = true;
+        this.writeChunkStaticStreams(entry);
+      }
       vCursor += entry.vertexCount;
       iCursor += entry.indexCount;
     }
@@ -230,15 +239,18 @@ export class ConcreteDynamicChunkPool {
     const stepDt = dt > 0 && Number.isFinite(dt) ? Math.min(dt, 0.1) : 0;
 
     if (stepDt > 0) {
+      let removedByTtl = false;
       for (let i = this.activeDynamicChunks.length - 1; i >= 0; i--) {
         const entry = this.activeDynamicChunks[i];
         if (entry.ttlS > 0) {
           entry.ageS += stepDt;
           if (entry.ageS >= entry.ttlS) {
-            this.removeDynamicChunkEntryAt(i, wallsById);
+            this.removeDynamicChunkEntryAt(i, wallsById, false);
+            removedByTtl = true;
           }
         }
       }
+      if (removedByTtl) this.repackAllDynamicChunkOffsets();
     }
 
     if (this.activeDynamicChunks.length === 0) {
@@ -247,14 +259,16 @@ export class ConcreteDynamicChunkPool {
       return;
     }
 
-    let anyTransformUpdated = this.dynamicTopologyDirty || forceTransformAll;
     const mat = this.scratchMat16;
+
+    const positions = this.meshWriter.positions;
+    const normals = this.meshWriter.normals;
 
     for (let i = this.activeDynamicChunks.length - 1; i >= 0; i--) {
       const entry = this.activeDynamicChunks[i];
       const isSleeping = this.rapierWorld.isBodySleeping(entry.bodyHandle);
 
-      if (!forceTransformAll && !this.dynamicTopologyDirty && isSleeping && entry.sleepingSynced) {
+      if (!forceTransformAll && !entry.verticesStale && isSleeping && entry.sleepingSynced) {
         continue;
       }
 
@@ -270,56 +284,23 @@ export class ConcreteDynamicChunkPool {
       const ok = this.rapierWorld.writeBodyMatrix4(entry.bodyHandle, mat, 0, shrink, shrink, shrink);
       if (!ok) {
         this.removeDynamicChunkEntryAt(i, wallsById);
-        anyTransformUpdated = true;
         continue;
       }
 
-      const m00 = mat[0];
-      const m01 = mat[1];
-      const m02 = mat[2];
-      const m10 = mat[4];
-      const m11 = mat[5];
-      const m12 = mat[6];
-      const m20 = mat[8];
-      const m21 = mat[9];
-      const m22 = mat[10];
-      const tx = mat[12];
-      const ty = mat[13];
-      const tz = mat[14];
-
-      const invShrink = shrink > 1e-4 ? 1 / shrink : 1;
-      const r00 = m00 * invShrink;
-      const r01 = m01 * invShrink;
-      const r02 = m02 * invShrink;
-      const r10 = m10 * invShrink;
-      const r11 = m11 * invShrink;
-      const r12 = m12 * invShrink;
-      const r20 = m20 * invShrink;
-      const r21 = m21 * invShrink;
-      const r22 = m22 * invShrink;
-
-      const srcPos = entry.chunk.localPositions;
-      const srcNorm = entry.chunk.normals;
-      const dstOffset = entry.baseVertex * 3;
-      const vLen3 = entry.vertexCount * 3;
-
-      for (let k = 0; k < vLen3; k += 3) {
-        const lx = srcPos[k];
-        const ly = srcPos[k + 1];
-        const lz = srcPos[k + 2];
-
-        const d = dstOffset + k;
-        this.dynPositions[d] = m00 * lx + m10 * ly + m20 * lz + tx;
-        this.dynPositions[d + 1] = m01 * lx + m11 * ly + m21 * lz + ty;
-        this.dynPositions[d + 2] = m02 * lx + m12 * ly + m22 * lz + tz;
-
-        const nx = srcNorm[k];
-        const ny = srcNorm[k + 1];
-        const nz = srcNorm[k + 2];
-
-        this.dynNormals[d] = r00 * nx + r10 * ny + r20 * nz;
-        this.dynNormals[d + 1] = r01 * nx + r11 * ny + r21 * nz;
-        this.dynNormals[d + 2] = r02 * nx + r12 * ny + r22 * nz;
+      if (forceTransformAll || entry.verticesStale || !isPoseWithinEpsilon(mat, entry.uploadedPose)) {
+        writeTransformedPieceVertices(
+          mat,
+          shrink > 1e-4 ? 1 / shrink : 1,
+          entry.chunk.localPositions,
+          entry.chunk.normals,
+          entry.vertexCount,
+          positions,
+          normals,
+          entry.baseVertex,
+        );
+        entry.uploadedPose.set(mat);
+        entry.verticesStale = false;
+        this.meshWriter.markVerticesWritten(entry.baseVertex, entry.vertexCount);
       }
 
       entry.sleepingSynced = isSleeping && shrink >= 1;
@@ -335,7 +316,6 @@ export class ConcreteDynamicChunkPool {
           ownerWall.chunkPhase[entry.chunkIndex] = entry.phase;
         }
       }
-      anyTransformUpdated = true;
     }
 
     if (this.activeDynamicChunks.length === 0 || this.activeDynVertCount === 0) {
@@ -346,15 +326,11 @@ export class ConcreteDynamicChunkPool {
 
     this.dynamicEntity.enabled = true;
 
-    if (anyTransformUpdated) {
-      this.dynamicMesh.setPositions(this.dynPositions, 3, this.activeDynVertCount);
-      this.dynamicMesh.setNormals(this.dynNormals, 3, this.activeDynVertCount);
-      if (this.dynamicTopologyDirty) {
-        this.dynamicMesh.setUvs(0, this.dynUvs, 2, this.activeDynVertCount);
-        this.dynamicMesh.setIndices(this.dynIndices, this.activeDynIndexCount);
-        this.dynamicTopologyDirty = false;
-      }
-      this.dynamicMesh.update(pc.PRIMITIVE_TRIANGLES, false);
+    if (this.dynamicTopologyDirty) {
+      this.meshWriter.commitTopology(this.dynUvs, this.dynIndices, this.activeDynVertCount, this.activeDynIndexCount);
+      this.dynamicTopologyDirty = false;
+    } else {
+      this.meshWriter.uploadWrittenVertices();
     }
   }
 
@@ -372,6 +348,6 @@ export class ConcreteDynamicChunkPool {
   public destroy(): void {
     this.reset();
     this.dynamicEntity.destroy();
-    this.dynamicMesh.destroy();
+    this.meshWriter.destroy();
   }
 }

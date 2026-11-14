@@ -95,6 +95,14 @@ export async function compileAllGameShaders(
       toneMapping: shaderOutput.toneMapping,
       gammaCorrection: shaderOutput.gammaCorrection,
     });
+    const depthFlags = shaderOutput.sceneDepthMap;
+    if (depthFlags && warmupCam.camera) {
+      // The player camera's depth prepass puts scene-depth flags in every shader key; warm those variants.
+      const params = warmupCam.camera.shaderParams;
+      params.sceneDepthMapLinear = depthFlags.linear;
+      params.sceneDepthMapPacked = depthFlags.packed;
+      params.sceneDepthMapReciprocal = depthFlags.reciprocal;
+    }
     warmupCam.setPosition(0, -250, 0);
     stagingRoot.addChild(warmupCam);
 

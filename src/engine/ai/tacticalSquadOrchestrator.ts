@@ -26,7 +26,7 @@ import {
   type EnemyHitNotification,
   type EnemyTacticalAiState,
   MIN_CONSCIOUSNESS_TO_FIGHT,
-  TACTICAL_COVER_STATIONS,
+  type TacticalCoverStation,
 } from './tacticalAiTypes.ts';
 
 export function createEnemyTracerPool(app: pc.Application | null): HardwareInstancedPool | null {
@@ -298,7 +298,8 @@ export function relocateAgentToAlternateCover(
   agent: EnemyAiAgentRuntime,
   agents: ReadonlyMap<string, EnemyAiAgentRuntime>,
   peekPlanCache: Map<string, PeekPlanCacheEntry>,
-  elapsedClockS: number
+  elapsedClockS: number,
+  coverStations: readonly TacticalCoverStation[]
 ): boolean {
   const lastReloc = agent.lastRelocationClockS ?? -99;
   if (elapsedClockS - lastReloc < 6.5) return false;
@@ -312,7 +313,7 @@ export function relocateAgentToAlternateCover(
   const nextStation = selectCoverRelocationStation(
     agent.coverAnchorWorld,
     occupied,
-    TACTICAL_COVER_STATIONS
+    coverStations
   );
   if (!nextStation) return false;
 

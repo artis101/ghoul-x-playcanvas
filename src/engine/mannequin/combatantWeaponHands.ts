@@ -2,6 +2,7 @@ import { oppositeSide } from '../../core/ghoul/anatomy/handedness.ts';
 import * as pc from 'playcanvas';
 import type { ActiveFiringHand } from '../ai/tacticalAiTypes.ts';
 import type { CombatantGlbInstance, WeaponAssetId, WeaponGlbInstance } from '../assets/glbLoader.ts';
+import { HAND_ZONE } from './armZoneKeys.ts';
 import { CombatantSupportGrip } from './combatantSupportGrip.ts';
 import { M4A1_PALM_OFFSET_X, TRIGGER_GRIPS } from './combatantWeaponGrip.ts';
 
@@ -114,7 +115,7 @@ export class CombatantWeaponHands {
     glb: CombatantGlbInstance, side: ActiveFiringHand, rail: readonly [pc.Vec3, pc.Vec3], lateral: number,
     gripRotation?: pc.Quat,
   ): void {
-    const hand = glb.boneNodes.get(`HAND_${side}`);
+    const hand = glb.boneNodes.get(HAND_ZONE[side]);
     if (!hand) return;
     this.frame.mul2(this.support.node.getWorldTransform(), this.support.weaponToBind);
     // Where the clip put the support palm, in the gun's frame, and the nearest point on the rail.
@@ -139,7 +140,7 @@ export class CombatantWeaponHands {
     lateralOffset = 0,
     gripRotation?: pc.Quat,
   ): void {
-    const hand = glb.boneNodes.get(`HAND_${side}`);
+    const hand = glb.boneNodes.get(HAND_ZONE[side]);
     if (!hand) return;
     this.frame.mul2(binding.node.getWorldTransform(), binding.weaponToBind);
     this.palm.copy(grip);
